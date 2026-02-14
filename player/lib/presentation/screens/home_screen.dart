@@ -120,8 +120,10 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildShimmerLoading(BuildContext context) {
     final isDesktop = Breakpoints.isDesktop(context);
+    final safeAreaTop = MediaQuery.of(context).padding.top;
     return ListView(
-      padding: EdgeInsets.only(top: isDesktop ? 0 : 100),
+      padding:
+          EdgeInsets.only(top: isDesktop ? 0 : safeAreaTop + kToolbarHeight),
       children: [
         const _ShimmerHero(),
         SizedBox(height: isDesktop ? 32 : 24),

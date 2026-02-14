@@ -444,6 +444,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
+  double _getTopPadding(BuildContext context, bool showSearch) {
+    final safeAreaTop = MediaQuery.of(context).padding.top;
+    final appBarHeight = showSearch ? 120.0 : kToolbarHeight;
+    return safeAreaTop + appBarHeight + 8;
+  }
+
   Widget _buildGridView(BuildContext context, List items) {
     final isDesktop = Breakpoints.isDesktop(context);
     final horizontalPadding = Breakpoints.getHorizontalPadding(context);
@@ -453,8 +459,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final crossAxisCount = _calculateCrossAxisCount(constraints.maxWidth);
-        // Less top padding on desktop (no app bar overlap), adjust for search
-        final topPadding = effectiveShowSearch ? 140.0 : 100.0;
+        final topPadding = _getTopPadding(context, effectiveShowSearch);
         // Less bottom padding on desktop (no bottom nav)
         final bottomPadding = isDesktop ? 32.0 : 100.0;
 
@@ -489,7 +494,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final isDesktop = Breakpoints.isDesktop(context);
     final horizontalPadding = Breakpoints.getHorizontalPadding(context);
     final effectiveShowSearch = isDesktop || _showSearch;
-    final topPadding = effectiveShowSearch ? 140.0 : 100.0;
+    final topPadding = _getTopPadding(context, effectiveShowSearch);
     final bottomPadding = isDesktop ? 32.0 : 100.0;
 
     return ListView.builder(
