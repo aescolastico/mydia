@@ -426,71 +426,73 @@ defmodule MydiaWeb.Layouts do
     ~H"""
     <nav
       id="mobile-dock"
-      class="lg:hidden fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 ease-in-out"
+      class={[
+        "lg:hidden fixed z-50 left-3 right-3",
+        "bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
+        "flex items-center justify-around",
+        "rounded-2xl px-2 py-2",
+        "bg-base-100/60 backdrop-blur-3xl backdrop-saturate-150",
+        "border border-white/20",
+        "shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.2)]"
+      ]}
     >
-      <div class="backdrop-blur-md bg-base-200/90 border-t border-base-300 shadow-lg">
-        <div class="flex justify-around items-center px-2 py-3">
-          <.link
-            navigate="/"
-            class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-          >
-            <.icon name="hero-home" class="w-6 h-6" />
-            <span class="text-xs mt-1">Home</span>
-          </.link>
+      <.link
+        navigate="/"
+        class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+      >
+        <.icon name="hero-home" class="size-5" />
+        <span class="text-[10px] mt-0.5 opacity-70">Home</span>
+      </.link>
 
-          <%= if @current_user && @current_user.role == "guest" do %>
-            <%!-- Guest users see request options --%>
-            <.link
-              navigate="/request/movie"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-            >
-              <.icon name="hero-film" class="w-6 h-6" />
-              <span class="text-xs mt-1">Request</span>
-            </.link>
+      <%= if @current_user && @current_user.role == "guest" do %>
+        <.link
+          navigate="/request/movie"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+        >
+          <.icon name="hero-film" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">Request</span>
+        </.link>
 
-            <.link
-              navigate="/requests"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-            >
-              <.icon name="hero-queue-list" class="w-6 h-6" />
-              <span class="text-xs mt-1">Requests</span>
-            </.link>
-          <% else %>
-            <%!-- Admin users see library navigation --%>
-            <.link
-              navigate="/movies"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-            >
-              <.icon name="hero-film" class="w-6 h-6" />
-              <span class="text-xs mt-1">Movies</span>
-            </.link>
+        <.link
+          navigate="/requests"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+        >
+          <.icon name="hero-queue-list" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">Requests</span>
+        </.link>
+      <% else %>
+        <.link
+          navigate="/movies"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+        >
+          <.icon name="hero-film" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">Movies</span>
+        </.link>
 
-            <.link
-              navigate="/tv"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-            >
-              <.icon name="hero-tv" class="w-6 h-6" />
-              <span class="text-xs mt-1">TV</span>
-            </.link>
+        <.link
+          navigate="/tv"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+        >
+          <.icon name="hero-tv" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">TV</span>
+        </.link>
 
-            <.link
-              navigate="/downloads"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg hover:bg-base-300 transition-colors"
-            >
-              <.icon name="hero-arrow-down-tray" class="w-6 h-6" />
-              <span class="text-xs mt-1">Downloads</span>
-            </.link>
+        <.link
+          navigate="/downloads"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+        >
+          <.icon name="hero-arrow-down-tray" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">Downloads</span>
+        </.link>
 
-            <a
-              href="/player"
-              class="flex flex-col items-center justify-center min-w-[60px] min-h-[60px] rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-            >
-              <.icon name="hero-play-circle-solid" class="w-6 h-6" />
-              <span class="text-xs mt-1">Player</span>
-            </a>
-          <% end %>
-        </div>
-      </div>
+        <a
+          href="/player"
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl text-primary hover:bg-primary/10 transition-colors"
+        >
+          <.icon name="hero-play-circle-solid" class="size-5" />
+          <span class="text-[10px] mt-0.5 opacity-70">Player</span>
+        </a>
+      <% end %>
     </nav>
     """
   end
