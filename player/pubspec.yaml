@@ -65,6 +65,7 @@ flutter_launcher_icons:
     image_path: "assets/icon.png"
     icon_size: 256
   image_path: "assets/icon.png"
+  image_path_ios: "assets/icon_ios.png"
   remove_alpha_ios: true
   adaptive_icon_background: "#0f172a"
   adaptive_icon_foreground: "assets/icon.png"
