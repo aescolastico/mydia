@@ -50,6 +50,10 @@ defmodule MydiaWeb.Layouts do
   attr :books_count, :integer, default: 0, doc: "number of books in library"
   attr :executing_jobs, :list, default: [], doc: "list of currently executing background jobs"
 
+  attr :current_path, :string,
+    default: nil,
+    doc: "the current request path for active nav highlighting"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -80,9 +84,7 @@ defmodule MydiaWeb.Layouts do
         <main class="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 lg:p-8 pb-20 lg:pb-8">
           {render_slot(@inner_block)}
         </main>
-        
-    <!-- Mobile dock navigation -->
-        <.mobile_dock current_user={@current_user} />
+        <.mobile_dock current_user={@current_user} current_path={@current_path} />
       </div>
       
     <!-- Sidebar -->
@@ -112,25 +114,31 @@ defmodule MydiaWeb.Layouts do
           <nav class="flex-1 overflow-y-auto">
             <ul class="menu w-full space-y-1 px-2 py-4">
               <li>
-                <.link navigate="/" class="active">
+                <.link navigate="/" class={nav_active?(@current_path, "/", true) && "active"}>
                   <.icon name="hero-home" class="w-5 h-5" /> Dashboard
                 </.link>
               </li>
               <li>
-                <.link navigate="/movies">
+                <.link
+                  navigate="/movies"
+                  class={nav_active?(@current_path, "/movies", false) && "active"}
+                >
                   <.icon name="hero-film" class="w-5 h-5" /> Movies
                   <span class="badge badge-sm">{@movie_count}</span>
                 </.link>
               </li>
               <li>
-                <.link navigate="/tv">
+                <.link navigate="/tv" class={nav_active?(@current_path, "/tv", false) && "active"}>
                   <.icon name="hero-tv" class="w-5 h-5" /> TV Shows
                   <span class="badge badge-sm">{@tv_show_count}</span>
                 </.link>
               </li>
               <%= if MapSet.member?(@configured_library_types, :music) do %>
                 <li>
-                  <.link navigate="/music">
+                  <.link
+                    navigate="/music"
+                    class={nav_active?(@current_path, "/music", false) && "active"}
+                  >
                     <.icon name="hero-musical-note" class="w-5 h-5" /> Music
                     <span class="badge badge-sm">{@music_count}</span>
                   </.link>
@@ -138,7 +146,10 @@ defmodule MydiaWeb.Layouts do
               <% end %>
               <%= if MapSet.member?(@configured_library_types, :books) do %>
                 <li>
-                  <.link navigate="/books">
+                  <.link
+                    navigate="/books"
+                    class={nav_active?(@current_path, "/books", false) && "active"}
+                  >
                     <.icon name="hero-book-open" class="w-5 h-5" /> Books
                     <span class="badge badge-sm">{@books_count}</span>
                   </.link>
@@ -146,7 +157,10 @@ defmodule MydiaWeb.Layouts do
               <% end %>
               <%= if MapSet.member?(@configured_library_types, :adult) do %>
                 <li>
-                  <.link navigate="/adult">
+                  <.link
+                    navigate="/adult"
+                    class={nav_active?(@current_path, "/adult", false) && "active"}
+                  >
                     <.icon name="hero-eye-slash" class="w-5 h-5" /> Adult
                     <span class="badge badge-sm">{@adult_count}</span>
                   </.link>
@@ -158,28 +172,43 @@ defmodule MydiaWeb.Layouts do
               </li>
 
               <li>
-                <.link navigate="/downloads">
+                <.link
+                  navigate="/downloads"
+                  class={nav_active?(@current_path, "/downloads", false) && "active"}
+                >
                   <.icon name="hero-arrow-down-tray" class="w-5 h-5" /> Downloads
                   <span class="badge badge-primary badge-sm">{@downloads_count}</span>
                 </.link>
               </li>
               <li>
-                <.link navigate="/calendar">
+                <.link
+                  navigate="/calendar"
+                  class={nav_active?(@current_path, "/calendar", false) && "active"}
+                >
                   <.icon name="hero-calendar" class="w-5 h-5" /> Calendar
                 </.link>
               </li>
               <li>
-                <.link navigate="/search">
+                <.link
+                  navigate="/search"
+                  class={nav_active?(@current_path, "/search", false) && "active"}
+                >
                   <.icon name="hero-magnifying-glass" class="w-5 h-5" /> Search
                 </.link>
               </li>
               <li>
-                <.link navigate="/activity">
+                <.link
+                  navigate="/activity"
+                  class={nav_active?(@current_path, "/activity", false) && "active"}
+                >
                   <.icon name="hero-clock" class="w-5 h-5" /> Activity
                 </.link>
               </li>
               <li>
-                <.link navigate="/collections">
+                <.link
+                  navigate="/collections"
+                  class={nav_active?(@current_path, "/collections", false) && "active"}
+                >
                   <.icon name="hero-folder" class="w-5 h-5" /> Collections
                 </.link>
               </li>
@@ -190,34 +219,49 @@ defmodule MydiaWeb.Layouts do
                 </li>
 
                 <li>
-                  <a href="/admin/users">
+                  <.link
+                    navigate="/admin/users"
+                    class={nav_active?(@current_path, "/admin/users", false) && "active"}
+                  >
                     <.icon name="hero-users" class="w-5 h-5" /> Users
-                  </a>
+                  </.link>
                 </li>
                 <li>
-                  <a href="/admin/config">
+                  <.link
+                    navigate="/admin/config"
+                    class={nav_active?(@current_path, "/admin/config", false) && "active"}
+                  >
                     <.icon name="hero-cog-6-tooth" class="w-5 h-5" /> Configuration
-                  </a>
+                  </.link>
                 </li>
                 <%= if Mydia.ImportLists.FeatureFlags.enabled?() do %>
                   <li>
-                    <a href="/admin/import-lists">
+                    <.link
+                      navigate="/admin/import-lists"
+                      class={nav_active?(@current_path, "/admin/import-lists", false) && "active"}
+                    >
                       <.icon name="hero-arrow-down-on-square-stack" class="w-5 h-5" /> Import Lists
-                    </a>
+                    </.link>
                   </li>
                 <% end %>
                 <li>
-                  <a href="/admin/jobs">
+                  <.link
+                    navigate="/admin/jobs"
+                    class={nav_active?(@current_path, "/admin/jobs", false) && "active"}
+                  >
                     <.icon name="hero-queue-list" class="w-5 h-5" /> Background Jobs
-                  </a>
+                  </.link>
                 </li>
                 <li>
-                  <a href="/admin/requests">
+                  <.link
+                    navigate="/admin/requests"
+                    class={nav_active?(@current_path, "/admin/requests", false) && "active"}
+                  >
                     <.icon name="hero-inbox-stack" class="w-5 h-5" /> Requests
                     <%= if @pending_requests_count > 0 do %>
                       <span class="badge badge-primary badge-sm">{@pending_requests_count}</span>
                     <% end %>
-                  </a>
+                  </.link>
                 </li>
               <% end %>
 
@@ -227,19 +271,28 @@ defmodule MydiaWeb.Layouts do
                 </li>
 
                 <li>
-                  <a href="/request/movie">
+                  <.link
+                    navigate="/request/movie"
+                    class={nav_active?(@current_path, "/request/movie", false) && "active"}
+                  >
                     <.icon name="hero-film" class="w-5 h-5" /> Request Movie
-                  </a>
+                  </.link>
                 </li>
                 <li>
-                  <a href="/request/series">
+                  <.link
+                    navigate="/request/series"
+                    class={nav_active?(@current_path, "/request/series", false) && "active"}
+                  >
                     <.icon name="hero-tv" class="w-5 h-5" /> Request Series
-                  </a>
+                  </.link>
                 </li>
                 <li>
-                  <a href="/requests">
+                  <.link
+                    navigate="/requests"
+                    class={nav_active?(@current_path, "/requests", true) && "active"}
+                  >
                     <.icon name="hero-queue-list" class="w-5 h-5" /> My Requests
-                  </a>
+                  </.link>
                 </li>
               <% end %>
             </ul>
@@ -421,11 +474,13 @@ defmodule MydiaWeb.Layouts do
   Hidden on desktop/tablet screen sizes.
   """
   attr :current_user, :map, default: nil, doc: "the currently authenticated user"
+  attr :current_path, :string, default: nil, doc: "the current request path"
 
   def mobile_dock(assigns) do
     ~H"""
     <nav
       id="mobile-dock"
+      phx-hook="DockNav"
       class={[
         "lg:hidden fixed z-50 left-3 right-3",
         "bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
@@ -436,58 +491,46 @@ defmodule MydiaWeb.Layouts do
         "shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.2)]"
       ]}
     >
-      <.link
-        navigate="/"
-        class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
+      <div
+        id="dock-indicator"
+        class="fixed rounded-xl bg-primary/10 pointer-events-none transition-all duration-300 ease-in-out"
+        style="opacity:0"
       >
-        <.icon name="hero-home" class="size-5" />
-        <span class="text-[10px] mt-0.5 opacity-70">Home</span>
-      </.link>
+      </div>
+
+      <.dock_link path="/" current_path={@current_path} icon="hero-home" label="Home" exact />
 
       <%= if @current_user && @current_user.role == "guest" do %>
-        <.link
-          navigate="/request/movie"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
-        >
-          <.icon name="hero-film" class="size-5" />
-          <span class="text-[10px] mt-0.5 opacity-70">Request</span>
-        </.link>
-
-        <.link
-          navigate="/requests"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
-        >
-          <.icon name="hero-queue-list" class="size-5" />
-          <span class="text-[10px] mt-0.5 opacity-70">Requests</span>
-        </.link>
+        <.dock_link
+          path="/request/movie"
+          current_path={@current_path}
+          icon="hero-film"
+          label="Request"
+        />
+        <.dock_link
+          path="/requests"
+          current_path={@current_path}
+          icon="hero-queue-list"
+          label="Requests"
+        />
       <% else %>
-        <.link
-          navigate="/movies"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
-        >
-          <.icon name="hero-film" class="size-5" />
-          <span class="text-[10px] mt-0.5 opacity-70">Movies</span>
-        </.link>
-
-        <.link
-          navigate="/tv"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
-        >
-          <.icon name="hero-tv" class="size-5" />
-          <span class="text-[10px] mt-0.5 opacity-70">TV</span>
-        </.link>
-
-        <.link
-          navigate="/downloads"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl hover:bg-base-content/10 transition-colors"
-        >
-          <.icon name="hero-arrow-down-tray" class="size-5" />
-          <span class="text-[10px] mt-0.5 opacity-70">Downloads</span>
-        </.link>
-
+        <.dock_link
+          path="/movies"
+          current_path={@current_path}
+          icon="hero-film"
+          label="Movies"
+        />
+        <.dock_link path="/tv" current_path={@current_path} icon="hero-tv" label="TV" />
+        <.dock_link
+          path="/downloads"
+          current_path={@current_path}
+          icon="hero-arrow-down-tray"
+          label="Downloads"
+        />
         <a
           href="/player"
-          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl text-primary hover:bg-primary/10 transition-colors"
+          data-dock-link
+          class="flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl text-primary hover:bg-primary/10 transition-[color,opacity] duration-300 ease-in-out relative z-10"
         >
           <.icon name="hero-play-circle-solid" class="size-5" />
           <span class="text-[10px] mt-0.5 opacity-70">Player</span>
@@ -496,4 +539,40 @@ defmodule MydiaWeb.Layouts do
     </nav>
     """
   end
+
+  attr :path, :string, required: true
+  attr :current_path, :string, default: nil
+  attr :icon, :string, required: true
+  attr :label, :string, required: true
+  attr :exact, :boolean, default: false
+
+  defp dock_link(assigns) do
+    assigns =
+      assign(assigns, :active?, nav_active?(assigns.current_path, assigns.path, assigns.exact))
+
+    ~H"""
+    <.link
+      navigate={@path}
+      data-dock-link
+      data-active={@active? && "true"}
+      class={[
+        "flex flex-col items-center justify-center min-w-[52px] py-1.5 rounded-xl",
+        "transition-[color,opacity] duration-300 ease-in-out relative z-10",
+        if(@active?,
+          do: "text-primary opacity-100",
+          else: "opacity-50 hover:opacity-80"
+        )
+      ]}
+    >
+      <.icon name={@icon} class="size-5" />
+      <span class="text-[10px] mt-0.5">{@label}</span>
+    </.link>
+    """
+  end
+
+  defp nav_active?(nil, _path, _exact), do: false
+  defp nav_active?(current, path, true), do: current == path
+
+  defp nav_active?(current, path, false),
+    do: current == path || String.starts_with?(current, path <> "/")
 end

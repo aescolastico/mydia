@@ -143,9 +143,26 @@ defmodule MydiaWeb.Live.UserAuth do
       |> assign(:music_count, music_count)
       |> assign(:books_count, books_count)
       |> assign(:executing_jobs, executing_jobs)
+      |> assign(:current_path, nil)
       |> attach_hook(:jobs_status_hook, :handle_info, &handle_jobs_status/2)
 
+    # handle_params hooks only work for LiveViews mounted via live/3 in the router.
+    # This on_mount also runs for non-router views (e.g. dead view rendering), so
+    # we guard against the RuntimeError that would be raised in those cases.
+    socket =
+      try do
+        attach_hook(socket, :track_current_path, :handle_params, &track_current_path/3)
+      rescue
+        RuntimeError -> socket
+      end
+
     {:cont, socket}
+  end
+
+  # Track current path for active navigation highlighting
+  defp track_current_path(_params, uri, socket) do
+    path = URI.parse(uri).path
+    {:cont, assign(socket, :current_path, path)}
   end
 
   # Handle job status updates from PubSub

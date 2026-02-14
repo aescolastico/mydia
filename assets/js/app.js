@@ -27,6 +27,7 @@ import topbar from "../vendor/topbar";
 import VideoPlayer from "./hooks/video_player";
 import MusicPlayer from "./hooks/music_player";
 import PlexOAuth from "./hooks/plex_oauth";
+import DockNav from "./hooks/dock_nav";
 // Alpine.js for reactive UI components
 import Alpine from "alpinejs";
 import { videoPlayer } from "./alpine_components/video_player";
@@ -440,6 +441,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     SpritePreview,
     VideoPreview,
     PlexOAuth,
+    DockNav,
     AddDirectUrl,
   },
   // Preserve Alpine.js state and selection across LiveView DOM patches
