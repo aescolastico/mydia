@@ -31,8 +31,8 @@ defmodule MetadataRelay.Plug.Cache do
 
   @impl true
   def call(%Plug.Conn{method: "GET", request_path: path} = conn, _opts)
-      when path in ["/health", "/stats"] do
-    # Skip caching for health/stats endpoints
+      when path in ["/health", "/stats", "/metrics"] do
+    # Skip caching for health/stats/metrics endpoints
     conn
   end
 
@@ -74,6 +74,7 @@ defmodule MetadataRelay.Plug.Cache do
   end
 
   defp serve_cached_response(conn, cached_response) do
+    MetadataRelay.Metrics.inc("metadata_relay_cache_hits_total")
     %{status: status, headers: headers, body: body} = cached_response
 
     conn
@@ -85,6 +86,8 @@ defmodule MetadataRelay.Plug.Cache do
   defp cache_response(conn, cache_key) do
     # Only cache successful GET responses
     if conn.status in 200..299 do
+      MetadataRelay.Metrics.inc("metadata_relay_cache_misses_total")
+
       cached_response = %{
         status: conn.status,
         headers: filter_headers(conn.resp_headers),

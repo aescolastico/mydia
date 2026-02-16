@@ -322,16 +322,28 @@ defmodule MetadataRelay.Router do
   defp handle_tmdb_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total", service: "tmdb", status: "ok")
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
 
       {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "tmdb",
+          status: "error"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, Jason.encode!(body))
 
       {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "tmdb",
+          status: "error"
+        )
+
         error_response = %{
           error: "Internal server error",
           message: inspect(reason)
@@ -346,16 +358,28 @@ defmodule MetadataRelay.Router do
   defp handle_tvdb_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total", service: "tvdb", status: "ok")
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
 
       {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "tvdb",
+          status: "error"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, Jason.encode!(body))
 
       {:error, {:authentication_failed, reason}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "tvdb",
+          status: "error"
+        )
+
         error_response = %{
           error: "Authentication failed",
           message: "Failed to authenticate with TVDB: #{inspect(reason)}"
@@ -366,6 +390,11 @@ defmodule MetadataRelay.Router do
         |> send_resp(401, Jason.encode!(error_response))
 
       {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "tvdb",
+          status: "error"
+        )
+
         error_response = %{
           error: "Internal server error",
           message: inspect(reason)
@@ -394,6 +423,8 @@ defmodule MetadataRelay.Router do
 
     case MetadataRelay.RateLimiter.check_rate_limit(client_ip) do
       {:error, :rate_limited} ->
+        MetadataRelay.Metrics.inc("metadata_relay_rate_limited_total")
+
         error_response = %{
           error: "Too many requests",
           message: "Rate limit exceeded. Please try again later."
@@ -431,6 +462,8 @@ defmodule MetadataRelay.Router do
   defp process_crash_report(conn) do
     with {:ok, body} <- validate_crash_report(conn.body_params),
          {:ok, _occurrence} <- store_crash_report(body) do
+      MetadataRelay.Metrics.inc("metadata_relay_crash_reports_total")
+
       conn
       |> put_resp_content_type("application/json")
       |> send_resp(201, Jason.encode!(%{status: "created", message: "Crash report received"}))
@@ -542,11 +575,21 @@ defmodule MetadataRelay.Router do
   defp handle_subtitles_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "ok"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
 
       {:error, :not_configured} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "error"
+        )
+
         error_response = %{
           error: "Service not configured",
           message:
@@ -558,6 +601,11 @@ defmodule MetadataRelay.Router do
         |> send_resp(503, Jason.encode!(error_response))
 
       {:error, {:rate_limited, retry_after}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "error"
+        )
+
         error_response = %{
           error: "Too many requests",
           message: "Rate limit exceeded. Please try again later."
@@ -569,11 +617,21 @@ defmodule MetadataRelay.Router do
         |> send_resp(429, Jason.encode!(error_response))
 
       {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "error"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, Jason.encode!(body))
 
       {:error, {:authentication_failed, reason}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "error"
+        )
+
         error_response = %{
           error: "Authentication failed",
           message: "Failed to authenticate with OpenSubtitles: #{inspect(reason)}"
@@ -584,6 +642,11 @@ defmodule MetadataRelay.Router do
         |> send_resp(401, Jason.encode!(error_response))
 
       {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "opensubtitles",
+          status: "error"
+        )
+
         error_response = %{
           error: "Internal server error",
           message: inspect(reason)
@@ -598,16 +661,31 @@ defmodule MetadataRelay.Router do
   defp handle_music_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "musicbrainz",
+          status: "ok"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
 
       {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "musicbrainz",
+          status: "error"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, Jason.encode!(body))
 
       {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "musicbrainz",
+          status: "error"
+        )
+
         error_response = %{
           error: "Internal server error",
           message: inspect(reason)
@@ -622,16 +700,31 @@ defmodule MetadataRelay.Router do
   defp handle_openlibrary_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "openlibrary",
+          status: "ok"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
 
       {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "openlibrary",
+          status: "error"
+        )
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(status, Jason.encode!(body))
 
       {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "openlibrary",
+          status: "error"
+        )
+
         error_response = %{
           error: "Internal server error",
           message: inspect(reason)
@@ -672,6 +765,8 @@ defmodule MetadataRelay.Router do
   end
 
   defp send_rate_limited(conn, retry_after_seconds) do
+    MetadataRelay.Metrics.inc("metadata_relay_rate_limited_total")
+
     error_response = %{
       error: "rate_limited",
       message: "Too many requests. Please try again later.",
@@ -688,6 +783,8 @@ defmodule MetadataRelay.Router do
   defp handle_pairing_request(conn, handler_fn) do
     case handler_fn.() do
       {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_pairing_requests_total")
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(body))
