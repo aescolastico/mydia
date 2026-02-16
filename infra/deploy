@@ -71,6 +71,7 @@ class Phase(Enum):
     KUBECONFIG = "kubeconfig"
     KUBERNETES = "kubernetes"
     APP = "app"
+    MONITORING = "monitoring"
     VERIFY = "verify"
 
 
@@ -92,6 +93,12 @@ class Config:
     relay_tvdb_api_key: str = ""
     relay_tmdb_api_key: str = ""
 
+    # CoTURN
+    coturn_secret: str = ""
+
+    # Monitoring
+    grafana_admin_password: str = ""
+
     # VPS
     vps_name: str = ""  # Populated after VPS is ordered/found
     vps_ip: str = ""  # Populated after VPS is ordered/found
@@ -104,6 +111,10 @@ class Config:
     @property
     def argocd_fqdn(self) -> str:
         return f"{self.argocd_subdomain}.{self.domain_name}"
+
+    @property
+    def grafana_fqdn(self) -> str:
+        return f"grafana.{self.domain_name}"
 
     @property
     def ssh_public_key(self) -> str:
@@ -137,6 +148,8 @@ class Config:
             "relay_secret_key_base": self.relay_secret_key_base,
             "relay_tvdb_api_key": self.relay_tvdb_api_key,
             "relay_tmdb_api_key": self.relay_tmdb_api_key,
+            "coturn_secret": self.coturn_secret,
+            "grafana_admin_password": self.grafana_admin_password,
             "vps_name": self.vps_name,
             "vps_ip": self.vps_ip,
             "ssh_public_key_path": self.ssh_public_key_path,
@@ -847,6 +860,85 @@ def phase_app(config: Config, dry_run: bool = False) -> bool:
     return True
 
 
+def phase_monitoring(config: Config, dry_run: bool = False) -> bool:
+    """Deploy Prometheus + Grafana monitoring stack."""
+    console.print("\n[bold blue]Phase: Monitoring (Prometheus + Grafana)[/bold blue]")
+
+    namespace = "monitoring"
+    monitoring_dir = KUBERNETES_DIR / "apps" / "monitoring"
+
+    # --- Namespace ---
+    if k8s_namespace_exists(namespace):
+        console.print(f"  [green]✓[/green] Namespace '{namespace}' exists")
+    elif dry_run:
+        console.print(f"  [yellow]Would create:[/yellow] Namespace '{namespace}'")
+    else:
+        console.print("  [dim]Creating namespace...[/dim]")
+        ns_file = monitoring_dir / "namespace.yaml"
+        if ns_file.exists():
+            run(["kubectl", "apply", "-f", str(ns_file)])
+        else:
+            run(["kubectl", "create", "namespace", namespace])
+        console.print("  [green]✓[/green] Namespace created")
+
+    # --- Grafana Secret ---
+    if not config.grafana_admin_password:
+        config.grafana_admin_password = secrets.token_urlsafe(24)
+        config.save(CONFIG_FILE)
+        console.print("  [green]✓[/green] Generated Grafana admin password")
+
+    if k8s_secret_exists("grafana-secrets", namespace):
+        console.print("  [green]✓[/green] Secret 'grafana-secrets' exists")
+        if not dry_run:
+            console.print("  [dim]Updating secret...[/dim]")
+            proc = subprocess.Popen(
+                [
+                    "kubectl", "create", "secret", "generic", "grafana-secrets",
+                    "-n", namespace,
+                    "--dry-run=client", "-o", "yaml",
+                    f"--from-literal=GF_SECURITY_ADMIN_PASSWORD={config.grafana_admin_password}",
+                ],
+                stdout=subprocess.PIPE,
+            )
+            subprocess.run(["kubectl", "apply", "-f", "-"], stdin=proc.stdout)
+            console.print("  [green]✓[/green] Secret updated")
+    elif dry_run:
+        console.print("  [yellow]Would create:[/yellow] Grafana admin secret")
+    else:
+        console.print("  [dim]Creating secret...[/dim]")
+        run([
+            "kubectl", "create", "secret", "generic", "grafana-secrets",
+            "-n", namespace,
+            f"--from-literal=GF_SECURITY_ADMIN_PASSWORD={config.grafana_admin_password}",
+        ])
+        console.print("  [green]✓[/green] Secret created")
+
+    # --- Apply manifests ---
+    if dry_run:
+        console.print("  [yellow]Would apply:[/yellow] All monitoring manifests")
+    else:
+        console.print("  [dim]Applying manifests...[/dim]")
+        manifests = [
+            "prometheus-configmap.yaml",
+            "prometheus-pvc.yaml",
+            "prometheus-deployment.yaml",
+            "prometheus-service.yaml",
+            "grafana-configmap.yaml",
+            "grafana-dashboard-configmap.yaml",
+            "grafana-pvc.yaml",
+            "grafana-deployment.yaml",
+            "grafana-service.yaml",
+            "ingress.yaml",
+        ]
+        for manifest in manifests:
+            manifest_path = monitoring_dir / manifest
+            if manifest_path.exists():
+                run(["kubectl", "apply", "-f", str(manifest_path)])
+        console.print("  [green]✓[/green] Monitoring stack deployed")
+
+    return True
+
+
 def phase_verify(config: Config, dry_run: bool = False) -> bool:
     """Verify deployment health."""
     console.print("\n[bold blue]Phase: Verification[/bold blue]")
@@ -913,6 +1005,7 @@ def deploy(
         Phase.KUBECONFIG: phase_kubeconfig,
         Phase.KUBERNETES: phase_kubernetes,
         Phase.APP: phase_app,
+        Phase.MONITORING: phase_monitoring,
         Phase.VERIFY: phase_verify,
     }
 
@@ -974,6 +1067,7 @@ def print_summary(config: Config) -> None:
     table.add_row("Relay URL", f"https://{config.relay_fqdn}")
     table.add_row("P2P Relay", f"{config.vps_ip}:4001 (iroh)")
     table.add_row("ArgoCD URL", f"https://{config.argocd_fqdn}")
+    table.add_row("Grafana URL", f"https://{config.grafana_fqdn}")
     table.add_row("Health Check", f"https://{config.relay_fqdn}/health")
 
     console.print("\n")

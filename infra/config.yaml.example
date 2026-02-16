@@ -23,6 +23,10 @@ relay_tvdb_api_key: "your-tvdb-api-key"
 # TMDB API key from: https://www.themoviedb.org/settings/api
 relay_tmdb_api_key: "your-tmdb-api-key"
 
+# Monitoring
+# Leave empty to auto-generate on first deploy
+grafana_admin_password: ""
+
 # SSH Configuration
 ssh_public_key_path: "~/.ssh/id_ed25519.pub"
 

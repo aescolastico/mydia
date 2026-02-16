@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+
+    scrape_configs:
+      - job_name: "iroh-relay"
+        static_configs:
+          - targets:
+              - "iroh-relay.iroh-relay.svc.cluster.local:9090"
+            labels:
+              instance: "iroh-relay"
+
+      - job_name: "metadata-relay"
+        static_configs:
+          - targets:
+              - "metadata-relay.metadata-relay.svc.cluster.local:4000"
+            labels:
+              instance: "metadata-relay"

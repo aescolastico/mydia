@@ -1,0 +1,76 @@
+# Certificate for TLS
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-tls
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: observability
+spec:
+  dnsNames:
+    - grafana.mydia.dev
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  secretName: grafana-tls-secret
+---
+# Middleware for HTTP to HTTPS redirect
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: observability
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+# HTTP IngressRoute (redirects to HTTPS)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-http
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: observability
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`grafana.mydia.dev`)
+      middlewares:
+        - name: redirect-https
+          namespace: monitoring
+      services:
+        - name: grafana
+          port: 3000
+---
+# HTTPS IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: observability
+  annotations:
+    # external-dns will create DNS record pointing to this IP
+    external-dns.alpha.kubernetes.io/target: 149.56.129.39
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`grafana.mydia.dev`)
+      services:
+        - name: grafana
+          port: 3000
+  tls:
+    secretName: grafana-tls-secret
