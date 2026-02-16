@@ -162,10 +162,15 @@ class P2pDownloadJobService implements DownloadJobService {
 
   @override
   Future<String> getDownloadUrl(String jobId) async {
-    final port = _localProxy.port;
-    if (port == 0) {
-      throw StateError('Local proxy is not running');
+    // Ensure the local proxy is running for download requests.
+    // The proxy may not have been started yet if the user hasn't played
+    // any media in this session (it's normally started by PlayerScreen).
+    if (!_localProxy.isRunning) {
+      await _localProxy.start(
+        targetPeer: _serverNodeAddr,
+        authToken: _authToken,
+      );
     }
-    return 'http://127.0.0.1:$port/download/$jobId/file';
+    return 'http://127.0.0.1:${_localProxy.port}/download/$jobId/file';
   }
 }

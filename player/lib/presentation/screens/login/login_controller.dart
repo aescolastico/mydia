@@ -23,8 +23,10 @@ part 'login_controller.g.dart';
 enum ConnectionMode {
   /// Initial mode selection screen
   selection,
+
   /// Claim code pairing mode (E2E encrypted via relay)
   claimCode,
+
   /// Direct HTTPS connection mode
   direct,
 }
@@ -33,20 +35,28 @@ enum ConnectionMode {
 enum ClaimCodeStatus {
   /// Waiting for user to enter code
   idle,
+
   /// Resolving claim code via Relay HTTP API
   resolving,
+
   /// Looking up claim code on relay (Legacy) or Connecting to rendezvous point
   lookingUp,
+
   /// Connecting to instance via relay
   connecting,
+
   /// Discovering server via rendezvous
   discovering,
+
   /// Dialing server
   dialing,
+
   /// Performing Noise handshake / sending pairing request
   handshaking,
+
   /// Pairing complete
   paired,
+
   /// Error occurred
   error,
 }
@@ -91,12 +101,14 @@ class LoginState {
       success: success ?? this.success,
       claimCodeStatus: claimCodeStatus ?? this.claimCodeStatus,
       claimCodeMessage: claimCodeMessage,
-      updateRequiredError:
-          clearUpdateRequiredError ? null : (updateRequiredError ?? this.updateRequiredError),
+      updateRequiredError: clearUpdateRequiredError
+          ? null
+          : (updateRequiredError ?? this.updateRequiredError),
     );
   }
 
-  factory LoginState.initial() => const LoginState(mode: ConnectionMode.claimCode);
+  factory LoginState.initial() =>
+      const LoginState(mode: ConnectionMode.claimCode);
 }
 
 @riverpod
@@ -149,17 +161,18 @@ class LoginController extends _$LoginController {
           ClaimCodeStatus claimStatus;
           if (status.contains('Resolving')) {
             claimStatus = ClaimCodeStatus.resolving;
-          } else if (status.contains('Looking up') || status.contains('Finding')) {
+          } else if (status.contains('Looking up') ||
+              status.contains('Finding')) {
             claimStatus = ClaimCodeStatus.discovering;
           } else if (status.contains('Connecting') ||
-                     status.contains('Joining') ||
-                     status.contains('relay')) {
+              status.contains('Joining') ||
+              status.contains('relay')) {
             claimStatus = ClaimCodeStatus.connecting;
           } else if (status.contains('Dialing')) {
             claimStatus = ClaimCodeStatus.dialing;
           } else if (status.contains('Establishing') ||
-                     status.contains('Submitting') ||
-                     status.contains('secure')) {
+              status.contains('Submitting') ||
+              status.contains('secure')) {
             claimStatus = ClaimCodeStatus.handshaking;
           } else {
             claimStatus = ClaimCodeStatus.handshaking;
@@ -178,12 +191,14 @@ class LoginController extends _$LoginController {
 
       // Check if still mounted before updating state
       if (!ref.mounted) {
-        debugPrint('[LoginController] Not mounted after pairing, returning early');
+        debugPrint(
+            '[LoginController] Not mounted after pairing, returning early');
         return;
       }
 
       // Pairing successful - store credentials in auth service
-      debugPrint('[LoginController] Pairing successful! Storing credentials...');
+      debugPrint(
+          '[LoginController] Pairing successful! Storing credentials...');
       debugPrint('[LoginController] isP2PMode=${result.isP2PMode}');
       final credentials = result.credentials!;
       final authService = ref.read(authServiceProvider);
@@ -202,30 +217,34 @@ class LoginController extends _$LoginController {
       if (result.isP2PMode && credentials.serverNodeAddr != null) {
         debugPrint('[LoginController] Setting P2P mode in connection provider');
         await ref.read(connectionProvider.notifier).setP2PMode(
-          serverNodeAddr: credentials.serverNodeAddr!,
-        );
+              serverNodeAddr: credentials.serverNodeAddr!,
+            );
         // Invalidate GraphQL providers to force rebuild
         ref.invalidate(graphqlClientProvider);
         ref.invalidate(asyncGraphqlClientProvider);
       } else {
-        debugPrint('[LoginController] Direct mode, ensuring connection provider is in direct mode');
+        debugPrint(
+            '[LoginController] Direct mode, ensuring connection provider is in direct mode');
         await ref.read(connectionProvider.notifier).setDirectMode();
       }
 
       debugPrint('[LoginController] Refreshing auth state...');
 
       if (!ref.mounted) {
-        debugPrint('[LoginController] Not mounted after setSession, returning early');
+        debugPrint(
+            '[LoginController] Not mounted after setSession, returning early');
         return;
       }
 
       // Refresh auth state
-      debugPrint('[LoginController] Calling authStateProvider.notifier.refresh()...');
+      debugPrint(
+          '[LoginController] Calling authStateProvider.notifier.refresh()...');
       await ref.read(authStateProvider.notifier).refresh();
       debugPrint('[LoginController] Auth state refreshed!');
 
       if (!ref.mounted) {
-        debugPrint('[LoginController] Not mounted after refresh, returning early');
+        debugPrint(
+            '[LoginController] Not mounted after refresh, returning early');
         return;
       }
       debugPrint('[LoginController] Setting success state...');
@@ -291,14 +310,16 @@ class LoginController extends _$LoginController {
       final errorStr = e.toString();
       if (errorStr.contains('Invalid username or password') ||
           errorStr.contains('Local authentication is disabled')) {
-        errorMessage = errorStr.replaceFirst('Exception: Login failed: ', '')
+        errorMessage = errorStr
+            .replaceFirst('Exception: Login failed: ', '')
             .replaceFirst('Exception: Login error: Exception: ', '');
       } else if (errorStr.contains('401') || errorStr.contains('invalid')) {
         errorMessage = 'Invalid username or password';
       } else if (errorStr.contains('connection') ||
-                 errorStr.contains('network') ||
-                 errorStr.contains('SocketException')) {
-        errorMessage = 'Cannot connect to server. Check the URL and your network.';
+          errorStr.contains('network') ||
+          errorStr.contains('SocketException')) {
+        errorMessage =
+            'Cannot connect to server. Check the URL and your network.';
       } else if (errorStr.contains('404')) {
         errorMessage = 'Server not found. Check the URL.';
       }
@@ -339,12 +360,12 @@ class LoginController extends _$LoginController {
           if (status.contains('Validating')) {
             claimStatus = ClaimCodeStatus.lookingUp;
           } else if (status.contains('Connecting') ||
-                     status.contains('Joining') ||
-                     status.contains('relay')) {
+              status.contains('Joining') ||
+              status.contains('relay')) {
             claimStatus = ClaimCodeStatus.connecting;
           } else if (status.contains('Establishing') ||
-                     status.contains('Submitting') ||
-                     status.contains('secure')) {
+              status.contains('Submitting') ||
+              status.contains('secure')) {
             claimStatus = ClaimCodeStatus.handshaking;
           } else {
             claimStatus = ClaimCodeStatus.handshaking;
@@ -365,7 +386,8 @@ class LoginController extends _$LoginController {
       if (!ref.mounted) return;
 
       // Pairing successful - store credentials in auth service
-      debugPrint('[LoginController] QR pairing successful! isP2PMode=${result.isP2PMode}');
+      debugPrint(
+          '[LoginController] QR pairing successful! isP2PMode=${result.isP2PMode}');
       final credentials = result.credentials!;
       final authService = ref.read(authServiceProvider);
 
@@ -382,8 +404,8 @@ class LoginController extends _$LoginController {
       if (result.isP2PMode && credentials.serverNodeAddr != null) {
         debugPrint('[LoginController] Setting P2P mode from QR pairing');
         await ref.read(connectionProvider.notifier).setP2PMode(
-          serverNodeAddr: credentials.serverNodeAddr!,
-        );
+              serverNodeAddr: credentials.serverNodeAddr!,
+            );
         // Invalidate GraphQL providers to force rebuild
         ref.invalidate(graphqlClientProvider);
         ref.invalidate(asyncGraphqlClientProvider);

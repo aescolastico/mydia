@@ -3,9 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'collection_detail_controller.dart';
+import 'collections_controller.dart';
 import '../../widgets/media_poster.dart';
+import '../../widgets/quality_download_dialog.dart';
+import '../../../core/downloads/collection_sync_providers.dart';
+import '../../../core/downloads/collection_sync_service.dart';
+import '../../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/colors.dart';
+import '../../../domain/models/recently_added_item.dart';
 
 class CollectionDetailScreen extends ConsumerWidget {
   final String id;
@@ -52,6 +58,18 @@ class CollectionDetailScreen extends ConsumerWidget {
                   letterSpacing: -0.5,
                 ),
               ),
+              actions: [
+                if (isDownloadSupported)
+                  itemsData.whenOrNull(
+                        data: (items) => items.isNotEmpty
+                            ? _CollectionDownloadButton(
+                                collectionId: id,
+                                items: items,
+                              )
+                            : null,
+                      ) ??
+                      const SizedBox.shrink(),
+              ],
             ),
           ),
         ),
@@ -214,5 +232,240 @@ class CollectionDetailScreen extends ConsumerWidget {
     if (width > 600) return 4;
     if (width > 400) return 3;
     return 2;
+  }
+}
+
+/// Download button for a collection that toggles between download and sync states.
+class _CollectionDownloadButton extends ConsumerStatefulWidget {
+  final String collectionId;
+  final List<RecentlyAddedItem> items;
+
+  const _CollectionDownloadButton({
+    required this.collectionId,
+    required this.items,
+  });
+
+  @override
+  ConsumerState<_CollectionDownloadButton> createState() =>
+      _CollectionDownloadButtonState();
+}
+
+class _CollectionDownloadButtonState
+    extends ConsumerState<_CollectionDownloadButton> {
+  bool _isSyncing = false;
+
+  /// Look up the collection name from the cached collections list.
+  String _getCollectionName() {
+    final collectionsAsync = ref.read(collectionsControllerProvider);
+    if (collectionsAsync.hasValue) {
+      for (final c in collectionsAsync.value!) {
+        if (c.id == widget.collectionId) return c.name;
+      }
+    }
+    return 'Collection';
+  }
+
+  /// Find a content ID suitable for the quality dialog.
+  /// Prefers the first movie, falls back to the collection's first item.
+  String _getProbeContentId() {
+    final movies = widget.items.where((i) => i.isMovie);
+    if (movies.isNotEmpty) return movies.first.id;
+    return widget.items.first.id;
+  }
+
+  String _getProbeContentType() {
+    final movies = widget.items.where((i) => i.isMovie);
+    if (movies.isNotEmpty) return 'movie';
+    return 'episode';
+  }
+
+  Future<void> _startSync(String resolution) async {
+    if (_isSyncing) return;
+    setState(() => _isSyncing = true);
+
+    try {
+      final result = await syncCollectionItems(
+        items: widget.items,
+        resolution: resolution,
+        ref: ref,
+      );
+
+      // Save sync config
+      final save = ref.read(saveCollectionSyncProvider);
+      await save(
+        collectionId: widget.collectionId,
+        name: _getCollectionName(),
+        resolution: resolution,
+      );
+
+      if (!mounted) return;
+
+      final message = _buildResultMessage(result);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                result.hasNewDownloads
+                    ? Icons.download_rounded
+                    : Icons.info_outline_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Text(message)),
+            ],
+          ),
+          backgroundColor: result.hasNewDownloads
+              ? AppColors.primary
+              : AppColors.textSecondary,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Collection sync failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sync failed: $e'),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
+    }
+  }
+
+  String _buildResultMessage(CollectionSyncResult result) {
+    if (result.totalQueued == 0 && result.skipped > 0) {
+      return 'All ${result.skipped} items already downloaded or queued';
+    }
+    final parts = <String>[];
+    if (result.moviesQueued > 0) {
+      parts.add(
+          '${result.moviesQueued} movie${result.moviesQueued != 1 ? 's' : ''}');
+    }
+    if (result.episodesQueued > 0) {
+      parts.add(
+          '${result.episodesQueued} episode${result.episodesQueued != 1 ? 's' : ''}');
+    }
+    final queuedStr = parts.join(' and ');
+    final msg = 'Queued $queuedStr for download';
+    if (result.skipped > 0) {
+      return '$msg, ${result.skipped} already downloaded';
+    }
+    return msg;
+  }
+
+  Future<void> _handleDownloadTap() async {
+    final selectedResolution = await showQualityDownloadDialog(
+      context,
+      contentType: _getProbeContentType(),
+      contentId: _getProbeContentId(),
+      title: _getCollectionName(),
+    );
+
+    if (selectedResolution == null || !mounted) return;
+    await _startSync(selectedResolution);
+  }
+
+  Future<void> _handleSyncNow() async {
+    final config = await ref.read(
+      collectionSyncConfigProvider(widget.collectionId).future,
+    );
+    if (config == null || !mounted) return;
+    await _startSync(config['resolution']!);
+  }
+
+  Future<void> _handleStopSyncing() async {
+    final remove = ref.read(removeCollectionSyncProvider);
+    await remove(widget.collectionId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSyncedAsync =
+        ref.watch(isCollectionSyncedProvider(widget.collectionId));
+
+    if (_isSyncing) {
+      return const Padding(
+        padding: EdgeInsets.only(right: 12),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    final isSynced = isSyncedAsync.maybeWhen(
+      data: (value) => value,
+      orElse: () => false,
+    );
+
+    if (isSynced) {
+      return PopupMenuButton<String>(
+        icon: const Icon(
+          Icons.sync_rounded,
+          color: AppColors.primary,
+          size: 22,
+        ),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        style: const ButtonStyle(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        ),
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        onSelected: (value) {
+          if (value == 'sync_now') {
+            _handleSyncNow();
+          } else if (value == 'stop') {
+            _handleStopSyncing();
+          }
+        },
+        itemBuilder: (context) => [
+          const PopupMenuItem(
+            value: 'sync_now',
+            child: Row(
+              children: [
+                Icon(Icons.sync_rounded, size: 18),
+                SizedBox(width: 12),
+                Text('Sync Now'),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'stop',
+            child: Row(
+              children: [
+                Icon(Icons.sync_disabled_rounded, size: 18),
+                SizedBox(width: 12),
+                Text('Stop Syncing'),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return IconButton(
+      icon: const Icon(
+        Icons.download_rounded,
+        color: AppColors.textSecondary,
+        size: 22,
+      ),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      style: const ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      onPressed: _handleDownloadTap,
+    );
   }
 }

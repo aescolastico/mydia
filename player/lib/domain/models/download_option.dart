@@ -170,7 +170,8 @@ class DownloadJobStatus {
       jobId: json['job_id'] as String,
       status: DownloadJobStatusType.fromString(json['status'] as String),
       progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
-      currentFileSize: json['current_file_size'] as int?,
+      currentFileSize:
+          json['file_size'] as int? ?? json['current_file_size'] as int?,
       error: json['error'] as String?,
     );
   }

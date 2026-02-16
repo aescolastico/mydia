@@ -198,6 +198,31 @@ class _WebDownloadService implements DownloadService {
   }
 
   @override
+  Future<int> cancelAllQueued() async {
+    throw UnsupportedError('Downloads are not supported on web');
+  }
+
+  @override
+  Future<int> dismissAllFailed() async {
+    throw UnsupportedError('Downloads are not supported on web');
+  }
+
+  @override
+  Future<int> retryAllFailed() async {
+    throw UnsupportedError('Downloads are not supported on web');
+  }
+
+  @override
+  Future<int> deleteSeriesDownloads(String showId) async {
+    throw UnsupportedError('Downloads are not supported on web');
+  }
+
+  @override
+  Future<int> deleteSeasonDownloads(String showId, int seasonNumber) async {
+    throw UnsupportedError('Downloads are not supported on web');
+  }
+
+  @override
   List<DownloadTask> getActiveDownloads() => [];
 
   @override

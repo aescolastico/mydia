@@ -1,28 +1,25 @@
 /// Native implementation of download service.
 ///
 /// This provides the full download functionality on iOS, Android, and desktop.
-/// On mobile platforms (iOS/Android), uses background_downloader for background
-/// download capability. On desktop, uses Dio for foreground downloads.
+/// Uses Dio for all downloads. On Android, a foreground service keeps the
+/// process alive during background downloads.
 library;
 
 import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/models/download.dart';
+import '../../domain/models/download_option.dart';
 import '../../domain/models/download_settings.dart';
 import '../../domain/models/storage_settings.dart';
-import 'background_download_service.dart';
+import 'download_notification_service.dart';
 import 'download_service.dart';
 import 'download_job_service.dart';
 import 'download_speed_tracker.dart';
-
-/// Whether to use background downloads (true on mobile, false on desktop).
-bool get _useBackgroundDownloader => Platform.isIOS || Platform.isAndroid;
 
 /// Downloads are fully supported on native platforms.
 const bool isDownloadSupported = true;
@@ -198,10 +195,9 @@ class _NativeDownloadService implements DownloadService {
   final StreamController<DownloadTask> _progressController =
       StreamController<DownloadTask>.broadcast();
 
-  // Background download service for mobile platforms
-  BackgroundDownloadService? _backgroundService;
-  StreamSubscription<DownloadTask>? _backgroundProgressSubscription;
-  bool _backgroundServiceInitialized = false;
+  // Foreground service for keeping the process alive on Android
+  final _notificationService = DownloadNotificationService.instance;
+  StreamSubscription<DownloadTask>? _notificationProgressSub;
 
   // Job service for resuming progressive downloads
   DownloadJobService? _jobService;
@@ -276,9 +272,11 @@ class _NativeDownloadService implements DownloadService {
 
     while (hasAvailableSlots()) {
       // Get queued tasks sorted by creation date (FIFO)
+      // Only pick up 'queued' tasks - 'transcoding' tasks are already actively
+      // managed by _startProgressiveDownloadTask and should not be restarted.
       final queuedTasks = _database!
           .getAllTasks()
-          .where((t) => t.status == 'queued' || t.status == 'transcoding')
+          .where((t) => t.status == 'queued')
           .toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
@@ -291,17 +289,64 @@ class _NativeDownloadService implements DownloadService {
 
       // Start the download based on type
       if (task.isProgressive && task.transcodeJobId != null) {
-        // For progressive downloads that were queued, we need to resume
-        // The transcode job ID and other data should still be valid
-        _progressController.add(pendingTask);
-      } else if (task.downloadUrl != null) {
-        // Use background downloads on mobile, Dio on desktop
-        if (_useBackgroundDownloader) {
-          await _initializeBackgroundService();
-          await _backgroundService!.startDownload(pendingTask);
-        } else {
-          _startDownloadTask(pendingTask);
+        // Progressive download with existing transcode job - resume it
+        _startProgressiveDownloadTask(
+          pendingTask,
+          getDownloadUrl: _jobService!.getDownloadUrl,
+          getJobStatus: (jobId) async {
+            final status = await _jobService!.getJobStatus(jobId);
+            return (
+              status: status.status.name,
+              progress: status.progress,
+              fileSize: status.currentFileSize,
+              error: status.error,
+            );
+          },
+        );
+      } else if (task.isProgressive && _jobService != null) {
+        // Queued progressive download that hasn't been prepared yet
+        try {
+          final prepareResult = await _jobService!.prepareDownload(
+            contentType: task.mediaType,
+            id: task.mediaId,
+            resolution: task.quality,
+          );
+
+          final preparedTask = pendingTask.copyWith(
+            transcodeJobId: prepareResult.jobId,
+            transcodeProgress: prepareResult.progress,
+            status: prepareResult.status == DownloadJobStatusType.ready
+                ? 'downloading'
+                : 'transcoding',
+            fileSize: prepareResult.currentFileSize,
+            isProgressive: prepareResult.status != DownloadJobStatusType.ready,
+          );
+          await _database!.saveTask(preparedTask);
+          _progressController.add(preparedTask);
+
+          _startProgressiveDownloadTask(
+            preparedTask,
+            getDownloadUrl: _jobService!.getDownloadUrl,
+            getJobStatus: (jobId) async {
+              final status = await _jobService!.getJobStatus(jobId);
+              return (
+                status: status.status.name,
+                progress: status.progress,
+                fileSize: status.currentFileSize,
+                error: status.error,
+              );
+            },
+          );
+        } catch (e) {
+          final errorTask = pendingTask.copyWith(
+            status: 'failed',
+            error: 'Failed to prepare download: $e',
+          );
+          await _database!.saveTask(errorTask);
+          _progressController.add(errorTask);
         }
+      } else if (task.downloadUrl != null) {
+        _startDownloadTask(pendingTask);
       }
     }
   }
@@ -319,10 +364,12 @@ class _NativeDownloadService implements DownloadService {
       await cleanupOldTaskRecords();
     });
 
-    // Initialize background service early to handle any pending/resuming tasks
-    if (_useBackgroundDownloader) {
-      _initializeBackgroundService();
-    }
+    // Initialize foreground notification service and listen for progress
+    _notificationService.initialize();
+    _notificationProgressSub?.cancel();
+    _notificationProgressSub = _progressController.stream.listen((_) {
+      _updateForegroundService();
+    });
   }
 
   @override
@@ -361,63 +408,85 @@ class _NativeDownloadService implements DownloadService {
     }
   }
 
-  /// Initialize background download service for mobile platforms.
-  Future<void> _initializeBackgroundService() async {
-    if (!_useBackgroundDownloader || _backgroundServiceInitialized) return;
+  /// Update the Android foreground service based on current download state.
+  ///
+  /// Starts the service when the first download becomes active, updates
+  /// the notification with progress info, and stops it when no downloads remain.
+  Future<void> _updateForegroundService() async {
+    if (!Platform.isAndroid || _database == null) return;
 
-    _backgroundService = BackgroundDownloadService.instance;
-    await _backgroundService!.initialize();
+    final activeTasks = _database!.getAllTasks().where((t) =>
+        t.status == 'downloading' ||
+        t.status == 'transcoding' ||
+        t.status == 'pending' ||
+        t.status == 'queued' ||
+        t.status == 'paused');
+    final activeCount = activeTasks.length;
 
-    // Listen to background download progress and forward to our stream
-    debugPrint('[NativeService] Setting up background progress subscription');
-    _backgroundProgressSubscription =
-        _backgroundService!.progressStream.listen((task) {
-      debugPrint(
-          '[NativeService] Received bg progress: ${task.id} status=${task.status} progress=${task.progress}');
-      _onBackgroundProgress(task);
-    });
+    if (activeCount == 0) {
+      await _notificationService.stopService();
+      return;
+    }
 
-    _backgroundServiceInitialized = true;
-    debugPrint('[NativeService] Background service initialized');
-  }
+    // Find a representative task for the notification text
+    final downloadingTasks =
+        activeTasks.where((t) => t.status == 'downloading');
+    final transcodingTasks =
+        activeTasks.where((t) => t.status == 'transcoding');
 
-  /// Handle progress updates from background download service.
-  void _onBackgroundProgress(DownloadTask task) {
-    if (_database == null) return;
+    String title;
+    String text;
+    int progress = 0;
+    bool indeterminate = false;
 
-    // Feed speed tracker with bytes from the task (or estimate from progress)
-    if (task.status == 'downloading') {
-      final bytes = task.downloadedBytes ??
-          (task.fileSize != null && task.fileSize! > 0
-              ? (task.progress * task.fileSize!).round()
-              : null);
-      debugPrint(
-          '[BgProgress] ${task.id}: status=${task.status} progress=${task.progress} '
-          'downloadedBytes=${task.downloadedBytes} fileSize=${task.fileSize} estimatedBytes=$bytes');
-      if (bytes != null && bytes > 0) {
-        _speedTracker.recordProgress(task.id, bytes);
+    if (activeCount == 1) {
+      final task = activeTasks.first;
+      title = 'Downloading';
+      if (task.status == 'transcoding') {
+        final pct = (task.transcodeProgress * 100).round();
+        text = '${task.title} — Preparing';
+        progress = pct;
+      } else if (task.status == 'downloading') {
+        final pct = (task.progress * 100).round();
+        text = '${task.title} — $pct%';
+        progress = pct;
+      } else {
+        text = task.title;
+        indeterminate = true;
+      }
+    } else {
+      title = 'Downloading $activeCount items';
+      // Calculate average progress across all active downloading/transcoding tasks
+      final progressTasks = activeTasks
+          .where((t) => t.status == 'downloading' || t.status == 'transcoding');
+      if (progressTasks.isNotEmpty) {
+        final totalProgress = progressTasks.fold<double>(0.0, (sum, t) {
+          if (t.status == 'transcoding') return sum + t.transcodeProgress;
+          return sum + t.progress;
+        });
+        progress = (totalProgress / progressTasks.length * 100).round();
+
+        final task = downloadingTasks.isNotEmpty
+            ? downloadingTasks.first
+            : transcodingTasks.first;
+        final pct = task.status == 'transcoding'
+            ? (task.transcodeProgress * 100).round()
+            : (task.progress * 100).round();
+        text = '${task.title} — $pct%';
+      } else {
+        text = 'Waiting...';
+        indeterminate = true;
       }
     }
 
-    // Update the task in our database
-    _database!.saveTask(task);
-
-    // If completed, save to downloaded media
-    if (task.status == 'completed' && task.filePath != null) {
-      final media = DownloadedMedia.fromTask(task);
-      _database!.saveMedia(media);
-      _speedTracker.clearTask(task.id);
-
-      // Process queue to start next download
-      _processQueue();
-    } else if (task.status == 'failed' || task.status == 'cancelled') {
-      _speedTracker.clearTask(task.id);
-      // Process queue on failure/cancel too
-      _processQueue();
-    }
-
-    // Forward to our progress stream
-    _progressController.add(task);
+    final hasPermission = await _notificationService.requestPermissions();
+    if (!hasPermission) return;
+    await _notificationService.startService(
+      title: title,
+      text: text,
+      progress: progress,
+      indeterminate: indeterminate,
+    );
   }
 
   Future<String> _getDownloadDirectory() async {
@@ -752,7 +821,10 @@ class _NativeDownloadService implements DownloadService {
       // On mobile: wait for full transcode completion before using background download
       // On desktop: can start downloading once some content is available (progressive)
       bool transcodeComplete = updatedTask.transcodeProgress >= 1.0;
-      int? lastKnownFileSize;
+      // Initialize from the task's known file size (e.g. set by prepareDownload).
+      // This is critical for non-transcoded downloads where Phase 1 is skipped
+      // entirely, so the polling loop never gets a chance to populate this.
+      int? lastKnownFileSize = updatedTask.fileSize;
 
       while (!transcodeComplete && !cancelToken.isCancelled) {
         if (_pausedTasks[task.id] == true) {
@@ -778,10 +850,9 @@ class _NativeDownloadService implements DownloadService {
         if (status.status == 'ready') {
           transcodeComplete = true;
           lastKnownFileSize = status.fileSize;
-        } else if (!_useBackgroundDownloader &&
-            status.status == 'transcoding' &&
+        } else if (status.status == 'transcoding' &&
             (status.fileSize ?? 0) > 0) {
-          // Desktop only: File is being produced, we can start progressive download
+          // File is being produced, we can start progressive download
           lastKnownFileSize = status.fileSize;
           break;
         }
@@ -803,29 +874,6 @@ class _NativeDownloadService implements DownloadService {
       );
       await _database!.saveTask(updatedTask);
       _progressController.add(updatedTask);
-
-      // On mobile, use background download service for the file download
-      // This allows downloads to continue when app is backgrounded
-      if (_useBackgroundDownloader && transcodeComplete) {
-        debugPrint(
-            '[NativeService] Handing off to background service: ${task.id}');
-        try {
-          await _initializeBackgroundService();
-          await _backgroundService!.startDownload(updatedTask);
-          _cancelTokens.remove(task.id);
-          _pausedTasks.remove(task.id);
-          debugPrint('[NativeService] Handoff complete, returning');
-          return; // Background service will handle the rest
-        } catch (e) {
-          debugPrint(
-              '[NativeService] Background service handoff failed: $e, falling back to Dio');
-          // Fallback to foreground download if background service fails
-          // Continue to foreground download logic below
-        }
-      } else {
-        debugPrint(
-            '[NativeService] Using Dio download: useBackground=$_useBackgroundDownloader transcodeComplete=$transcodeComplete');
-      }
 
       // Progressive download loop - handles the case where file is still growing
       int downloadedBytes = updatedTask.downloadedBytes ?? 0;
@@ -914,6 +962,12 @@ class _NativeDownloadService implements DownloadService {
           if (transcodeComplete &&
               lastKnownFileSize != null &&
               currentFileSize >= lastKnownFileSize) {
+            // We have all the expected bytes
+            downloadComplete = true;
+          } else if (transcodeComplete && response.statusCode == 200) {
+            // Transcode is done and server returned full content (not partial).
+            // This handles the case where file size is unknown but the
+            // server confirmed the download is complete via HTTP 200.
             downloadComplete = true;
           } else if (!transcodeComplete) {
             // Still transcoding, wait a bit then check for more data
@@ -1104,13 +1158,6 @@ class _NativeDownloadService implements DownloadService {
     final task = _database!.getTask(taskId);
     if (task == null) return;
 
-    // On mobile, try to pause via background service first
-    if (_useBackgroundDownloader && _backgroundServiceInitialized) {
-      await _backgroundService!.pauseDownload(taskId);
-      // Background service will update the task status
-      return;
-    }
-
     // For progressive downloads, use the pause flag instead of cancelling
     if (task.isProgressive) {
       _pausedTasks[taskId] = true;
@@ -1138,13 +1185,6 @@ class _NativeDownloadService implements DownloadService {
 
     final task = _database!.getTask(taskId);
     if (task == null || task.status != 'paused') return;
-
-    // On mobile, try to resume via background service first
-    if (_useBackgroundDownloader && _backgroundServiceInitialized) {
-      await _backgroundService!.resumeDownload(taskId);
-      // Background service will update the task status
-      return;
-    }
 
     // For progressive downloads, just clear the pause flag
     // The download loop will continue automatically
@@ -1239,12 +1279,6 @@ class _NativeDownloadService implements DownloadService {
   Future<void> cancelDownload(String taskId) async {
     if (_database == null) return;
 
-    // On mobile, try to cancel via background service first
-    if (_useBackgroundDownloader && _backgroundServiceInitialized) {
-      await _backgroundService!.cancelDownload(taskId);
-    }
-
-    // Use centralized cleanup for everything else
     await _cancelAndCleanupTask(taskId);
   }
 
@@ -1253,15 +1287,135 @@ class _NativeDownloadService implements DownloadService {
     if (_database == null) return;
 
     final task = _database!.getTask(taskId);
-    if (task != null &&
-        (task.status == 'failed' || task.status == 'cancelled')) {
-      final retryTask = task.copyWith(
-        status: 'pending',
+    if (task == null ||
+        (task.status != 'failed' && task.status != 'cancelled')) {
+      return;
+    }
+
+    // For progressive downloads, we need to prepare a new transcode job
+    if (task.isProgressive && _jobService != null) {
+      try {
+        final contentType = task.mediaType; // 'movie' or 'episode'
+        final prepareResult = await _jobService!.prepareDownload(
+          contentType: contentType,
+          id: task.mediaId,
+          resolution: task.quality,
+        );
+
+        // Build a fresh task preserving metadata but resetting download state
+        final retryTask = DownloadTask(
+          id: task.id,
+          mediaId: task.mediaId,
+          title: task.title,
+          quality: task.quality,
+          progress: 0.0,
+          status: prepareResult.status == DownloadJobStatusType.ready
+              ? 'downloading'
+              : 'transcoding',
+          mediaType: task.mediaType,
+          posterUrl: task.posterUrl,
+          createdAt: DateTime.now(),
+          isProgressive: prepareResult.status != DownloadJobStatusType.ready,
+          transcodeJobId: prepareResult.jobId,
+          transcodeProgress: prepareResult.progress,
+          fileSize: prepareResult.currentFileSize,
+          overview: task.overview,
+          runtime: task.runtime,
+          genres: task.genres,
+          rating: task.rating,
+          backdropUrl: task.backdropUrl,
+          year: task.year,
+          contentRating: task.contentRating,
+          seasonNumber: task.seasonNumber,
+          episodeNumber: task.episodeNumber,
+          showId: task.showId,
+          showTitle: task.showTitle,
+          showPosterUrl: task.showPosterUrl,
+          thumbnailUrl: task.thumbnailUrl,
+          airDate: task.airDate,
+        );
+
+        await _database!.saveTask(retryTask);
+        _progressController.add(retryTask);
+
+        _startProgressiveDownloadTask(
+          retryTask,
+          getDownloadUrl: _jobService!.getDownloadUrl,
+          getJobStatus: (jobId) async {
+            final status = await _jobService!.getJobStatus(jobId);
+            return (
+              status: status.status.name,
+              progress: status.progress,
+              fileSize: status.currentFileSize,
+              error: status.error,
+            );
+          },
+        );
+      } catch (e) {
+        // If prepare fails, update the task with the new error
+        final errorTask = DownloadTask(
+          id: task.id,
+          mediaId: task.mediaId,
+          title: task.title,
+          quality: task.quality,
+          progress: 0.0,
+          status: 'failed',
+          mediaType: task.mediaType,
+          posterUrl: task.posterUrl,
+          createdAt: task.createdAt,
+          isProgressive: task.isProgressive,
+          error: 'Retry failed: $e',
+          overview: task.overview,
+          runtime: task.runtime,
+          genres: task.genres,
+          rating: task.rating,
+          backdropUrl: task.backdropUrl,
+          year: task.year,
+          contentRating: task.contentRating,
+          seasonNumber: task.seasonNumber,
+          episodeNumber: task.episodeNumber,
+          showId: task.showId,
+          showTitle: task.showTitle,
+          showPosterUrl: task.showPosterUrl,
+          thumbnailUrl: task.thumbnailUrl,
+          airDate: task.airDate,
+        );
+        await _database!.saveTask(errorTask);
+        _progressController.add(errorTask);
+      }
+    } else {
+      // Non-progressive download: reset state and retry
+      // Construct a new task to ensure error is cleared (copyWith can't null-out fields)
+      final retryTask = DownloadTask(
+        id: task.id,
+        mediaId: task.mediaId,
+        title: task.title,
+        quality: task.quality,
         progress: 0.0,
-        error: null,
+        status: 'pending',
+        mediaType: task.mediaType,
+        downloadUrl: task.downloadUrl,
+        posterUrl: task.posterUrl,
+        fileSize: task.fileSize,
+        createdAt: DateTime.now(),
+        overview: task.overview,
+        runtime: task.runtime,
+        genres: task.genres,
+        rating: task.rating,
+        backdropUrl: task.backdropUrl,
+        year: task.year,
+        contentRating: task.contentRating,
+        seasonNumber: task.seasonNumber,
+        episodeNumber: task.episodeNumber,
+        showId: task.showId,
+        showTitle: task.showTitle,
+        showPosterUrl: task.showPosterUrl,
+        thumbnailUrl: task.thumbnailUrl,
+        airDate: task.airDate,
       );
       await _database!.saveTask(retryTask);
-      await _startDownloadTask(retryTask);
+
+      _startDownloadTask(retryTask);
     }
   }
 
@@ -1289,6 +1443,146 @@ class _NativeDownloadService implements DownloadService {
     for (final task in tasks) {
       await _database!.deleteTask(task.id);
     }
+  }
+
+  @override
+  Future<int> cancelAllQueued() async {
+    if (_database == null) return 0;
+
+    final queuedTasks = _database!
+        .getAllTasks()
+        .where((t) => t.status == 'queued' || t.status == 'pending')
+        .toList();
+
+    for (final task in queuedTasks) {
+      await _cancelAndCleanupTask(task.id, processQueue: false);
+    }
+
+    // Process queue once at the end
+    await _processQueue();
+    return queuedTasks.length;
+  }
+
+  @override
+  Future<int> dismissAllFailed() async {
+    if (_database == null) return 0;
+
+    final failedTasks =
+        _database!.getAllTasks().where((t) => t.status == 'failed').toList();
+
+    for (final task in failedTasks) {
+      // Delete partial file if exists
+      if (task.filePath != null) {
+        final file = File(task.filePath!);
+        if (await file.exists()) {
+          try {
+            await file.delete();
+          } catch (_) {}
+        }
+      }
+      // Delete task record
+      await _database!.deleteTask(task.id);
+      // Emit a cancelled event so UI updates
+      _progressController.add(task.copyWith(status: 'cancelled'));
+    }
+
+    return failedTasks.length;
+  }
+
+  @override
+  Future<int> retryAllFailed() async {
+    if (_database == null) return 0;
+
+    final failedTasks =
+        _database!.getAllTasks().where((t) => t.status == 'failed').toList();
+
+    for (final task in failedTasks) {
+      await retryDownload(task.id);
+    }
+
+    return failedTasks.length;
+  }
+
+  @override
+  Future<int> deleteSeriesDownloads(String showId) async {
+    if (_database == null) return 0;
+
+    int count = 0;
+
+    // Delete completed downloads for this series
+    final allMedia = _database!.getAllMedia();
+    final seriesMedia = allMedia.where((m) => m.showId == showId).toList();
+    for (final media in seriesMedia) {
+      final file = File(media.filePath);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
+      await _database!.deleteMedia(media.id);
+      // Clean up associated tasks
+      final tasks =
+          _database!.getAllTasks().where((t) => t.mediaId == media.mediaId);
+      for (final task in tasks) {
+        await _database!.deleteTask(task.id);
+      }
+      count++;
+    }
+
+    // Cancel active tasks for this series
+    final allTasks = _database!.getAllTasks();
+    final seriesTasks = allTasks.where((t) => t.showId == showId).toList();
+    for (final task in seriesTasks) {
+      await _cancelAndCleanupTask(task.id, processQueue: false);
+      count++;
+    }
+
+    await _processQueue();
+    return count;
+  }
+
+  @override
+  Future<int> deleteSeasonDownloads(String showId, int seasonNumber) async {
+    if (_database == null) return 0;
+
+    int count = 0;
+
+    // Delete completed downloads for this season
+    final allMedia = _database!.getAllMedia();
+    final seasonMedia = allMedia
+        .where(
+            (m) => m.showId == showId && (m.seasonNumber ?? 0) == seasonNumber)
+        .toList();
+    for (final media in seasonMedia) {
+      final file = File(media.filePath);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
+      await _database!.deleteMedia(media.id);
+      // Clean up associated tasks
+      final tasks =
+          _database!.getAllTasks().where((t) => t.mediaId == media.mediaId);
+      for (final task in tasks) {
+        await _database!.deleteTask(task.id);
+      }
+      count++;
+    }
+
+    // Cancel active tasks for this season
+    final allTasks = _database!.getAllTasks();
+    final seasonTasks = allTasks
+        .where(
+            (t) => t.showId == showId && (t.seasonNumber ?? 0) == seasonNumber)
+        .toList();
+    for (final task in seasonTasks) {
+      await _cancelAndCleanupTask(task.id, processQueue: false);
+      count++;
+    }
+
+    await _processQueue();
+    return count;
   }
 
   @override
@@ -1322,10 +1616,8 @@ class _NativeDownloadService implements DownloadService {
       token.cancel();
     }
     _cancelTokens.clear();
+    _notificationProgressSub?.cancel();
+    _notificationService.stopService();
     _progressController.close();
-
-    // Clean up background service subscription
-    _backgroundProgressSubscription?.cancel();
-    _backgroundService?.dispose();
   }
 }

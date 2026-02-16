@@ -432,7 +432,8 @@ case "$COMMAND" in
                     run)
                         echo -e "${GREEN}Building and running on Android device...${NC}"
                         echo ""
-                        nix develop ./player --command bash -c "cd player && flutter pub get && flutter run"
+                        extra_args="${@:3}"
+                        nix develop ./player --command bash -c "cd player && flutter pub get && flutter run $extra_args"
                         ;;
                     shell)
                         echo -e "${GREEN}Opening nix develop shell in player directory...${NC}"

@@ -65,7 +65,8 @@ class DownloadQueueStatus {
   bool get hasAvailableSlots => activeCount < maxConcurrent;
 
   /// Number of available download slots.
-  int get availableSlots => (maxConcurrent - activeCount).clamp(0, maxConcurrent);
+  int get availableSlots =>
+      (maxConcurrent - activeCount).clamp(0, maxConcurrent);
 
   /// Total pending downloads (active + queued).
   int get totalPending => activeCount + queuedCount;
@@ -93,12 +94,14 @@ Future<DownloadQueueStatus> downloadQueueStatus(Ref ref) async {
       .where((t) => t.status == 'downloading' || t.status == 'transcoding')
       .toList();
 
-    final queuedDownloads = allTasks
-        .where((t) => t.status == 'pending' || t.status == 'queued' || t.status == 'transcoding')
-        .toList()
-      // Sort by creation date (FIFO)
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-
+  final queuedDownloads = allTasks
+      .where((t) =>
+          t.status == 'pending' ||
+          t.status == 'queued' ||
+          t.status == 'transcoding')
+      .toList()
+    // Sort by creation date (FIFO)
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
   return DownloadQueueStatus(
     activeCount: activeDownloads.length,
@@ -166,9 +169,13 @@ class DownloadQueueManager {
       int adjustedIndex;
       if (i == currentIndex) {
         adjustedIndex = targetIndex;
-      } else if (currentIndex < targetIndex && i > currentIndex && i <= targetIndex) {
+      } else if (currentIndex < targetIndex &&
+          i > currentIndex &&
+          i <= targetIndex) {
         adjustedIndex = i - 1;
-      } else if (currentIndex > targetIndex && i >= targetIndex && i < currentIndex) {
+      } else if (currentIndex > targetIndex &&
+          i >= targetIndex &&
+          i < currentIndex) {
         adjustedIndex = i + 1;
       } else {
         adjustedIndex = i;
@@ -217,9 +224,7 @@ class DownloadQueueManager {
     if (activeCount >= maxConcurrent) return;
 
     // Get queued tasks sorted by creation date (FIFO)
-    final queuedTasks = allTasks
-        .where((t) => t.status == 'queued')
-        .toList()
+    final queuedTasks = allTasks.where((t) => t.status == 'queued').toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     // Start as many queued downloads as we have slots

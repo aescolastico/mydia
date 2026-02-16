@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -167,7 +168,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           return;
         }
 
-        if (!await file_utils.fileExists(downloadedMedia.filePath)) {
+        final offlinePath =
+            await _resolveDownloadedFilePath(downloadedMedia.filePath);
+        if (offlinePath == null) {
           setState(() {
             _error =
                 'Downloaded file not found. Please re-download the content.';
@@ -177,8 +180,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         }
 
         // Play downloaded content in offline mode
-        await _initializeOfflinePlayback(downloadedMedia.filePath);
+        await _initializeOfflinePlayback(offlinePath);
         return;
+      }
+
+      // In online mode, if content is downloaded locally, play it directly
+      // without requiring network for streaming
+      if (downloadedMedia != null && !kIsWeb) {
+        final localPath =
+            await _resolveDownloadedFilePath(downloadedMedia.filePath);
+        if (localPath != null) {
+          debugPrint('Playing from local file: $localPath');
+
+          // Try to initialize progress sync (optional - local playback
+          // works even if server is unreachable)
+          try {
+            final graphqlClient =
+                await ref.read(asyncGraphqlClientProvider.future);
+            _progressService = ProgressService(graphqlClient);
+            await _fetchProgressAndEpisodes(graphqlClient);
+          } catch (e) {
+            debugPrint('Could not initialize progress sync: $e');
+          }
+
+          await _openPlayerAndStart(localPath, {});
+          return;
+        }
+        debugPrint('Downloaded file not found, falling back to streaming');
       }
 
       // Online mode - initialize network services
@@ -229,16 +257,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
       // Fetch saved progress and episode list for TV shows
       await _fetchProgressAndEpisodes(graphqlClient);
-
-      // Check for downloaded content playable from local file
-      if (downloadedMedia != null && !kIsWeb) {
-        if (await file_utils.fileExists(downloadedMedia.filePath)) {
-          debugPrint('Playing from local file: ${downloadedMedia.filePath}');
-          await _openPlayerAndStart(downloadedMedia.filePath, {});
-          return;
-        }
-        debugPrint('Downloaded file not found, falling back to streaming');
-      }
 
       // Fetch streaming candidates to determine optimal strategy
       if (mounted) {
@@ -462,6 +480,44 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
 
     debugPrint('Loaded ${_subtitleTracks.length} subtitle tracks from GraphQL');
+  }
+
+  /// Resolve the actual file path for a downloaded media file.
+  ///
+  /// The stored path may not match the actual location due to a bug where
+  /// the previous download backend received a full absolute path as a relative
+  /// directory, causing doubled paths. This tries the stored path first,
+  /// then checks alternative locations.
+  Future<String?> _resolveDownloadedFilePath(String storedPath) async {
+    // Try the stored path first
+    if (await file_utils.fileExists(storedPath)) {
+      return storedPath;
+    }
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final filename = storedPath.split('/').last;
+
+      // Try the standard downloads directory with just the filename
+      final standardPath = '${docsDir.path}/downloads/$filename';
+      if (standardPath != storedPath &&
+          await file_utils.fileExists(standardPath)) {
+        debugPrint('[PlayerScreen] Found file at standard path: $standardPath');
+        return standardPath;
+      }
+
+      // Try the doubled path (legacy bug: full absolute path was passed
+      // as relative directory to previous download backend)
+      final doubledPath = '${docsDir.path}$storedPath';
+      if (await file_utils.fileExists(doubledPath)) {
+        debugPrint('[PlayerScreen] Found file at doubled path: $doubledPath');
+        return doubledPath;
+      }
+    } catch (e) {
+      debugPrint('[PlayerScreen] Error resolving download path: $e');
+    }
+
+    return null;
   }
 
   /// Check if the first candidate supports direct play on native.

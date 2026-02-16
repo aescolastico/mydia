@@ -232,7 +232,8 @@ class _DeviceCard extends StatelessWidget {
                     label: const Text('Revoke Device'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.error,
-                      side: BorderSide(color: AppColors.error.withValues(alpha: 0.5)),
+                      side: BorderSide(
+                          color: AppColors.error.withValues(alpha: 0.5)),
                     ),
                   ),
                 ),

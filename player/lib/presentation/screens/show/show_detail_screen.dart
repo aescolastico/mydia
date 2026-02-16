@@ -3,12 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/cache/poster_cache_manager.dart';
+import '../../../core/downloads/bulk_download_helper.dart';
+import '../../../core/downloads/download_job_providers.dart';
+import '../../../core/downloads/download_providers.dart';
+import '../../../core/downloads/download_service.dart';
 import 'show_detail_controller.dart';
 import 'season_episodes_controller.dart';
 import '../../../domain/models/show_detail.dart';
+import '../../../domain/models/season_info.dart';
+import '../../../domain/models/episode.dart';
 import '../../widgets/episode_card.dart';
+import '../../widgets/quality_download_dialog.dart';
 import '../../widgets/quality_selector.dart';
 import '../../../core/theme/colors.dart';
+import '../../widgets/play_button.dart';
 
 class ShowDetailScreen extends ConsumerWidget {
   final String id;
@@ -334,12 +342,22 @@ class ShowDetailScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _PlayButton(
-                    onPressed: show.nextEpisode != null
-                        ? () {
-                            // TODO: Navigate to episode player
-                            debugPrint(
-                                'Playing next episode: ${show.nextEpisode!.id}');
+                  PlayButton(
+                    onPressed: show.nextEpisode != null &&
+                            show.nextEpisode!.files.isNotEmpty
+                        ? () async {
+                            final nextEp = show.nextEpisode!;
+                            final selectedFile = await showQualitySelector(
+                              context,
+                              nextEp.files,
+                            );
+                            if (selectedFile != null && context.mounted) {
+                              final title =
+                                  '${show.title} - ${nextEp.episodeCode}';
+                              context.push(
+                                '/player/episode/${nextEp.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(title)}',
+                              );
+                            }
                           }
                         : null,
                   ),
@@ -607,6 +625,14 @@ class ShowDetailScreen extends ConsumerWidget {
                       fontWeight: FontWeight.bold,
                     ),
               ),
+              const Spacer(),
+              if (isDownloadSupported)
+                _BulkDownloadButton(
+                  showId: id,
+                  show: show,
+                  selectedSeason: selectedSeason,
+                  availableSeasons: availableSeasons,
+                ),
             ],
           ),
         ),
@@ -782,6 +808,215 @@ class ShowDetailScreen extends ConsumerWidget {
   }
 }
 
+class _BulkDownloadButton extends ConsumerWidget {
+  final String showId;
+  final ShowDetail show;
+  final int selectedSeason;
+  final List<SeasonInfo> availableSeasons;
+
+  const _BulkDownloadButton({
+    required this.showId,
+    required this.show,
+    required this.selectedSeason,
+    required this.availableSeasons,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return PopupMenuButton<String>(
+      icon: const Icon(
+        Icons.download_rounded,
+        color: AppColors.textSecondary,
+        size: 22,
+      ),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      style: const ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      onSelected: (value) {
+        if (value == 'season') {
+          _handleBulkDownload(
+            context,
+            ref,
+            [selectedSeason],
+          );
+        } else if (value == 'all') {
+          _handleBulkDownload(
+            context,
+            ref,
+            availableSeasons.map((s) => s.seasonNumber).toList(),
+          );
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'season',
+          child: Row(
+            children: [
+              const Icon(Icons.folder_rounded, size: 18),
+              const SizedBox(width: 12),
+              Text('Download Season $selectedSeason'),
+            ],
+          ),
+        ),
+        if (availableSeasons.length > 1)
+          const PopupMenuItem(
+            value: 'all',
+            child: Row(
+              children: [
+                Icon(Icons.folder_copy_rounded, size: 18),
+                SizedBox(width: 12),
+                Text('Download All Seasons'),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _handleBulkDownload(
+    BuildContext context,
+    WidgetRef ref,
+    List<int> seasonNumbers,
+  ) async {
+    // Fetch episodes for all requested seasons
+    final allEpisodes = <Episode>[];
+    for (final seasonNumber in seasonNumbers) {
+      try {
+        final episodes = await ref.read(
+          seasonEpisodesControllerProvider(
+            showId: showId,
+            seasonNumber: seasonNumber,
+          ).future,
+        );
+        allEpisodes
+            .addAll(episodes.where((e) => e.hasFile && e.files.isNotEmpty));
+      } catch (e) {
+        debugPrint('Failed to fetch episodes for season $seasonNumber: $e');
+      }
+    }
+
+    if (allEpisodes.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No downloadable episodes found'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+
+    // Show quality dialog using the first episode's ID
+    final selectedResolution = await showQualityDownloadDialog(
+      context,
+      contentType: 'episode',
+      contentId: allEpisodes.first.id,
+      title: seasonNumbers.length == 1
+          ? '${show.title} - Season ${seasonNumbers.first}'
+          : '${show.title} - All Seasons',
+    );
+
+    if (selectedResolution == null || !context.mounted) return;
+
+    // Get download services
+    final downloadJobService = ref.read(unifiedDownloadJobServiceProvider);
+    if (downloadJobService == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Download service not available'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    final downloadManager = await ref.read(downloadManagerProvider.future);
+
+    // Build sets for skip checks
+    final downloadedMediaIds = <String>{};
+    final queueMediaIds = <String>{};
+
+    for (final episode in allEpisodes) {
+      if (downloadManager.isMediaDownloaded(episode.id)) {
+        downloadedMediaIds.add(episode.id);
+      }
+    }
+
+    final queueAsync = ref.read(downloadQueueProvider);
+    if (queueAsync.hasValue) {
+      for (final task in queueAsync.value!) {
+        queueMediaIds.add(task.mediaId);
+      }
+    }
+
+    // Start bulk downloads
+    final result = await startBulkEpisodeDownloads(
+      episodes: allEpisodes,
+      resolution: selectedResolution,
+      showId: showId,
+      showTitle: show.title,
+      showPosterUrl: show.artwork.posterUrl,
+      downloadManager: downloadManager,
+      downloadJobService: downloadJobService,
+      isMediaDownloaded: (id) => downloadedMediaIds.contains(id),
+      isMediaInQueue: (id) => queueMediaIds.contains(id),
+    );
+
+    if (!context.mounted) return;
+
+    // Show result snackbar
+    final message = _buildResultMessage(result);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              result.queued > 0
+                  ? Icons.download_rounded
+                  : Icons.info_outline_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor:
+            result.queued > 0 ? AppColors.primary : AppColors.textSecondary,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  String _buildResultMessage(BulkDownloadResult result) {
+    if (result.queued == 0 && result.skipped > 0) {
+      return 'All ${result.skipped} episodes already downloaded or queued';
+    }
+    final parts = <String>[];
+    parts.add(
+        'Queued ${result.queued} episode${result.queued != 1 ? 's' : ''} for download');
+    if (result.skipped > 0) {
+      parts.add('${result.skipped} already downloaded');
+    }
+    if (result.failed > 0) {
+      parts.add('${result.failed} failed');
+    }
+    return parts.join(', ');
+  }
+}
+
 class _SeasonChip extends StatefulWidget {
   final String label;
   final bool isSelected;
@@ -849,101 +1084,6 @@ class _SeasonChipState extends State<_SeasonChip>
               fontSize: 14,
               fontWeight: FontWeight.w600,
               color: widget.isSelected ? Colors.white : AppColors.textPrimary,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PlayButton extends StatefulWidget {
-  final VoidCallback? onPressed;
-
-  const _PlayButton({
-    this.onPressed,
-  });
-
-  @override
-  State<_PlayButton> createState() => _PlayButtonState();
-}
-
-class _PlayButtonState extends State<_PlayButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-
-  bool get _enabled => widget.onPressed != null;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 100),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.90).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  static const double _size = 72.0;
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: SizedBox(
-        width: _size,
-        height: _size,
-        child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: _enabled
-                ? const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: _enabled ? null : AppColors.surfaceVariant,
-            boxShadow: _enabled
-                ? [
-                    BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.5),
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: widget.onPressed,
-              onTapDown: _enabled ? (_) => _controller.forward() : null,
-              onTapUp: _enabled ? (_) => _controller.reverse() : null,
-              onTapCancel: _enabled ? () => _controller.reverse() : null,
-              child: Center(
-                child: Padding(
-                  // Slight right offset to optically center the play triangle
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Icon(
-                    Icons.play_arrow_rounded,
-                    size: 40,
-                    color: _enabled ? Colors.white : AppColors.textDisabled,
-                  ),
-                ),
-              ),
             ),
           ),
         ),

@@ -85,7 +85,7 @@ class DownloadsScreen extends ConsumerWidget {
 
     return Scaffold(
       extendBodyBehindAppBar: true,
-      appBar: _buildAppBar(context),
+      appBar: _buildAppBar(context, ref),
       body: CustomScrollView(
         slivers: [
           // Top padding for app bar
@@ -122,22 +122,28 @@ class DownloadsScreen extends ConsumerWidget {
               child: _buildEmptyState(context),
             )
           else
-            SliverPadding(
-              padding: const EdgeInsets.all(16),
-              sliver: SliverGrid(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  childAspectRatio: 0.48,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 16,
-                ),
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    return _buildGridItem(context, ref, sortedItems[index]);
-                  },
-                  childCount: sortedItems.length,
-                ),
-              ),
+            SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final crossAxisCount =
+                    _calculateCrossAxisCount(constraints.crossAxisExtent);
+                return SliverPadding(
+                  padding: const EdgeInsets.all(16),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      childAspectRatio: 0.48,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 16,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        return _buildGridItem(context, ref, sortedItems[index]);
+                      },
+                      childCount: sortedItems.length,
+                    ),
+                  ),
+                );
+              },
             ),
 
           // Bottom padding
@@ -165,6 +171,38 @@ class DownloadsScreen extends ConsumerWidget {
                       fontWeight: FontWeight.bold,
                     ),
               ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () async {
+                  final manager =
+                      await ref.read(downloadManagerProvider.future);
+                  await manager.retryAllFailed();
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Retry All', style: TextStyle(fontSize: 12)),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 32),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  final manager =
+                      await ref.read(downloadManagerProvider.future);
+                  await manager.dismissAllFailed();
+                },
+                icon: const Icon(Icons.clear_rounded, size: 16),
+                label:
+                    const Text('Dismiss All', style: TextStyle(fontSize: 12)),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.textSecondary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 32),
+                ),
+              ),
             ],
           ),
         ),
@@ -190,11 +228,21 @@ class DownloadsScreen extends ConsumerWidget {
   Widget _buildGridItem(
       BuildContext context, WidgetRef ref, DownloadGroup group) {
     final isActive = group.activeTasks.isNotEmpty;
+    final DownloadTask? activeTask = isActive ? group.activeTasks.first : null;
 
     double progress = 0.0;
-    if (isActive) {
-      final task = group.activeTasks.first;
-      progress = task.isProgressive ? task.combinedProgress : task.progress;
+    if (activeTask != null) {
+      progress = activeTask.isProgressive
+          ? activeTask.combinedProgress
+          : activeTask.progress;
+    }
+
+    // Build episode code for active series downloads (e.g. "S01E05")
+    String? activeEpisodeCode;
+    if (activeTask != null && group.type == GroupType.series) {
+      final s = activeTask.seasonNumber?.toString().padLeft(2, '0') ?? '??';
+      final e = activeTask.episodeNumber?.toString().padLeft(2, '0') ?? '??';
+      activeEpisodeCode = 'S${s}E$e';
     }
 
     return GestureDetector(
@@ -211,9 +259,8 @@ class DownloadsScreen extends ConsumerWidget {
             ),
           );
         } else {
-          if (isActive) {
-            final task = group.activeTasks.first;
-            _showCancelDialog(context, ref, task);
+          if (activeTask != null) {
+            _showCancelDialog(context, ref, activeTask);
           } else if (group.downloads.isNotEmpty) {
             final media = group.downloads.first;
             context.push(
@@ -222,6 +269,7 @@ class DownloadsScreen extends ConsumerWidget {
           }
         }
       },
+      onLongPress: () => _showItemOptions(context, ref, group),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -290,25 +338,74 @@ class DownloadsScreen extends ConsumerWidget {
                   ),
                 ],
 
-                // Series episode count badge
-                if (group.type == GroupType.series && !isActive)
+                // Episode code strip on poster for active series downloads
+                if (isActive && activeEpisodeCode != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(12),
+                        bottomRight: Radius.circular(12),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.85),
+                            ],
+                          ),
+                        ),
+                        child: Text(
+                          activeEpisodeCode,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Series episode count badge (always visible)
+                if (group.type == GroupType.series)
                   Positioned(
                     top: 8,
                     right: 8,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                          horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(4),
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      child: Text(
-                        '${group.downloads.length + group.activeTasks.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.video_library_rounded,
+                            color: Colors.white,
+                            size: 10,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${group.downloads.length + group.activeTasks.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -333,13 +430,24 @@ class DownloadsScreen extends ConsumerWidget {
                   ),
                 ),
 
+                // Episode title for active series downloads
+                if (activeTask != null && group.type == GroupType.series)
+                  Text(
+                    activeTask.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 10,
+                    ),
+                  ),
+
                 // Download stats (only when active)
                 if (isActive)
                   Builder(
                     builder: (context) {
-                      final task = group.activeTasks.first;
-                      final bytesText =
-                          task.progressBytesDisplay ?? task.fileSizeDisplay;
+                      final bytesText = activeTask!.progressBytesDisplay ??
+                          activeTask.fileSizeDisplay;
 
                       return Consumer(
                         builder: (context, ref, _) {
@@ -348,7 +456,7 @@ class DownloadsScreen extends ConsumerWidget {
                           String? speedText;
                           speedAsync.when(
                             data: (speedMap) {
-                              final info = speedMap[task.id];
+                              final info = speedMap[activeTask.id];
                               if (info != null && info.bytesPerSecond > 0) {
                                 speedText = info.speedDisplay;
                               }
@@ -425,7 +533,227 @@ class DownloadsScreen extends ConsumerWidget {
     );
   }
 
-  PreferredSizeWidget _buildAppBar(BuildContext context) {
+  void _showItemOptions(
+      BuildContext context, WidgetRef ref, DownloadGroup group) {
+    final isActive = group.activeTasks.isNotEmpty;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: AppColors.textSecondary.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Title
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                child: Text(
+                  group.title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              if (isActive) ...[
+                // Active download: cancel option
+                ListTile(
+                  leading:
+                      const Icon(Icons.cancel_outlined, color: AppColors.error),
+                  title: const Text('Cancel Download'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    final task = group.activeTasks.first;
+                    _showCancelDialog(context, ref, task);
+                  },
+                ),
+              ] else if (group.type == GroupType.movie) ...[
+                // Completed movie: play + delete
+                ListTile(
+                  leading: const Icon(Icons.play_arrow_rounded,
+                      color: AppColors.primary),
+                  title: const Text('Play'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    if (group.downloads.isNotEmpty) {
+                      final media = group.downloads.first;
+                      context.push(
+                        '/player/movie/${media.mediaId}?fileId=offline&title=${Uri.encodeComponent(media.title)}',
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded,
+                      color: AppColors.error),
+                  title: const Text('Delete',
+                      style: TextStyle(color: AppColors.error)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showDeleteMovieDialog(context, ref, group);
+                  },
+                ),
+              ] else if (group.type == GroupType.series) ...[
+                // Completed series: view episodes + delete all
+                ListTile(
+                  leading:
+                      const Icon(Icons.list_rounded, color: AppColors.primary),
+                  title: const Text('View Episodes'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => SeriesDownloadsScreen(
+                          showId: group.id,
+                          showTitle: group.title,
+                          showPosterUrl: group.posterUrl,
+                          backdropUrl: group.backdropUrl,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded,
+                      color: AppColors.error),
+                  title: const Text('Delete All Episodes',
+                      style: TextStyle(color: AppColors.error)),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showDeleteSeriesDialog(context, ref, group);
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showDeleteMovieDialog(
+      BuildContext context, WidgetRef ref, DownloadGroup group) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Delete Download'),
+        content: Text(
+            'Delete "${group.title}"? The downloaded file will be removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      final manager = await ref.read(downloadManagerProvider.future);
+      for (final media in group.downloads) {
+        await manager.deleteDownload(media.mediaId);
+      }
+    }
+  }
+
+  Future<void> _showDeleteSeriesDialog(
+      BuildContext context, WidgetRef ref, DownloadGroup group) async {
+    final episodeCount = group.downloads.length + group.activeTasks.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Delete All Episodes'),
+        content: Text(
+          'Delete all $episodeCount episode${episodeCount == 1 ? '' : 's'} of "${group.title}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      final manager = await ref.read(downloadManagerProvider.future);
+      await manager.deleteSeriesDownloads(group.id);
+    }
+  }
+
+  Future<void> _showCancelAllQueuedDialog(
+      BuildContext context, WidgetRef ref, int queuedCount) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Cancel All Queued?'),
+        content: Text(
+          'Cancel $queuedCount queued download${queuedCount == 1 ? '' : 's'}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            child: const Text('Cancel All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      final manager = await ref.read(downloadManagerProvider.future);
+      await manager.cancelAllQueued();
+    }
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context, WidgetRef ref) {
+    final queueAsync = ref.watch(downloadQueueProvider);
+    final queuedCount = queueAsync.whenOrNull(
+          data: (tasks) => tasks
+              .where((t) => t.status == 'queued' || t.status == 'pending')
+              .length,
+        ) ??
+        0;
+
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
       child: ClipRRect(
@@ -454,6 +782,17 @@ class DownloadsScreen extends ConsumerWidget {
                                   letterSpacing: -0.3,
                                 ),
                       ),
+                      const Spacer(),
+                      if (queuedCount > 0)
+                        IconButton(
+                          onPressed: () => _showCancelAllQueuedDialog(
+                              context, ref, queuedCount),
+                          tooltip: 'Cancel all queued',
+                          icon: const Icon(
+                            Icons.clear_all_rounded,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -476,6 +815,9 @@ class DownloadsScreen extends ConsumerWidget {
     final progressColor = isFull
         ? AppColors.error
         : (isWarning ? AppColors.warning : AppColors.primary);
+
+    final hasActiveDownloads =
+        status.inProgressBytes > 0 || status.queuedBytes > 0;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -560,21 +902,120 @@ class DownloadsScreen extends ConsumerWidget {
               ),
             ],
           ),
-          // Progress bar if limit is set
+          // Segmented progress bar if limit is set
           if (status.settings.hasLimit) ...[
             const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: status.usagePercentage,
-                minHeight: 8,
-                backgroundColor: AppColors.surfaceVariant,
-                valueColor: AlwaysStoppedAnimation<Color>(progressColor),
-              ),
+            _buildSegmentedProgressBar(
+              status: status,
+              completedColor: progressColor,
             ),
+          ],
+          // Breakdown of in-progress and queued downloads
+          if (hasActiveDownloads) ...[
+            const SizedBox(height: 12),
+            _buildStorageBreakdown(context, status, progressColor),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildSegmentedProgressBar({
+    required StorageQuotaStatus status,
+    required Color completedColor,
+  }) {
+    final maxBytes = status.maxBytes ?? 1;
+    final completedFrac = (status.usedBytes / maxBytes).clamp(0.0, 1.0);
+    final inProgressFrac =
+        (status.inProgressBytes / maxBytes).clamp(0.0, 1.0 - completedFrac);
+    final queuedFrac = (status.queuedBytes / maxBytes)
+        .clamp(0.0, 1.0 - completedFrac - inProgressFrac);
+    final remainingFrac =
+        (1.0 - completedFrac - inProgressFrac - queuedFrac).clamp(0.0, 1.0);
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: SizedBox(
+        height: 8,
+        child: Row(
+          children: [
+            if (completedFrac > 0)
+              Flexible(
+                flex: (completedFrac * 1000).round(),
+                child: Container(color: completedColor),
+              ),
+            if (inProgressFrac > 0)
+              Flexible(
+                flex: (inProgressFrac * 1000).round(),
+                child: Container(
+                  color: completedColor.withValues(alpha: 0.45),
+                ),
+              ),
+            if (queuedFrac > 0)
+              Flexible(
+                flex: (queuedFrac * 1000).round(),
+                child: Container(
+                  color: completedColor.withValues(alpha: 0.2),
+                ),
+              ),
+            if (remainingFrac > 0)
+              Flexible(
+                flex: (remainingFrac * 1000).round(),
+                child: Container(color: AppColors.surfaceVariant),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStorageBreakdown(
+      BuildContext context, StorageQuotaStatus status, Color baseColor) {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 4,
+      children: [
+        if (status.inProgressBytes > 0)
+          _buildBreakdownChip(
+            context,
+            color: baseColor.withValues(alpha: 0.45),
+            label: '${status.inProgressDisplay} downloading',
+          ),
+        if (status.queuedBytes > 0)
+          _buildBreakdownChip(
+            context,
+            color: baseColor.withValues(alpha: 0.2),
+            label: '${status.queuedDisplay} queued',
+          ),
+      ],
+    );
+  }
+
+  Widget _buildBreakdownChip(
+    BuildContext context, {
+    required Color color,
+    required String label,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+              ),
+        ),
+      ],
     );
   }
 
@@ -592,6 +1033,16 @@ class DownloadsScreen extends ConsumerWidget {
         currentUsage: status.usedBytes,
       ),
     );
+  }
+
+  int _calculateCrossAxisCount(double width) {
+    if (width > 1400) return 8;
+    if (width > 1200) return 7;
+    if (width > 1000) return 6;
+    if (width > 800) return 5;
+    if (width > 600) return 4;
+    if (width > 400) return 3;
+    return 2;
   }
 
   Widget _buildEmptyState(BuildContext context) {
@@ -635,15 +1086,17 @@ class DownloadsScreen extends ConsumerWidget {
     );
   }
 
-  /// Builds a card for a failed download with error details and retry/dismiss actions.
-  /// (Copied from original but simplified for horizontal list)
   Widget _buildFailedDownloadCard(
     BuildContext context,
     WidgetRef ref,
     DownloadTask task,
   ) {
+    final posterUrl = task.mediaType == 'episode'
+        ? (task.showPosterUrl ?? task.posterUrl)
+        : task.posterUrl;
+
     return Container(
-      padding: const EdgeInsets.all(12),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
@@ -651,55 +1104,100 @@ class DownloadsScreen extends ConsumerWidget {
           color: AppColors.error.withValues(alpha: 0.3),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.error, color: AppColors.error, size: 16),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  task.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
+          // Poster
+          SizedBox(
+            width: 90,
+            height: 160,
+            child: posterUrl != null
+                ? CachedNetworkImage(
+                    imageUrl: posterUrl,
+                    fit: BoxFit.cover,
+                    cacheManager: PosterCacheManager(),
+                    placeholder: (_, __) =>
+                        Container(color: AppColors.surfaceVariant),
+                    errorWidget: (_, __, ___) => Container(
+                      color: AppColors.surfaceVariant,
+                      child: const Icon(Icons.movie,
+                          color: AppColors.textSecondary),
+                    ),
+                  )
+                : Container(
+                    color: AppColors.surfaceVariant,
+                    child:
+                        const Icon(Icons.movie, color: AppColors.textSecondary),
+                  ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Failed',
-            style: TextStyle(color: AppColors.error, fontSize: 12),
-          ),
-          const Spacer(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () async {
-                  final manager =
-                      await ref.read(downloadManagerProvider.future);
-                  await manager.cancelDownload(task.id);
-                },
-                child: const Text('Dismiss', style: TextStyle(fontSize: 12)),
+          // Info
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    task.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded,
+                          color: AppColors.error, size: 14),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          task.error ?? 'Download failed',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style:
+                              TextStyle(color: AppColors.error, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () async {
+                          final manager =
+                              await ref.read(downloadManagerProvider.future);
+                          await manager.cancelDownload(task.id);
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                        child: const Text('Dismiss',
+                            style: TextStyle(fontSize: 12)),
+                      ),
+                      const SizedBox(width: 4),
+                      FilledButton(
+                        onPressed: () async {
+                          final manager =
+                              await ref.read(downloadManagerProvider.future);
+                          await manager.retryDownload(task.id);
+                        },
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 0),
+                          backgroundColor: AppColors.primary,
+                          minimumSize: const Size(0, 32),
+                        ),
+                        child:
+                            const Text('Retry', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              FilledButton(
-                onPressed: () async {
-                  final manager =
-                      await ref.read(downloadManagerProvider.future);
-                  await manager.retryDownload(task.id);
-                },
-                style: FilledButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                  backgroundColor: AppColors.primary,
-                  minimumSize: const Size(0, 32),
-                ),
-                child: const Text('Retry', style: TextStyle(fontSize: 12)),
-              ),
-            ],
+            ),
           ),
         ],
       ),

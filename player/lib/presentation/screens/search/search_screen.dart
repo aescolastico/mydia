@@ -126,9 +126,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           _FilterChip(
             label: 'Movies',
             icon: Icons.movie_rounded,
-            isSelected: searchState.selectedTypes.contains(SearchResultType.movie),
+            isSelected:
+                searchState.selectedTypes.contains(SearchResultType.movie),
             onTap: () {
-              ref.read(searchControllerProvider.notifier).toggleType(SearchResultType.movie);
+              ref
+                  .read(searchControllerProvider.notifier)
+                  .toggleType(SearchResultType.movie);
               if (searchState.query.isNotEmpty) {
                 ref.read(searchControllerProvider.notifier).search();
               }
@@ -138,9 +141,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           _FilterChip(
             label: 'TV Shows',
             icon: Icons.tv_rounded,
-            isSelected: searchState.selectedTypes.contains(SearchResultType.tvShow),
+            isSelected:
+                searchState.selectedTypes.contains(SearchResultType.tvShow),
             onTap: () {
-              ref.read(searchControllerProvider.notifier).toggleType(SearchResultType.tvShow);
+              ref
+                  .read(searchControllerProvider.notifier)
+                  .toggleType(SearchResultType.tvShow);
               if (searchState.query.isNotEmpty) {
                 ref.read(searchControllerProvider.notifier).search();
               }
@@ -502,7 +508,8 @@ class _SearchResultCardState extends State<_SearchResultCard> {
                             placeholder: (context, url) => Container(
                               color: AppColors.surface,
                               child: const Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ),
                             errorWidget: (context, url, error) => Container(

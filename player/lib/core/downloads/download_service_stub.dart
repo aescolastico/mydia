@@ -178,6 +178,21 @@ class _StubDownloadService implements DownloadService {
   Future<void> deleteDownload(String mediaId) async {}
 
   @override
+  Future<int> cancelAllQueued() async => 0;
+
+  @override
+  Future<int> dismissAllFailed() async => 0;
+
+  @override
+  Future<int> retryAllFailed() async => 0;
+
+  @override
+  Future<int> deleteSeriesDownloads(String showId) async => 0;
+
+  @override
+  Future<int> deleteSeasonDownloads(String showId, int seasonNumber) async => 0;
+
+  @override
   List<DownloadTask> getActiveDownloads() => [];
 
   @override

@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugPrint, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
@@ -8,8 +6,11 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_status.dart';
 import '../../core/config/web_config.dart';
 import '../../core/connection/connection_provider.dart';
+import '../../core/downloads/collection_sync_providers.dart';
+import '../../core/downloads/collection_sync_service.dart';
 import '../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../core/graphql/graphql_provider.dart';
+import '../screens/collections/collection_detail_controller.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/p2p/p2p_service.dart';
 import '../../core/theme/colors.dart';
@@ -167,8 +168,10 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   AppLifecycleListener? _lifecycleListener;
+  GoRouter? _router;
   bool _homeExpanded = true;
   bool _libraryExpanded = false;
+  DateTime? _lastAutoSyncTime;
 
   static bool _isHomeSection(String loc) =>
       loc == '/' ||
@@ -189,7 +192,30 @@ class _AppShellState extends ConsumerState<AppShell> {
       _lifecycleListener = AppLifecycleListener(
         onResume: _onAppResume,
       );
+      // Auto-sync collections after first frame
+      if (isDownloadSupported) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _performCollectionAutoSync();
+        });
+      }
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Listen to all route changes (including push/pop of detail screens)
+    // to ensure the shell repaints when uncovered after a pop.
+    final router = GoRouter.of(context);
+    if (_router != router) {
+      _router?.routerDelegate.removeListener(_onRouteChanged);
+      _router = router;
+      _router!.routerDelegate.addListener(_onRouteChanged);
+    }
+  }
+
+  void _onRouteChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -202,6 +228,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   void dispose() {
+    _router?.routerDelegate.removeListener(_onRouteChanged);
     _lifecycleListener?.dispose();
     super.dispose();
   }
@@ -211,6 +238,86 @@ class _AppShellState extends ConsumerState<AppShell> {
   void _onAppResume() {
     debugPrint('[AppShell] App resumed from background');
     // Connection health checks are handled by the connection provider
+    if (isDownloadSupported) {
+      _performCollectionAutoSync();
+    }
+  }
+
+  /// Auto-sync all collections that have sync enabled.
+  /// Debounced to skip if already ran within the last 5 minutes.
+  Future<void> _performCollectionAutoSync() async {
+    // Debounce: skip if last sync was less than 5 minutes ago
+    final now = DateTime.now();
+    if (_lastAutoSyncTime != null &&
+        now.difference(_lastAutoSyncTime!) < const Duration(minutes: 5)) {
+      debugPrint('[AppShell] Skipping auto-sync (debounced)');
+      return;
+    }
+    _lastAutoSyncTime = now;
+
+    try {
+      final syncConfigs = await ref.read(allSyncedCollectionsProvider.future);
+      if (syncConfigs.isEmpty) return;
+
+      debugPrint(
+        '[AppShell] Auto-syncing ${syncConfigs.length} collection(s)',
+      );
+
+      int totalQueued = 0;
+      for (final entry in syncConfigs.entries) {
+        final collectionId = entry.key;
+        final config = entry.value;
+        final resolution = config['resolution'];
+        if (resolution == null) continue;
+
+        try {
+          final items = await ref.read(
+            collectionDetailControllerProvider(collectionId).future,
+          );
+
+          if (items.isEmpty) continue;
+
+          final result = await syncCollectionItems(
+            items: items,
+            resolution: resolution,
+            ref: ref,
+          );
+          totalQueued += result.totalQueued;
+
+          if (result.hasNewDownloads) {
+            debugPrint(
+              '[AppShell] Auto-sync: ${config['name']} - '
+              '${result.moviesQueued} movies, '
+              '${result.episodesQueued} episodes queued',
+            );
+          }
+        } catch (e) {
+          debugPrint(
+            '[AppShell] Auto-sync failed for ${config['name']}: $e',
+          );
+        }
+      }
+
+      if (totalQueued > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.sync_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  'Auto-sync: queued $totalQueued new item${totalQueued != 1 ? 's' : ''} for download',
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.primary,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[AppShell] Auto-sync error: $e');
+    }
   }
 
   void _autoExpandForRoute(String location) {
@@ -259,72 +366,71 @@ class _AppShellState extends ConsumerState<AppShell> {
     final location = widget.location;
     final showBackToMydia = isEmbedMode;
     final isOffline = _isOfflineMode();
+    // Use MediaQuery instead of LayoutBuilder to determine layout.
+    // LayoutBuilder defers building to the layout phase, which can prevent
+    // proper repaint propagation on mobile when combined with GlobalKey
+    // on the Scaffold (causing the "stuck navigation" bug).
+    final isDesktop = Breakpoints.isDesktop(context);
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isDesktop = constraints.maxWidth >= Breakpoints.tablet;
-
-        if (isDesktop) {
-          return Scaffold(
-            body: Row(
-              children: [
-                _DesktopSidebar(
-                  location: location,
-                  onNavigate: _navigateTo,
-                  homeExpanded: _homeExpanded,
-                  libraryExpanded: _libraryExpanded,
-                  onToggleHome: () =>
-                      setState(() => _homeExpanded = !_homeExpanded),
-                  onToggleLibrary: () =>
-                      setState(() => _libraryExpanded = !_libraryExpanded),
-                  showBackToMydia: showBackToMydia,
-                  isOffline: isOffline,
-                ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      SizedBox(height: _macOSTitleBarPadding),
-                      if (isOffline) const OfflineBanner(),
-                      Expanded(child: widget.child),
-                    ],
-                  ),
-                ),
-              ],
+    if (isDesktop) {
+      return Scaffold(
+        body: Row(
+          children: [
+            _DesktopSidebar(
+              location: location,
+              onNavigate: _navigateTo,
+              homeExpanded: _homeExpanded,
+              libraryExpanded: _libraryExpanded,
+              onToggleHome: () =>
+                  setState(() => _homeExpanded = !_homeExpanded),
+              onToggleLibrary: () =>
+                  setState(() => _libraryExpanded = !_libraryExpanded),
+              showBackToMydia: showBackToMydia,
+              isOffline: isOffline,
             ),
-          );
-        }
+            Expanded(
+              child: Column(
+                children: [
+                  SizedBox(height: _macOSTitleBarPadding),
+                  if (isOffline) const OfflineBanner(),
+                  Expanded(child: widget.child),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
-        return Scaffold(
-          key: AppShell.scaffoldKey,
-          extendBody: true,
-          drawer: _MobileDrawer(
-            location: location,
-            onNavigate: (route) {
-              Navigator.of(context).pop();
-              _navigateTo(route);
-            },
-            homeExpanded: _homeExpanded,
-            libraryExpanded: _libraryExpanded,
-            onToggleHome: () => setState(() => _homeExpanded = !_homeExpanded),
-            onToggleLibrary: () =>
-                setState(() => _libraryExpanded = !_libraryExpanded),
-            showBackToMydia: showBackToMydia,
-            isOffline: isOffline,
-          ),
-          body: Column(
-            children: [
-              if (isOffline) const OfflineBanner(),
-              Expanded(child: widget.child),
-            ],
-          ),
-          bottomNavigationBar: _ModernBottomNav(
-            location: location,
-            onNavigate: _navigateTo,
-            isOffline: isOffline,
-            showBackToMydia: showBackToMydia,
-          ),
-        );
-      },
+    return Scaffold(
+      key: AppShell.scaffoldKey,
+      extendBody: true,
+      drawer: _MobileDrawer(
+        location: location,
+        onNavigate: (route) {
+          Navigator.of(context).pop();
+          _navigateTo(route);
+        },
+        homeExpanded: _homeExpanded,
+        libraryExpanded: _libraryExpanded,
+        onToggleHome: () => setState(() => _homeExpanded = !_homeExpanded),
+        onToggleLibrary: () =>
+            setState(() => _libraryExpanded = !_libraryExpanded),
+        showBackToMydia: showBackToMydia,
+        isOffline: isOffline,
+      ),
+      body: Column(
+        children: [
+          if (isOffline) const OfflineBanner(),
+          Expanded(child: widget.child),
+        ],
+      ),
+      bottomNavigationBar: _ModernBottomNav(
+        location: location,
+        onNavigate: _navigateTo,
+        isOffline: isOffline,
+        showBackToMydia: showBackToMydia,
+      ),
     );
   }
 }
@@ -902,88 +1008,82 @@ class _ModernBottomNav extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.surface.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.2),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 16,
-                    spreadRadius: 2,
-                    offset: const Offset(0, 4),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.2),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.1),
+                blurRadius: 16,
+                spreadRadius: 2,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                if (showBackToMydia)
+                  _NavItem(
+                    icon: Icons.arrow_back_rounded,
+                    selectedIcon: Icons.arrow_back_rounded,
+                    label: 'Mydia',
+                    isSelected: false,
+                    onTap: navigateToMydiaApp,
                   ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    if (showBackToMydia)
-                      _NavItem(
-                        icon: Icons.arrow_back_rounded,
-                        selectedIcon: Icons.arrow_back_rounded,
-                        label: 'Mydia',
-                        isSelected: false,
-                        onTap: navigateToMydiaApp,
-                      ),
-                    _NavItem(
-                      icon: Icons.home_outlined,
-                      selectedIcon: Icons.home_rounded,
-                      label: 'Home',
-                      isSelected: _AppShellState._isHomeSection(location),
-                      isDisabled: isOffline,
-                      onTap: () => onNavigate('/'),
-                    ),
-                    _NavItem(
-                      icon: Icons.movie_outlined,
-                      selectedIcon: Icons.movie_rounded,
-                      label: 'Movies',
-                      isSelected: location.startsWith('/movies'),
-                      isDisabled: isOffline,
-                      onTap: () => onNavigate('/movies'),
-                    ),
-                    _NavItem(
-                      icon: Icons.tv_outlined,
-                      selectedIcon: Icons.tv_rounded,
-                      label: 'Shows',
-                      isSelected: location.startsWith('/shows'),
-                      isDisabled: isOffline,
-                      onTap: () => onNavigate('/shows'),
-                    ),
-                    if (isDownloadSupported)
-                      _NavItem(
-                        icon: Icons.download_outlined,
-                        selectedIcon: Icons.download_rounded,
-                        label: 'Downloads',
-                        isSelected: location.startsWith('/downloads'),
-                        onTap: () => onNavigate('/downloads'),
-                      )
-                    else
-                      _NavItem(
-                        icon: Icons.favorite_outline_rounded,
-                        selectedIcon: Icons.favorite_rounded,
-                        label: 'Favorites',
-                        isSelected: location.startsWith('/favorites'),
-                        isDisabled: isOffline,
-                        onTap: () => onNavigate('/favorites'),
-                      ),
-                    _SettingsNavItem(
-                      isSelected: location.startsWith('/settings'),
-                      isDisabled: isOffline,
-                      onTap: () => onNavigate('/settings'),
-                    ),
-                  ],
+                _NavItem(
+                  icon: Icons.home_outlined,
+                  selectedIcon: Icons.home_rounded,
+                  label: 'Home',
+                  isSelected: _AppShellState._isHomeSection(location),
+                  isDisabled: isOffline,
+                  onTap: () => onNavigate('/'),
                 ),
-              ),
+                _NavItem(
+                  icon: Icons.movie_outlined,
+                  selectedIcon: Icons.movie_rounded,
+                  label: 'Movies',
+                  isSelected: location.startsWith('/movies'),
+                  isDisabled: isOffline,
+                  onTap: () => onNavigate('/movies'),
+                ),
+                _NavItem(
+                  icon: Icons.tv_outlined,
+                  selectedIcon: Icons.tv_rounded,
+                  label: 'Shows',
+                  isSelected: location.startsWith('/shows'),
+                  isDisabled: isOffline,
+                  onTap: () => onNavigate('/shows'),
+                ),
+                if (isDownloadSupported)
+                  _NavItem(
+                    icon: Icons.download_outlined,
+                    selectedIcon: Icons.download_rounded,
+                    label: 'Downloads',
+                    isSelected: location.startsWith('/downloads'),
+                    onTap: () => onNavigate('/downloads'),
+                  )
+                else
+                  _NavItem(
+                    icon: Icons.favorite_outline_rounded,
+                    selectedIcon: Icons.favorite_rounded,
+                    label: 'Favorites',
+                    isSelected: location.startsWith('/favorites'),
+                    isDisabled: isOffline,
+                    onTap: () => onNavigate('/favorites'),
+                  ),
+                _SettingsNavItem(
+                  isSelected: location.startsWith('/settings'),
+                  isDisabled: isOffline,
+                  onTap: () => onNavigate('/settings'),
+                ),
+              ],
             ),
           ),
         ),

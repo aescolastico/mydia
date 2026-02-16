@@ -53,6 +53,12 @@ class StorageQuotaStatus {
   final int remainingBytes;
   final StorageSettings settings;
 
+  /// Estimated total size of currently downloading tasks.
+  final int inProgressBytes;
+
+  /// Estimated total size of queued/pending tasks.
+  final int queuedBytes;
+
   const StorageQuotaStatus({
     required this.usedBytes,
     required this.maxBytes,
@@ -61,7 +67,12 @@ class StorageQuotaStatus {
     required this.isFull,
     required this.remainingBytes,
     required this.settings,
+    this.inProgressBytes = 0,
+    this.queuedBytes = 0,
   });
+
+  /// Total projected bytes when all downloads complete.
+  int get projectedBytes => usedBytes + inProgressBytes + queuedBytes;
 
   /// Format used bytes for display.
   String get usedDisplay => StorageSettings.formatBytes(usedBytes);
@@ -74,6 +85,12 @@ class StorageQuotaStatus {
   String get remainingDisplay => remainingBytes >= 0
       ? StorageSettings.formatBytes(remainingBytes)
       : 'Unlimited';
+
+  /// Format in-progress bytes for display.
+  String get inProgressDisplay => StorageSettings.formatBytes(inProgressBytes);
+
+  /// Format queued bytes for display.
+  String get queuedDisplay => StorageSettings.formatBytes(queuedBytes);
 }
 
 /// Provider for storage quota status.
@@ -81,6 +98,20 @@ class StorageQuotaStatus {
 Future<StorageQuotaStatus> storageQuotaStatus(Ref ref) async {
   final usedBytes = await ref.watch(storageUsageProvider.future);
   final settings = await ref.watch(storageSettingsProvider.future);
+  final activeTasks = await ref.watch(downloadQueueProvider.future);
+
+  // Calculate in-progress and queued bytes from active tasks
+  int inProgressBytes = 0;
+  int queuedBytes = 0;
+
+  for (final task in activeTasks) {
+    final size = task.fileSize ?? 0;
+    if (task.status == 'downloading' || task.status == 'transcoding') {
+      inProgressBytes += size;
+    } else if (task.status == 'pending' || task.status == 'queued') {
+      queuedBytes += size;
+    }
+  }
 
   return StorageQuotaStatus(
     usedBytes: usedBytes,
@@ -90,6 +121,8 @@ Future<StorageQuotaStatus> storageQuotaStatus(Ref ref) async {
     isFull: settings.isStorageFull(usedBytes),
     remainingBytes: settings.remainingBytes(usedBytes),
     settings: settings,
+    inProgressBytes: inProgressBytes,
+    queuedBytes: queuedBytes,
   );
 }
 

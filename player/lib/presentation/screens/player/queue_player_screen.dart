@@ -253,8 +253,8 @@ class _QueuePlayerScreenState extends ConsumerState<QueuePlayerScreen> {
               if (hasPrevious && hasNext) const SizedBox(width: 24),
               if (hasNext)
                 IconButton(
-                  icon:
-                      const Icon(Icons.skip_next, color: Colors.white, size: 32),
+                  icon: const Icon(Icons.skip_next,
+                      color: Colors.white, size: 32),
                   onPressed: _playNext,
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.black.withValues(alpha: 0.7),

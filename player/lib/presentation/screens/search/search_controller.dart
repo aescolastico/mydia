@@ -58,7 +58,11 @@ class SearchState {
   }
 
   bool get hasResults => results != null && results!.results.isNotEmpty;
-  bool get isEmpty => query.isNotEmpty && !isLoading && results != null && results!.results.isEmpty;
+  bool get isEmpty =>
+      query.isNotEmpty &&
+      !isLoading &&
+      results != null &&
+      results!.results.isEmpty;
 }
 
 @riverpod
@@ -105,9 +109,8 @@ class SearchController extends _$SearchController {
 
       // Add type filter if any types are selected
       if (state.selectedTypes.isNotEmpty) {
-        variables['types'] = state.selectedTypes
-            .map((t) => t.apiValue)
-            .toList();
+        variables['types'] =
+            state.selectedTypes.map((t) => t.apiValue).toList();
       }
 
       final result = await client.query(

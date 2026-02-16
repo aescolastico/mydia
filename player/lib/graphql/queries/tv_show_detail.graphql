@@ -1,4 +1,5 @@
 #import '../fragments/artwork_fragment.graphql'
+#import '../fragments/media_file_fragment.graphql'
 
 query TvShowDetail($id: ID!) {
   tvShow(id: $id) {
@@ -33,6 +34,9 @@ query TvShowDetail($id: ID!) {
       episodeNumber
       title
       airDate
+      files {
+        ...MediaFileFragment
+      }
     }
     isFavorite
   }

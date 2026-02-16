@@ -199,7 +199,8 @@ class DownloadManager {
 
   Future<void> retryDownload(String taskId) async {
     final task = _database.getTask(taskId);
-    if (task != null && (task.status == 'failed' || task.status == 'cancelled')) {
+    if (task != null &&
+        (task.status == 'failed' || task.status == 'cancelled')) {
       final retryTask = task.copyWith(
         status: 'pending',
         progress: 0.0,
@@ -213,9 +214,9 @@ class DownloadManager {
   Future<void> deleteDownload(String mediaId) async {
     // Find the downloaded media
     final media = _database.getAllMedia().firstWhere(
-      (m) => m.mediaId == mediaId,
-      orElse: () => throw StateError('Media not found'),
-    );
+          (m) => m.mediaId == mediaId,
+          orElse: () => throw StateError('Media not found'),
+        );
 
     // Delete the file
     final file = File(media.filePath);

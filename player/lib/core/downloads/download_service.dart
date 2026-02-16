@@ -145,6 +145,22 @@ abstract class DownloadService {
   Future<void> cancelDownload(String taskId);
   Future<void> retryDownload(String taskId);
   Future<void> deleteDownload(String mediaId);
+
+  /// Cancel all queued/pending downloads. Returns count cancelled.
+  Future<int> cancelAllQueued();
+
+  /// Dismiss all failed download records. Returns count dismissed.
+  Future<int> dismissAllFailed();
+
+  /// Retry all failed downloads. Returns count retried.
+  Future<int> retryAllFailed();
+
+  /// Delete all downloads (completed + active) for a series. Returns count deleted.
+  Future<int> deleteSeriesDownloads(String showId);
+
+  /// Delete all downloads for a specific season of a series. Returns count deleted.
+  Future<int> deleteSeasonDownloads(String showId, int seasonNumber);
+
   List<DownloadTask> getActiveDownloads();
   List<DownloadedMedia> getDownloadedMedia();
   bool isMediaDownloaded(String mediaId);
