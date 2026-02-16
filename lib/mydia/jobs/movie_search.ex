@@ -595,7 +595,7 @@ defmodule Mydia.Jobs.MovieSearch do
   defp build_filter_stats(results, ranking_opts) do
     min_seeders = Keyword.get(ranking_opts, :min_seeders, get_min_seeders())
 
-    low_seeders = Enum.count(results, fn r -> (r[:seeders] || 0) < min_seeders end)
+    low_seeders = Enum.count(results, fn r -> r.seeders < min_seeders end)
 
     %{
       "total_results" => length(results),

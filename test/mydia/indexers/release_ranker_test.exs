@@ -739,6 +739,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranked =
         ReleaseRanker.rank_all([exact_match, partial_match],
           search_query: "The Studio S01E01",
+          media_type: :episode,
           min_seeders: 1
         )
 
@@ -772,6 +773,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranked =
         ReleaseRanker.rank_all([result],
           search_query: "The Studio S01E01",
+          media_type: :episode,
           min_seeders: 1
         )
 
@@ -791,6 +793,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranked =
         ReleaseRanker.rank_all([result],
           search_query: "The Studio 2025 S01E01",
+          media_type: :episode,
           min_seeders: 1
         )
 
@@ -840,6 +843,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranked =
         ReleaseRanker.rank_all(results,
           search_query: "The Girlfriend S01",
+          media_type: :episode,
           min_seeders: 1,
           size_range: {100, 20_000}
         )
@@ -897,6 +901,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       # Without search_query, all results get title_match score of 0
       ranked_without_query =
         ReleaseRanker.rank_all(results,
+          media_type: :episode,
           min_seeders: 1,
           size_range: {100, 20_000}
         )
@@ -909,6 +914,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranked_with_query =
         ReleaseRanker.rank_all(results,
           search_query: "The Girlfriend S01",
+          media_type: :episode,
           min_seeders: 1,
           size_range: {100, 20_000}
         )
@@ -1037,6 +1043,117 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       # Only the matching result should remain
       assert length(ranked) == 1
       assert String.contains?(List.first(ranked).result.title, "The.Matrix")
+    end
+  end
+
+  describe "TV release rejection for movie searches" do
+    test "rejects TV season release when searching for a movie with overlapping title words" do
+      # Real-world bug: searching for movie "Frozen 2013" matched
+      # "Frozen Planet II S01 1080p BluRay x265" because the word "Frozen"
+      # overlapped, giving a non-zero title match score (~4.25).
+      # Releases with season patterns (S01, S01E05) should never match movie searches.
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        build_result(%{
+          title: "Frozen Planet II S01 1080p BluRay x265",
+          size: round(15.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("Frozen Planet II S01 1080p BluRay x265")
+        }),
+        build_result(%{
+          title: "Frozen.2013.1080p.BluRay.x264-Group",
+          size: round(8.0 * gb),
+          seeders: 30,
+          quality: QualityParser.parse("Frozen.2013.1080p.BluRay.x264-Group")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Frozen 2013",
+          media_type: :movie,
+          min_seeders: 0
+        )
+
+      # The TV show should be filtered out
+      tv_release = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen Planet II"))
+
+      assert tv_release == nil,
+             "TV season release should be filtered out when searching for a movie"
+
+      # The correct movie should remain
+      assert length(ranked) == 1
+      assert String.contains?(List.first(ranked).result.title, "Frozen.2013")
+    end
+
+    test "rejects releases with S01E05 episode pattern in movie search" do
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        build_result(%{
+          title: "Breaking Bad S01E05 1080p BluRay x265",
+          size: round(2.0 * gb),
+          seeders: 100,
+          quality: QualityParser.parse("Breaking Bad S01E05 1080p BluRay x265")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Breaking Bad 2008",
+          media_type: :movie,
+          min_seeders: 0
+        )
+
+      assert ranked == [],
+             "TV episode with S01E05 pattern should be filtered out in movie search"
+    end
+
+    test "does not reject TV releases when media_type is :episode" do
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        build_result(%{
+          title: "Breaking Bad S01E05 1080p BluRay x265",
+          size: round(2.0 * gb),
+          seeders: 100,
+          quality: QualityParser.parse("Breaking Bad S01E05 1080p BluRay x265")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Breaking Bad S01E05",
+          media_type: :episode,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "TV episode should not be filtered when media_type is :episode"
+    end
+
+    test "does not reject TV releases when media_type is not specified" do
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        build_result(%{
+          title: "Some.Show.S02E10.1080p.WEB-DL",
+          size: round(2.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("Some.Show.S02E10.1080p.WEB-DL")
+        })
+      ]
+
+      # Default media_type is :movie, so this SHOULD be filtered
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Some Show",
+          min_seeders: 0
+        )
+
+      assert ranked == [],
+             "Default media_type is :movie so TV releases should still be filtered"
     end
   end
 

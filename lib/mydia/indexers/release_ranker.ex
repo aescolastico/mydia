@@ -111,9 +111,12 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
     search_query = Keyword.get(opts, :search_query)
 
+    media_type = Keyword.get(opts, :media_type, :movie)
+
     ranked =
       results
       |> filter_acceptable(opts)
+      |> reject_tv_releases_for_movies(media_type)
       |> Enum.map(fn result ->
         breakdown = calculate_score_breakdown(result, opts)
         RankedResult.new(%{result: result, score: breakdown.total, breakdown: breakdown})
@@ -325,6 +328,29 @@ defmodule Mydia.Indexers.ReleaseRanker do
       total: round_score(total_score)
     })
   end
+
+  ## Private Functions - Media Type Filtering
+
+  # When searching for a movie, reject releases that contain TV season/episode
+  # patterns (S01, S01E05, etc.) since they're clearly TV content, not movies.
+  # This prevents false matches like "Frozen Planet II S01" matching "Frozen 2013".
+  @tv_season_pattern ~r/\bS\d{1,2}(?:E\d{1,3})?\b/i
+
+  defp reject_tv_releases_for_movies(results, :movie) do
+    Enum.filter(results, fn result ->
+      if Regex.match?(@tv_season_pattern, result.title) do
+        Logger.info(
+          "[ReleaseRanker] Filtered out (TV season/episode pattern in movie search): #{result.title}"
+        )
+
+        false
+      else
+        true
+      end
+    end)
+  end
+
+  defp reject_tv_releases_for_movies(results, _media_type), do: results
 
   ## Private Functions - Title Match Filtering
 
