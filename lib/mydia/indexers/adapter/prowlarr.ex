@@ -191,7 +191,9 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
   defp maybe_add_list_param(params, _key, []), do: params
 
   defp maybe_add_list_param(params, key, list) when is_list(list) do
-    [{key, Enum.join(list, ",")} | params]
+    # Prowlarr expects repeated query params (e.g., indexerIds=6&indexerIds=17),
+    # not comma-separated values (indexerIds=6,17) which returns a 400 error.
+    Enum.reduce(list, params, fn value, acc -> [{key, value} | acc] end)
   end
 
   # Validates and converts indexer IDs to integers.
