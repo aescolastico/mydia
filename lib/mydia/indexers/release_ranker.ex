@@ -109,6 +109,8 @@ defmodule Mydia.Indexers.ReleaseRanker do
         "size_range=#{inspect(Keyword.get(opts, :size_range))}"
     )
 
+    search_query = Keyword.get(opts, :search_query)
+
     ranked =
       results
       |> filter_acceptable(opts)
@@ -116,6 +118,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
         breakdown = calculate_score_breakdown(result, opts)
         RankedResult.new(%{result: result, score: breakdown.total, breakdown: breakdown})
       end)
+      |> reject_zero_title_match(search_query)
       |> sort_by_score_and_preferences(preferred_qualities)
 
     # Log the top 5 results after sorting
@@ -321,6 +324,26 @@ defmodule Mydia.Indexers.ReleaseRanker do
       tag_bonus: round_score(tag_bonus),
       total: round_score(total_score)
     })
+  end
+
+  ## Private Functions - Title Match Filtering
+
+  # When a search_query is provided, reject results where the title doesn't match
+  # the query at all (title_match == 0.0). This prevents downloading completely
+  # unrelated content that happens to have high quality/seeder scores.
+  defp reject_zero_title_match(ranked_results, nil), do: ranked_results
+  defp reject_zero_title_match(ranked_results, ""), do: ranked_results
+
+  defp reject_zero_title_match(ranked_results, _search_query) do
+    Enum.filter(ranked_results, fn %{result: result, breakdown: breakdown} ->
+      if breakdown.title_match > 0.0 do
+        true
+      else
+        Logger.info("[ReleaseRanker] Filtered out (zero title match): #{result.title}")
+
+        false
+      end
+    end)
   end
 
   ## Private Functions - Sorting

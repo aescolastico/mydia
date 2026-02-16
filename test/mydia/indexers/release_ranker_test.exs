@@ -919,6 +919,127 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
+  describe "zero title match rejection" do
+    test "rejects TV show episode when searching for a movie with same words in title" do
+      # Real-world bug: searching for movie "Casino Royale 2006" returned
+      # "Secret Life of the Auction House S01E08 Casino Royale Sweet Shop"
+      # because it scored 48.9 total (quality: 69.8, seeders: 7.0) despite
+      # having title_match of 0.0 - the words "Casino Royale" appear in the
+      # TV episode title but the overall title doesn't match the search query.
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        # The wrong release - TV show episode that happens to contain search words
+        build_result(%{
+          title:
+            "Secret Life of the Auction House S01E08 Casino Royale Sweet Shop 1080p AMZN WEB-DL DDP2 0 H 264-RAWR",
+          size: round(2.5 * gb),
+          seeders: 7,
+          quality:
+            QualityParser.parse(
+              "Secret Life of the Auction House S01E08 Casino Royale Sweet Shop 1080p AMZN WEB-DL DDP2 0 H 264-RAWR"
+            )
+        }),
+        # A correct match for Casino Royale
+        build_result(%{
+          title: "Casino.Royale.2006.1080p.BluRay.x264-Group",
+          size: round(10.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("Casino.Royale.2006.1080p.BluRay.x264-Group")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Casino Royale 2006",
+          preferred_qualities: ["1080p"],
+          min_seeders: 0
+        )
+
+      # The TV show episode should be filtered out (title_match is 0.0)
+      tv_episode =
+        Enum.find(ranked, &String.contains?(&1.result.title, "Secret Life of the Auction House"))
+
+      assert tv_episode == nil,
+             "TV show episode with 0 title match should be filtered out when search_query is provided"
+
+      # The correct movie should be selected
+      best = List.first(ranked)
+      assert best != nil
+      assert String.contains?(best.result.title, "Casino.Royale.2006")
+    end
+
+    test "rejects completely unrelated release when search_query is provided" do
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        build_result(%{
+          title: "Completely.Unrelated.Movie.2023.1080p.BluRay.x264",
+          size: round(8.0 * gb),
+          seeders: 200,
+          quality: QualityParser.parse("Completely.Unrelated.Movie.2023.1080p.BluRay.x264")
+        })
+      ]
+
+      # When searching with a specific query, unrelated results should be filtered
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "Casino Royale 2006",
+          min_seeders: 0
+        )
+
+      assert ranked == [],
+             "Completely unrelated release should be filtered out when search_query is provided"
+    end
+
+    test "does not reject results when no search_query is provided" do
+      # Without search_query, title matching is disabled - all results should pass
+      results = [
+        build_result(%{
+          title: "Any.Movie.1080p.BluRay.x264",
+          seeders: 50
+        })
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0)
+
+      assert length(ranked) == 1,
+             "Results should not be filtered by title when no search_query is provided"
+    end
+
+    test "only the TV episode is filtered when correct match also exists" do
+      # When search_query is provided, only results with 0 title match are rejected
+      gb = 1024 * 1024 * 1024
+
+      results = [
+        # Wrong release - unrelated content
+        build_result(%{
+          title: "Some.Random.Show.S01E01.1080p.WEB-DL",
+          size: round(3.0 * gb),
+          seeders: 100,
+          quality: QualityParser.parse("Some.Random.Show.S01E01.1080p.WEB-DL")
+        }),
+        # Correct match
+        build_result(%{
+          title: "The.Matrix.1999.1080p.BluRay.x264-Group",
+          size: round(10.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("The.Matrix.1999.1080p.BluRay.x264-Group")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          search_query: "The Matrix 1999",
+          min_seeders: 0
+        )
+
+      # Only the matching result should remain
+      assert length(ranked) == 1
+      assert String.contains?(List.first(ranked).result.title, "The.Matrix")
+    end
+  end
+
   describe "real-world movie search scenarios" do
     @doc """
     Test case based on actual search results for "xXx 2002" movie with HD-1080p quality profile.
