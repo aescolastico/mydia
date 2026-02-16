@@ -38,7 +38,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
   - `:blocked_tags` - List of strings to filter out from titles
   - `:search_query` - Original search query to score title relevance
   - `:quality_profile` - QualityProfile struct for scoring (recommended)
-  - `:media_type` - Either `:movie` or `:episode` (default: `:movie`)
+  - `:media_type` - Either `:movie` or `:episode` (default: `nil`, TV filtering only applied when `:movie`)
   """
 
   require Logger
@@ -59,7 +59,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
           blocked_tags: [String.t()],
           search_query: String.t() | nil,
           quality_profile: QualityProfile.t() | nil,
-          media_type: :movie | :episode
+          media_type: :movie | :episode | nil
         ]
 
   @default_min_seeders 0
@@ -111,7 +111,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
     search_query = Keyword.get(opts, :search_query)
 
-    media_type = Keyword.get(opts, :media_type, :movie)
+    media_type = Keyword.get(opts, :media_type)
 
     ranked =
       results

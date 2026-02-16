@@ -1145,15 +1145,15 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         })
       ]
 
-      # Default media_type is :movie, so this SHOULD be filtered
+      # No media_type specified, so TV releases should NOT be filtered
       ranked =
         ReleaseRanker.rank_all(results,
           search_query: "Some Show",
           min_seeders: 0
         )
 
-      assert ranked == [],
-             "Default media_type is :movie so TV releases should still be filtered"
+      assert length(ranked) == 1,
+             "Without media_type, TV releases should not be filtered"
     end
   end
 
