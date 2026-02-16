@@ -1301,7 +1301,7 @@ defmodule Mydia.Events do
       %{
         "title" => media_item.title,
         "media_type" => media_item.type,
-        "error_reason" => to_string(reason),
+        "error_reason" => format_download_error(reason),
         "error_message" => error_message
       }
       |> Map.merge(metadata)
