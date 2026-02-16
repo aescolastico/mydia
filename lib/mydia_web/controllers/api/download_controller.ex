@@ -96,7 +96,8 @@ defmodule MydiaWeb.Api.DownloadController do
           job_id: job_info.job_id,
           status: job_info.status,
           progress: job_info.progress,
-          error: job_info.error
+          error: job_info.error,
+          file_size: job_info.file_size
         })
 
       {:error, :job_not_found} ->

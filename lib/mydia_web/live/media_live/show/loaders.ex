@@ -80,7 +80,10 @@ defmodule MydiaWeb.MediaLive.Show.Loaders do
   # Load transcode jobs for all media files in a media item
   # Returns a map of media_file_id => list of transcode jobs
   def load_transcode_jobs(media_item) do
-    media_item.media_files
+    episode_files = Enum.flat_map(media_item.episodes || [], & &1.media_files)
+    all_files = media_item.media_files ++ episode_files
+
+    all_files
     |> Enum.flat_map(fn media_file ->
       Downloads.list_transcode_jobs_for_media_file(media_file.id)
     end)

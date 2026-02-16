@@ -84,7 +84,9 @@ defmodule MydiaWeb.AdminConfigLive.Index do
   def handle_info({:job_updated, _id}, socket) do
     {:noreply,
      update(socket, :transcode_jobs, fn _ ->
-       Downloads.list_transcode_jobs(preload: [:user, media_file: [:media_item, :episode]])
+       Downloads.list_transcode_jobs(
+         preload: [:user, media_file: [:media_item, episode: [:media_item]]]
+       )
      end)}
   end
 
@@ -2721,7 +2723,9 @@ defmodule MydiaWeb.AdminConfigLive.Index do
     |> assign(:active_sessions, Streaming.list_active_sessions())
     |> assign(
       :transcode_jobs,
-      Downloads.list_transcode_jobs(preload: [:user, media_file: [:media_item, :episode]])
+      Downloads.list_transcode_jobs(
+        preload: [:user, media_file: [:media_item, episode: [:media_item]]]
+      )
     )
     |> assign(:watch_history, Playback.list_recent_history(limit: 20))
   end

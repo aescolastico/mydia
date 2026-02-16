@@ -1679,12 +1679,7 @@ defmodule MydiaWeb.MediaLive.Show do
   end
 
   def handle_async(:rescan_series, {:ok, {{:ok, scan_result}, {:ok, refreshed, _errors}}}, socket) do
-    message =
-      if Enum.empty?(scan_result.errors) do
-        "Re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s)"
-      else
-        "Re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s), #{length(scan_result.errors)} error(s)"
-      end
+    message = rescan_flash_message("Re-scan", scan_result, refreshed)
 
     {:noreply,
      socket
@@ -1716,12 +1711,7 @@ defmodule MydiaWeb.MediaLive.Show do
   end
 
   def handle_async(:rescan_movie, {:ok, {{:ok, scan_result}, {:ok, refreshed, _errors}}}, socket) do
-    message =
-      if Enum.empty?(scan_result.errors) do
-        "Re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s)"
-      else
-        "Re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s), #{length(scan_result.errors)} error(s)"
-      end
+    message = rescan_flash_message("Re-scan", scan_result, refreshed)
 
     {:noreply,
      socket
@@ -1757,12 +1747,7 @@ defmodule MydiaWeb.MediaLive.Show do
         {:ok, {season_num, {:ok, scan_result}, {:ok, refreshed, _errors}}},
         socket
       ) do
-    message =
-      if Enum.empty?(scan_result.errors) do
-        "Season #{season_num} re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s)"
-      else
-        "Season #{season_num} re-scan complete! Found #{scan_result.new_files} new file(s), refreshed metadata for #{refreshed} file(s), #{length(scan_result.errors)} error(s)"
-      end
+    message = rescan_flash_message("Season #{season_num} re-scan", scan_result, refreshed)
 
     {:noreply,
      socket
@@ -2001,6 +1986,26 @@ defmodule MydiaWeb.MediaLive.Show do
   defp category_display_name(:anime_series), do: "Anime Series"
   defp category_display_name(:cartoon_series), do: "Cartoon Series"
   defp category_display_name(cat), do: to_string(cat)
+
+  defp rescan_flash_message(prefix, scan_result, refreshed) do
+    deleted = Map.get(scan_result, :deleted_files, 0)
+
+    parts = ["Found #{scan_result.new_files} new file(s)"]
+
+    parts =
+      if deleted > 0,
+        do: parts ++ ["removed #{deleted} missing file(s)"],
+        else: parts
+
+    parts = parts ++ ["refreshed metadata for #{refreshed} file(s)"]
+
+    parts =
+      if not Enum.empty?(scan_result.errors),
+        do: parts ++ ["#{length(scan_result.errors)} error(s)"],
+        else: parts
+
+    "#{prefix} complete! #{Enum.join(parts, ", ")}"
+  end
 
   # Collection helpers
 

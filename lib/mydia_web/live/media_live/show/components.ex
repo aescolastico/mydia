@@ -527,6 +527,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
   attr :rescanning_season, :any, default: nil
   attr :auto_searching_episode, :any, default: nil
   attr :playback_enabled, :boolean, required: true
+  attr :transcode_jobs, :map, default: %{}
 
   def episodes_section(assigns) do
     ~H"""
@@ -775,6 +776,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
                             file={file}
                             episode={episode}
                             playback_enabled={@playback_enabled}
+                            transcode_jobs={Map.get(@transcode_jobs, file.id, [])}
                           />
                         </div>
                       </div>
@@ -796,6 +798,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
   attr :file, :map, required: true
   attr :episode, :map, required: true
   attr :playback_enabled, :boolean, required: true
+  attr :transcode_jobs, :list, default: []
 
   def episode_file_row(assigns) do
     ~H"""
@@ -830,6 +833,38 @@ defmodule MydiaWeb.MediaLive.Show.Components do
       </div>
       <%!-- File actions --%>
       <div class="flex items-center gap-1 flex-shrink-0">
+        <% available_resolutions =
+          available_transcode_resolutions(
+            @file,
+            Map.new(@transcode_jobs, fn j -> {j.resolution, j} end)
+          ) %>
+        <%= if available_resolutions != [] do %>
+          <div class="dropdown dropdown-end">
+            <div
+              tabindex="0"
+              role="button"
+              class="btn btn-ghost btn-xs btn-square"
+              title="Pre-transcode"
+            >
+              <.icon name="hero-wrench" class="w-4 h-4" />
+            </div>
+            <ul
+              tabindex="0"
+              class="dropdown-content menu bg-base-100 rounded-box z-[1] w-44 p-2 shadow"
+            >
+              <li :for={res <- available_resolutions}>
+                <button
+                  type="button"
+                  phx-click="pre_transcode"
+                  phx-value-media-file-id={@file.id}
+                  phx-value-resolution={res}
+                >
+                  {res}
+                </button>
+              </li>
+            </ul>
+          </div>
+        <% end %>
         <%= if @playback_enabled do %>
           <a
             href={
@@ -861,6 +896,16 @@ defmodule MydiaWeb.MediaLive.Show.Components do
         </button>
       </div>
     </div>
+    <%!-- Transcode job badges --%>
+    <%= if @transcode_jobs != [] do %>
+      <div class="flex flex-wrap items-center gap-2 pl-6 mt-1">
+        <.transcode_badge
+          :for={job <- @transcode_jobs}
+          job={job}
+          file={@file}
+        />
+      </div>
+    <% end %>
     """
   end
 
@@ -925,6 +970,38 @@ defmodule MydiaWeb.MediaLive.Show.Components do
                   </div>
                   <%!-- Right side: Icon-only action buttons --%>
                   <div class="flex items-center gap-1 flex-shrink-0">
+                    <% available_resolutions =
+                      available_transcode_resolutions(
+                        file,
+                        Map.new(Map.get(@transcode_jobs, file.id, []), fn j -> {j.resolution, j} end)
+                      ) %>
+                    <%= if available_resolutions != [] do %>
+                      <div class="dropdown dropdown-end">
+                        <div
+                          tabindex="0"
+                          role="button"
+                          class="btn btn-ghost btn-sm btn-square"
+                          title="Pre-transcode"
+                        >
+                          <.icon name="hero-wrench" class="w-5 h-5" />
+                        </div>
+                        <ul
+                          tabindex="0"
+                          class="dropdown-content menu bg-base-100 rounded-box z-[1] w-44 p-2 shadow"
+                        >
+                          <li :for={res <- available_resolutions}>
+                            <button
+                              type="button"
+                              phx-click="pre_transcode"
+                              phx-value-media-file-id={file.id}
+                              phx-value-resolution={res}
+                            >
+                              {res}
+                            </button>
+                          </li>
+                        </ul>
+                      </div>
+                    <% end %>
                     <button
                       type="button"
                       phx-click="show_file_details"
@@ -975,43 +1052,16 @@ defmodule MydiaWeb.MediaLive.Show.Components do
   attr :transcode_jobs, :list, default: []
 
   defp transcode_controls(assigns) do
-    assigns =
-      assign(
-        assigns,
-        :jobs_by_resolution,
-        Map.new(assigns.transcode_jobs, fn j -> {j.resolution, j} end)
-      )
-
     ~H"""
-    <div class="flex flex-wrap items-center gap-2">
-      <%!-- Status badges for existing transcode jobs --%>
-      <.transcode_badge
-        :for={job <- @transcode_jobs}
-        job={job}
-        file={@file}
-      />
-      <%!-- Pre-transcode dropdown for resolutions not yet queued --%>
-      <% available = available_transcode_resolutions(@file, @jobs_by_resolution) %>
-      <%= if available != [] do %>
-        <div class="dropdown dropdown-end">
-          <div tabindex="0" role="button" class="btn btn-ghost btn-xs gap-1">
-            <.icon name="hero-bolt" class="w-3.5 h-3.5" /> Pre-Transcode
-          </div>
-          <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-[1] w-44 p-2 shadow">
-            <li :for={res <- available}>
-              <button
-                type="button"
-                phx-click="pre_transcode"
-                phx-value-media-file-id={@file.id}
-                phx-value-resolution={res}
-              >
-                {res}
-              </button>
-            </li>
-          </ul>
-        </div>
-      <% end %>
-    </div>
+    <%= if @transcode_jobs != [] do %>
+      <div class="flex flex-wrap items-center gap-2">
+        <.transcode_badge
+          :for={job <- @transcode_jobs}
+          job={job}
+          file={@file}
+        />
+      </div>
+    <% end %>
     """
   end
 

@@ -83,6 +83,9 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
       assigns.ra_config && assigns.ra_config.enabled && assigns.p2p_status &&
         assigns.p2p_status.running
 
+    # Pairing requires relay to be connected (so we can produce a node_addr)
+    pairing_available = p2p_running && assigns.p2p_status.relay_connected
+
     # Get local address info
     local_addr = get_local_address()
 
@@ -92,6 +95,7 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
     assigns =
       assigns
       |> assign(:p2p_running, p2p_running)
+      |> assign(:pairing_available, pairing_available)
       |> assign(:local_addr, local_addr)
       |> assign(:detected_urls, detected_urls)
 
@@ -102,14 +106,14 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
         <div class="flex items-center gap-3">
           <div class={[
             "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-            if(@ra_config && @ra_config.enabled && @p2p_running,
+            if(@ra_config && @ra_config.enabled && @pairing_available,
               do: "bg-success/15",
               else: "bg-base-300"
             )
           ]}>
             <.icon
               name="hero-signal"
-              class={"w-5 h-5 #{if @ra_config && @ra_config.enabled && @p2p_running, do: "text-success", else: "opacity-50"}"}
+              class={"w-5 h-5 #{if @ra_config && @ra_config.enabled && @pairing_available, do: "text-success", else: "opacity-50"}"}
             />
           </div>
           <div>
@@ -118,8 +122,10 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
               <%= cond do %>
                 <% !(@ra_config && @ra_config.enabled) -> %>
                   Connect mobile apps from anywhere
-                <% @p2p_running -> %>
+                <% @pairing_available -> %>
                   Players can connect via P2P
+                <% @p2p_running -> %>
+                  Connecting to relay...
                 <% true -> %>
                   Initializing...
               <% end %>
@@ -141,7 +147,7 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
         <%!-- Pairing & Status Row --%>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <%!-- Pair New Device Card --%>
-          <%= if @p2p_running do %>
+          <%= if @pairing_available do %>
             <div
               class="group flex items-center gap-3 p-4 bg-gradient-to-br from-primary/5 via-base-200 to-secondary/5 rounded-xl border border-primary/20 cursor-pointer hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all"
               phx-click="open_pairing_modal"
@@ -166,11 +172,17 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
           <% else %>
             <div class="flex items-center gap-3 p-4 bg-base-200 rounded-xl border border-base-300 opacity-60">
               <div class="w-11 h-11 rounded-xl bg-base-300 flex items-center justify-center">
-                <span class="loading loading-spinner loading-sm"></span>
+                <.icon name="hero-qr-code" class="w-5 h-5 opacity-40" />
               </div>
               <div class="flex-1">
                 <div class="font-semibold">Pair New Device</div>
-                <div class="text-xs text-base-content/50">Starting...</div>
+                <div class="text-xs text-base-content/50">
+                  <%= if @p2p_running do %>
+                    Waiting for relay connection...
+                  <% else %>
+                    Starting P2P...
+                  <% end %>
+                </div>
               </div>
             </div>
           <% end %>
@@ -180,12 +192,23 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
             <div class="flex items-center gap-3">
               <div class={[
                 "w-3 h-3 rounded-full shrink-0",
-                if(@p2p_running, do: "bg-success", else: "bg-warning animate-pulse")
+                cond do
+                  @pairing_available -> "bg-success"
+                  @p2p_running -> "bg-warning animate-pulse"
+                  true -> "bg-warning animate-pulse"
+                end
               ]}>
               </div>
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-sm">
-                  {if @p2p_running, do: "P2P Online", else: "P2P Starting..."}
+                  <%= cond do %>
+                    <% @pairing_available -> %>
+                      P2P Online
+                    <% @p2p_running -> %>
+                      P2P Connecting...
+                    <% true -> %>
+                      P2P Starting...
+                  <% end %>
                 </div>
                 <div class="text-xs text-base-content/50">
                   <%= if @p2p_status && @p2p_status.relay_connected do %>
@@ -1144,17 +1167,33 @@ defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
 
       {:error, :p2p_not_running} ->
         Logger.warning("Failed to generate pairing code: P2P service not running")
+        assign(socket, :pairing_error, "P2P service is not running. Please try again.")
+
+      {:error, :p2p_not_ready} ->
+        Logger.warning("Failed to generate pairing code: P2P not ready yet")
 
         assign(
           socket,
           :pairing_error,
-          "P2P service is not running. Please try again."
+          "P2P service is still starting up. Please try again in a moment."
         )
 
-      {:error, changeset} ->
-        Logger.error("Failed to generate pairing code: database error - #{inspect(changeset)}")
+      {:error, :rate_limited} ->
+        Logger.warning("Failed to generate pairing code: rate limited by relay")
+        assign(socket, :pairing_error, "Too many requests. Please wait a minute and try again.")
 
-        assign(socket, :pairing_error, "Database error. Please try again.")
+      {:error, :create_claim_failed} ->
+        Logger.error("Failed to generate pairing code: relay returned an error")
+        assign(socket, :pairing_error, "Relay service returned an error. Please try again.")
+
+      {:error, reason} ->
+        Logger.error("Failed to generate pairing code: #{inspect(reason)}")
+
+        assign(
+          socket,
+          :pairing_error,
+          "Could not connect to relay service. Please check your connection and try again."
+        )
     end
   end
 

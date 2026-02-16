@@ -256,7 +256,7 @@ defmodule MydiaWeb.AdminConfigLive.Components do
         </div>
       </div>
 
-      <div class="divider">Player Activity</div>
+      <div class="divider">Activity</div>
 
       <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 sm:gap-8">
         <%!-- Active Playback Sessions --%>
@@ -340,16 +340,18 @@ defmodule MydiaWeb.AdminConfigLive.Components do
                     <div class="flex justify-between items-start gap-2 mb-2">
                       <% title =
                         cond do
-                          job.media_file.episode && job.media_file.media_item ->
-                            "#{job.media_file.media_item.title} - S#{job.media_file.episode.season_number}E#{job.media_file.episode.episode_number}"
+                          job.media_file.episode && job.media_file.episode.media_item ->
+                            ep = job.media_file.episode
+                            s = String.pad_leading("#{ep.season_number}", 2, "0")
+                            e = String.pad_leading("#{ep.episode_number}", 2, "0")
+                            "#{ep.media_item.title} - S#{s}E#{e}"
 
                           job.media_file.media_item ->
                             job.media_file.media_item.title
 
                           true ->
-                            if job.media_file.path,
-                              do: Path.basename(job.media_file.path),
-                              else: "Unknown"
+                            path = job.media_file.relative_path || job.media_file.path
+                            if path, do: Path.basename(path), else: "Unknown"
                         end %>
                       <div class="min-w-0 flex-1">
                         <div class="font-medium text-sm truncate" title={title}>{title}</div>

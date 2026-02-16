@@ -547,8 +547,28 @@ defmodule Mydia.Library do
                 scan_result.files
                 |> Enum.reject(fn file_info -> MapSet.member?(existing_paths, file_info.path) end)
 
+              # Find files in DB that are no longer on disk
+              scanned_paths =
+                scan_result.files
+                |> Enum.map(& &1.path)
+                |> MapSet.new()
+
+              missing_files =
+                Enum.reject(existing_files, fn file ->
+                  case MediaFile.absolute_path(file) do
+                    nil -> true
+                    path -> MapSet.member?(scanned_paths, path)
+                  end
+                end)
+
+              deleted_count =
+                Enum.count(missing_files, fn file ->
+                  match?({:ok, _}, delete_media_file(file))
+                end)
+
               Logger.info("Found new files during re-scan",
                 new_file_count: length(new_files),
+                deleted_files: deleted_count,
                 total_scanned: length(scan_result.files)
               )
 
@@ -577,6 +597,7 @@ defmodule Mydia.Library do
               Logger.info("Re-scan complete",
                 media_item_id: media_item_id,
                 new_files: created_count,
+                deleted_files: deleted_count,
                 matched: matched_count,
                 errors: length(create_errors)
               )
@@ -584,6 +605,7 @@ defmodule Mydia.Library do
               {:ok,
                %{
                  new_files: created_count,
+                 deleted_files: deleted_count,
                  matched: matched_count,
                  errors: create_errors
                }}
@@ -646,8 +668,9 @@ defmodule Mydia.Library do
                   parsed.season == season_number
                 end)
 
-              # Get existing media file paths for this series
-              existing_files = get_media_files_for_item(media_item_id, preload: [:library_path])
+              # Get existing media file paths for this series (with episode for season scoping)
+              existing_files =
+                get_media_files_for_item(media_item_id, preload: [:library_path, :episode])
 
               existing_paths =
                 existing_files
@@ -660,9 +683,46 @@ defmodule Mydia.Library do
                 season_files
                 |> Enum.reject(fn file_info -> MapSet.member?(existing_paths, file_info.path) end)
 
+              # Find files in DB for this season that are no longer on disk
+              scanned_paths =
+                season_files
+                |> Enum.map(& &1.path)
+                |> MapSet.new()
+
+              missing_files =
+                existing_files
+                |> Enum.filter(fn file ->
+                  # Only consider files belonging to this season
+                  belongs_to_season =
+                    cond do
+                      file.episode && file.episode.season_number == season_number ->
+                        true
+
+                      is_nil(file.episode) ->
+                        # Unmatched file: use filename parsing to determine season
+                        parsed = FileParser.parse(Path.basename(file.relative_path || ""))
+                        parsed.season == season_number
+
+                      true ->
+                        false
+                    end
+
+                  belongs_to_season &&
+                    case MediaFile.absolute_path(file) do
+                      nil -> false
+                      path -> not MapSet.member?(scanned_paths, path)
+                    end
+                end)
+
+              deleted_count =
+                Enum.count(missing_files, fn file ->
+                  match?({:ok, _}, delete_media_file(file))
+                end)
+
               Logger.info("Found new files for season during re-scan",
                 season: season_number,
                 new_file_count: length(new_files),
+                deleted_files: deleted_count,
                 total_season_files: length(season_files)
               )
 
@@ -694,6 +754,7 @@ defmodule Mydia.Library do
                 media_item_id: media_item_id,
                 season: season_number,
                 new_files: created_count,
+                deleted_files: deleted_count,
                 matched: matched_count,
                 errors: length(create_errors)
               )
@@ -701,6 +762,7 @@ defmodule Mydia.Library do
               {:ok,
                %{
                  new_files: created_count,
+                 deleted_files: deleted_count,
                  matched: matched_count,
                  errors: create_errors
                }}
@@ -775,8 +837,28 @@ defmodule Mydia.Library do
                 scan_result.files
                 |> Enum.reject(fn file_info -> MapSet.member?(existing_paths, file_info.path) end)
 
+              # Find files in DB that are no longer on disk
+              scanned_paths =
+                scan_result.files
+                |> Enum.map(& &1.path)
+                |> MapSet.new()
+
+              missing_files =
+                Enum.reject(existing_files, fn file ->
+                  case MediaFile.absolute_path(file) do
+                    nil -> true
+                    path -> MapSet.member?(scanned_paths, path)
+                  end
+                end)
+
+              deleted_count =
+                Enum.count(missing_files, fn file ->
+                  match?({:ok, _}, delete_media_file(file))
+                end)
+
               Logger.info("Found new files during movie re-scan",
                 new_file_count: length(new_files),
+                deleted_files: deleted_count,
                 total_scanned: length(scan_result.files)
               )
 
@@ -787,12 +869,14 @@ defmodule Mydia.Library do
               Logger.info("Movie re-scan complete",
                 media_item_id: media_item_id,
                 new_files: created_count,
+                deleted_files: deleted_count,
                 errors: length(create_errors)
               )
 
               {:ok,
                %{
                  new_files: created_count,
+                 deleted_files: deleted_count,
                  errors: create_errors
                }}
 
