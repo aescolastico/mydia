@@ -1323,6 +1323,15 @@ defmodule Mydia.Events do
   defp format_download_error(:duplicate_download), do: "Download already exists"
   defp format_download_error(:no_suitable_client), do: "No suitable download client found"
   defp format_download_error(:client_error), do: "Download client error"
+
+  defp format_download_error({:client_error, %Mydia.Downloads.Client.Error{} = error}),
+    do: Mydia.Downloads.Client.Error.message(error)
+
+  defp format_download_error({:client_error, reason}) when is_binary(reason), do: reason
+
+  defp format_download_error({:client_error, reason}),
+    do: "Download client error: #{inspect(reason)}"
+
   defp format_download_error(reason) when is_binary(reason), do: reason
   defp format_download_error(reason), do: inspect(reason)
 
