@@ -8,32 +8,38 @@ RUN apk add --no-cache build-base git openssl-dev
 ENV MIX_ENV=prod
 ENV HEX_HOME=/root/.hex
 ENV MIX_HOME=/root/.mix
+# Increase hex timeout for slow networks/CI (5 minutes)
+ENV HEX_HTTP_TIMEOUT=300000
 
 WORKDIR /app
 
 # Install hex and rebar with cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+# Use id=relay-* to avoid cache contamination with mydia builds (different OTP version)
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
     mix local.hex --force && \
     mix local.rebar --force
 
 # Copy mix files (building from repo root)
 COPY metadata-relay/mix.exs metadata-relay/mix.lock ./
 
-# Install dependencies with cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
-    --mount=type=cache,target=/app/deps \
-    mix deps.get --only prod && \
+# Install dependencies with cache (with retry for transient network failures)
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
+    --mount=type=cache,id=relay-deps,target=/app/deps \
+    for i in 1 2 3; do \
+      mix deps.get --only prod && break || \
+      (echo "Attempt $i failed, retrying in 10s..." && sleep 10); \
+    done && \
     cp -r deps deps_copy
 
 # Restore deps from cache copy
 RUN rm -rf deps && mv deps_copy deps
 
 # Compile dependencies with cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
-    --mount=type=cache,target=/app/_build,sharing=locked \
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
+    --mount=type=cache,id=relay-build,target=/app/_build,sharing=locked \
     mix deps.compile && \
     cp -r _build _build_copy
 
@@ -46,13 +52,13 @@ COPY metadata-relay/lib ./lib
 COPY metadata-relay/priv ./priv
 
 # Compile the application
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
     mix compile
 
 # Build release
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
     mix release
 
 # Start a new stage for the final image

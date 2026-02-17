@@ -38,8 +38,9 @@ ENV MIX_HOME=/root/.mix
 ENV HEX_HTTP_TIMEOUT=300000
 
 # Install Hex and Rebar with cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+# Use id=mydia-* to avoid cache contamination with relay builds (different OTP version)
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
     mix local.hex --force && \
     mix local.rebar --force
 
@@ -50,9 +51,9 @@ WORKDIR /app
 COPY mix.exs mix.lock ./
 
 # Install dependencies with cache (with retry for transient network failures)
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
-    --mount=type=cache,target=/app/deps \
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
+    --mount=type=cache,id=mydia-deps,target=/app/deps \
     for i in 1 2 3; do \
       mix deps.get --only prod && break || \
       (echo "Attempt $i failed, retrying in 10s..." && sleep 10); \
@@ -66,9 +67,9 @@ RUN rm -rf deps && mv deps_copy deps
 COPY patches/ueberauth_oidcc_request.ex ./deps/ueberauth_oidcc/lib/ueberauth_oidcc/request.ex
 
 # Compile dependencies with cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
-    --mount=type=cache,target=/app/_build,sharing=locked \
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
+    --mount=type=cache,id=mydia-build,target=/app/_build,sharing=locked \
     mix deps.compile && \
     cp -r _build _build_copy
 
@@ -83,13 +84,13 @@ COPY assets ./assets
 COPY native ./native
 
 # Compile application
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
     mix compile
 
 # Build Phoenix assets with npm cache
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
     --mount=type=cache,target=/root/.npm \
     cd assets && \
     npm ci --prefix . --progress=false --no-audit --loglevel=error && \
@@ -97,8 +98,8 @@ RUN --mount=type=cache,target=/root/.hex \
     mix assets.deploy
 
 # Build release
-RUN --mount=type=cache,target=/root/.hex \
-    --mount=type=cache,target=/root/.mix \
+RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
+    --mount=type=cache,id=mydia-mix,target=/root/.mix \
     mix release
 
 # ============================================
