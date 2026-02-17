@@ -82,12 +82,20 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
   @impl true
   def handle_info({:job_updated, _id}, socket) do
+    job_preloads = [:user, media_file: [:media_item, episode: [:media_item]]]
+
+    active_jobs =
+      Downloads.list_transcode_jobs(
+        status: ["pending", "transcoding", "playing"],
+        preload: job_preloads
+      )
+
+    recent_activity = build_recent_activity(job_preloads)
+
     {:noreply,
-     update(socket, :transcode_jobs, fn _ ->
-       Downloads.list_transcode_jobs(
-         preload: [:user, media_file: [:media_item, episode: [:media_item]]]
-       )
-     end)}
+     socket
+     |> assign(:active_jobs, active_jobs)
+     |> assign(:recent_activity, recent_activity)}
   end
 
   # Library reorganization job handlers
@@ -310,9 +318,17 @@ defmodule MydiaWeb.AdminConfigLive.Index do
   end
 
   @impl true
-  def handle_event("clear_completed_jobs", _params, socket) do
+  def handle_event("clear_recent_activity", _params, socket) do
     Downloads.delete_all_completed_jobs()
-    {:noreply, put_flash(socket, :info, "Cleared all completed transcode jobs")}
+    Playback.clear_recent_history()
+
+    job_preloads = [:user, media_file: [:media_item, episode: [:media_item]]]
+    recent_activity = build_recent_activity(job_preloads)
+
+    {:noreply,
+     socket
+     |> assign(:recent_activity, recent_activity)
+     |> put_flash(:info, "Cleared recent activity")}
   end
 
   ## General Settings Events
@@ -2719,15 +2735,45 @@ defmodule MydiaWeb.AdminConfigLive.Index do
   end
 
   defp load_player_data(socket) do
+    job_preloads = [:user, media_file: [:media_item, episode: [:media_item]]]
+
+    active_jobs =
+      Downloads.list_transcode_jobs(
+        status: ["pending", "transcoding", "playing"],
+        preload: job_preloads
+      )
+
+    recent_activity = build_recent_activity(job_preloads)
+
     socket
     |> assign(:active_sessions, Streaming.list_active_sessions())
-    |> assign(
-      :transcode_jobs,
+    |> assign(:active_jobs, active_jobs)
+    |> assign(:recent_activity, recent_activity)
+  end
+
+  defp build_recent_activity(job_preloads) do
+    completed_jobs =
       Downloads.list_transcode_jobs(
-        preload: [:user, media_file: [:media_item, episode: [:media_item]]]
+        status: ["ready", "failed"],
+        limit: 15,
+        preload: job_preloads
       )
-    )
-    |> assign(:watch_history, Playback.list_recent_history(limit: 20))
+
+    watch_history = Playback.list_recent_history(limit: 15)
+
+    job_items =
+      Enum.map(completed_jobs, fn job ->
+        %{type: :transcode_job, data: job, timestamp: job.updated_at}
+      end)
+
+    history_items =
+      Enum.map(watch_history, fn progress ->
+        %{type: :watch_history, data: progress, timestamp: progress.last_watched_at}
+      end)
+
+    (job_items ++ history_items)
+    |> Enum.sort_by(& &1.timestamp, {:desc, DateTime})
+    |> Enum.take(20)
   end
 
   defp get_media_server_health_status(media_servers) do

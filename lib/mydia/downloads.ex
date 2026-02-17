@@ -1794,13 +1794,28 @@ defmodule Mydia.Downloads do
 
   @doc """
   Lists transcode jobs.
+
+  ## Options
+    - `:preload` - List of associations to preload
+    - `:status` - List of status strings to filter by (e.g. ["pending", "transcoding"])
+    - `:limit` - Maximum number of results to return
   """
   def list_transcode_jobs(opts \\ []) do
     TranscodeJob
+    |> maybe_filter_status(opts[:status])
     |> maybe_preload(opts[:preload])
     |> order_by([j], desc: j.updated_at)
+    |> maybe_limit(opts[:limit])
     |> Repo.all()
   end
+
+  defp maybe_filter_status(query, nil), do: query
+
+  defp maybe_filter_status(query, statuses) when is_list(statuses),
+    do: where(query, [j], j.status in ^statuses)
+
+  defp maybe_limit(query, nil), do: query
+  defp maybe_limit(query, limit), do: limit(query, ^limit)
 
   @doc """
   Cancels a transcode job.
@@ -1853,12 +1868,12 @@ defmodule Mydia.Downloads do
   end
 
   @doc """
-  Deletes all completed (ready) transcode jobs and their files.
+  Deletes all completed (ready) and failed transcode jobs and their files.
   """
   def delete_all_completed_jobs do
     jobs =
       TranscodeJob
-      |> where([j], j.status == "ready")
+      |> where([j], j.status in ["ready", "failed"])
       |> Repo.all()
 
     Enum.each(jobs, &cancel_transcode_job/1)
