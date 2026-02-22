@@ -134,6 +134,10 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
           if(max_bitrate, do: " (max_bitrate: #{max_bitrate}kbps)", else: "")
       )
 
+      # Fire Trakt scrobble start
+      content_id = resolve_content_id(media_file)
+      Mydia.Integrations.Trakt.Scrobbler.scrobble_start(user_id, content_id)
+
       {:ok,
        %{
          session_id: info.session_id,
@@ -179,6 +183,14 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
         # Session not found, but that's okay (may have already timed out)
         Logger.debug("Session #{session_id} not found, may have already terminated")
         {:ok, true}
+    end
+  end
+
+  defp resolve_content_id(media_file) do
+    cond do
+      media_file.episode_id -> [episode_id: media_file.episode_id]
+      media_file.media_item_id -> [media_item_id: media_file.media_item_id]
+      true -> []
     end
   end
 end

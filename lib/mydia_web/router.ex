@@ -76,6 +76,15 @@ defmodule MydiaWeb.Router do
     live "/setup", FirstTimeSetupLive.Index, :index
   end
 
+  # Trakt OAuth (authenticated users only, must be before OIDC /:provider catch-all)
+  scope "/auth", MydiaWeb do
+    pipe_through [:browser, :auth, :require_authenticated]
+
+    get "/trakt", TraktAuthController, :authorize
+    get "/trakt/callback", TraktAuthController, :callback
+    delete "/trakt", TraktAuthController, :disconnect
+  end
+
   # Authentication routes
   scope "/auth", MydiaWeb do
     pipe_through :browser

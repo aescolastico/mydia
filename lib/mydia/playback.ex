@@ -55,16 +55,26 @@ defmodule Mydia.Playback do
       |> Map.put(:user_id, user_id)
       |> Map.merge(Map.new(content_id))
 
-    case get_progress(user_id, content_id) do
-      nil ->
-        %Progress{}
-        |> Progress.changeset(attrs)
-        |> Repo.insert()
+    result =
+      case get_progress(user_id, content_id) do
+        nil ->
+          %Progress{}
+          |> Progress.changeset(attrs)
+          |> Repo.insert()
 
-      existing_progress ->
-        existing_progress
-        |> Progress.changeset(attrs)
-        |> Repo.update()
+        existing_progress ->
+          existing_progress
+          |> Progress.changeset(attrs)
+          |> Repo.update()
+      end
+
+    case result do
+      {:ok, progress} ->
+        maybe_scrobble(user_id, content_id, progress)
+        {:ok, progress}
+
+      error ->
+        error
     end
   end
 
@@ -130,14 +140,25 @@ defmodule Mydia.Playback do
 
   """
   def mark_watched(user_id, content_id) do
-    case get_progress(user_id, content_id) do
-      nil ->
-        {:error, :not_found}
+    result =
+      case get_progress(user_id, content_id) do
+        nil ->
+          {:error, :not_found}
 
-      existing_progress ->
-        existing_progress
-        |> Progress.changeset(%{watched: true})
-        |> Repo.update()
+        existing_progress ->
+          existing_progress
+          |> Progress.changeset(%{watched: true})
+          |> Repo.update()
+      end
+
+    case result do
+      {:ok, _progress} ->
+        # Push to Trakt history (fire-and-forget)
+        maybe_push_trakt_history(user_id, content_id)
+        result
+
+      _ ->
+        result
     end
   end
 
@@ -294,5 +315,20 @@ defmodule Mydia.Playback do
       end
 
     Repo.all(query)
+  end
+
+  # ── Trakt Integration ────────────────────────────────────────────────
+
+  defp maybe_scrobble(user_id, content_id, progress) do
+    if Mydia.Integrations.trakt_scrobbling_enabled?(user_id) do
+      pct = progress.completion_percentage || 0.0
+      Mydia.Integrations.Trakt.Scrobbler.scrobble_progress(user_id, content_id, pct)
+    end
+  end
+
+  defp maybe_push_trakt_history(user_id, content_id) do
+    if Mydia.Integrations.trakt_enabled?(user_id) do
+      Mydia.Integrations.Trakt.Scrobbler.scrobble_stop(user_id, content_id, 100.0)
+    end
   end
 end
