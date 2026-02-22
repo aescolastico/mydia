@@ -1,6 +1,6 @@
 site_name: Mydia Documentation
 site_description: A modern, self-hosted media management platform for tracking, organizing, and monitoring your media library
-site_url: https://getmydia.github.io/mydia
+site_url: https://docs.mydia.dev
 repo_url: https://github.com/getmydia/mydia
 repo_name: getmydia/mydia
 docs_dir: docs

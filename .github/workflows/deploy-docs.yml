@@ -23,7 +23,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "docs"
   cancel-in-progress: false
 
 jobs:
