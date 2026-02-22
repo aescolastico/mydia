@@ -5,14 +5,13 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/cache/poster_cache_manager.dart';
 import 'episode_detail_controller.dart';
 import '../../../domain/models/episode_detail.dart';
-import '../../widgets/quality_selector.dart';
 import '../../widgets/quality_download_dialog.dart';
 import '../../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../../core/downloads/download_providers.dart';
 import '../../../core/downloads/download_job_providers.dart';
 import '../../../domain/models/download.dart';
 import '../../../core/theme/colors.dart';
-import '../../widgets/play_button.dart';
+import '../../widgets/smart_play_button.dart';
 
 class EpisodeDetailScreen extends ConsumerWidget {
   final String id;
@@ -187,20 +186,13 @@ class EpisodeDetailScreen extends ConsumerWidget {
                       child: _buildTitleSectionInline(context, episode),
                     ),
                     const SizedBox(width: 12),
-                    PlayButton(
-                      onPressed: episode.files.isNotEmpty
-                          ? () async {
-                              final selectedFile = await showQualitySelector(
-                                context,
-                                episode.files,
-                              );
-                              if (selectedFile != null && context.mounted) {
-                                context.push(
-                                  '/player/episode/${episode.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(episode.fullTitle)}',
-                                );
-                              }
-                            }
-                          : null,
+                    SmartPlayButton(
+                      files: episode.files,
+                      onFileSelected: (file) {
+                        context.push(
+                          '/player/episode/${episode.id}?fileId=${file.id}&title=${Uri.encodeComponent(episode.fullTitle)}',
+                        );
+                      },
                     ),
                   ],
                 ),

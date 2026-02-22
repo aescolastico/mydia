@@ -14,9 +14,9 @@ import '../../../domain/models/season_info.dart';
 import '../../../domain/models/episode.dart';
 import '../../widgets/episode_card.dart';
 import '../../widgets/quality_download_dialog.dart';
-import '../../widgets/quality_selector.dart';
+import '../../../core/player/media_file_selector.dart';
 import '../../../core/theme/colors.dart';
-import '../../widgets/play_button.dart';
+import '../../widgets/smart_play_button.dart';
 
 class ShowDetailScreen extends ConsumerWidget {
   final String id;
@@ -342,25 +342,18 @@ class ShowDetailScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  PlayButton(
-                    onPressed: show.nextEpisode != null &&
-                            show.nextEpisode!.files.isNotEmpty
-                        ? () async {
-                            final nextEp = show.nextEpisode!;
-                            final selectedFile = await showQualitySelector(
-                              context,
-                              nextEp.files,
-                            );
-                            if (selectedFile != null && context.mounted) {
-                              final title =
-                                  '${show.title} - ${nextEp.episodeCode}';
-                              context.push(
-                                '/player/episode/${nextEp.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(title)}',
-                              );
-                            }
-                          }
-                        : null,
-                  ),
+                  if (show.nextEpisode != null)
+                    SmartPlayButton(
+                      files: show.nextEpisode!.files,
+                      onFileSelected: (file) {
+                        final nextEp = show.nextEpisode!;
+                        final title =
+                            '${show.title} - ${nextEp.episodeCode}';
+                        context.push(
+                          '/player/episode/${nextEp.id}?fileId=${file.id}&title=${Uri.encodeComponent(title)}',
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
@@ -735,9 +728,13 @@ class ShowDetailScreen extends ConsumerWidget {
                   onTap: episode.hasFile
                       ? () async {
                           if (episode.files.isNotEmpty) {
-                            final selectedFile = await showQualitySelector(
-                              context,
+                            final screenWidth =
+                                MediaQuery.sizeOf(context).width;
+                            final deviceContext =
+                                await DeviceContext.detect(screenWidth);
+                            final selectedFile = MediaFileSelector.selectBest(
                               episode.files,
+                              deviceContext,
                             );
                             if (selectedFile != null && context.mounted) {
                               final showAsync =

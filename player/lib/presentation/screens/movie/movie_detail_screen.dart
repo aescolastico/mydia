@@ -4,14 +4,13 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../core/cache/poster_cache_manager.dart';
 import 'movie_detail_controller.dart';
-import '../../widgets/quality_selector.dart';
 import '../../widgets/quality_download_dialog.dart';
 import '../../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../../core/downloads/download_providers.dart';
 import '../../../core/downloads/download_job_providers.dart';
 import '../../../domain/models/download.dart';
 import '../../../core/theme/colors.dart';
-import '../../widgets/play_button.dart';
+import '../../widgets/smart_play_button.dart';
 
 class MovieDetailScreen extends ConsumerWidget {
   final String id;
@@ -334,20 +333,13 @@ class MovieDetailScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  PlayButton(
-                    onPressed: movie.files.isNotEmpty
-                        ? () async {
-                            final selectedFile = await showQualitySelector(
-                              context,
-                              movie.files,
-                            );
-                            if (selectedFile != null && context.mounted) {
-                              context.push(
-                                '/player/movie/${movie.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(movie.title)}',
-                              );
-                            }
-                          }
-                        : null,
+                  SmartPlayButton(
+                    files: movie.files,
+                    onFileSelected: (file) {
+                      context.push(
+                        '/player/movie/${movie.id}?fileId=${file.id}&title=${Uri.encodeComponent(movie.title)}',
+                      );
+                    },
                   ),
                 ],
               ),
