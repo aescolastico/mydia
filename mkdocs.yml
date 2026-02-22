@@ -4,6 +4,7 @@ site_url: https://docs.mydia.dev
 repo_url: https://github.com/getmydia/mydia
 repo_name: getmydia/mydia
 docs_dir: docs
+site_dir: _site
 
 theme:
   name: material

@@ -1,0 +1,27 @@
+---
+import { getCollection } from 'astro:content';
+import BlogCard from './BlogCard.astro';
+
+const posts = (await getCollection('blog'))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
+  .slice(0, 3);
+---
+
+{posts.length > 0 && (
+  <section class="py-20 px-4 bg-base-200/50">
+    <div class="max-w-4xl mx-auto">
+      <div class="flex items-center justify-between mb-10">
+        <h2 class="text-3xl font-bold">Latest posts</h2>
+        <a href="/blog" class="btn btn-ghost btn-sm">
+          View all
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+          </svg>
+        </a>
+      </div>
+      <div class="grid gap-4">
+        {posts.map(post => <BlogCard post={post} />)}
+      </div>
+    </div>
+  </section>
+)}

@@ -1,0 +1,24 @@
+---
+import Base from '../../layouts/Base.astro';
+import BlogCard from '../../components/BlogCard.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('blog'))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+---
+
+<Base title="Blog - Mydia" description="Updates and news from the Mydia project">
+  <div class="py-16 px-4">
+    <div class="max-w-4xl mx-auto">
+      <h1 class="text-4xl font-bold mb-2">Blog</h1>
+      <p class="text-base-content/60 mb-10">Updates, releases, and news from the Mydia project.</p>
+      {posts.length > 0 ? (
+        <div class="grid gap-4">
+          {posts.map(post => <BlogCard post={post} />)}
+        </div>
+      ) : (
+        <p class="text-base-content/50">No posts yet. Check back soon!</p>
+      )}
+    </div>
+  </div>
+</Base>

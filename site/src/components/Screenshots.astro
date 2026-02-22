@@ -1,0 +1,47 @@
+---
+const screenshots = [
+  { src: '/img/homepage.png', alt: 'Mydia homepage dashboard', label: 'Dashboard' },
+  { src: '/img/tv-shows.png', alt: 'TV shows library', label: 'TV Shows' },
+  { src: '/img/movies.png', alt: 'Movies library', label: 'Movies' },
+  { src: '/img/calendar.png', alt: 'Episode calendar', label: 'Calendar' },
+  { src: '/img/search.png', alt: 'Search interface', label: 'Search' },
+];
+---
+
+<section class="py-20 px-4">
+  <div class="max-w-6xl mx-auto">
+    <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4">
+      See it in action
+    </h2>
+    <p class="text-base-content/60 text-center mb-12 max-w-xl mx-auto">
+      A clean, modern interface for managing your media collection.
+    </p>
+
+    <!-- Featured screenshot -->
+    <div class="mb-8 rounded-xl overflow-hidden border border-base-300 shadow-2xl">
+      <img
+        src={screenshots[0].src}
+        alt={screenshots[0].alt}
+        class="w-full"
+        loading="lazy"
+      />
+    </div>
+
+    <!-- Thumbnail grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {screenshots.slice(1).map(screenshot => (
+        <div class="group">
+          <div class="rounded-lg overflow-hidden border border-base-300 hover:border-primary/30 transition-colors shadow-lg">
+            <img
+              src={screenshot.src}
+              alt={screenshot.alt}
+              class="w-full"
+              loading="lazy"
+            />
+          </div>
+          <p class="text-sm text-base-content/50 text-center mt-2">{screenshot.label}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

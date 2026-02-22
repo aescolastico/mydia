@@ -87,7 +87,7 @@ compose.override.yml
 /priv/generated/
 
 # MkDocs build output
-/site/
+/_site/
 
 # Metadata relay logs
 /metadata-relay/logs/
