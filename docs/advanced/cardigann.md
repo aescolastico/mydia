@@ -61,6 +61,24 @@ Each indexer may have specific settings:
 
 Refer to the indexer's requirements in the Admin UI.
 
+## FlareSolverr Integration
+
+Some indexer sites are protected by Cloudflare or similar anti-bot services. You can use [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) to bypass these challenges automatically.
+
+### Setup
+
+1. Run a FlareSolverr instance (e.g., via Docker)
+2. Configure the following environment variables:
+
+```bash
+FLARESOLVERR_URL=http://flaresolverr:8191
+# FLARESOLVERR_ENABLED is auto-enabled when URL is set
+# FLARESOLVERR_TIMEOUT=60000
+# FLARESOLVERR_MAX_TIMEOUT=120000
+```
+
+See [Environment Variables](../reference/environment-variables.md#flaresolverr) for the full reference.
+
 ## Limitations
 
 ### Known Issues

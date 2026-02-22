@@ -70,11 +70,14 @@ Configure additional libraries using numbered variables (`<N>` = 1, 2, 3, etc.):
 |----------|-------------|---------|
 | `LOCAL_AUTH_ENABLED` | Enable local username/password auth | `true` |
 | `OIDC_ENABLED` | Enable OIDC/OpenID Connect auth | `false` |
-| `OIDC_DISCOVERY_DOCUMENT_URI` | OIDC discovery endpoint URL | - |
+| `OIDC_ISSUER` | OIDC issuer URL (e.g., `https://auth.example.com`) | - |
 | `OIDC_CLIENT_ID` | OIDC client ID | - |
 | `OIDC_CLIENT_SECRET` | OIDC client secret | - |
 | `OIDC_REDIRECT_URI` | OIDC callback URL | Auto-computed |
 | `OIDC_SCOPES` | Space-separated scope list | `openid profile email` |
+
+!!! note "Legacy Variable"
+    `OIDC_DISCOVERY_DOCUMENT_URI` is accepted as a legacy alias for `OIDC_ISSUER`. The issuer is extracted by stripping the `/.well-known/openid-configuration` suffix.
 
 ## Feature Flags
 
@@ -82,8 +85,8 @@ Configure additional libraries using numbered variables (`<N>` = 1, 2, 3, etc.):
 |----------|-------------|---------|
 | `ENABLE_PLAYBACK` | Enable media playback controls and HLS streaming | `true` |
 | `ENABLE_CARDIGANN` | Enable native Cardigann indexer support | `true` |
-| `ENABLE_SUBTITLES` | Enable subtitle download and management | `false` |
-| `ENABLE_IMPORT_LISTS` | Enable import lists for syncing external lists (TMDB watchlists, popular, etc.) | `true` |
+| `ENABLE_IMPORT_LISTS` | Enable import lists for syncing external lists (TMDB watchlists, popular, etc.) | `false` |
+| `ENABLE_REMOTE_ACCESS` | Enable P2P remote access for the Flutter player | `false` |
 
 ## Download Clients
 
@@ -122,7 +125,7 @@ Configure multiple indexers using numbered variables (`<N>` = 1, 2, 3, etc.):
 | `INDEXER_<N>_CATEGORIES` | Comma-separated categories | `movies,tv` |
 | `INDEXER_<N>_RATE_LIMIT` | Rate limit (requests/sec) | - |
 
-**Indexer Types:** `prowlarr`, `jackett`, `public`
+**Indexer Types:** `prowlarr`, `jackett`, `nzbhydra2`, `public`
 
 ## PostgreSQL Configuration
 
@@ -137,6 +140,35 @@ For PostgreSQL deployments (using `latest-pg` image):
 | `DATABASE_USER` | Database username | `postgres` |
 | `DATABASE_PASSWORD` | Database password | - |
 | `POOL_SIZE` | Connection pool size | `10` |
+
+## Remote Access (P2P)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `P2P_KEYPAIR_PATH` | Path to store the P2P keypair for persistent node identity | - |
+| `P2P_BIND_PORT` | UDP port for direct peer-to-peer connections (enables hole punching) | Random |
+
+!!! note
+    `P2P_KEYPAIR_PATH` is required for remote access. Without it, the node ID changes on restart and paired devices can't reconnect.
+
+## Metadata Relay
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `METADATA_RELAY_URL` | URL for the metadata relay service | `https://relay.mydia.dev` |
+
+The metadata relay proxies requests to TVDB/TMDB and handles remote access relay connections. See [Architecture](../development/architecture.md) for details.
+
+## FlareSolverr
+
+FlareSolverr is a proxy server used to bypass Cloudflare protection on indexer sites. Used by Cardigann indexers that require browser-based challenge solving.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FLARESOLVERR_URL` | FlareSolverr instance URL | - |
+| `FLARESOLVERR_ENABLED` | Enable FlareSolverr integration | Auto-enabled if URL is set |
+| `FLARESOLVERR_TIMEOUT` | Request timeout in milliseconds | `60000` |
+| `FLARESOLVERR_MAX_TIMEOUT` | Maximum timeout in milliseconds | `120000` |
 
 ## Advanced Configuration
 

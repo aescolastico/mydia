@@ -1,6 +1,6 @@
 # E2E Testing
 
-Mydia uses Playwright for comprehensive browser-based end-to-end testing.
+Mydia uses Playwright for comprehensive browser-based end-to-end testing. [Wallaby](https://github.com/elixir-wallaby/wallaby) (an Elixir-based browser testing library) is also available as a dependency for server-side integration tests.
 
 ## Overview
 

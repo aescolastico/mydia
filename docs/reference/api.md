@@ -1,30 +1,45 @@
 # API Reference
 
-!!! info "Coming Soon"
-    API documentation is planned for a future release. Mydia currently provides a web interface for all functionality.
+!!! info "Internal APIs"
+    Mydia exposes HTTP and GraphQL APIs primarily for internal use by the Flutter player and the web UI. These APIs are not yet stable or documented for third-party consumption.
 
 ## Current State
 
-Mydia does not currently expose a public REST API. All functionality is accessible through the Phoenix LiveView web interface.
+Mydia includes several internal API surfaces used by its own components:
 
-## Planned Features
+| Area | Description |
+|------|-------------|
+| **Downloads** | Download client management and status |
+| **Indexers** | Search queries to configured indexers |
+| **Media** | Library browsing, metadata, and management |
+| **Playback** | Playback session control |
+| **Streaming** | HLS streaming session lifecycle |
+| **Subtitles** | Subtitle search and download |
+| **Admin/Config** | Server configuration and settings |
+| **GraphQL** | Absinthe-based GraphQL API (used by the Flutter player) |
 
-Future API support may include:
+## GraphQL API
 
-- REST API for media management
-- WebSocket events for real-time updates
-- API key authentication
-- Rate limiting
+The GraphQL endpoint is available at `/api/graphql` and is used by the Flutter player for:
 
-## Internal APIs
+- Browsing movies and TV shows
+- Managing streaming sessions
+- Fetching media metadata and files
 
-Mydia uses internal APIs for:
+The schema uses Absinthe with connection/edges/node pagination for collections.
 
-- Download client communication (qBittorrent, Transmission, SABnzbd, NZBGet)
-- Indexer queries (Prowlarr, Jackett)
-- Metadata fetching (via metadata-relay service)
+## REST Endpoints
 
-These are implementation details and not intended for external use.
+REST-style endpoints handle:
+
+- HLS manifest and segment serving
+- Subtitle file delivery
+- Download client webhooks
+- Admin configuration
+
+## Stability
+
+These APIs are **internal** and may change between versions without notice. If you're interested in a stable public API for third-party integrations, please open a [feature request](https://github.com/getmydia/mydia/issues/new).
 
 ## Integration Options
 

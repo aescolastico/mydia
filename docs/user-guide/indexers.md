@@ -8,6 +8,7 @@ Indexers provide search capabilities for finding media releases. Mydia supports 
 |------|-------------|-------------|
 | **Prowlarr** | Indexer manager with unified API | Yes |
 | **Jackett** | Indexer proxy | Yes |
+| **NZBHydra2** | NZB meta search aggregator | Yes |
 | **Cardigann** | Built-in indexer support | Experimental |
 
 ## Prowlarr (Recommended)
@@ -56,6 +57,30 @@ INDEXER_2_NAME=Jackett
 INDEXER_2_TYPE=jackett
 INDEXER_2_BASE_URL=http://jackett:9117
 INDEXER_2_API_KEY=your-jackett-api-key
+```
+
+## NZBHydra2
+
+NZBHydra2 is a meta search aggregator for NZB indexers.
+
+### Setup
+
+1. Navigate to **Admin > Indexers**
+2. Click **Add Indexer**
+3. Select **NZBHydra2**
+4. Enter connection details:
+   - Base URL: `http://nzbhydra2:5076`
+   - API Key: Your NZBHydra2 API key
+5. Test connection
+6. Save
+
+### Environment Variables
+
+```bash
+INDEXER_3_NAME=NZBHydra2
+INDEXER_3_TYPE=nzbhydra2
+INDEXER_3_BASE_URL=http://nzbhydra2:5076
+INDEXER_3_API_KEY=your-nzbhydra2-api-key
 ```
 
 ## Cardigann (Experimental)

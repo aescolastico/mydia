@@ -55,7 +55,7 @@ Mydia supports OpenID Connect (OIDC) for single sign-on integration.
 
 ```bash
 OIDC_ENABLED=true
-OIDC_DISCOVERY_DOCUMENT_URI=https://your-provider/.well-known/openid-configuration
+OIDC_ISSUER=https://your-provider
 OIDC_CLIENT_ID=mydia
 OIDC_CLIENT_SECRET=your-client-secret
 OIDC_REDIRECT_URI=http://localhost:4000/auth/oidc/callback

@@ -20,7 +20,7 @@ Mydia works with any OIDC-compliant provider:
 
 ```bash
 OIDC_ENABLED=true
-OIDC_DISCOVERY_DOCUMENT_URI=https://your-provider/.well-known/openid-configuration
+OIDC_ISSUER=https://your-provider
 OIDC_CLIENT_ID=mydia
 OIDC_CLIENT_SECRET=your-client-secret
 OIDC_REDIRECT_URI=http://localhost:4000/auth/oidc/callback
@@ -32,11 +32,14 @@ OIDC_SCOPES=openid profile email
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `OIDC_ENABLED` | Enable OIDC authentication | Yes |
-| `OIDC_DISCOVERY_DOCUMENT_URI` | Provider's discovery endpoint | Yes |
+| `OIDC_ISSUER` | OIDC issuer URL (e.g., `https://auth.example.com`) | Yes |
 | `OIDC_CLIENT_ID` | Application client ID | Yes |
 | `OIDC_CLIENT_SECRET` | Application client secret | Yes |
 | `OIDC_REDIRECT_URI` | Callback URL (auto-computed if not set) | No |
 | `OIDC_SCOPES` | Space-separated scope list | No |
+
+!!! note "Legacy Variable"
+    `OIDC_DISCOVERY_DOCUMENT_URI` is still accepted as a legacy alias for `OIDC_ISSUER`. The issuer is extracted by stripping the `/.well-known/openid-configuration` suffix.
 
 ## Provider Setup
 
@@ -64,7 +67,7 @@ No need to configure:
 5. Copy client ID and secret
 
 ```bash
-OIDC_DISCOVERY_DOCUMENT_URI=https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration
+OIDC_ISSUER=https://keycloak.example.com/realms/myrealm
 OIDC_CLIENT_ID=mydia
 OIDC_CLIENT_SECRET=your-client-secret
 ```
@@ -90,7 +93,7 @@ identity_providers:
 2. Configure Mydia:
 
 ```bash
-OIDC_DISCOVERY_DOCUMENT_URI=https://authelia.example.com/.well-known/openid-configuration
+OIDC_ISSUER=https://authelia.example.com
 OIDC_CLIENT_ID=mydia
 OIDC_CLIENT_SECRET=your-client-secret
 ```
@@ -102,7 +105,7 @@ OIDC_CLIENT_SECRET=your-client-secret
 3. Copy domain, client ID, and secret
 
 ```bash
-OIDC_DISCOVERY_DOCUMENT_URI=https://your-tenant.auth0.com/.well-known/openid-configuration
+OIDC_ISSUER=https://your-tenant.auth0.com
 OIDC_CLIENT_ID=your-client-id
 OIDC_CLIENT_SECRET=your-client-secret
 ```
@@ -114,7 +117,7 @@ OIDC_CLIENT_SECRET=your-client-secret
 3. Copy client ID and secret
 
 ```bash
-OIDC_DISCOVERY_DOCUMENT_URI=https://accounts.google.com/.well-known/openid-configuration
+OIDC_ISSUER=https://accounts.google.com
 OIDC_CLIENT_ID=your-client-id.apps.googleusercontent.com
 OIDC_CLIENT_SECRET=your-client-secret
 ```

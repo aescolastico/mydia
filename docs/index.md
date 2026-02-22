@@ -18,6 +18,9 @@ A modern, self-hosted media management platform for tracking, organizing, and mo
 - **SSO Support** - Local authentication plus OIDC/OpenID Connect integration
 - **Release Calendar** - Track upcoming releases and monitor episodes
 - **Import Lists** - Sync external lists from TMDB (watchlists, popular, trending) to auto-add content (experimental)
+- **Remote Access** - P2P connectivity for the Flutter player via iroh (experimental)
+- **Media Playback** - HLS streaming with on-the-fly transcoding (experimental)
+- **Trakt.tv Integration** - Scrobbling and library sync
 - **Modern Real-Time UI** - Phoenix LiveView with instant updates and responsive design
 
 ## Quick Start
@@ -97,6 +100,7 @@ For detailed setup instructions, see the [Getting Started Guide](getting-started
 | **Media Server Integration** | Planned | Plex/Kodi/Jellyfin | Plex/Kodi/Jellyfin |
 | **List Import** | Experimental | Yes | Yes |
 | **Native Playback** | Experimental | No | No |
+| **Remote Access (P2P)** | Experimental | No | No |
 | **Technology** | Elixir/Phoenix LiveView | .NET/React | .NET/React |
 | **Maturity** | Early development | Production-ready | Production-ready |
 
@@ -107,7 +111,7 @@ For detailed setup instructions, see the [Getting Started Guide](getting-started
 ## Getting Help
 
 - [GitHub Issues](https://github.com/getmydia/mydia/issues) - Bug reports and feature requests
-- [Documentation](https://getmydia.github.io/mydia) - Full documentation
+- [Documentation](https://docs.mydia.dev) - Full documentation
 
 ## Tech Stack
 

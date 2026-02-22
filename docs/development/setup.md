@@ -81,7 +81,7 @@ For development without Docker:
 
 ### Prerequisites
 
-- Elixir 1.16+
+- Elixir 1.15+
 - Erlang 26+
 - Node.js 18+
 - SQLite 3

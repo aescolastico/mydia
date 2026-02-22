@@ -1,7 +1,7 @@
 # Mydia
 
 [![Test & Quality](https://github.com/getmydia/mydia/actions/workflows/test.yml/badge.svg)](https://github.com/getmydia/mydia/actions/workflows/test.yml)
-[![Documentation](https://github.com/getmydia/mydia/actions/workflows/docs.yml/badge.svg)](https://getmydia.github.io/mydia)
+[![Documentation](https://github.com/getmydia/mydia/actions/workflows/docs.yml/badge.svg)](https://docs.mydia.dev)
 
 **Your personal media companion, built with Phoenix LiveView**
 
@@ -67,14 +67,14 @@ Open http://localhost:4000 and create your admin account.
 
 ## Documentation
 
-Full documentation available at **[getmydia.github.io/mydia](https://getmydia.github.io/mydia)**
+Full documentation available at **[docs.mydia.dev](https://docs.mydia.dev)**
 
-- [Installation Guide](https://getmydia.github.io/mydia/latest/getting-started/installation/)
-- [Configuration Reference](https://getmydia.github.io/mydia/latest/reference/environment-variables/)
-- [Download Clients Setup](https://getmydia.github.io/mydia/latest/user-guide/download-clients/)
-- [SSO/OIDC Setup](https://getmydia.github.io/mydia/latest/advanced/oidc/)
-- [PostgreSQL Support](https://getmydia.github.io/mydia/latest/advanced/postgresql/)
-- [Development Guide](https://getmydia.github.io/mydia/latest/development/setup/)
+- [Installation Guide](https://docs.mydia.dev/latest/getting-started/installation/)
+- [Configuration Reference](https://docs.mydia.dev/latest/reference/environment-variables/)
+- [Download Clients Setup](https://docs.mydia.dev/latest/user-guide/download-clients/)
+- [SSO/OIDC Setup](https://docs.mydia.dev/latest/advanced/oidc/)
+- [PostgreSQL Support](https://docs.mydia.dev/latest/advanced/postgresql/)
+- [Development Guide](https://docs.mydia.dev/latest/development/setup/)
 
 ## Screenshots
 
@@ -91,7 +91,7 @@ Full documentation available at **[getmydia.github.io/mydia](https://getmydia.gi
 ./dev mix precommit      # Run all checks
 ```
 
-See the [Development Guide](https://getmydia.github.io/mydia/latest/development/setup/) for details.
+See the [Development Guide](https://docs.mydia.dev/latest/development/setup/) for details.
 
 ### Documentation
 
