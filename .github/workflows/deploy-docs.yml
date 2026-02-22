@@ -8,8 +8,6 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - '.github/workflows/deploy-docs.yml'
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -19,8 +17,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: "docs"
@@ -51,24 +47,11 @@ jobs:
         run: |
           git fetch origin gh-pages:gh-pages || echo "gh-pages branch does not exist yet"
 
-      - name: Deploy latest (push to master)
+      - name: Deploy dev (push to master)
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           uv run --project docs mike deploy --push --update-aliases dev
           uv run --project docs mike set-default --push dev
-
-      - name: Cleanup stale latest version
-        if: github.event_name == 'release'
-        run: |
-          uv run --project docs mike delete --push latest || true
-
-      - name: Deploy release version
-        if: github.event_name == 'release'
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          uv run --project docs mike deploy --push --update-aliases "$VERSION" latest
-          uv run --project docs mike set-default --push latest
 
       - name: Deploy manual version
         if: github.event_name == 'workflow_dispatch'

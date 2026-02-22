@@ -907,3 +907,40 @@ jobs:
             artifacts/appcast.xml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docs:
+    name: Deploy Docs
+    if: needs.prepare.outputs.is_prerelease == 'false'
+    needs:
+      - prepare
+      - publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen --project docs
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch gh-pages branch
+        run: |
+          git fetch origin gh-pages:gh-pages || echo "gh-pages branch does not exist yet"
+
+      - name: Deploy versioned docs
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          uv run --project docs mike delete --push latest || true
+          uv run --project docs mike deploy --push --update-aliases "$VERSION" latest
+          uv run --project docs mike set-default --push latest
