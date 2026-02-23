@@ -182,16 +182,22 @@ defmodule MydiaWeb.RequestMediaLive.Index do
   defp build_request_attrs(result, params, assigns) do
     media_type_string = if assigns.media_type == :movie, do: "movie", else: "tv_show"
 
-    %{
+    base = %{
       media_type: media_type_string,
       title: result.title || result.name,
       original_title: result.original_title || result.original_name,
       year: extract_year(result),
-      tmdb_id: result.id,
       imdb_id: result.imdb_id,
       requester_notes: params["requester_notes"],
       requester_id: assigns.current_user.id
     }
+
+    # For TV shows from TVDB, store tvdb_id; otherwise store tmdb_id
+    if assigns.media_type == :tv_show and Map.get(result, :provider) == :tvdb do
+      Map.put(base, :tvdb_id, result.id)
+    else
+      Map.put(base, :tmdb_id, result.id)
+    end
   end
 
   defp extract_year(metadata) do
@@ -222,7 +228,7 @@ defmodule MydiaWeb.RequestMediaLive.Index do
   defp get_poster_url(result) do
     case result.poster_path do
       nil -> "/images/no-poster.svg"
-      path -> "https://image.tmdb.org/t/p/w500#{path}"
+      path -> ImageUrl.poster_url(path)
     end
   end
 

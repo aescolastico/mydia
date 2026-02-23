@@ -69,6 +69,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   alias Mydia.Metadata.ProviderIDRegistry
 
   alias Mydia.Metadata.Structs.{
+    ImageData,
     SearchResult,
     MediaMetadata,
     SeasonData,
@@ -97,36 +98,68 @@ defmodule Mydia.Metadata.Provider.Relay do
   def search(config, query, opts \\ []) do
     when_valid_query(query, fn ->
       media_type = Keyword.get(opts, :media_type)
-      year = Keyword.get(opts, :year)
-      language = Keyword.get(opts, :language, @default_language)
-      include_adult = Keyword.get(opts, :include_adult, false)
-      page = Keyword.get(opts, :page, 1)
 
-      endpoint = search_endpoint(media_type)
-
-      params =
-        [
-          query: query,
-          language: language,
-          include_adult: include_adult,
-          page: page
-        ]
-        |> maybe_add_year(year, media_type)
-
-      req = HTTP.new_request(config)
-
-      case HTTP.get(req, endpoint, params: params) do
-        {:ok, %{status: 200, body: body}} ->
-          results = parse_search_results(body, media_type)
-          {:ok, results}
-
-        {:ok, %{status: status, body: body}} ->
-          {:error, Error.api_error("Search failed with status #{status}", %{body: body})}
-
-        {:error, error} ->
-          {:error, error}
+      if media_type == :tv_show do
+        search_tvdb(config, query, opts)
+      else
+        search_tmdb(config, query, opts)
       end
     end)
+  end
+
+  defp search_tmdb(config, query, opts) do
+    media_type = Keyword.get(opts, :media_type)
+    year = Keyword.get(opts, :year)
+    language = Keyword.get(opts, :language, @default_language)
+    include_adult = Keyword.get(opts, :include_adult, false)
+    page = Keyword.get(opts, :page, 1)
+
+    endpoint = search_endpoint(media_type)
+
+    params =
+      [
+        query: query,
+        language: language,
+        include_adult: include_adult,
+        page: page
+      ]
+      |> maybe_add_year(year, media_type)
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: params) do
+      {:ok, %{status: 200, body: body}} ->
+        results = parse_search_results(body, media_type)
+        {:ok, results}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("Search failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp search_tvdb(config, query, opts) do
+    year = Keyword.get(opts, :year)
+
+    params =
+      [query: query, type: "series"]
+      |> maybe_add_param(:year, year)
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, "/tvdb/search", params: params) do
+      {:ok, %{status: 200, body: body}} ->
+        results = parse_tvdb_search_results(body)
+        {:ok, results}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("TVDB search failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
   end
 
   @impl true
@@ -134,8 +167,8 @@ defmodule Mydia.Metadata.Provider.Relay do
     media_type = Keyword.get(opts, :media_type, :movie)
     provider = Keyword.get(opts, :provider)
 
-    # Route to TVDB-specific fetch if provider is :tvdb
-    if provider == :tvdb do
+    # Route to TVDB for TV shows by default, or when explicitly requested
+    if provider == :tvdb || (media_type == :tv_show && provider != :tmdb) do
       fetch_tvdb_by_id(config, provider_id, opts)
     else
       fetch_tmdb_by_id(config, provider_id, media_type, opts)
@@ -231,7 +264,7 @@ defmodule Mydia.Metadata.Provider.Relay do
 
     req = HTTP.new_request(config)
 
-    case HTTP.get(req, endpoint, params: []) do
+    case HTTP.get(req, endpoint, params: [meta: "translations"]) do
       {:ok, %{status: 200, body: body}} ->
         # Successful fetch - record the ID→type mapping
         ProviderIDRegistry.record_id_type(provider_id, :tvdb, media_type)
@@ -266,12 +299,21 @@ defmodule Mydia.Metadata.Provider.Relay do
     # Transform genres
     genres = transform_tvdb_genres(data["genres"])
 
+    # Extract English translations (extended endpoint returns translation arrays)
+    translations = data["translations"] || %{}
+
+    english_name =
+      extract_tvdb_english_translation(translations["nameTranslations"], "name")
+
+    english_overview =
+      extract_tvdb_english_translation(translations["overviewTranslations"], "overview")
+
     # Build TMDB-like response
     %{
       "id" => data["id"],
-      "name" => data["name"],
+      "name" => english_name || data["name"],
       "original_name" => data["originalName"] || data["name"],
-      "overview" => data["overview"],
+      "overview" => english_overview || data["overview"],
       "first_air_date" => data["firstAired"],
       "last_air_date" => data["lastAired"],
       "status" => get_in(data, ["status", "name"]),
@@ -279,7 +321,7 @@ defmodule Mydia.Metadata.Provider.Relay do
       "backdrop_path" => transform_tvdb_artwork(data["artworks"], "background"),
       "genres" => genres,
       "popularity" => data["score"],
-      "vote_average" => data["score"],
+      "vote_average" => nil,
       "number_of_seasons" => length(seasons),
       "number_of_episodes" => data["episodes"] |> List.wrap() |> length(),
       "in_production" => get_in(data, ["status", "name"]) == "Continuing",
@@ -329,7 +371,8 @@ defmodule Mydia.Metadata.Provider.Relay do
         "overview" => s["overview"],
         "poster_path" => transform_tvdb_image(s["image"]),
         "air_date" => nil,
-        "episode_count" => s["episodeCount"] || 0
+        "episode_count" => s["episodeCount"] || 0,
+        "tvdb_season_id" => s["id"]
       }
     end)
   end
@@ -351,6 +394,19 @@ defmodule Mydia.Metadata.Provider.Relay do
   defp transform_tvdb_origin_country(country) when is_binary(country), do: [country]
   defp transform_tvdb_origin_country(countries) when is_list(countries), do: countries
   defp transform_tvdb_origin_country(_), do: []
+
+  # Extract English translation from TVDB translation arrays
+  # TVDB extended endpoints return translations as lists of %{"language" => "eng", "name" => "..."}
+  defp extract_tvdb_english_translation(nil, _field), do: nil
+
+  defp extract_tvdb_english_translation(translations, field) when is_list(translations) do
+    case Enum.find(translations, fn t -> t["language"] == "eng" end) do
+      nil -> nil
+      translation -> translation[field]
+    end
+  end
+
+  defp extract_tvdb_english_translation(_, _), do: nil
 
   # TVDB images are full URLs or relative paths
   defp transform_tvdb_image(nil), do: nil
@@ -393,6 +449,16 @@ defmodule Mydia.Metadata.Provider.Relay do
   @impl true
   def fetch_images(config, provider_id, opts \\ []) do
     media_type = Keyword.get(opts, :media_type, :movie)
+    provider = Keyword.get(opts, :provider)
+
+    if provider == :tvdb || (media_type == :tv_show && provider != :tmdb) do
+      fetch_tvdb_images(config, provider_id)
+    else
+      fetch_tmdb_images(config, provider_id, media_type, opts)
+    end
+  end
+
+  defp fetch_tmdb_images(config, provider_id, media_type, opts) do
     language = Keyword.get(opts, :language)
     include_image_language = Keyword.get(opts, :include_image_language)
 
@@ -421,8 +487,90 @@ defmodule Mydia.Metadata.Provider.Relay do
     end
   end
 
+  defp fetch_tvdb_images(config, provider_id) do
+    # TVDB images come from the extended series endpoint artworks
+    endpoint = "/tvdb/series/#{provider_id}/extended"
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: []) do
+      {:ok, %{status: 200, body: body}} ->
+        data = body["data"] || body
+        images = parse_tvdb_artworks(data["artworks"])
+        {:ok, images}
+
+      {:ok, %{status: 404}} ->
+        {:error, Error.not_found("TVDB series not found: #{provider_id}")}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("TVDB fetch images failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp parse_tvdb_artworks(nil), do: ImagesResponse.new(%{posters: [], backdrops: [], logos: []})
+
+  defp parse_tvdb_artworks(artworks) when is_list(artworks) do
+    {posters, backdrops} =
+      Enum.reduce(artworks, {[], []}, fn artwork, {posters, backdrops} ->
+        type_name =
+          case artwork["type"] do
+            %{"name" => name} -> name
+            name when is_binary(name) -> name
+            _ -> nil
+          end
+
+        image_url = artwork["image"] || artwork["url"]
+
+        case type_name do
+          "poster" ->
+            img =
+              ImageData.new(
+                file_path: image_url,
+                width: artwork["width"],
+                height: artwork["height"]
+              )
+
+            {[img | posters], backdrops}
+
+          "background" ->
+            img =
+              ImageData.new(
+                file_path: image_url,
+                width: artwork["width"],
+                height: artwork["height"]
+              )
+
+            {posters, [img | backdrops]}
+
+          _ ->
+            {posters, backdrops}
+        end
+      end)
+
+    %ImagesResponse{
+      posters: Enum.reverse(posters),
+      backdrops: Enum.reverse(backdrops),
+      logos: []
+    }
+  end
+
+  defp parse_tvdb_artworks(_), do: ImagesResponse.new(%{posters: [], backdrops: [], logos: []})
+
   @impl true
   def fetch_season(config, provider_id, season_number, opts \\ []) do
+    tvdb_season_id = Keyword.get(opts, :tvdb_season_id)
+
+    if tvdb_season_id do
+      fetch_season_tvdb(config, tvdb_season_id, opts)
+    else
+      fetch_season_tmdb(config, provider_id, season_number, opts)
+    end
+  end
+
+  defp fetch_season_tmdb(config, provider_id, season_number, opts) do
     language = Keyword.get(opts, :language, @default_language)
 
     endpoint = "/tmdb/tv/shows/#{provider_id}/#{season_number}"
@@ -443,6 +591,74 @@ defmodule Mydia.Metadata.Provider.Relay do
 
       {:error, error} ->
         {:error, error}
+    end
+  end
+
+  defp fetch_season_tvdb(config, tvdb_season_id, _opts) do
+    endpoint = "/tvdb/seasons/#{tvdb_season_id}/extended"
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: [meta: "translations"]) do
+      {:ok, %{status: 200, body: body}} ->
+        data = body["data"] || body
+        # Episodes in the season response don't include translation text,
+        # only language code arrays. Fetch each episode's translations individually.
+        data = enrich_tvdb_episodes_with_translations(req, data)
+        season = SeasonData.from_tvdb_response(data)
+        {:ok, season}
+
+      {:ok, %{status: 404}} ->
+        {:error, Error.not_found("TVDB season not found: #{tvdb_season_id}")}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("TVDB fetch season failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  # TVDB season extended responses include episodes but without translation text.
+  # Fetch each episode's extended data to get translations (name/overview in English).
+  defp enrich_tvdb_episodes_with_translations(req, data) do
+    episodes = data["episodes"] || []
+
+    if episodes == [] do
+      data
+    else
+      enriched =
+        episodes
+        |> Task.async_stream(
+          fn ep -> fetch_tvdb_episode_translations(req, ep) end,
+          max_concurrency: 5,
+          timeout: :infinity
+        )
+        |> Enum.flat_map(fn
+          {:ok, ep} -> [ep]
+          {:exit, _reason} -> []
+        end)
+
+      Map.put(data, "episodes", enriched)
+    end
+  end
+
+  # Fetch an individual episode's extended data to get its translations.
+  # Merges the translations key into the episode map so from_tvdb_response can extract English text.
+  defp fetch_tvdb_episode_translations(req, episode) do
+    ep_id = episode["id"]
+
+    if ep_id do
+      case HTTP.get(req, "/tvdb/episodes/#{ep_id}/extended", params: [meta: "translations"]) do
+        {:ok, %{status: 200, body: body}} ->
+          ep_data = body["data"] || body
+          Map.put(episode, "translations", ep_data["translations"])
+
+        _ ->
+          episode
+      end
+    else
+      episode
     end
   end
 
@@ -530,6 +746,75 @@ defmodule Mydia.Metadata.Provider.Relay do
 
     search_result
   end
+
+  defp parse_tvdb_search_results(%{"data" => results}) when is_list(results) do
+    Enum.map(results, &parse_tvdb_search_result/1)
+  end
+
+  defp parse_tvdb_search_results(_), do: []
+
+  defp parse_tvdb_search_result(data) when is_map(data) do
+    provider_id = to_string(data["tvdb_id"] || data["id"])
+
+    year =
+      case data["year"] do
+        y when is_binary(y) ->
+          case Integer.parse(y) do
+            {n, _} -> n
+            :error -> extract_year_from_tvdb_date(data["first_air_time"])
+          end
+
+        y when is_integer(y) ->
+          y
+
+        _ ->
+          extract_year_from_tvdb_date(data["first_air_time"])
+      end
+
+    # Prefer English translation over the native-language name
+    translations = data["translations"] || %{}
+    english_title = translations["eng"]
+    display_title = english_title || data["name"]
+
+    # Prefer English overview over the native-language overview
+    overviews = data["overviews"] || %{}
+    english_overview = overviews["eng"]
+    display_overview = english_overview || data["overview"]
+
+    # Record the ID→type mapping for TVDB
+    ProviderIDRegistry.record_id_type(provider_id, :tvdb, :tv_show)
+
+    %SearchResult{
+      provider_id: provider_id,
+      provider: :tvdb,
+      media_type: :tv_show,
+      title: display_title,
+      name: display_title,
+      original_title: data["name"],
+      year: year,
+      overview: display_overview,
+      poster_path: data["image_url"],
+      first_air_date: data["first_air_time"],
+      id: data["tvdb_id"] || data["id"]
+    }
+  end
+
+  defp extract_year_from_tvdb_date(nil), do: nil
+
+  defp extract_year_from_tvdb_date(date) when is_binary(date) do
+    case String.split(date, "-") do
+      [year | _] ->
+        case Integer.parse(year) do
+          {y, _} -> y
+          :error -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp extract_year_from_tvdb_date(_), do: nil
 
   defp parse_metadata(data, media_type, provider_id) do
     MediaMetadata.from_api_response(data, media_type, provider_id)

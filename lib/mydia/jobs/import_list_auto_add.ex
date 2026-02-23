@@ -121,9 +121,12 @@ defmodule Mydia.Jobs.ImportListAutoAdd do
         mt -> mt
       end
 
-    case Mydia.Metadata.fetch_by_id(config, tmdb_id, media_type: media_type) do
+    # Import lists typically have TMDB IDs, so use provider: :tmdb to force TMDB fetch
+    fetch_opts = [media_type: media_type, provider: :tmdb]
+
+    case Mydia.Metadata.fetch_by_id(config, tmdb_id, fetch_opts) do
       {:ok, metadata} ->
-        create_media_item(import_list, item, metadata)
+        create_media_item(import_list, item, metadata, config)
 
       {:error, reason} ->
         Logger.warning("[ImportListAutoAdd] Failed to fetch metadata",
@@ -136,7 +139,7 @@ defmodule Mydia.Jobs.ImportListAutoAdd do
     end
   end
 
-  defp create_media_item(import_list, item, metadata) do
+  defp create_media_item(import_list, item, metadata, config) do
     attrs = %{
       type: import_list.media_type,
       title: metadata.title,
@@ -148,6 +151,14 @@ defmodule Mydia.Jobs.ImportListAutoAdd do
       monitored: import_list.monitored,
       quality_profile_id: import_list.quality_profile_id
     }
+
+    # For TV shows, look up TVDB ID via search
+    attrs =
+      if import_list.media_type == "tv_show" do
+        lookup_tvdb_id(attrs, config)
+      else
+        attrs
+      end
 
     case Media.create_media_item(attrs) do
       {:ok, media_item} ->
@@ -206,6 +217,27 @@ defmodule Mydia.Jobs.ImportListAutoAdd do
         end
 
         :ok
+    end
+  end
+
+  # Look up the TVDB ID for a TV show by searching TVDB by title+year
+  defp lookup_tvdb_id(attrs, config) do
+    search_opts =
+      if attrs[:year] do
+        [media_type: :tv_show, provider: :tvdb, year: attrs[:year]]
+      else
+        [media_type: :tv_show, provider: :tvdb]
+      end
+
+    case Mydia.Metadata.search(config, attrs.title, search_opts) do
+      {:ok, [first | _]} ->
+        case Integer.parse(first.provider_id) do
+          {tvdb_id, ""} -> Map.put(attrs, :tvdb_id, tvdb_id)
+          _ -> attrs
+        end
+
+      _ ->
+        attrs
     end
   end
 

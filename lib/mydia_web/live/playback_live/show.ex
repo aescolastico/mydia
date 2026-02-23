@@ -109,13 +109,13 @@ defmodule MydiaWeb.PlaybackLive.Show do
     # Try to get episode-specific poster from metadata
     case episode.metadata do
       %{"poster_path" => path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/w300#{path}"
+        ImageUrl.still_url(path)
 
       _ ->
         # Fall back to show poster
         case episode.media_item.metadata do
           %{"poster_path" => path} when is_binary(path) ->
-            "https://image.tmdb.org/t/p/w300#{path}"
+            ImageUrl.still_url(path)
 
           _ ->
             nil

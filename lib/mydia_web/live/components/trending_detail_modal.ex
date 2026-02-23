@@ -43,7 +43,7 @@ defmodule MydiaWeb.Live.Components.TrendingDetailModal do
           <div class="relative h-48 md:h-64 bg-base-300">
             <%= if backdrop_path(@item, @metadata) do %>
               <img
-                src={"https://image.tmdb.org/t/p/w1280#{backdrop_path(@item, @metadata)}"}
+                src={ImageUrl.backdrop_url(backdrop_path(@item, @metadata), "w1280")}
                 alt=""
                 class="w-full h-full object-cover"
               />
@@ -66,7 +66,7 @@ defmodule MydiaWeb.Live.Components.TrendingDetailModal do
               <div class="flex items-end gap-4">
                 <%= if poster_path(@item, @metadata) do %>
                   <img
-                    src={"https://image.tmdb.org/t/p/w185#{poster_path(@item, @metadata)}"}
+                    src={ImageUrl.poster_url(poster_path(@item, @metadata), "w185")}
                     alt={title(@item, @metadata)}
                     class="w-20 md:w-28 rounded-lg shadow-xl hidden sm:block"
                   />
@@ -143,7 +143,7 @@ defmodule MydiaWeb.Live.Components.TrendingDetailModal do
                         <div class="text-center">
                           <%= if member.profile_path do %>
                             <img
-                              src={"https://image.tmdb.org/t/p/w185#{member.profile_path}"}
+                              src={ImageUrl.profile_url(member.profile_path)}
                               alt={member.name}
                               class="w-16 h-16 md:w-20 md:h-20 rounded-full object-cover mx-auto mb-2"
                             />

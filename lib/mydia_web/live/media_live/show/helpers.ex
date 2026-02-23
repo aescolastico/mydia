@@ -32,7 +32,7 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   def get_poster_url(media_item) do
     case media_item.metadata do
       %MediaMetadata{poster_path: path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/w500#{path}"
+        Mydia.Metadata.ImageUrl.poster_url(path)
 
       _ ->
         "/images/no-poster.svg"
@@ -42,7 +42,7 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   def get_backdrop_url(media_item) do
     case media_item.metadata do
       %MediaMetadata{backdrop_path: path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/original#{path}"
+        Mydia.Metadata.ImageUrl.backdrop_url(path)
 
       _ ->
         nil
@@ -107,7 +107,7 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   def get_rating(media_item) do
     case media_item.metadata do
       %MediaMetadata{vote_average: rating} when is_number(rating) ->
-        Float.round(rating, 1)
+        Float.round(rating * 1.0, 1)
 
       _ ->
         nil
@@ -203,7 +203,7 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   def get_profile_image_url(nil), do: nil
 
   def get_profile_image_url(path) when is_binary(path) do
-    "https://image.tmdb.org/t/p/w185#{path}"
+    Mydia.Metadata.ImageUrl.profile_url(path)
   end
 
   def group_episodes_by_season(episodes) do
@@ -338,10 +338,9 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   def get_episode_thumbnail(episode) do
     case episode.metadata do
       %{"still_path" => path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/w300#{path}"
+        Mydia.Metadata.ImageUrl.still_url(path)
 
       _ ->
-        # Use a placeholder or the series poster
         nil
     end
   end

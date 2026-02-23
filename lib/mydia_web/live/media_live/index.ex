@@ -835,7 +835,7 @@ defmodule MydiaWeb.MediaLive.Index do
   defp get_poster_url(media_item) do
     case media_item.metadata do
       %MediaMetadata{poster_path: path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/w500#{path}"
+        ImageUrl.poster_url(path)
 
       _ ->
         "/images/no-poster.svg"

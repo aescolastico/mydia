@@ -89,6 +89,8 @@ defmodule Mydia.Metadata.Structs.ImageData do
   """
   def full_url(%__MODULE__{file_path: nil}, _base_url), do: nil
 
+  def full_url(%__MODULE__{file_path: "http" <> _ = url}, _base_url), do: url
+
   def full_url(%__MODULE__{file_path: file_path}, base_url) do
     base_url <> file_path
   end

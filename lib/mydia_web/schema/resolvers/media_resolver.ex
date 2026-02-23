@@ -5,7 +5,7 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   alias Mydia.{Media, Library, Playback}
 
-  @tmdb_image_base "https://image.tmdb.org/t/p/original"
+  alias Mydia.Metadata.ImageUrl
 
   # Movie and TVShow field resolvers
 
@@ -49,8 +49,8 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
     backdrop_path = get_in_metadata(metadata, :backdrop_path)
 
     artwork = %{
-      poster_url: build_image_url(poster_path),
-      backdrop_url: build_image_url(backdrop_path),
+      poster_url: ImageUrl.poster_url(poster_path),
+      backdrop_url: ImageUrl.backdrop_url(backdrop_path),
       thumbnail_url: nil
     }
 
@@ -192,7 +192,7 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   def resolve_episode_thumbnail(%{metadata: metadata}, _args, _info) do
     still_path = get_in_metadata(metadata, :still_path)
-    {:ok, build_image_url(still_path)}
+    {:ok, ImageUrl.still_url(still_path)}
   end
 
   def resolve_episode_thumbnail(_episode, _args, _info), do: {:ok, nil}
@@ -254,11 +254,6 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   end
 
   defp get_in_metadata(_metadata, _field), do: nil
-
-  defp build_image_url(nil), do: nil
-  defp build_image_url(""), do: nil
-  defp build_image_url("/" <> _ = path), do: @tmdb_image_base <> path
-  defp build_image_url(path), do: @tmdb_image_base <> "/" <> path
 
   defp format_progress(progress) do
     %{

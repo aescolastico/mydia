@@ -450,7 +450,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
       is_struct(media_item, Mydia.Media.MediaItem) ->
         case media_item.metadata do
           %{"poster_path" => path} when is_binary(path) ->
-            "https://image.tmdb.org/t/p/w200#{path}"
+            ImageUrl.poster_url(path, "w200")
 
           _ ->
             "/images/no-poster.svg"

@@ -135,5 +135,13 @@ defmodule Mydia.Integrations.Trakt.Scrobbler do
         m
       end
     end)
+    |> then(fn m ->
+      if item.tvdb_id do
+        ids = Map.get(m, :ids, %{})
+        Map.put(m, :ids, Map.put(ids, :tvdb, item.tvdb_id))
+      else
+        m
+      end
+    end)
   end
 end

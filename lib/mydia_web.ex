@@ -97,6 +97,7 @@ defmodule MydiaWeb do
       # Common modules used in templates
       alias Phoenix.LiveView.JS
       alias MydiaWeb.Layouts
+      alias Mydia.Metadata.ImageUrl
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

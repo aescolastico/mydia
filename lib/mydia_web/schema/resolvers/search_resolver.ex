@@ -5,7 +5,7 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
 
   alias Mydia.Media
 
-  @tmdb_image_base "https://image.tmdb.org/t/p/original"
+  alias Mydia.Metadata.ImageUrl
 
   def search(_parent, %{query: query} = args, _info) when byte_size(query) > 0 do
     first = Map.get(args, :first, 20)
@@ -49,7 +49,7 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
   defp build_search_result(media_item) do
     %{
       id: media_item.id,
-      type: String.to_atom(media_item.type),
+      type: String.to_existing_atom(media_item.type),
       title: media_item.title,
       year: media_item.year,
       artwork: build_artwork(media_item),
@@ -64,8 +64,8 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
     backdrop_path = get_metadata_field(metadata, :backdrop_path)
 
     %{
-      poster_url: build_image_url(poster_path),
-      backdrop_url: build_image_url(backdrop_path),
+      poster_url: ImageUrl.poster_url(poster_path),
+      backdrop_url: ImageUrl.backdrop_url(backdrop_path),
       thumbnail_url: nil
     }
   end
@@ -83,9 +83,4 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
   end
 
   defp get_metadata_field(_metadata, _field), do: nil
-
-  defp build_image_url(nil), do: nil
-  defp build_image_url(""), do: nil
-  defp build_image_url("/" <> _ = path), do: @tmdb_image_base <> path
-  defp build_image_url(path), do: @tmdb_image_base <> "/" <> path
 end

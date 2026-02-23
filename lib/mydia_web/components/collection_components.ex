@@ -265,8 +265,7 @@ defmodule MydiaWeb.CollectionComponents do
     """
   end
 
-  @tmdb_image_base "https://image.tmdb.org/t/p/w342"
-  defp tmdb_poster_url(path), do: @tmdb_image_base <> path
+  defp tmdb_poster_url(path), do: Mydia.Metadata.ImageUrl.poster_url(path, "w342")
 
   # Small poster collage for list view rows (2x2 grid in a small thumbnail)
   attr :poster_paths, :list, required: true

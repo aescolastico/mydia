@@ -299,8 +299,9 @@ defmodule MydiaWeb.MediaLive.Show do
              |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
              |> put_flash(:info, "Refreshed metadata: #{count} episodes added")}
 
-          {:error, :missing_tmdb_id} ->
-            {:noreply, put_flash(socket, :error, "Cannot refresh: Missing TMDB ID")}
+          {:error, :missing_provider_id} ->
+            {:noreply,
+             put_flash(socket, :error, "Cannot refresh: Missing provider ID (TMDB/TVDB)")}
 
           {:error, reason} ->
             {:noreply,

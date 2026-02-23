@@ -29,6 +29,7 @@ defmodule MydiaWeb.Live.Components.MetadataSearchForm do
   - `show_no_results` - (optional) Whether to show "no results" message
   """
   use Phoenix.Component
+  alias Mydia.Metadata.ImageUrl
   import MydiaWeb.CoreComponents
 
   attr :title_value, :string, required: true
@@ -67,7 +68,7 @@ defmodule MydiaWeb.Live.Components.MetadataSearchForm do
             >
               <%= if Map.get(result, :poster_path) do %>
                 <img
-                  src={"https://image.tmdb.org/t/p/w92#{result.poster_path}"}
+                  src={ImageUrl.image_url(result.poster_path, "w92")}
                   alt={result.title}
                   class="w-10 h-14 object-cover rounded flex-shrink-0"
                 />

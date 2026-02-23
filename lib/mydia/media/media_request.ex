@@ -17,6 +17,7 @@ defmodule Mydia.Media.MediaRequest do
     field :original_title, :string
     field :year, :integer
     field :tmdb_id, :integer
+    field :tvdb_id, :integer
     field :imdb_id, :string
     field :status, :string, default: "pending"
     field :requester_notes, :string
@@ -43,6 +44,7 @@ defmodule Mydia.Media.MediaRequest do
       :original_title,
       :year,
       :tmdb_id,
+      :tvdb_id,
       :imdb_id,
       :requester_notes,
       :requester_id
@@ -89,13 +91,14 @@ defmodule Mydia.Media.MediaRequest do
   """
   def valid_media_types, do: @media_types
 
-  # Ensure at least one external ID (TMDB or IMDB) is provided
+  # Ensure at least one external ID (TMDB, TVDB, or IMDB) is provided
   defp validate_at_least_one_external_id(changeset) do
     tmdb_id = get_field(changeset, :tmdb_id)
+    tvdb_id = get_field(changeset, :tvdb_id)
     imdb_id = get_field(changeset, :imdb_id)
 
-    if is_nil(tmdb_id) && is_nil(imdb_id) do
-      add_error(changeset, :tmdb_id, "either TMDB ID or IMDB ID must be provided")
+    if is_nil(tmdb_id) && is_nil(tvdb_id) && is_nil(imdb_id) do
+      add_error(changeset, :tmdb_id, "either TMDB ID, TVDB ID, or IMDB ID must be provided")
     else
       changeset
     end

@@ -96,14 +96,18 @@ defmodule MydiaWeb.DashboardLive.Index do
   end
 
   @impl true
-  def handle_event("add_to_library", %{"tmdb_id" => tmdb_id, "media_type" => media_type}, socket) do
+  def handle_event(
+        "add_to_library",
+        %{"tmdb_id" => provider_id, "media_type" => media_type},
+        socket
+      ) do
     media_type_atom = String.to_existing_atom(media_type)
 
     # Set the adding state
-    socket = assign(socket, :adding_item_id, tmdb_id)
+    socket = assign(socket, :adding_item_id, provider_id)
 
     # Start async task to add media
-    send(self(), {:add_media_to_library, tmdb_id, media_type_atom})
+    send(self(), {:add_media_to_library, provider_id, media_type_atom})
 
     {:noreply, socket}
   end
@@ -210,19 +214,31 @@ defmodule MydiaWeb.DashboardLive.Index do
     end
   end
 
-  def handle_info({:add_media_to_library, tmdb_id, media_type}, socket) do
-    # Convert tmdb_id to integer for consistent map key type
-    tmdb_id_int =
-      case tmdb_id do
+  def handle_info({:add_media_to_library, provider_id, media_type}, socket) do
+    # Convert provider_id to integer for consistent map key type
+    provider_id_int =
+      case provider_id do
         id when is_integer(id) -> id
         id when is_binary(id) -> String.to_integer(id)
       end
 
     config = Metadata.default_relay_config()
 
-    case Metadata.fetch_by_id(config, tmdb_id, media_type: media_type) do
+    # Trending items always come from TMDB, so use provider: :tmdb for fetch
+    # This ensures we fetch from TMDB even for TV shows (since the ID is a TMDB ID)
+    fetch_opts = [media_type: media_type, provider: :tmdb]
+
+    case Metadata.fetch_by_id(config, provider_id, fetch_opts) do
       {:ok, metadata} ->
         attrs = build_media_item_attrs(metadata, media_type)
+
+        # For TV shows, also look up TVDB ID by title+year for proper storage
+        attrs =
+          if media_type == :tv_show do
+            lookup_and_add_tvdb_id(attrs, config)
+          else
+            attrs
+          end
 
         case Media.create_media_item(attrs) do
           {:ok, media_item} ->
@@ -233,7 +249,7 @@ defmodule MydiaWeb.DashboardLive.Index do
 
             # Update library status map with integer key
             library_status_map =
-              Map.put(socket.assigns.library_status_map, tmdb_id_int, %{
+              Map.put(socket.assigns.library_status_map, provider_id_int, %{
                 in_library: true,
                 monitored: media_item.monitored,
                 type: if(media_type == :movie, do: "movie", else: "tv_show"),
@@ -275,14 +291,18 @@ defmodule MydiaWeb.DashboardLive.Index do
   defp enrich_with_library_status(items, library_status_map) do
     Enum.map(items, fn item ->
       # Convert provider_id to integer for map lookup
-      tmdb_id =
+      provider_id_int =
         case item.provider_id do
           id when is_integer(id) -> id
           id when is_binary(id) -> String.to_integer(id)
           nil -> nil
         end
 
-      library_status = Map.get(library_status_map, tmdb_id, %{in_library: false})
+      # Check both direct key and {:tvdb, id} key for TV shows
+      library_status =
+        Map.get(library_status_map, provider_id_int) ||
+          Map.get(library_status_map, {:tvdb, provider_id_int}) ||
+          %{in_library: false}
 
       Map.merge(item, %{
         in_library: library_status[:in_library] || false,
@@ -295,8 +315,8 @@ defmodule MydiaWeb.DashboardLive.Index do
   defp build_media_item_attrs(metadata, media_type) do
     type_string = if media_type == :movie, do: "movie", else: "tv_show"
 
-    # Extract provider_id and convert to integer for tmdb_id
-    tmdb_id =
+    # Extract provider_id and convert to integer
+    provider_id =
       case metadata.provider_id do
         nil -> nil
         id when is_integer(id) -> id
@@ -308,11 +328,32 @@ defmodule MydiaWeb.DashboardLive.Index do
       title: metadata.title,
       original_title: metadata.original_title,
       year: extract_year(metadata),
-      tmdb_id: tmdb_id,
+      tmdb_id: provider_id,
       imdb_id: metadata.imdb_id,
       metadata: metadata,
       monitored: true
     }
+  end
+
+  # Look up the TVDB ID for a TV show by searching TVDB by title+year
+  defp lookup_and_add_tvdb_id(attrs, config) do
+    search_opts =
+      if attrs[:year] do
+        [media_type: :tv_show, provider: :tvdb, year: attrs[:year]]
+      else
+        [media_type: :tv_show, provider: :tvdb]
+      end
+
+    case Metadata.search(config, attrs.title, search_opts) do
+      {:ok, [first | _]} ->
+        case Integer.parse(first.provider_id) do
+          {tvdb_id, ""} -> Map.put(attrs, :tvdb_id, tvdb_id)
+          _ -> attrs
+        end
+
+      _ ->
+        attrs
+    end
   end
 
   defp extract_year(metadata) do

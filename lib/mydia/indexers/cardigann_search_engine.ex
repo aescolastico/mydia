@@ -575,7 +575,8 @@ defmodule Mydia.Indexers.CardigannSearchEngine do
         season: Keyword.get(opts, :season),
         episode: Keyword.get(opts, :episode),
         imdb_id: Keyword.get(opts, :imdb_id),
-        tmdb_id: Keyword.get(opts, :tmdb_id)
+        tmdb_id: Keyword.get(opts, :tmdb_id),
+        tvdb_id: Keyword.get(opts, :tvdb_id)
       },
       categories: Keyword.get(opts, :categories, []),
       settings: definition.settings

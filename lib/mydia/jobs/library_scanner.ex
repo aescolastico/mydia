@@ -1147,21 +1147,40 @@ defmodule Mydia.Jobs.LibraryScanner do
           case Mydia.Media.get_episode_by_number(media_file.media_item_id, season, episode_number) do
             nil ->
               # Episode doesn't exist yet, try to fetch it from TMDB
-              Logger.info("Episode not found, attempting to fetch from TMDB",
+              Logger.info("Episode not found, attempting to fetch from provider",
                 media_item_id: media_file.media_item_id,
                 season: season,
                 episode: episode_number
               )
 
-              # Fetch the media item to get TMDB ID
+              # Fetch the media item to get provider ID
               media_item = Mydia.Media.get_media_item!(media_file.media_item_id)
 
-              if media_item.tmdb_id do
-                # Fetch season data from TMDB
+              # Prefer tvdb_id for TV shows, fall back to tmdb_id
+              {provider_id, has_tvdb} =
+                cond do
+                  media_item.tvdb_id -> {media_item.tvdb_id, true}
+                  media_item.tmdb_id -> {media_item.tmdb_id, false}
+                  true -> {nil, false}
+                end
+
+              if provider_id do
+                # Pass tvdb_season_id when using TVDB so the relay routes correctly
+                fetch_opts =
+                  if has_tvdb do
+                    # For TVDB we need the season's TVDB ID for proper routing
+                    # We don't have it here, so pass empty opts (relay will use series ID + season number)
+                    []
+                  else
+                    []
+                  end
+
+                # Fetch season data from the appropriate provider
                 case Metadata.fetch_season(
                        metadata_config,
-                       to_string(media_item.tmdb_id),
-                       season
+                       to_string(provider_id),
+                       season,
+                       fetch_opts
                      ) do
                   {:ok, season_data} ->
                     # Create episodes for this season
@@ -1174,7 +1193,7 @@ defmodule Mydia.Jobs.LibraryScanner do
                            episode_number
                          ) do
                       nil ->
-                        Logger.warning("Episode still not found after TMDB fetch",
+                        Logger.warning("Episode still not found after provider fetch",
                           media_item_id: media_file.media_item_id,
                           season: season,
                           episode: episode_number
@@ -1187,7 +1206,7 @@ defmodule Mydia.Jobs.LibraryScanner do
                     end
 
                   {:error, reason} ->
-                    Logger.warning("Failed to fetch season from TMDB",
+                    Logger.warning("Failed to fetch season from provider",
                       media_item_id: media_file.media_item_id,
                       season: season,
                       reason: reason
@@ -1196,7 +1215,7 @@ defmodule Mydia.Jobs.LibraryScanner do
                     false
                 end
               else
-                Logger.warning("Media item has no TMDB ID, cannot fetch episodes",
+                Logger.warning("Media item has no provider ID, cannot fetch episodes",
                   media_item_id: media_file.media_item_id
                 )
 
@@ -1357,49 +1376,14 @@ defmodule Mydia.Jobs.LibraryScanner do
     end
   end
 
-  # Creates episodes from TMDB season data
+  # Creates/updates episodes from season data using the consolidated function
   defp create_episodes_from_season(media_item, season_data) do
-    episodes = season_data.episodes || []
-    season_number = season_data.season_number
+    {:ok, count} = Mydia.Media.upsert_episodes_from_season(media_item, season_data)
 
-    Enum.each(episodes, fn episode_data ->
-      # Check if episode already exists
-      existing_episode =
-        Mydia.Media.get_episode_by_number(
-          media_item.id,
-          season_number,
-          episode_data.episode_number
-        )
-
-      if is_nil(existing_episode) do
-        attrs = %{
-          media_item_id: media_item.id,
-          season_number: season_number,
-          episode_number: episode_data.episode_number,
-          title: episode_data.name,
-          air_date: parse_air_date(episode_data.air_date),
-          metadata: episode_data,
-          monitored: true
-        }
-
-        case Mydia.Media.create_episode(attrs) do
-          {:ok, _episode} ->
-            Logger.debug("Created episode from season data",
-              media_item_id: media_item.id,
-              season: season_number,
-              episode: episode_data.episode_number
-            )
-
-          {:error, reason} ->
-            Logger.warning("Failed to create episode from season data",
-              media_item_id: media_item.id,
-              season: season_number,
-              episode: episode_data.episode_number,
-              reason: reason
-            )
-        end
-      end
-    end)
+    Logger.debug("Upserted #{count} episodes from season data",
+      media_item_id: media_item.id,
+      season: season_data.season_number
+    )
   rescue
     error ->
       Logger.error("Exception while creating episodes from season data",
@@ -1407,18 +1391,4 @@ defmodule Mydia.Jobs.LibraryScanner do
         error: Exception.message(error)
       )
   end
-
-  # Parses an air date string
-  defp parse_air_date(nil), do: nil
-  defp parse_air_date(""), do: nil
-  defp parse_air_date(%Date{} = date), do: date
-
-  defp parse_air_date(date_string) when is_binary(date_string) do
-    case Date.from_iso8601(date_string) do
-      {:ok, date} -> date
-      _ -> nil
-    end
-  end
-
-  defp parse_air_date(_), do: nil
 end

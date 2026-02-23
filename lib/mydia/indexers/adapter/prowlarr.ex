@@ -282,9 +282,10 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       # Parse quality from title
       quality = QualityParser.parse(title)
 
-      # Extract TMDB and IMDB IDs from indexerFlags or custom fields
+      # Extract TMDB, TVDB, and IMDB IDs from indexerFlags or custom fields
       # Prowlarr may return these in different places depending on the indexer
       tmdb_id = extract_tmdb_id(item)
+      tvdb_id = extract_tvdb_id(item)
       imdb_id = extract_imdb_id(item)
 
       # Extract download protocol (torrent vs usenet)
@@ -326,6 +327,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         published_at: published_at,
         quality: quality,
         tmdb_id: tmdb_id,
+        tvdb_id: tvdb_id,
         imdb_id: imdb_id,
         download_protocol: download_protocol
       )
@@ -359,6 +361,23 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       # Sometimes in custom fields
       is_list(item["customFields"]) ->
         find_custom_field_id(item["customFields"], "tmdbId")
+
+      true ->
+        nil
+    end
+  end
+
+  # Extract TVDB ID from Prowlarr response
+  defp extract_tvdb_id(item) do
+    cond do
+      is_integer(item["tvdbId"]) and item["tvdbId"] > 0 ->
+        item["tvdbId"]
+
+      is_map(item["indexerFlags"]) and is_integer(item["indexerFlags"]["tvdbId"]) ->
+        item["indexerFlags"]["tvdbId"]
+
+      is_list(item["customFields"]) ->
+        find_custom_field_id(item["customFields"], "tvdbId")
 
       true ->
         nil

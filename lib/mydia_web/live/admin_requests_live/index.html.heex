@@ -82,6 +82,9 @@
                         <span class="badge badge-sm badge-ghost">
                           {String.replace(request.media_type, "_", " ") |> String.capitalize()}
                         </span>
+                        <%= if request.tvdb_id do %>
+                          <span class="badge badge-sm badge-ghost">TVDB: {request.tvdb_id}</span>
+                        <% end %>
                         <%= if request.tmdb_id do %>
                           <span class="badge badge-sm badge-ghost">TMDB: {request.tmdb_id}</span>
                         <% end %>

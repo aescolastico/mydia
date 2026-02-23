@@ -231,10 +231,14 @@ defmodule Mydia.Integrations.Trakt.Sync do
   defp find_media_item_by_ids(ids) do
     imdb = Map.get(ids, "imdb")
     tmdb = Map.get(ids, "tmdb")
+    tvdb = Map.get(ids, "tvdb")
 
     cond do
       imdb ->
         Repo.get_by(Media.MediaItem, imdb_id: imdb)
+
+      tvdb ->
+        Repo.get_by(Media.MediaItem, tvdb_id: tvdb)
 
       tmdb ->
         Repo.get_by(Media.MediaItem, tmdb_id: tmdb)
@@ -299,6 +303,7 @@ defmodule Mydia.Integrations.Trakt.Sync do
     %{}
     |> then(fn m -> if item.imdb_id, do: Map.put(m, :imdb, item.imdb_id), else: m end)
     |> then(fn m -> if item.tmdb_id, do: Map.put(m, :tmdb, item.tmdb_id), else: m end)
+    |> then(fn m -> if item.tvdb_id, do: Map.put(m, :tvdb, item.tvdb_id), else: m end)
   end
 
   # ── Timestamp Helpers ───────────────────────────────────────────────

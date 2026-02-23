@@ -36,6 +36,7 @@ defmodule MydiaWeb.Schema.MediaTypes do
     field :original_title, :string
     field :year, :integer
     field :tmdb_id, :integer
+    field :tvdb_id, :integer
     field :imdb_id, :string
 
     field :category, :media_category do
@@ -120,6 +121,7 @@ defmodule MydiaWeb.Schema.MediaTypes do
     field :original_title, :string
     field :year, :integer
     field :tmdb_id, :integer
+    field :tvdb_id, :integer
     field :imdb_id, :string
 
     field :category, :media_category do

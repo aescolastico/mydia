@@ -16,7 +16,7 @@ defmodule Mydia.LibraryItem.MediaItem do
   def poster_url(%Mydia.Media.MediaItem{metadata: metadata}) do
     case metadata do
       %MediaMetadata{poster_path: path} when is_binary(path) ->
-        "https://image.tmdb.org/t/p/w500#{path}"
+        Mydia.Metadata.ImageUrl.poster_url(path)
 
       _ ->
         @default_poster

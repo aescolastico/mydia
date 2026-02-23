@@ -192,10 +192,17 @@ defmodule MydiaWeb.Api.MediaController do
     metadata = match_result.metadata
 
     # Extract relevant fields from metadata
+    # Determine which ID field to update based on provider type
+    id_attrs =
+      if media_item.type == "tv_show" and match_result.provider_type == :tvdb do
+        %{tvdb_id: match_result.provider_id}
+      else
+        %{tmdb_id: match_result.provider_id}
+      end
+
     attrs =
-      %{
+      Map.merge(id_attrs, %{
         title: metadata.title,
-        tmdb_id: match_result.provider_id,
         metadata: metadata,
         year: extract_year(metadata),
         overview: metadata.overview,
@@ -204,7 +211,7 @@ defmodule MydiaWeb.Api.MediaController do
         genres: extract_genres(metadata),
         runtime: metadata.runtime,
         status: metadata.status
-      }
+      })
       |> Map.reject(fn {_k, v} -> is_nil(v) end)
 
     Repo.transaction(fn ->
@@ -271,6 +278,7 @@ defmodule MydiaWeb.Api.MediaController do
       type: media_item.type,
       year: media_item.year,
       tmdb_id: media_item.tmdb_id,
+      tvdb_id: media_item.tvdb_id,
       overview: media_item.overview,
       poster_url: media_item.poster_url,
       backdrop_url: media_item.backdrop_url,

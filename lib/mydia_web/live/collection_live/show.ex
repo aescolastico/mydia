@@ -1455,13 +1455,13 @@ defmodule MydiaWeb.CollectionLive.Show do
   end
 
   defp build_poster_url(%{metadata: %{"poster_path" => path}}) when is_binary(path) do
-    "https://image.tmdb.org/t/p/w342#{path}"
+    ImageUrl.poster_url(path, "w342")
   end
 
   defp build_poster_url(%{metadata: metadata}) when is_map(metadata) do
     case Map.get(metadata, "poster_path") || Map.get(metadata, :poster_path) do
       nil -> nil
-      path -> "https://image.tmdb.org/t/p/w342#{path}"
+      path -> ImageUrl.poster_url(path, "w342")
     end
   end
 

@@ -513,10 +513,13 @@ defmodule Mydia.Library.MetadataMatcher do
                 to_string(series.provider_id)
               )
 
+            # Use the provider from search result
+            provider_type = series.provider || :tvdb
+
             {:ok,
              MatchResult.new(
                provider_id: to_string(series.provider_id),
-               provider_type: :tmdb,
+               provider_type: provider_type,
                title: series.title,
                year: series.year,
                match_confidence: 0.70,
@@ -592,10 +595,12 @@ defmodule Mydia.Library.MetadataMatcher do
 
       [item | _] ->
         # Found a match! Return a match_result struct
+        {pid, ptype} = provider_id_for_item(item, :movie)
+
         {:ok,
          MatchResult.new(
-           provider_id: to_string(item.tmdb_id),
-           provider_type: :tmdb,
+           provider_id: pid || to_string(item.id),
+           provider_type: ptype || :tmdb,
            title: item.title,
            year: item.year,
            match_confidence: 0.95,
@@ -622,11 +627,18 @@ defmodule Mydia.Library.MetadataMatcher do
         {:error, :no_local_match}
 
       [item | _] ->
-        # Found a match! Return a match_result struct
+        # Use tvdb_id if available, fall back to tmdb_id
+        {provider_id, provider_type} =
+          if item.tvdb_id do
+            {to_string(item.tvdb_id), :tvdb}
+          else
+            {to_string(item.tmdb_id), :tmdb}
+          end
+
         {:ok,
          MatchResult.new(
-           provider_id: to_string(item.tmdb_id),
-           provider_type: :tmdb,
+           provider_id: provider_id,
+           provider_type: provider_type,
            title: item.title,
            year: item.year,
            match_confidence: 0.95,
@@ -730,6 +742,7 @@ defmodule Mydia.Library.MetadataMatcher do
           title: best_match.title,
           year: best_match.year,
           provider_id: best_match.provider_id,
+          provider: best_match.provider,
           match_score: score
         )
 
@@ -740,10 +753,13 @@ defmodule Mydia.Library.MetadataMatcher do
             to_string(best_match.provider_id)
           )
 
+        # Use the provider from search result (e.g., :tvdb for TV show searches)
+        provider_type = best_match.provider || :tvdb
+
         {:ok,
          MatchResult.new(
            provider_id: to_string(best_match.provider_id),
-           provider_type: :tmdb,
+           provider_type: provider_type,
            title: best_match.title,
            year: best_match.year,
            match_confidence: score,
@@ -1025,9 +1041,11 @@ defmodule Mydia.Library.MetadataMatcher do
   # If metadata is already a MediaMetadata struct, return it as-is
   # If metadata is a plain map, convert it using from_api_response
   defp convert_db_metadata(nil, item, media_type) do
+    {provider_id, provider} = provider_id_for_item(item, media_type)
+
     %MediaMetadata{
-      provider_id: to_string(item.tmdb_id),
-      provider: :tmdb,
+      provider_id: provider_id,
+      provider: provider,
       media_type: media_type,
       title: item.title,
       year: item.year
@@ -1039,6 +1057,19 @@ defmodule Mydia.Library.MetadataMatcher do
   end
 
   defp convert_db_metadata(metadata_map, item, media_type) when is_map(metadata_map) do
-    MediaMetadata.from_api_response(metadata_map, media_type, to_string(item.tmdb_id))
+    {provider_id, _provider} = provider_id_for_item(item, media_type)
+    MediaMetadata.from_api_response(metadata_map, media_type, provider_id)
+  end
+
+  defp provider_id_for_item(item, :tv_show) do
+    cond do
+      item.tvdb_id -> {to_string(item.tvdb_id), :tvdb}
+      item.tmdb_id -> {to_string(item.tmdb_id), :tmdb}
+      true -> {nil, nil}
+    end
+  end
+
+  defp provider_id_for_item(item, _media_type) do
+    if item.tmdb_id, do: {to_string(item.tmdb_id), :tmdb}, else: {nil, nil}
   end
 end

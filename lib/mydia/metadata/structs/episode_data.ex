@@ -55,6 +55,43 @@ defmodule Mydia.Metadata.Structs.EpisodeData do
     }
   end
 
+  @doc """
+  Creates an EpisodeData struct from a TVDB API response map.
+
+  TVDB uses different field names: `seasonNumber`, `number`, `name`,
+  `overview`, `aired`, `runtime`, `image`.
+  """
+  def from_tvdb_response(data) when is_map(data) do
+    # Extract English translations if available (episodes within season responses
+    # may not include translations — falls back gracefully)
+    translations = data["translations"] || %{}
+    english_name = extract_english_translation(translations["nameTranslations"], "name")
+
+    english_overview =
+      extract_english_translation(translations["overviewTranslations"], "overview")
+
+    %__MODULE__{
+      season_number: data["seasonNumber"],
+      episode_number: data["number"],
+      name: english_name || data["name"],
+      overview: english_overview || data["overview"],
+      air_date: parse_date(data["aired"]),
+      runtime: data["runtime"],
+      still_path: data["image"]
+    }
+  end
+
+  defp extract_english_translation(nil, _field), do: nil
+
+  defp extract_english_translation(translations, field) when is_list(translations) do
+    case Enum.find(translations, fn t -> t["language"] == "eng" end) do
+      nil -> nil
+      translation -> translation[field]
+    end
+  end
+
+  defp extract_english_translation(_, _), do: nil
+
   defp parse_date(nil), do: nil
   defp parse_date(""), do: nil
 

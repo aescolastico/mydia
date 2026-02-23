@@ -104,51 +104,55 @@ defmodule Mydia.Jobs.MetadataRefresh do
   ## Private Functions
 
   defp refresh_media_item(media_item, config, fetch_episodes) do
-    # Try to get tmdb_id from media_item or extract from stored metadata
-    tmdb_id = get_or_extract_tmdb_id(media_item)
     media_type = parse_media_type(media_item.type)
 
-    # If no TMDB ID, try to recover it via the shared Media function
-    {tmdb_id, media_item} =
-      if tmdb_id do
-        {tmdb_id, media_item}
+    # Get the appropriate provider ID and its source (tvdb_id for TV shows, tmdb_id for movies)
+    {provider_id, provider_source} = get_or_extract_provider_id(media_item, media_type)
+
+    # If no provider ID, try to recover it via the shared Media function
+    {provider_id, provider_source, media_item} =
+      if provider_id do
+        {provider_id, provider_source, media_item}
       else
-        Logger.info("No TMDB ID found, attempting to recover by title search",
+        Logger.info("No provider ID found, attempting to recover by title search",
           media_item_id: media_item.id,
           title: media_item.title
         )
 
-        case Media.recover_tmdb_id_by_title(media_item, media_type) do
+        case Media.recover_provider_id_by_title(media_item, media_type) do
           {:ok, found_id, updated_item} ->
-            Logger.info("Successfully recovered TMDB ID via title search",
+            Logger.info("Successfully recovered provider ID via title search",
               media_item_id: media_item.id,
               title: media_item.title,
-              tmdb_id: found_id
+              provider_id: found_id
             )
 
-            {found_id, updated_item}
+            source = if updated_item.tvdb_id, do: :tvdb, else: :tmdb
+            {found_id, source, updated_item}
 
           {:error, reason} ->
-            Logger.warning("Failed to recover TMDB ID via title search",
+            Logger.warning("Failed to recover provider ID via title search",
               media_item_id: media_item.id,
               title: media_item.title,
               reason: reason
             )
 
-            {nil, media_item}
+            {nil, nil, media_item}
         end
       end
 
-    if tmdb_id do
+    if provider_id do
       Logger.info("Refreshing metadata",
         media_item_id: media_item.id,
         title: media_item.title,
-        tmdb_id: tmdb_id
+        provider_id: provider_id,
+        provider_source: provider_source,
+        media_type: media_type
       )
 
-      case fetch_updated_metadata(tmdb_id, media_type, config) do
+      case fetch_updated_metadata(provider_id, media_type, provider_source, config) do
         {:ok, metadata} ->
-          attrs = build_update_attrs(metadata, media_type)
+          attrs = build_update_attrs(metadata, media_type, media_item)
 
           case Media.update_media_item(media_item, attrs, reason: "Metadata refreshed") do
             {:ok, updated_item} ->
@@ -176,18 +180,18 @@ defmodule Mydia.Jobs.MetadataRefresh do
         {:error, reason} ->
           Logger.error("Failed to fetch updated metadata",
             media_item_id: media_item.id,
-            tmdb_id: tmdb_id,
+            provider_id: provider_id,
             reason: reason
           )
 
           {:error, reason}
       end
     else
-      Logger.warning("Media item has no TMDB ID and could not recover via title search",
+      Logger.warning("Media item has no provider ID and could not recover via title search",
         media_item_id: media_item.id
       )
 
-      {:error, :no_tmdb_id}
+      {:error, :no_provider_id}
     end
   end
 
@@ -218,58 +222,79 @@ defmodule Mydia.Jobs.MetadataRefresh do
   defp parse_media_type("tv_show"), do: :tv_show
   defp parse_media_type(_), do: :movie
 
-  defp fetch_updated_metadata(tmdb_id, media_type, config) do
+  defp fetch_updated_metadata(provider_id, media_type, provider_source, config) do
     fetch_opts = [
       media_type: media_type,
+      provider: provider_source,
       append_to_response: ["credits", "images", "videos", "keywords"]
     ]
 
-    Metadata.fetch_by_id(config, to_string(tmdb_id), fetch_opts)
+    Metadata.fetch_by_id(config, to_string(provider_id), fetch_opts)
   end
 
-  defp build_update_attrs(metadata, _media_type) do
-    %{
+  defp build_update_attrs(metadata, media_type, media_item) do
+    base_attrs = %{
       title: metadata.title,
       original_title: metadata.original_title,
       year: extract_year(metadata),
-      tmdb_id: metadata.id,
       imdb_id: metadata.imdb_id,
       metadata: metadata
     }
+
+    # Route the metadata ID to the correct field based on provider source
+    {_provider_id, provider_source} = get_or_extract_provider_id(media_item, media_type)
+
+    case provider_source do
+      :tvdb ->
+        Map.put(base_attrs, :tvdb_id, metadata.id)
+
+      _ ->
+        Map.put(base_attrs, :tmdb_id, metadata.id)
+    end
   end
 
-  defp get_or_extract_tmdb_id(media_item) do
+  defp get_or_extract_provider_id(media_item, media_type) do
     cond do
-      # If tmdb_id is already set, use it
+      # For TV shows, prefer tvdb_id
+      media_type == :tv_show and media_item.tvdb_id ->
+        {media_item.tvdb_id, :tvdb}
+
+      # Fall back to tmdb_id for any media type
       media_item.tmdb_id ->
-        media_item.tmdb_id
+        {media_item.tmdb_id, :tmdb}
 
-      # Try to extract from metadata["id"] (new format after fix - string key)
+      # Try to extract from metadata["id"] (new format - string key)
       media_item.metadata && media_item.metadata["id"] ->
-        case media_item.metadata["id"] do
-          id when is_integer(id) ->
-            id
+        id =
+          case media_item.metadata["id"] do
+            id when is_integer(id) ->
+              id
 
-          id when is_binary(id) ->
-            case Integer.parse(id) do
-              {parsed_id, ""} -> parsed_id
-              _ -> nil
-            end
+            id when is_binary(id) ->
+              case Integer.parse(id) do
+                {parsed_id, ""} -> parsed_id
+                _ -> nil
+              end
 
-          _ ->
-            nil
-        end
+            _ ->
+              nil
+          end
+
+        {id, :tmdb}
 
       # Try to extract from metadata["provider_id"] (old format - string key)
       media_item.metadata && media_item.metadata["provider_id"] ->
-        case Integer.parse(media_item.metadata["provider_id"]) do
-          {id, ""} -> id
-          _ -> nil
-        end
+        id =
+          case Integer.parse(media_item.metadata["provider_id"]) do
+            {id, ""} -> id
+            _ -> nil
+          end
 
-      # No tmdb_id available
+        {id, :tmdb}
+
+      # No provider ID available
       true ->
-        nil
+        {nil, nil}
     end
   end
 

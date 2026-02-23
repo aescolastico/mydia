@@ -426,12 +426,46 @@ defmodule Mydia.Downloads.TorrentMatcher do
 
   @doc false
   def try_id_based_match(torrent_info, library_items, media_type) do
-    # Check if torrent_info has TMDB or IMDB ID
+    # Check if torrent_info has TVDB, TMDB, or IMDB ID
+    tvdb_id = Map.get(torrent_info, :tvdb_id)
     tmdb_id = Map.get(torrent_info, :tmdb_id)
     imdb_id = Map.get(torrent_info, :imdb_id)
 
     cond do
-      # Try TMDB ID first (most reliable)
+      # Try TVDB ID first for TV shows (most native for indexers)
+      is_integer(tvdb_id) and tvdb_id > 0 ->
+        case find_by_tvdb_id(library_items, tvdb_id) do
+          nil ->
+            Logger.info(
+              "TVDB ID #{tvdb_id} from torrent not found in library for #{torrent_info.title}"
+            )
+
+            # Fall through to try TMDB ID
+            try_tmdb_or_imdb_match(torrent_info, library_items, media_type, tmdb_id, imdb_id)
+
+          item ->
+            confidence = 0.98
+            reason = build_id_match_reason(item, torrent_info, "TVDB ID #{tvdb_id}", media_type)
+            Logger.info("Matched via TVDB ID #{tvdb_id}: #{torrent_info.title} -> #{item.title}")
+            {:ok, item, confidence, reason}
+        end
+
+      # Try TMDB ID
+      is_integer(tmdb_id) and tmdb_id > 0 ->
+        try_tmdb_or_imdb_match(torrent_info, library_items, media_type, tmdb_id, imdb_id)
+
+      # Try IMDB ID as fallback
+      is_binary(imdb_id) and imdb_id != "" ->
+        try_tmdb_or_imdb_match(torrent_info, library_items, media_type, nil, imdb_id)
+
+      # No IDs available - fall back to title matching
+      true ->
+        {:error, :no_id_match}
+    end
+  end
+
+  defp try_tmdb_or_imdb_match(torrent_info, library_items, media_type, tmdb_id, imdb_id) do
+    cond do
       is_integer(tmdb_id) and tmdb_id > 0 ->
         case find_by_tmdb_id(library_items, tmdb_id) do
           nil ->
@@ -439,7 +473,11 @@ defmodule Mydia.Downloads.TorrentMatcher do
               "TMDB ID #{tmdb_id} from torrent not found in library for #{torrent_info.title}"
             )
 
-            {:error, :no_id_match}
+            if is_binary(imdb_id) and imdb_id != "" do
+              try_imdb_match(torrent_info, library_items, media_type, imdb_id)
+            else
+              {:error, :no_id_match}
+            end
 
           item ->
             confidence = 0.98
@@ -448,32 +486,40 @@ defmodule Mydia.Downloads.TorrentMatcher do
             {:ok, item, confidence, reason}
         end
 
-      # Try IMDB ID as fallback
       is_binary(imdb_id) and imdb_id != "" ->
-        case find_by_imdb_id(library_items, imdb_id) do
-          nil ->
-            Logger.info(
-              "IMDB ID #{imdb_id} from torrent not found in library for #{torrent_info.title}"
-            )
+        try_imdb_match(torrent_info, library_items, media_type, imdb_id)
 
-            {:error, :no_id_match}
-
-          item ->
-            confidence = 0.98
-            reason = build_id_match_reason(item, torrent_info, "IMDB ID #{imdb_id}", media_type)
-            Logger.info("Matched via IMDB ID #{imdb_id}: #{torrent_info.title} -> #{item.title}")
-            {:ok, item, confidence, reason}
-        end
-
-      # No IDs available - fall back to title matching
       true ->
         {:error, :no_id_match}
+    end
+  end
+
+  defp try_imdb_match(torrent_info, library_items, media_type, imdb_id) do
+    case find_by_imdb_id(library_items, imdb_id) do
+      nil ->
+        Logger.info(
+          "IMDB ID #{imdb_id} from torrent not found in library for #{torrent_info.title}"
+        )
+
+        {:error, :no_id_match}
+
+      item ->
+        confidence = 0.98
+        reason = build_id_match_reason(item, torrent_info, "IMDB ID #{imdb_id}", media_type)
+        Logger.info("Matched via IMDB ID #{imdb_id}: #{torrent_info.title} -> #{item.title}")
+        {:ok, item, confidence, reason}
     end
   end
 
   defp find_by_tmdb_id(items, tmdb_id) do
     Enum.find(items, fn item ->
       item.tmdb_id == tmdb_id
+    end)
+  end
+
+  defp find_by_tvdb_id(items, tvdb_id) do
+    Enum.find(items, fn item ->
+      item.tvdb_id == tvdb_id
     end)
   end
 

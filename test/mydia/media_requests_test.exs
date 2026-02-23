@@ -111,7 +111,7 @@ defmodule Mydia.MediaRequestsTest do
       assert %{media_type: ["can't be blank"], title: ["can't be blank"]} = errors_on(changeset)
     end
 
-    test "requires either TMDB ID or IMDB ID", %{user: user} do
+    test "requires either TMDB ID, TVDB ID, or IMDB ID", %{user: user} do
       attrs = %{
         media_type: "movie",
         title: "Test Movie",
@@ -119,7 +119,9 @@ defmodule Mydia.MediaRequestsTest do
       }
 
       assert {:error, changeset} = MediaRequests.create_request(attrs)
-      assert %{tmdb_id: ["either TMDB ID or IMDB ID must be provided"]} = errors_on(changeset)
+
+      assert %{tmdb_id: ["either TMDB ID, TVDB ID, or IMDB ID must be provided"]} =
+               errors_on(changeset)
     end
 
     test "prevents duplicate requests for the same TMDB ID", %{user: user} do

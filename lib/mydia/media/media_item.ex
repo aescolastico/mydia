@@ -16,6 +16,7 @@ defmodule Mydia.Media.MediaItem do
     field :original_title, :string
     field :year, :integer
     field :tmdb_id, :integer
+    field :tvdb_id, :integer
     field :imdb_id, :string
     field :metadata, Mydia.Media.MetadataType
     field :monitored, :boolean, default: true
@@ -49,6 +50,7 @@ defmodule Mydia.Media.MediaItem do
       :original_title,
       :year,
       :tmdb_id,
+      :tvdb_id,
       :imdb_id,
       :metadata,
       :monitored,
@@ -60,6 +62,7 @@ defmodule Mydia.Media.MediaItem do
     |> validate_number(:year, greater_than: 1800, less_than: 2200)
     |> validate_year_for_movies()
     |> unique_constraint(:tmdb_id)
+    |> unique_constraint(:tvdb_id)
     |> foreign_key_constraint(:quality_profile_id)
   end
 

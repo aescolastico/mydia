@@ -265,6 +265,8 @@ defmodule Mydia.Indexers.Adapter.Jackett do
             ~x"./torznab:attr[@name='category']/@value"s |> add_namespace("torznab", @torznab_ns),
           tmdb_id:
             ~x"./torznab:attr[@name='tmdbid']/@value"s |> add_namespace("torznab", @torznab_ns),
+          tvdb_id:
+            ~x"./torznab:attr[@name='tvdbid']/@value"s |> add_namespace("torznab", @torznab_ns),
           imdb_id:
             ~x"./torznab:attr[@name='imdbid']/@value"s |> add_namespace("torznab", @torznab_ns),
           tracker: ~x"./jackettindexer/text()"s
@@ -354,6 +356,13 @@ defmodule Mydia.Indexers.Adapter.Jackett do
           id_str -> String.to_integer(id_str)
         end
 
+      # Parse TVDB ID
+      tvdb_id =
+        case item.tvdb_id do
+          "" -> nil
+          id_str -> String.to_integer(id_str)
+        end
+
       # Parse IMDB ID (format: tt1234567 or just 1234567)
       imdb_id =
         case item.imdb_id do
@@ -378,6 +387,7 @@ defmodule Mydia.Indexers.Adapter.Jackett do
           published_at: published_at,
           quality: quality,
           tmdb_id: tmdb_id,
+          tvdb_id: tvdb_id,
           imdb_id: imdb_id
         )
       end

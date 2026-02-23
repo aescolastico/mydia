@@ -219,7 +219,7 @@
               >
                 <%= if movie.poster_path do %>
                   <img
-                    src={"https://image.tmdb.org/t/p/w500#{movie.poster_path}"}
+                    src={ImageUrl.poster_url(movie.poster_path)}
                     alt={movie.title}
                     class="w-full h-full object-cover"
                   />
@@ -319,7 +319,7 @@
               >
                 <%= if show.poster_path do %>
                   <img
-                    src={"https://image.tmdb.org/t/p/w500#{show.poster_path}"}
+                    src={ImageUrl.poster_url(show.poster_path)}
                     alt={show.title}
                     class="w-full h-full object-cover"
                   />

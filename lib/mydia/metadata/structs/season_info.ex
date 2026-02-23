@@ -15,7 +15,8 @@ defmodule Mydia.Metadata.Structs.SeasonInfo do
     :overview,
     :air_date,
     :episode_count,
-    :poster_path
+    :poster_path,
+    :tvdb_season_id
   ]
 
   @type t :: %__MODULE__{
@@ -24,7 +25,8 @@ defmodule Mydia.Metadata.Structs.SeasonInfo do
           overview: String.t() | nil,
           air_date: String.t() | nil,
           episode_count: integer() | nil,
-          poster_path: String.t() | nil
+          poster_path: String.t() | nil,
+          tvdb_season_id: integer() | nil
         }
 
   @doc """
@@ -42,7 +44,8 @@ defmodule Mydia.Metadata.Structs.SeasonInfo do
       overview: data["overview"],
       air_date: data["air_date"],
       episode_count: data["episode_count"],
-      poster_path: data["poster_path"]
+      poster_path: data["poster_path"],
+      tvdb_season_id: data["tvdb_season_id"]
     }
   end
 end

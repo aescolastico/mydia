@@ -130,17 +130,25 @@ defmodule Mydia.Library.MetadataEnricher do
   defp determine_media_type(_), do: :movie
 
   defp get_or_create_media_item(provider_id, media_type, match_result, config) do
-    tmdb_id = String.to_integer(provider_id)
+    provider_type = Map.get(match_result, :provider_type, :tmdb)
+    id = String.to_integer(provider_id)
 
-    # Check if media item already exists
-    case Media.get_media_item_by_tmdb(tmdb_id) do
+    # Look up existing item by the appropriate provider ID
+    existing_item =
+      if provider_type == :tvdb do
+        Media.get_media_item_by_tvdb(id)
+      else
+        Media.get_media_item_by_tmdb(id)
+      end
+
+    case existing_item do
       nil ->
         # Fetch full metadata and create new item
         create_new_media_item(provider_id, media_type, match_result, config)
 
-      existing_item ->
+      item ->
         # Update existing item with latest metadata
-        update_existing_media_item(existing_item, provider_id, media_type, config)
+        update_existing_media_item(item, provider_id, media_type, config)
     end
   end
 
@@ -196,17 +204,28 @@ defmodule Mydia.Library.MetadataEnricher do
   end
 
   defp build_media_item_attrs(metadata, media_type, match_result) do
-    %{
+    provider_id = String.to_integer(to_string(metadata.provider_id))
+    provider_type = Map.get(match_result, :provider_type, metadata.provider || :tmdb)
+
+    attrs = %{
       type: media_type_to_string(media_type),
       title: metadata.title,
       original_title: metadata.original_title,
       year: extract_year(metadata),
-      tmdb_id: String.to_integer(to_string(metadata.provider_id)),
       imdb_id: metadata.imdb_id,
       metadata: metadata,
       monitored: true
     }
-    |> maybe_add_quality_profile(match_result)
+
+    # Set the appropriate provider ID field
+    attrs =
+      if provider_type == :tvdb || (media_type == :tv_show && metadata.provider == :tvdb) do
+        Map.put(attrs, :tvdb_id, provider_id)
+      else
+        Map.put(attrs, :tmdb_id, provider_id)
+      end
+
+    maybe_add_quality_profile(attrs, match_result)
   end
 
   defp media_type_to_string(:movie), do: "movie"
@@ -284,13 +303,23 @@ defmodule Mydia.Library.MetadataEnricher do
       title: media_item.title
     )
 
-    # Get number of seasons from metadata
-    num_seasons = get_number_of_seasons(media_item.metadata)
+    # Get seasons list from metadata (includes tvdb_season_id if from TVDB)
+    seasons = get_seasons_list(media_item.metadata)
 
-    if num_seasons && num_seasons > 0 do
+    if seasons != [] do
       # Fetch and create/update all episodes
-      Enum.each(1..num_seasons, fn season_num ->
-        case Metadata.fetch_season(config, provider_id, season_num) do
+      Enum.each(seasons, fn season ->
+        season_num = Map.get(season, :season_number, 0)
+        tvdb_season_id = Map.get(season, :tvdb_season_id)
+
+        fetch_opts =
+          if tvdb_season_id do
+            [tvdb_season_id: tvdb_season_id]
+          else
+            []
+          end
+
+        case Metadata.fetch_season(config, provider_id, season_num, fetch_opts) do
           {:ok, season_data} ->
             create_episodes_for_season(media_item, season_data)
 
@@ -304,7 +333,6 @@ defmodule Mydia.Library.MetadataEnricher do
       end)
 
       # After all episodes are created, directly associate the file with the target episode(s)
-      # This is O(1) per episode instead of O(n) iteration through all episodes
       associate_file_with_target_episodes(media_item, match_result)
     else
       Logger.warning("No season information available",
@@ -315,95 +343,26 @@ defmodule Mydia.Library.MetadataEnricher do
     :ok
   end
 
-  defp get_number_of_seasons(%{number_of_seasons: num}) when is_integer(num), do: num
-
-  defp get_number_of_seasons(%{seasons: seasons}) when is_list(seasons) do
+  defp get_seasons_list(%{seasons: seasons}) when is_list(seasons) do
     # Filter out season 0 (specials) for now
-    Enum.count(seasons, fn s -> Map.get(s, :season_number, 0) > 0 end)
+    Enum.filter(seasons, fn s -> Map.get(s, :season_number, 0) > 0 end)
   end
 
-  defp get_number_of_seasons(_), do: nil
+  defp get_seasons_list(%{number_of_seasons: num}) when is_integer(num) and num > 0 do
+    # Fallback: create basic season entries without tvdb_season_id
+    Enum.map(1..num, fn n -> %{season_number: n} end)
+  end
+
+  defp get_seasons_list(_), do: []
 
   defp create_episodes_for_season(media_item, season_data) do
-    episodes = Map.get(season_data, :episodes, [])
-    season_number = Map.get(season_data, :season_number)
+    {:ok, count} = Media.upsert_episodes_from_season(media_item, season_data)
 
-    Enum.each(episodes, fn episode_data ->
-      # Check if episode already exists
-      case get_episode(media_item.id, season_number, episode_data.episode_number) do
-        nil ->
-          attrs = build_episode_attrs(media_item.id, season_number, episode_data)
-
-          case Media.create_episode(attrs) do
-            {:ok, _episode} ->
-              Logger.debug("Created episode",
-                media_item_id: media_item.id,
-                season: season_number,
-                episode: episode_data.episode_number
-              )
-
-            {:error, reason} ->
-              Logger.warning("Failed to create episode",
-                media_item_id: media_item.id,
-                season: season_number,
-                episode: episode_data.episode_number,
-                reason: reason
-              )
-          end
-
-        existing_episode ->
-          # Update existing episode with fresh metadata
-          attrs = build_episode_attrs(media_item.id, season_number, episode_data)
-
-          case Media.update_episode(existing_episode, attrs) do
-            {:ok, _updated_episode} ->
-              Logger.debug("Updated episode",
-                media_item_id: media_item.id,
-                season: season_number,
-                episode: episode_data.episode_number
-              )
-
-            {:error, reason} ->
-              Logger.warning("Failed to update episode",
-                media_item_id: media_item.id,
-                season: season_number,
-                episode: episode_data.episode_number,
-                reason: reason
-              )
-          end
-      end
-    end)
+    Logger.debug("Upserted #{count} episodes",
+      media_item_id: media_item.id,
+      season: season_data.season_number
+    )
   end
-
-  defp get_episode(media_item_id, season_number, episode_number) do
-    Media.get_episode_by_number(media_item_id, season_number, episode_number)
-  rescue
-    _ -> nil
-  end
-
-  defp build_episode_attrs(media_item_id, season_number, episode_data) do
-    %{
-      media_item_id: media_item_id,
-      season_number: season_number,
-      episode_number: episode_data.episode_number,
-      title: episode_data.name,
-      air_date: parse_air_date(episode_data.air_date),
-      metadata: episode_data,
-      monitored: true
-    }
-  end
-
-  defp parse_air_date(nil), do: nil
-  defp parse_air_date(""), do: nil
-
-  defp parse_air_date(date_string) when is_binary(date_string) do
-    case Date.from_iso8601(date_string) do
-      {:ok, date} -> date
-      _ -> nil
-    end
-  end
-
-  defp parse_air_date(_), do: nil
 
   # Directly associates the media file with target episodes using O(1) lookups
   # instead of iterating through all episodes

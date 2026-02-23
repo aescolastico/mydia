@@ -443,6 +443,7 @@ defmodule Mydia.Indexers.Adapter.Cardigann do
       episode: Keyword.get(opts, :episode),
       imdb_id: Keyword.get(opts, :imdb_id),
       tmdb_id: Keyword.get(opts, :tmdb_id),
+      tvdb_id: Keyword.get(opts, :tvdb_id),
       config: definition.config || %{},
       settings: parsed.settings
     ]

@@ -593,9 +593,13 @@ defmodule Mydia.ImportLists do
         _ -> media_type
       end
 
+    # Check by tmdb_id first
     case Repo.get_by(MediaItem, tmdb_id: tmdb_id, type: type) do
-      nil -> :not_found
-      media_item -> {:duplicate, media_item}
+      nil ->
+        :not_found
+
+      media_item ->
+        {:duplicate, media_item}
     end
   end
 

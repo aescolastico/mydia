@@ -67,6 +67,7 @@ defmodule Mydia.Indexers.SearchResult do
           quality: QualityInfo.t() | nil,
           metadata: SearchResultMetadata.t() | nil,
           tmdb_id: integer() | nil,
+          tvdb_id: integer() | nil,
           imdb_id: String.t() | nil,
           download_protocol: :torrent | :nzb | nil
         }
@@ -85,6 +86,7 @@ defmodule Mydia.Indexers.SearchResult do
     :quality,
     :metadata,
     :tmdb_id,
+    :tvdb_id,
     :imdb_id,
     :download_protocol
   ]

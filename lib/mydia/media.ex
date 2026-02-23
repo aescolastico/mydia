@@ -58,6 +58,16 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Gets a single media item by TVDB ID.
+  """
+  def get_media_item_by_tvdb(tvdb_id, opts \\ []) do
+    MediaItem
+    |> where([m], m.tvdb_id == ^tvdb_id)
+    |> maybe_preload(opts[:preload])
+    |> Repo.one()
+  end
+
+  @doc """
   Creates a media item.
 
   For TV shows, this automatically fetches and creates all episodes from the
@@ -496,9 +506,13 @@ defmodule Mydia.Media do
   end
 
   @doc """
-  Returns a map of TMDB IDs to library status for efficient lookup.
+  Returns a map of provider IDs to library status for efficient lookup.
 
-  Returns a map where keys are TMDB IDs and values are maps with:
+  Returns a map where:
+  - TMDB IDs are integer keys: `12345 => %{...}`
+  - TVDB IDs are tuple keys: `{:tvdb, 67890} => %{...}`
+
+  Values are maps with:
   - `:in_library` - boolean
   - `:monitored` - boolean (if in library)
   - `:type` - "movie" or "tv_show" (if in library)
@@ -508,19 +522,23 @@ defmodule Mydia.Media do
 
       iex> get_library_status_map()
       %{
-        "12345" => %{in_library: true, monitored: true, type: "movie", id: 1},
-        "67890" => %{in_library: true, monitored: false, type: "tv_show", id: 2}
+        12345 => %{in_library: true, monitored: true, type: "movie", id: 1},
+        {:tvdb, 67890} => %{in_library: true, monitored: false, type: "tv_show", id: 2}
       }
   """
   def get_library_status_map do
     MediaItem
-    |> select(
-      [m],
-      {m.tmdb_id, %{in_library: true, monitored: m.monitored, type: m.type, id: m.id}}
-    )
-    |> where([m], not is_nil(m.tmdb_id))
+    |> where([m], not is_nil(m.tmdb_id) or not is_nil(m.tvdb_id))
+    |> select([m], {m.tmdb_id, m.tvdb_id, m.monitored, m.type, m.id})
     |> Repo.all()
-    |> Map.new()
+    |> Enum.reduce(%{}, fn {tmdb_id, tvdb_id, monitored, type, id}, acc ->
+      entry = %{in_library: true, monitored: monitored, type: type, id: id}
+
+      acc =
+        if tmdb_id, do: Map.put(acc, tmdb_id, entry), else: acc
+
+      if tvdb_id, do: Map.put(acc, {:tvdb, tvdb_id}, entry), else: acc
+    end)
   end
 
   ## Episodes
@@ -950,26 +968,41 @@ defmodule Mydia.Media do
     force = Keyword.get(opts, :force, false)
     config = Metadata.default_relay_config()
 
-    # Get TMDB ID from metadata, or try to recover it via title search
-    tmdb_id =
-      case media_item.metadata do
-        %{"provider_id" => id} when is_binary(id) -> id
-        _ -> media_item.tmdb_id
+    # Get provider ID - prefer tvdb_id for TV shows, fall back to tmdb_id
+    # Track the provider source so we route to the correct API
+    {provider_id, provider_source} =
+      cond do
+        media_item.tvdb_id ->
+          {to_string(media_item.tvdb_id), :tvdb}
+
+        media_item.tmdb_id ->
+          {to_string(media_item.tmdb_id), :tmdb}
+
+        true ->
+          case media_item.metadata do
+            %{"provider_id" => id} when is_binary(id) -> {id, :tmdb}
+            _ -> {nil, nil}
+          end
       end
 
-    # If no TMDB ID, try to recover it by searching by title
-    {tmdb_id, media_item} =
-      if is_nil(tmdb_id) or tmdb_id == "" do
-        case do_recover_tmdb_id_by_title(media_item, :tv_show, config) do
-          {:ok, recovered_id, updated_item} -> {recovered_id, updated_item}
-          {:error, _reason} -> {nil, media_item}
+    # If no provider ID, try to recover it by searching by title
+    {provider_id, provider_source, media_item} =
+      if is_nil(provider_id) or provider_id == "" do
+        case do_recover_provider_id_by_title(media_item, :tv_show, config) do
+          {:ok, recovered_id, updated_item} ->
+            # Recovery searches TVDB for TV shows
+            source = if updated_item.tvdb_id, do: :tvdb, else: :tmdb
+            {to_string(recovered_id), source, updated_item}
+
+          {:error, _reason} ->
+            {nil, nil, media_item}
         end
       else
-        {tmdb_id, media_item}
+        {provider_id, provider_source, media_item}
       end
 
-    if is_nil(tmdb_id) or tmdb_id == "" do
-      {:error, :missing_tmdb_id}
+    if is_nil(provider_id) or provider_id == "" do
+      {:error, :missing_provider_id}
     else
       # Check if we should skip season refresh based on threshold
       if should_skip_season_refresh?(media_item, force) do
@@ -988,7 +1021,10 @@ defmodule Mydia.Media do
         # Fetch fresh metadata to get seasons info
         config = Metadata.default_relay_config()
 
-        case Metadata.fetch_by_id(config, to_string(tmdb_id), media_type: :tv_show) do
+        case Metadata.fetch_by_id(config, provider_id,
+               media_type: :tv_show,
+               provider: provider_source
+             ) do
           {:ok, metadata} ->
             # Delete existing episodes if force option is enabled
             if force do
@@ -1013,6 +1049,24 @@ defmodule Mydia.Media do
                 "none" -> []
                 _ -> seasons
               end
+
+            # Invalidate season cache to ensure fresh data with translations
+            has_tvdb = not is_nil(media_item.tvdb_id)
+
+            Enum.each(seasons_to_fetch, fn season ->
+              tvdb_season_id =
+                if has_tvdb, do: Map.get(season, :tvdb_season_id), else: nil
+
+              cache_key =
+                Metadata.build_season_cache_key(
+                  provider_id,
+                  season.season_number,
+                  "en-US",
+                  tvdb_season_id
+                )
+
+              Mydia.Metadata.Cache.delete(cache_key)
+            end)
 
             # Fetch and create episodes for each season
             episode_count =
@@ -1189,80 +1243,124 @@ defmodule Mydia.Media do
     end)
   end
 
+  @doc """
+  Upserts episodes from season data into the database.
+
+  Creates new episodes or updates existing ones with fresh metadata from the
+  provider. This is the single source of truth for episode creation/update
+  from season data — all callers should use this instead of duplicating logic.
+
+  ## Options
+    - `:monitor_fn` - Function `(season_number, air_date) -> boolean` to determine
+      if a new episode should be monitored. Defaults to monitoring all non-special episodes.
+    - `:force` - If true, skips existing episode lookup (for use after delete_all). Default: false.
+
+  ## Returns
+    - `{:ok, count}` - Number of episodes processed (created + updated)
+  """
+  def upsert_episodes_from_season(media_item, season_data, opts \\ []) do
+    default_monitor = fn season_num, _air_date -> season_num > 0 end
+    monitor_fn = Keyword.get(opts, :monitor_fn, default_monitor)
+    force = Keyword.get(opts, :force, false)
+
+    episodes = season_data.episodes || []
+
+    count =
+      Enum.reduce(episodes, 0, fn episode, acc ->
+        season_num = episode.season_number
+        episode_num = episode.episode_number
+
+        # Skip if season or episode number is nil
+        if is_nil(season_num) or is_nil(episode_num) do
+          acc
+        else
+          existing =
+            if force do
+              nil
+            else
+              get_episode_by_number(media_item.id, season_num, episode_num)
+            end
+
+          air_date = parse_air_date(episode.air_date)
+
+          if is_nil(existing) do
+            should_monitor = monitor_fn.(season_num, air_date)
+
+            case create_episode(%{
+                   media_item_id: media_item.id,
+                   season_number: season_num,
+                   episode_number: episode_num,
+                   title: episode.name,
+                   air_date: air_date,
+                   metadata: Map.from_struct(episode),
+                   monitored: should_monitor
+                 }) do
+              {:ok, _episode} -> acc + 1
+              {:error, _changeset} -> acc
+            end
+          else
+            # Update existing episode with fresh metadata
+            case update_episode(existing, %{
+                   title: episode.name,
+                   air_date: air_date,
+                   metadata: Map.from_struct(episode)
+                 }) do
+              {:ok, _episode} -> acc + 1
+              {:error, _changeset} -> acc
+            end
+          end
+        end
+      end)
+
+    {:ok, count}
+  end
+
   ## Private Functions
 
   defp create_episodes_for_season(media_item, season, config, force) do
     alias Mydia.Metadata
 
-    # Fetch season details with episodes
-    tmdb_id =
-      case media_item.metadata do
-        %{"provider_id" => id} when is_binary(id) -> id
-        _ -> media_item.tmdb_id
+    # Get provider ID - prefer tvdb_id for TV shows
+    # Only use tvdb_season_id routing when we actually have a tvdb_id
+    {provider_id, has_tvdb} =
+      cond do
+        media_item.tvdb_id ->
+          {to_string(media_item.tvdb_id), true}
+
+        media_item.tmdb_id ->
+          {to_string(media_item.tmdb_id), false}
+
+        true ->
+          case media_item.metadata do
+            %{"provider_id" => id} when is_binary(id) -> {id, false}
+            _ -> {nil, false}
+          end
       end
 
-    case Metadata.fetch_season_cached(config, to_string(tmdb_id), season.season_number) do
+    # Pass tvdb_season_id only if we have a tvdb_id (otherwise season IDs are TMDB)
+    fetch_opts =
+      if has_tvdb do
+        case Map.get(season, :tvdb_season_id) do
+          nil -> []
+          tvdb_season_id -> [tvdb_season_id: tvdb_season_id]
+        end
+      else
+        []
+      end
+
+    case Metadata.fetch_season_cached(
+           config,
+           to_string(provider_id),
+           season.season_number,
+           fetch_opts
+         ) do
       {:ok, season_data} ->
-        episodes = season_data.episodes || []
-
-        created_count =
-          Enum.reduce(episodes, 0, fn episode, count ->
-            season_num = episode.season_number
-            episode_num = episode.episode_number
-
-            # Skip if season or episode number is nil
-            if is_nil(season_num) or is_nil(episode_num) do
-              count
-            else
-              # Check if episode already exists (unless force is enabled)
-              existing =
-                if force do
-                  nil
-                else
-                  get_episode_by_number(
-                    media_item.id,
-                    season_num,
-                    episode_num
-                  )
-                end
-
-              if is_nil(existing) do
-                air_date = parse_air_date(episode.air_date)
-                # Determine monitoring based on preset for new episodes
-                should_monitor =
-                  should_monitor_new_episode?(
-                    media_item,
-                    season_num,
-                    air_date
-                  )
-
-                case create_episode(%{
-                       media_item_id: media_item.id,
-                       season_number: season_num,
-                       episode_number: episode_num,
-                       title: episode.name,
-                       air_date: air_date,
-                       metadata: Map.from_struct(episode),
-                       monitored: should_monitor
-                     }) do
-                  {:ok, _episode} -> count + 1
-                  {:error, _changeset} -> count
-                end
-              else
-                # Update existing episode with fresh metadata
-                case update_episode(existing, %{
-                       title: episode.name,
-                       air_date: parse_air_date(episode.air_date),
-                       metadata: Map.from_struct(episode)
-                     }) do
-                  {:ok, _episode} -> count + 1
-                  {:error, _changeset} -> count
-                end
-              end
-            end
-          end)
-
-        {:ok, created_count}
+        upsert_episodes_from_season(media_item, season_data,
+          force: force,
+          monitor_fn: fn season_num, air_date ->
+            should_monitor_new_episode?(media_item, season_num, air_date)
+          end
+        )
 
       {:error, reason} ->
         {:error, reason}
@@ -1656,22 +1754,23 @@ defmodule Mydia.Media do
   @doc """
   Recover TMDB ID by searching for the media item by title.
 
-  This is useful when a media item was created without a TMDB ID (e.g., due to a bug)
+  This is useful when a media item was created without a provider ID (e.g., due to a bug)
   and needs to have its ID recovered via a title search.
 
-  Returns {:ok, tmdb_id, updated_media_item} or {:error, reason}
+  For TV shows, searches TVDB and stores tvdb_id. For movies, searches TMDB and stores tmdb_id.
+
+  Returns {:ok, provider_id, updated_media_item} or {:error, reason}
   """
-  def recover_tmdb_id_by_title(%MediaItem{} = media_item, media_type) do
+  def recover_provider_id_by_title(%MediaItem{} = media_item, media_type) do
     alias Mydia.Metadata
     config = Metadata.default_relay_config()
-    do_recover_tmdb_id_by_title(media_item, media_type, config)
+    do_recover_provider_id_by_title(media_item, media_type, config)
   end
 
-  defp do_recover_tmdb_id_by_title(%MediaItem{} = media_item, media_type, config) do
+  defp do_recover_provider_id_by_title(%MediaItem{} = media_item, media_type, config) do
     alias Mydia.Metadata
-    alias Mydia.Metadata.Structs.SearchResult
 
-    Logger.info("Attempting to recover TMDB ID by title search",
+    Logger.info("Attempting to recover provider ID by title search",
       media_item_id: media_item.id,
       title: media_item.title,
       media_type: media_type
@@ -1690,7 +1789,7 @@ defmodule Mydia.Media do
         if media_item.year do
           case Metadata.search(config, media_item.title, media_type: media_type) do
             {:ok, results} when results != [] ->
-              select_and_update_tmdb_id(results, media_item)
+              select_and_update_provider_id(results, media_item, media_type)
 
             _ ->
               {:error, :no_matches_found}
@@ -1700,14 +1799,14 @@ defmodule Mydia.Media do
         end
 
       {:ok, results} ->
-        select_and_update_tmdb_id(results, media_item)
+        select_and_update_provider_id(results, media_item, media_type)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp select_and_update_tmdb_id(results, media_item) do
+  defp select_and_update_provider_id(results, media_item, media_type) do
     alias Mydia.Metadata.Structs.SearchResult
 
     # Score and select best match
@@ -1718,24 +1817,33 @@ defmodule Mydia.Media do
       end)
 
     case Enum.max_by(scored_results, fn {_result, score} -> score end, fn -> nil end) do
-      {%SearchResult{provider_id: provider_id}, score} when score >= 0.5 ->
+      {%SearchResult{provider_id: provider_id, provider: provider}, score} when score >= 0.5 ->
         case Integer.parse(provider_id) do
-          {tmdb_id, ""} ->
-            Logger.info("Recovered TMDB ID via title search",
+          {parsed_id, ""} ->
+            # For TV shows from TVDB, store as tvdb_id; otherwise store as tmdb_id
+            {id_field, update_attrs} =
+              if media_type == :tv_show and provider == :tvdb do
+                {:tvdb_id, %{tvdb_id: parsed_id}}
+              else
+                {:tmdb_id, %{tmdb_id: parsed_id}}
+              end
+
+            Logger.info("Recovered provider ID via title search",
               media_item_id: media_item.id,
               title: media_item.title,
-              tmdb_id: tmdb_id,
+              id_field: id_field,
+              provider_id: parsed_id,
               match_score: score
             )
 
-            # Update the media item with the recovered TMDB ID
-            case update_media_item(media_item, %{tmdb_id: tmdb_id}, reason: "TMDB ID recovered") do
+            # Update the media item with the recovered ID
+            case update_media_item(media_item, update_attrs, reason: "Provider ID recovered") do
               {:ok, updated_item} ->
-                {:ok, tmdb_id, updated_item}
+                {:ok, parsed_id, updated_item}
 
               {:error, _changeset} ->
                 # Even if update fails, return the ID so refresh can proceed
-                {:ok, tmdb_id, media_item}
+                {:ok, parsed_id, media_item}
             end
 
           _ ->

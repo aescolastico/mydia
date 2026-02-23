@@ -1207,10 +1207,16 @@ defmodule MydiaWeb.SearchLive.Index do
   end
 
   defp create_media_item_from_metadata(parsed, metadata) do
-    # Check if media already exists by TMDB ID
-    tmdb_id = metadata.provider_id
+    # Check if media already exists by provider ID
+    # For TV shows from TVDB, check tvdb_id; otherwise check tmdb_id
+    existing =
+      if parsed.type == :tv_show and Map.get(metadata, :provider) == :tvdb do
+        Media.get_media_item_by_tvdb(metadata.provider_id)
+      else
+        Media.get_media_item_by_tmdb(metadata.provider_id)
+      end
 
-    case Media.get_media_item_by_tmdb(tmdb_id) do
+    case existing do
       nil ->
         # Create new media item
         attrs = build_media_item_attrs(parsed, metadata)
@@ -1243,7 +1249,7 @@ defmodule MydiaWeb.SearchLive.Index do
     config = Mydia.Config.get()
     monitor_by_default = config.media.monitor_by_default
 
-    %{
+    base = %{
       type: type,
       title: metadata.title || parsed.title,
       original_title: metadata.original_title,
@@ -1252,10 +1258,16 @@ defmodule MydiaWeb.SearchLive.Index do
           (metadata.release_date && extract_year_from_date(metadata.release_date)) ||
           (metadata.first_air_date && extract_year_from_date(metadata.first_air_date)) ||
           parsed.year,
-      tmdb_id: metadata.provider_id,
       metadata: metadata,
       monitored: monitor_by_default
     }
+
+    # For TV shows from TVDB, store tvdb_id; otherwise store tmdb_id
+    if parsed.type == :tv_show and Map.get(metadata, :provider) == :tvdb do
+      Map.put(base, :tvdb_id, metadata.provider_id)
+    else
+      Map.put(base, :tmdb_id, metadata.provider_id)
+    end
   end
 
   defp extract_year_from_date(%Date{} = date), do: date.year
@@ -1302,7 +1314,7 @@ defmodule MydiaWeb.SearchLive.Index do
     config = Mydia.Config.get()
     monitor_by_default = config.media.monitor_by_default
 
-    %{
+    base = %{
       type: type,
       title: metadata.title,
       original_title: metadata.original_title,
@@ -1310,10 +1322,16 @@ defmodule MydiaWeb.SearchLive.Index do
         metadata.year ||
           (metadata.release_date && extract_year_from_date(metadata.release_date)) ||
           (metadata.first_air_date && extract_year_from_date(metadata.first_air_date)),
-      tmdb_id: metadata.provider_id,
       metadata: metadata,
       monitored: monitor_by_default
     }
+
+    # For TV shows from TVDB, store tvdb_id; otherwise store tmdb_id
+    if media_type == :tv_show and Map.get(metadata, :provider) == :tvdb do
+      Map.put(base, :tvdb_id, metadata.provider_id)
+    else
+      Map.put(base, :tmdb_id, metadata.provider_id)
+    end
   end
 
   defp format_client_error(error) when is_binary(error), do: error

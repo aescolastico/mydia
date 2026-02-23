@@ -1700,7 +1700,7 @@ defmodule MydiaWeb.AdminConfigLive.Components do
 
   # Helper for image URLs
   defp build_image_url(nil), do: nil
-  defp build_image_url(path) when is_binary(path), do: "https://image.tmdb.org/t/p/w92#{path}"
+  defp build_image_url(path) when is_binary(path), do: ImageUrl.image_url(path, "w92")
   defp build_image_url(_), do: nil
 
   # Helper for file size formatting

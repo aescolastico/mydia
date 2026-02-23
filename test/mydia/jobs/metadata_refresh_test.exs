@@ -14,7 +14,7 @@ defmodule Mydia.Jobs.MetadataRefreshTest do
                perform_job(MetadataRefresh, %{"media_item_id" => fake_id})
     end
 
-    test "returns error when media item has no TMDB ID and title search fails" do
+    test "returns error when media item has no provider ID and title search fails" do
       # Create media item without TMDB ID
       media_item =
         media_item_fixture(%{
@@ -27,7 +27,7 @@ defmodule Mydia.Jobs.MetadataRefreshTest do
       # Since title search will fail (no mock results), should return error
       result = perform_job(MetadataRefresh, %{"media_item_id" => media_item.id})
 
-      assert result == {:error, :no_tmdb_id}
+      assert result == {:error, :no_provider_id}
     end
 
     test "refreshes media item when TMDB ID exists" do
@@ -43,8 +43,8 @@ defmodule Mydia.Jobs.MetadataRefreshTest do
       # This will fail because no mock server, but should get past the TMDB ID check
       result = perform_job(MetadataRefresh, %{"media_item_id" => media_item.id})
 
-      # Will fail due to no metadata relay, but should not be :no_tmdb_id
-      assert result != {:error, :no_tmdb_id}
+      # Will fail due to no metadata relay, but should not be :no_provider_id
+      assert result != {:error, :no_provider_id}
     end
   end
 

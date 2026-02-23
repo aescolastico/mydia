@@ -9,6 +9,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
 
   use Phoenix.Component
   import MydiaWeb.CoreComponents
+  alias Mydia.Metadata.ImageUrl
 
   @doc """
   Renders the progress steps indicator for the import wizard.
@@ -806,7 +807,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
         <%!-- Use Map.get for safe access since metadata can be empty (issue #44) --%>
         <%= if poster_path = Map.get(match.metadata || %{}, :poster_path) do %>
           <img
-            src={"https://image.tmdb.org/t/p/w92#{poster_path}"}
+            src={ImageUrl.image_url(poster_path, "w92")}
             alt={match.title}
             class="w-12 h-18 rounded object-cover"
           />
@@ -1389,7 +1390,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
           >
             <%= if result.poster_path do %>
               <img
-                src={"https://image.tmdb.org/t/p/w92#{result.poster_path}"}
+                src={ImageUrl.image_url(result.poster_path, "w92")}
                 alt={result.title}
                 class="w-10 h-14 rounded object-cover shadow-sm"
               />

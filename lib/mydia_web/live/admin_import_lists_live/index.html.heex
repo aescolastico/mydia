@@ -551,7 +551,7 @@
                 <figure class="relative">
                   <%= if item.poster_path do %>
                     <img
-                      src={"https://image.tmdb.org/t/p/w185#{item.poster_path}"}
+                      src={ImageUrl.poster_url(item.poster_path, "w185")}
                       alt={item.title}
                       class="w-full aspect-[2/3] object-cover"
                       loading="lazy"

@@ -260,9 +260,9 @@ defmodule Mydia.Metadata do
       when is_atom(type) do
     alias Mydia.Metadata.Cache
 
-    # Build cache key including language to avoid returning wrong language results
     language = Keyword.get(opts, :language, "en-US")
-    cache_key = "season:#{provider_id}:#{season_number}:#{language}"
+    tvdb_season_id = Keyword.get(opts, :tvdb_season_id)
+    cache_key = build_season_cache_key(provider_id, season_number, language, tvdb_season_id)
 
     # Cache for 24 hours
     Cache.fetch(
@@ -272,6 +272,21 @@ defmodule Mydia.Metadata do
       end,
       ttl: :timer.hours(24)
     )
+  end
+
+  @doc """
+  Builds a deterministic cache key for season data.
+
+  Used by `fetch_season_cached/4` and by callers that need to invalidate
+  specific season cache entries.
+  """
+  def build_season_cache_key(
+        provider_id,
+        season_number,
+        language \\ "en-US",
+        tvdb_season_id \\ nil
+      ) do
+    "season:#{provider_id}:#{season_number}:#{language}:#{tvdb_season_id}"
   end
 
   @doc """

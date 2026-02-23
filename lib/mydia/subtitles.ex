@@ -254,6 +254,7 @@ defmodule Mydia.Subtitles do
     params
     |> maybe_put(:imdb_id, media_item.imdb_id)
     |> maybe_put(:tmdb_id, media_item.tmdb_id)
+    |> maybe_put(:tvdb_id, media_item.tvdb_id)
     |> Map.put(:media_type, if(media_item.type == "tv_show", do: "episode", else: "movie"))
   end
 
@@ -307,7 +308,8 @@ defmodule Mydia.Subtitles do
 
     # Metadata match (IMDB/TMDB)
     score =
-      if Map.has_key?(search_params, :imdb_id) || Map.has_key?(search_params, :tmdb_id) do
+      if Map.has_key?(search_params, :imdb_id) || Map.has_key?(search_params, :tmdb_id) ||
+           Map.has_key?(search_params, :tvdb_id) do
         score + @scoring_weights.metadata_match
       else
         score

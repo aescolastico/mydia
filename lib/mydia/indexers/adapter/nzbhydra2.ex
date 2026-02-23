@@ -345,6 +345,13 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
           id_str -> String.to_integer(id_str)
         end
 
+      # Parse TVDB ID
+      tvdb_id =
+        case item.tvdb_id do
+          "" -> nil
+          id_str -> String.to_integer(id_str)
+        end
+
       # Parse IMDB ID
       imdb_id =
         case item.imdb_id do
@@ -371,6 +378,7 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
           published_at: published_at,
           quality: quality,
           tmdb_id: tmdb_id,
+          tvdb_id: tvdb_id,
           imdb_id: imdb_id,
           # Always NZB protocol for NZBHydra2
           download_protocol: :nzb

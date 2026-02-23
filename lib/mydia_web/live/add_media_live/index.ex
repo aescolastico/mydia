@@ -229,14 +229,15 @@ defmodule MydiaWeb.AddMediaLive.Index do
         case Media.create_media_item(attrs, season_monitoring: season_monitoring) do
           {:ok, media_item} ->
             # Stay on page with success message
-            tmdb_id = String.to_integer(selected.provider_id)
+            # Use provider_id as key (integer) for tracking added items
+            id_key = String.to_integer(selected.provider_id)
 
             {:noreply,
              socket
              |> assign(:adding_index, nil)
              |> assign(
                :added_item_ids,
-               Map.put(socket.assigns.added_item_ids, tmdb_id, media_item.id)
+               Map.put(socket.assigns.added_item_ids, id_key, media_item.id)
              )
              |> put_flash(:info, "#{media_item.title} has been added to your library")}
 
@@ -389,17 +390,23 @@ defmodule MydiaWeb.AddMediaLive.Index do
   defp build_media_item_attrs(metadata, config, media_type) do
     type_string = if media_type == :movie, do: "movie", else: "tv_show"
 
-    %{
+    base = %{
       type: type_string,
       title: metadata.title,
       original_title: metadata.original_title,
       year: extract_year(metadata),
-      tmdb_id: metadata.id,
       imdb_id: metadata.imdb_id,
       metadata: metadata,
       monitored: config.monitored,
       quality_profile_id: config.quality_profile_id
     }
+
+    # For TV shows fetched via TVDB, store tvdb_id; for movies, store tmdb_id
+    if media_type == :tv_show and Map.get(metadata, :provider) == :tvdb do
+      Map.put(base, :tvdb_id, metadata.id)
+    else
+      Map.put(base, :tmdb_id, metadata.id)
+    end
   end
 
   defp extract_year(metadata) do
@@ -429,22 +436,34 @@ defmodule MydiaWeb.AddMediaLive.Index do
   defp extract_year_from_date(_), do: nil
 
   defp check_existing_items(results, media_type) do
-    # Extract TMDB IDs from search results (provider_id is a string)
-    tmdb_ids =
+    # Extract provider IDs from search results (provider_id is a string)
+    provider_ids =
       results
       |> Enum.map(& &1.provider_id)
       |> Enum.reject(&is_nil/1)
       |> Enum.map(&String.to_integer/1)
 
-    if tmdb_ids == [] do
+    if provider_ids == [] do
       %{}
     else
-      # Query for existing media items with these TMDB IDs
+      # Query for existing media items with these provider IDs
       type_string = if media_type == :movie, do: "movie", else: "tv_show"
 
-      Media.list_media_items(type: type_string)
-      |> Enum.filter(&(&1.tmdb_id in tmdb_ids))
-      |> Map.new(&{&1.tmdb_id, &1.id})
+      items = Media.list_media_items(type: type_string)
+
+      # For TV shows, check tvdb_id; for movies, check tmdb_id
+      if media_type == :tv_show do
+        items
+        |> Enum.filter(&(&1.tvdb_id in provider_ids or &1.tmdb_id in provider_ids))
+        |> Map.new(fn item ->
+          key = item.tvdb_id || item.tmdb_id
+          {key, item.id}
+        end)
+      else
+        items
+        |> Enum.filter(&(&1.tmdb_id in provider_ids))
+        |> Map.new(&{&1.tmdb_id, &1.id})
+      end
     end
   end
 
@@ -469,7 +488,7 @@ defmodule MydiaWeb.AddMediaLive.Index do
   defp get_poster_url(result) do
     case result.poster_path do
       nil -> "/images/no-poster.svg"
-      path -> "https://image.tmdb.org/t/p/w500#{path}"
+      path -> ImageUrl.poster_url(path)
     end
   end
 

@@ -62,7 +62,7 @@ defmodule MydiaWeb.Live.Components.DisambiguationModalComponent do
                       <% else %>
                         <%= if Map.get(match, :poster_path) do %>
                           <img
-                            src={"https://image.tmdb.org/t/p/w92#{match.poster_path}"}
+                            src={ImageUrl.image_url(match.poster_path, "w92")}
                             alt={match.title}
                             class="w-16 h-24 object-cover rounded"
                           />
