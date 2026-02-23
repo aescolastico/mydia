@@ -187,6 +187,7 @@ The `./dev` script automatically starts services if they're not running and prov
 
 - **Development**: `./dev mix mydia.user <command>` (list, add, delete, reset-password)
 - **Production container**: `mydia-cli user <command>` (wraps the mix task via release eval)
+- **Default dev credentials**: username `admin`, password `adminadmin`
 
 ### Git Guidelines
 
