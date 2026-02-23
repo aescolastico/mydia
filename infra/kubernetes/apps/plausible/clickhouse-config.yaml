@@ -38,6 +38,11 @@ data:
       <max_concurrent_queries>10</max_concurrent_queries>
       <background_pool_size>2</background_pool_size>
       <background_schedule_pool_size>2</background_schedule_pool_size>
+      <merge_tree>
+        <number_of_free_entries_in_pool_to_execute_mutation>0</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>0</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>0</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+      </merge_tree>
     </clickhouse>
 
   clickhouse-default-profile-low-resources-overrides.xml: |
@@ -49,4 +54,21 @@ data:
           <max_bytes_before_external_group_by>268435456</max_bytes_before_external_group_by>
         </default>
       </profiles>
+    </clickhouse>
+
+  clickhouse-retention.xml: |
+    <clickhouse>
+      <!-- Drop whole parts when TTL expires instead of row-by-row deletion -->
+      <merge_tree>
+        <ttl_only_drop_parts>1</ttl_only_drop_parts>
+        <min_age_to_force_merge_seconds>86400</min_age_to_force_merge_seconds>
+      </merge_tree>
+      <!-- Reserve 512 MiB free space as safety margin -->
+      <storage_configuration>
+        <disks>
+          <default>
+            <keep_free_space_bytes>536870912</keep_free_space_bytes>
+          </default>
+        </disks>
+      </storage_configuration>
     </clickhouse>

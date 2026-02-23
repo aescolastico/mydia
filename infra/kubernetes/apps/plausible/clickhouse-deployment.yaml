@@ -25,6 +25,9 @@ spec:
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:24.12-alpine
+          env:
+            - name: CLICKHOUSE_SKIP_USER_SETUP
+              value: "1"
           ports:
             - name: http
               containerPort: 8123
@@ -47,6 +50,9 @@ spec:
             - name: config
               mountPath: /etc/clickhouse-server/users.d/default-profile-overrides.xml
               subPath: clickhouse-default-profile-low-resources-overrides.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/retention.xml
+              subPath: clickhouse-retention.xml
           livenessProbe:
             httpGet:
               path: /ping

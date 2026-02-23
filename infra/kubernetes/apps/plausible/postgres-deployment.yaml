@@ -35,10 +35,7 @@ spec:
             - name: POSTGRES_USER
               value: plausible
             - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: plausible-secrets
-                  key: POSTGRES_PASSWORD
+              value: plausible
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

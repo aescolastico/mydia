@@ -1065,7 +1065,7 @@ def phase_analytics(config: Config, dry_run: bool = False) -> bool:
         config.plausible_secret_key_base = secrets.token_urlsafe(48)
         changed = True
     if not config.plausible_totp_vault_key:
-        config.plausible_totp_vault_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+        config.plausible_totp_vault_key = base64.b64encode(secrets.token_bytes(32)).decode()
         changed = True
     if not config.plausible_postgres_password:
         config.plausible_postgres_password = secrets.token_urlsafe(24)

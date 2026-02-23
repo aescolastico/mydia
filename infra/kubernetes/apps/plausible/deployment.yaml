@@ -28,7 +28,7 @@ spec:
           command:
             - /bin/sh
             - -c
-            - /app/bin/migrate && /app/bin/migrate_clickhouse
+            - /entrypoint.sh db createdb && /entrypoint.sh db migrate
           envFrom:
             - configMapRef:
                 name: plausible-config
