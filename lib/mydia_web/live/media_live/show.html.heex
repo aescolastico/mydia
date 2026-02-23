@@ -36,9 +36,59 @@
           <div class="mb-4 md:mb-6">
             <div class="flex items-start justify-between gap-2 md:gap-4 mb-2">
               <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold">{@media_item.title}</h1>
-              <.link navigate={~p"/media"} class="btn btn-ghost btn-sm btn-square flex-shrink-0">
-                <.icon name="hero-x-mark" class="w-5 h-5" />
-              </.link>
+              <div class="flex items-center gap-0.5 flex-shrink-0">
+                <div class="tooltip tooltip-bottom" data-tip="Refresh metadata">
+                  <button
+                    type="button"
+                    phx-click="refresh_metadata"
+                    class="btn btn-ghost btn-sm btn-square"
+                  >
+                    <.icon name="hero-arrow-path" class="w-4 h-4" />
+                  </button>
+                </div>
+                <%= if @media_item.type == "tv_show" && has_media_files?(@media_item) do %>
+                  <div class="tooltip tooltip-bottom" data-tip="Re-scan files">
+                    <button
+                      type="button"
+                      phx-click="rescan_series"
+                      class="btn btn-ghost btn-sm btn-square"
+                    >
+                      <.icon name="hero-folder-arrow-down" class="w-4 h-4" />
+                    </button>
+                  </div>
+                <% end %>
+                <%= if @media_item.type == "movie" && has_media_files?(@media_item) do %>
+                  <div class="tooltip tooltip-bottom" data-tip="Re-scan files">
+                    <button
+                      type="button"
+                      phx-click="rescan_movie"
+                      class="btn btn-ghost btn-sm btn-square"
+                    >
+                      <.icon name="hero-folder-arrow-down" class="w-4 h-4" />
+                    </button>
+                  </div>
+                <% end %>
+                <%= if has_media_files?(@media_item) do %>
+                  <div class="tooltip tooltip-bottom" data-tip="Rename files">
+                    <button
+                      type="button"
+                      phx-click="show_rename_modal"
+                      class="btn btn-ghost btn-sm btn-square"
+                    >
+                      <.icon name="hero-pencil-square" class="w-4 h-4" />
+                    </button>
+                  </div>
+                <% end %>
+                <div class="tooltip tooltip-bottom" data-tip="Delete">
+                  <button
+                    type="button"
+                    phx-click="show_delete_confirm"
+                    class="btn btn-ghost btn-sm btn-square text-base-content/50 hover:text-error"
+                  >
+                    <.icon name="hero-trash" class="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             <%= if @media_item.original_title && @media_item.original_title != @media_item.title do %>

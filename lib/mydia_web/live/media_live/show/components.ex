@@ -89,25 +89,35 @@ defmodule MydiaWeb.MediaLive.Show.Components do
           <% end %>
         <% end %>
 
-        <button
-          type="button"
-          phx-click="auto_search_download"
-          class="btn btn-primary btn-block"
-          disabled={@auto_searching || !can_auto_search?(@media_item, @downloads_with_status)}
-        >
-          <%= if @auto_searching do %>
-            <span class="loading loading-spinner loading-sm"></span> Searching...
-          <% else %>
-            <.icon name="hero-bolt" class="w-5 h-5" /> Auto Search & Download
-          <% end %>
-        </button>
-
-        <button type="button" phx-click="manual_search" class="btn btn-outline btn-block">
-          <.icon name="hero-magnifying-glass" class="w-5 h-5" /> Manual Search
-        </button>
+        <div>
+          <div class="text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-1">
+            Search
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              phx-click="auto_search_download"
+              class="btn btn-primary flex-1"
+              disabled={@auto_searching || !can_auto_search?(@media_item, @downloads_with_status)}
+            >
+              <%= if @auto_searching do %>
+                <span class="loading loading-spinner loading-sm"></span> Searching...
+              <% else %>
+                <.icon name="hero-bolt" class="w-5 h-5" /> Auto
+              <% end %>
+            </button>
+            <button
+              type="button"
+              phx-click="manual_search"
+              class="btn btn-outline flex-1"
+            >
+              <.icon name="hero-magnifying-glass" class="w-5 h-5" /> Manual
+            </button>
+          </div>
+        </div>
 
         <%!-- Favorite and Collection actions --%>
-        <div class="flex gap-2 mt-2">
+        <div class="flex gap-2">
           <button
             type="button"
             phx-click="toggle_favorite"
@@ -184,7 +194,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
         </div>
 
         <%!-- Secondary actions: stacked on mobile --%>
-        <div class="flex flex-col gap-2 mt-2">
+        <div class="flex flex-col gap-2">
           <%= if @media_item.type == "tv_show" do %>
             <%!-- Monitoring Preset Dropdown (TV shows only) --%>
             <div class="dropdown dropdown-end w-full">
@@ -251,82 +261,35 @@ defmodule MydiaWeb.MediaLive.Show.Components do
               </span>
             </button>
           <% end %>
-
-          <button
-            type="button"
-            phx-click="refresh_metadata"
-            class="btn btn-ghost w-full"
-            title="Refresh metadata and episodes from metadata provider"
-          >
-            <.icon name="hero-arrow-path" class="w-5 h-5" />
-            <span>Refresh</span>
-          </button>
-
-          <%= if @media_item.type == "tv_show" && has_media_files?(@media_item) do %>
-            <button
-              type="button"
-              phx-click="rescan_series"
-              class="btn btn-ghost w-full"
-              title="Re-scan series: discover new files and refresh metadata for all episodes"
-            >
-              <.icon name="hero-folder-arrow-down" class="w-5 h-5" />
-              <span>Re-scan</span>
-            </button>
-          <% end %>
-
-          <%= if @media_item.type == "movie" && has_media_files?(@media_item) do %>
-            <button
-              type="button"
-              phx-click="rescan_movie"
-              class="btn btn-ghost w-full"
-              title="Re-scan movie: discover new files and refresh metadata"
-            >
-              <.icon name="hero-folder-arrow-down" class="w-5 h-5" />
-              <span>Re-scan</span>
-            </button>
-          <% end %>
-
-          <%= if has_media_files?(@media_item) do %>
-            <button
-              type="button"
-              phx-click="show_rename_modal"
-              class="btn btn-ghost w-full"
-              title="Rename files to follow naming convention"
-            >
-              <.icon name="hero-pencil-square" class="w-5 h-5" />
-              <span>Rename</span>
-            </button>
-          <% end %>
         </div>
 
-        <div class="divider my-2"></div>
-
         <%!-- Info Cards --%>
-        <div class="space-y-2">
+        <div class="rounded-box bg-base-200/50 p-2 space-y-1 mt-3">
           <%!-- Quality Profile --%>
           <div class="dropdown dropdown-end w-full">
             <div
               tabindex="0"
               role="button"
-              class="stat bg-base-200 rounded-box p-2 md:p-3 cursor-pointer hover:bg-base-300 transition-colors text-left w-full group"
+              class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-base-300/50 transition-colors w-full group"
               title="Click to change quality profile"
             >
-              <div class="stat-title text-xs">Quality Profile</div>
-              <div class="stat-value text-sm flex items-center gap-2">
-                <%= if @media_item.quality_profile do %>
-                  <span class="group-hover:text-primary transition-colors">
-                    {@media_item.quality_profile.name}
-                  </span>
-                <% else %>
-                  <span class="text-base-content/50 group-hover:text-primary transition-colors">
-                    Not Set
-                  </span>
-                <% end %>
-                <.icon
-                  name="hero-chevron-down"
-                  class="w-3 h-3 opacity-50 group-hover:opacity-100 transition-opacity"
-                />
+              <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <.icon name="hero-adjustments-horizontal" class="w-4 h-4 text-primary" />
               </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs text-base-content/50">Quality Profile</div>
+                <div class="text-sm font-medium truncate">
+                  <%= if @media_item.quality_profile do %>
+                    {@media_item.quality_profile.name}
+                  <% else %>
+                    <span class="text-base-content/40">Not Set</span>
+                  <% end %>
+                </div>
+              </div>
+              <.icon
+                name="hero-chevron-right"
+                class="w-4 h-4 text-base-content/30 group-hover:text-base-content/60 transition-colors flex-shrink-0"
+              />
             </div>
             <ul
               tabindex="0"
@@ -368,52 +331,51 @@ defmodule MydiaWeb.MediaLive.Show.Components do
           </div>
 
           <%!-- Category --%>
-          <div class="stat bg-base-200 rounded-box p-2 md:p-3">
-            <div class="stat-title text-xs">Category</div>
-            <div class="stat-value text-sm">
-              <button
-                type="button"
-                phx-click="show_category_modal"
-                class="group cursor-pointer"
-                title="Click to change category"
-              >
+          <button
+            type="button"
+            phx-click="show_category_modal"
+            class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-base-300/50 transition-colors w-full group"
+            title="Click to change category"
+          >
+            <div class="w-8 h-8 rounded-lg bg-secondary/10 flex items-center justify-center flex-shrink-0">
+              <.icon name="hero-tag" class="w-4 h-4 text-secondary" />
+            </div>
+            <div class="flex-1 min-w-0 text-left">
+              <div class="text-xs text-base-content/50">Category</div>
+              <div class="text-sm font-medium">
                 <%= if @media_item.category do %>
                   <.category_badge
                     category={@media_item.category}
                     override={@media_item.category_override}
-                    class="group-hover:ring-2 group-hover:ring-primary transition-all"
                   />
                 <% else %>
-                  <span class="badge badge-ghost group-hover:ring-2 group-hover:ring-primary transition-all">
+                  <span class="badge badge-ghost badge-sm">
                     {if @media_item.type == "movie", do: "Movie", else: "TV Show"}
                   </span>
                 <% end %>
-              </button>
+              </div>
             </div>
-          </div>
+            <.icon
+              name="hero-chevron-right"
+              class="w-4 h-4 text-base-content/30 group-hover:text-base-content/60 transition-colors flex-shrink-0"
+            />
+          </button>
 
           <%!-- Path --%>
           <%= if path = get_media_path(@media_item) do %>
-            <div class="stat bg-base-200 rounded-box p-2 md:p-3">
-              <div class="stat-title text-xs">Path</div>
-              <div class="stat-value text-xs font-mono truncate" title={path}>
-                {path}
+            <div class="flex items-center gap-2.5 px-2 py-1.5">
+              <div class="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
+                <.icon name="hero-folder" class="w-4 h-4 text-accent" />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs text-base-content/50">Path</div>
+                <div class="text-xs font-mono truncate" title={path}>
+                  {path}
+                </div>
               </div>
             </div>
           <% end %>
         </div>
-
-        <div class="divider my-2"></div>
-
-        <%!-- Delete action --%>
-        <button
-          type="button"
-          phx-click="show_delete_confirm"
-          class="btn btn-error btn-ghost btn-sm md:btn-md w-full"
-        >
-          <.icon name="hero-trash" class="w-4 h-4 md:w-5 md:h-5" />
-          <span>Delete</span>
-        </button>
       </div>
     </div>
     """
