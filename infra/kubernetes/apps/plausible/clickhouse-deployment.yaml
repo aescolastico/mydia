@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plausible-events-db
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible-events-db
+    app.kubernetes.io/component: analytics
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: plausible-events-db
+      app.kubernetes.io/component: analytics
+      app.kubernetes.io/part-of: mydia
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: plausible-events-db
+        app.kubernetes.io/component: analytics
+        app.kubernetes.io/part-of: mydia
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.12-alpine
+          ports:
+            - name: http
+              containerPort: 8123
+              protocol: TCP
+            - name: native
+              containerPort: 9000
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/logging.xml
+              subPath: clickhouse-logs.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/ipv4-only.xml
+              subPath: clickhouse-ipv4-only.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/low-resources.xml
+              subPath: clickhouse-low-resources.xml
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/default-profile-overrides.xml
+              subPath: clickhouse-default-profile-low-resources-overrides.xml
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1024Mi"
+              cpu: "500m"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: plausible-events-db-data
+        - name: config
+          configMap:
+            name: clickhouse-config

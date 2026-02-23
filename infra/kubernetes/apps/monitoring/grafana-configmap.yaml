@@ -15,10 +15,18 @@ data:
     admin_user = admin
 
     [users]
-    allow_sign_up = false
+    allow_sign_up = true
+    auto_assign_org_role = Editor
 
     [auth.anonymous]
     enabled = false
+
+    [auth.proxy]
+    enabled = true
+    header_name = X-Auth-Request-Email
+    header_property = email
+    auto_sign_up = true
+    headers = Email:X-Auth-Request-Email
 
     [dashboards]
     default_home_dashboard_path = /var/lib/grafana/dashboards/iroh-relay.json

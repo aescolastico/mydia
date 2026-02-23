@@ -27,6 +27,21 @@ relay_tmdb_api_key: "your-tmdb-api-key"
 # Leave empty to auto-generate on first deploy
 grafana_admin_password: ""
 
+# Shared OAuth (oauth2-proxy)
+# Create a GitHub OAuth App at: https://github.com/organizations/getmydia/settings/applications
+# Homepage URL: https://auth.mydia.dev
+# Authorization callback URL: https://auth.mydia.dev/oauth2/callback
+oauth2_proxy_client_id: "your-github-oauth-client-id"
+oauth2_proxy_client_secret: "your-github-oauth-client-secret"
+# Leave empty to auto-generate on first deploy
+oauth2_proxy_cookie_secret: ""
+
+# Analytics (Plausible CE)
+# Leave empty to auto-generate on first deploy
+plausible_secret_key_base: ""
+plausible_totp_vault_key: ""
+plausible_postgres_password: ""
+
 # SSH Configuration
 ssh_public_key_path: "~/.ssh/id_ed25519.pub"
 

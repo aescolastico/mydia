@@ -1,0 +1,76 @@
+# Certificate for TLS
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: plausible-tls
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/component: analytics
+spec:
+  dnsNames:
+    - plausible.mydia.dev
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  secretName: plausible-tls-secret
+---
+# Middleware for HTTP to HTTPS redirect
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/component: analytics
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+# HTTP IngressRoute (redirects to HTTPS)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plausible-http
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/component: analytics
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`plausible.mydia.dev`)
+      middlewares:
+        - name: redirect-https
+          namespace: plausible
+      services:
+        - name: plausible
+          port: 8000
+---
+# HTTPS IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plausible
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/component: analytics
+  annotations:
+    # external-dns will create DNS record pointing to this IP
+    external-dns.alpha.kubernetes.io/target: 149.56.129.39
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`plausible.mydia.dev`)
+      services:
+        - name: plausible
+          port: 8000
+  tls:
+    secretName: plausible-tls-secret

@@ -70,8 +70,10 @@ class Phase(Enum):
     VPS = "vps"
     KUBECONFIG = "kubeconfig"
     KUBERNETES = "kubernetes"
+    AUTH = "auth"
     APP = "app"
     MONITORING = "monitoring"
+    ANALYTICS = "analytics"
     VERIFY = "verify"
 
 
@@ -99,6 +101,16 @@ class Config:
     # Monitoring
     grafana_admin_password: str = ""
 
+    # Shared OAuth (oauth2-proxy)
+    oauth2_proxy_client_id: str = ""
+    oauth2_proxy_client_secret: str = ""
+    oauth2_proxy_cookie_secret: str = ""
+
+    # Analytics (Plausible CE)
+    plausible_secret_key_base: str = ""
+    plausible_totp_vault_key: str = ""
+    plausible_postgres_password: str = ""
+
     # VPS
     vps_name: str = ""  # Populated after VPS is ordered/found
     vps_ip: str = ""  # Populated after VPS is ordered/found
@@ -115,6 +127,14 @@ class Config:
     @property
     def grafana_fqdn(self) -> str:
         return f"grafana.{self.domain_name}"
+
+    @property
+    def auth_fqdn(self) -> str:
+        return f"auth.{self.domain_name}"
+
+    @property
+    def plausible_fqdn(self) -> str:
+        return f"plausible.{self.domain_name}"
 
     @property
     def ssh_public_key(self) -> str:
@@ -135,6 +155,10 @@ class Config:
         with open(path) as f:
             data = yaml.safe_load(f)
 
+        # Remove deprecated fields from older configs
+        for old_field in ["grafana_github_client_id", "grafana_github_client_secret"]:
+            data.pop(old_field, None)
+
         return cls(**data)
 
     def save(self, path: Path) -> None:
@@ -150,6 +174,12 @@ class Config:
             "relay_tmdb_api_key": self.relay_tmdb_api_key,
             "coturn_secret": self.coturn_secret,
             "grafana_admin_password": self.grafana_admin_password,
+            "oauth2_proxy_client_id": self.oauth2_proxy_client_id,
+            "oauth2_proxy_client_secret": self.oauth2_proxy_client_secret,
+            "oauth2_proxy_cookie_secret": self.oauth2_proxy_cookie_secret,
+            "plausible_secret_key_base": self.plausible_secret_key_base,
+            "plausible_totp_vault_key": self.plausible_totp_vault_key,
+            "plausible_postgres_password": self.plausible_postgres_password,
             "vps_name": self.vps_name,
             "vps_ip": self.vps_ip,
             "ssh_public_key_path": self.ssh_public_key_path,
@@ -690,6 +720,7 @@ def phase_kubernetes(config: Config, dry_run: bool = False) -> bool:
                 "--namespace", "kube-system",
                 "--set", "ports.web.redirectTo.port=websecure",
                 "--set", "ports.websecure.tls.enabled=true",
+                "--set", "providers.kubernetesCRD.allowCrossNamespace=true",
                 "--wait", "--timeout", "5m",
             ])
             console.print("  [green]✓[/green] Traefik installed")
@@ -793,6 +824,76 @@ def phase_kubernetes(config: Config, dry_run: bool = False) -> bool:
     return True
 
 
+def phase_auth(config: Config, dry_run: bool = False) -> bool:
+    """Deploy oauth2-proxy for shared GitHub OAuth."""
+    console.print("\n[bold blue]Phase: Auth (oauth2-proxy)[/bold blue]")
+
+    namespace = "oauth2-proxy"
+    oauth2_proxy_dir = KUBERNETES_DIR / "apps" / "oauth2-proxy"
+
+    # --- Namespace ---
+    if k8s_namespace_exists(namespace):
+        console.print(f"  [green]✓[/green] Namespace '{namespace}' exists")
+    elif dry_run:
+        console.print(f"  [yellow]Would create:[/yellow] Namespace '{namespace}'")
+    else:
+        console.print("  [dim]Creating namespace...[/dim]")
+        ns_file = oauth2_proxy_dir / "namespace.yaml"
+        if ns_file.exists():
+            run(["kubectl", "apply", "-f", str(ns_file)])
+        else:
+            run(["kubectl", "create", "namespace", namespace])
+        console.print("  [green]✓[/green] Namespace created")
+
+    # --- Auto-generate cookie secret if empty ---
+    if not config.oauth2_proxy_cookie_secret:
+        config.oauth2_proxy_cookie_secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+        config.save(CONFIG_FILE)
+        console.print("  [green]✓[/green] Generated oauth2-proxy cookie secret")
+
+    # --- Secret ---
+    if k8s_secret_exists("oauth2-proxy-secrets", namespace):
+        console.print("  [green]✓[/green] Secret 'oauth2-proxy-secrets' exists")
+        if not dry_run:
+            console.print("  [dim]Updating secret...[/dim]")
+            proc = subprocess.Popen(
+                ["kubectl", "create", "secret", "generic", "oauth2-proxy-secrets",
+                "-n", namespace,
+                "--dry-run=client", "-o", "yaml",
+                f"--from-literal=OAUTH2_PROXY_CLIENT_ID={config.oauth2_proxy_client_id}",
+                f"--from-literal=OAUTH2_PROXY_CLIENT_SECRET={config.oauth2_proxy_client_secret}",
+                f"--from-literal=OAUTH2_PROXY_COOKIE_SECRET={config.oauth2_proxy_cookie_secret}"],
+                stdout=subprocess.PIPE
+            )
+            subprocess.run(["kubectl", "apply", "-f", "-"], stdin=proc.stdout)
+            console.print("  [green]✓[/green] Secret updated")
+    elif dry_run:
+        console.print("  [yellow]Would create:[/yellow] oauth2-proxy secrets")
+    else:
+        console.print("  [dim]Creating secret...[/dim]")
+        run([
+            "kubectl", "create", "secret", "generic", "oauth2-proxy-secrets",
+            "-n", namespace,
+            f"--from-literal=OAUTH2_PROXY_CLIENT_ID={config.oauth2_proxy_client_id}",
+            f"--from-literal=OAUTH2_PROXY_CLIENT_SECRET={config.oauth2_proxy_client_secret}",
+            f"--from-literal=OAUTH2_PROXY_COOKIE_SECRET={config.oauth2_proxy_cookie_secret}",
+        ])
+        console.print("  [green]✓[/green] Secret created")
+
+    # --- Apply manifests ---
+    if dry_run:
+        console.print("  [yellow]Would apply:[/yellow] All oauth2-proxy manifests")
+    else:
+        console.print("  [dim]Applying manifests...[/dim]")
+        for manifest in ["deployment.yaml", "service.yaml", "ingress.yaml"]:
+            manifest_path = oauth2_proxy_dir / manifest
+            if manifest_path.exists():
+                run(["kubectl", "apply", "-f", str(manifest_path)])
+        console.print("  [green]✓[/green] oauth2-proxy deployed")
+
+    return True
+
+
 def phase_app(config: Config, dry_run: bool = False) -> bool:
     """Deploy metadata-relay application."""
     console.print("\n[bold blue]Phase: Application (metadata-relay)[/bold blue]")
@@ -892,13 +993,11 @@ def phase_monitoring(config: Config, dry_run: bool = False) -> bool:
         if not dry_run:
             console.print("  [dim]Updating secret...[/dim]")
             proc = subprocess.Popen(
-                [
-                    "kubectl", "create", "secret", "generic", "grafana-secrets",
-                    "-n", namespace,
-                    "--dry-run=client", "-o", "yaml",
-                    f"--from-literal=GF_SECURITY_ADMIN_PASSWORD={config.grafana_admin_password}",
-                ],
-                stdout=subprocess.PIPE,
+                ["kubectl", "create", "secret", "generic", "grafana-secrets",
+                "-n", namespace,
+                "--dry-run=client", "-o", "yaml",
+                f"--from-literal=GF_SECURITY_ADMIN_PASSWORD={config.grafana_admin_password}"],
+                stdout=subprocess.PIPE
             )
             subprocess.run(["kubectl", "apply", "-f", "-"], stdin=proc.stdout)
             console.print("  [green]✓[/green] Secret updated")
@@ -939,55 +1038,154 @@ def phase_monitoring(config: Config, dry_run: bool = False) -> bool:
     return True
 
 
+def phase_analytics(config: Config, dry_run: bool = False) -> bool:
+    """Deploy Plausible CE analytics stack."""
+    console.print("\n[bold blue]Phase: Analytics (Plausible CE)[/bold blue]")
+
+    namespace = "plausible"
+    plausible_dir = KUBERNETES_DIR / "apps" / "plausible"
+
+    # --- Namespace ---
+    if k8s_namespace_exists(namespace):
+        console.print(f"  [green]✓[/green] Namespace '{namespace}' exists")
+    elif dry_run:
+        console.print(f"  [yellow]Would create:[/yellow] Namespace '{namespace}'")
+    else:
+        console.print("  [dim]Creating namespace...[/dim]")
+        ns_file = plausible_dir / "namespace.yaml"
+        if ns_file.exists():
+            run(["kubectl", "apply", "-f", str(ns_file)])
+        else:
+            run(["kubectl", "create", "namespace", namespace])
+        console.print("  [green]✓[/green] Namespace created")
+
+    # --- Auto-generate secrets if empty ---
+    changed = False
+    if not config.plausible_secret_key_base:
+        config.plausible_secret_key_base = secrets.token_urlsafe(48)
+        changed = True
+    if not config.plausible_totp_vault_key:
+        config.plausible_totp_vault_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+        changed = True
+    if not config.plausible_postgres_password:
+        config.plausible_postgres_password = secrets.token_urlsafe(24)
+        changed = True
+    if changed:
+        config.save(CONFIG_FILE)
+        console.print("  [green]✓[/green] Generated Plausible secrets")
+
+    # --- Secret ---
+    if k8s_secret_exists("plausible-secrets", namespace):
+        console.print("  [green]✓[/green] Secret 'plausible-secrets' exists")
+        if not dry_run:
+            console.print("  [dim]Updating secret...[/dim]")
+            proc = subprocess.Popen(
+                ["kubectl", "create", "secret", "generic", "plausible-secrets",
+                "-n", namespace,
+                "--dry-run=client", "-o", "yaml",
+                f"--from-literal=SECRET_KEY_BASE={config.plausible_secret_key_base}",
+                f"--from-literal=TOTP_VAULT_KEY={config.plausible_totp_vault_key}",
+                f"--from-literal=POSTGRES_PASSWORD={config.plausible_postgres_password}"],
+                stdout=subprocess.PIPE
+            )
+            subprocess.run(["kubectl", "apply", "-f", "-"], stdin=proc.stdout)
+            console.print("  [green]✓[/green] Secret updated")
+    elif dry_run:
+        console.print("  [yellow]Would create:[/yellow] Plausible secrets")
+    else:
+        console.print("  [dim]Creating secret...[/dim]")
+        run([
+            "kubectl", "create", "secret", "generic", "plausible-secrets",
+            "-n", namespace,
+            f"--from-literal=SECRET_KEY_BASE={config.plausible_secret_key_base}",
+            f"--from-literal=TOTP_VAULT_KEY={config.plausible_totp_vault_key}",
+            f"--from-literal=POSTGRES_PASSWORD={config.plausible_postgres_password}",
+        ])
+        console.print("  [green]✓[/green] Secret created")
+
+    # --- Apply manifests ---
+    if dry_run:
+        console.print("  [yellow]Would apply:[/yellow] All Plausible manifests")
+    else:
+        console.print("  [dim]Applying manifests...[/dim]")
+        manifests = [
+            "configmap.yaml",
+            "clickhouse-config.yaml",
+            "pvc.yaml",
+            "postgres-deployment.yaml",
+            "clickhouse-deployment.yaml",
+            "service.yaml",
+            "deployment.yaml",
+            "ingress.yaml",
+        ]
+        for manifest in manifests:
+            manifest_path = plausible_dir / manifest
+            if manifest_path.exists():
+                run(["kubectl", "apply", "-f", str(manifest_path)])
+        console.print("  [green]✓[/green] Plausible analytics deployed")
+
+    return True
+
+
 def phase_verify(config: Config, dry_run: bool = False) -> bool:
     """Verify deployment health."""
     console.print("\n[bold blue]Phase: Verification[/bold blue]")
 
     if dry_run:
         console.print(f"  [yellow]Would check:[/yellow] https://{config.relay_fqdn}/health")
+        console.print(f"  [yellow]Would check:[/yellow] https://{config.plausible_fqdn}/api/health")
         return True
 
-    # Wait for deployment to be ready
-    console.print("  [dim]Waiting for deployment to be ready...[/dim]")
-    result = run(
-        [
-            "kubectl", "rollout", "status",
-            "deployment/metadata-relay",
-            "-n", "metadata-relay",
-            "--timeout=5m",
-        ],
-        check=False,
-        capture=True,
-    )
+    # Check services to verify
+    services = [
+        ("metadata-relay", "metadata-relay", f"https://{config.relay_fqdn}/health"),
+        ("plausible", "plausible", f"https://{config.plausible_fqdn}/api/health"),
+    ]
 
-    if result.returncode != 0:
-        console.print("  [yellow]![/yellow] Deployment not ready yet")
+    for deploy_name, ns, health_url in services:
+        # Wait for deployment to be ready
+        console.print(f"  [dim]Waiting for {deploy_name} deployment...[/dim]")
+        result = run(
+            [
+                "kubectl", "rollout", "status",
+                f"deployment/{deploy_name}",
+                "-n", ns,
+                "--timeout=5m",
+            ],
+            check=False,
+            capture=True,
+        )
 
-    # Check health endpoint
-    health_url = f"https://{config.relay_fqdn}/health"
-    console.print(f"  [dim]Checking {health_url}...[/dim]")
+        if result.returncode != 0:
+            console.print(f"  [yellow]![/yellow] {deploy_name} deployment not ready yet")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress.add_task("Waiting for health check...", total=None)
+        # Check health endpoint
+        console.print(f"  [dim]Checking {health_url}...[/dim]")
 
-        for attempt in range(60):
-            try:
-                response = httpx.get(health_url, timeout=10, verify=False)
-                if response.status_code == 200:
-                    console.print("  [green]✓[/green] Health check passed")
-                    return True
-            except httpx.RequestError:
-                pass
-            time.sleep(5)
+        passed = False
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task(f"Waiting for {deploy_name} health check...", total=None)
 
-    console.print("  [yellow]![/yellow] Health check not passing yet")
-    console.print("      This may be due to DNS propagation or certificate issuance.")
-    console.print(f"      Check manually: curl -k {health_url}")
+            for attempt in range(60):
+                try:
+                    response = httpx.get(health_url, timeout=10, verify=False)
+                    if response.status_code == 200:
+                        console.print(f"  [green]✓[/green] {deploy_name} health check passed")
+                        passed = True
+                        break
+                except httpx.RequestError:
+                    pass
+                time.sleep(5)
+
+        if not passed:
+            console.print(f"  [yellow]![/yellow] {deploy_name} health check not passing yet")
+            console.print("      This may be due to DNS propagation or certificate issuance.")
+            console.print(f"      Check manually: curl -k {health_url}")
 
     return True
 
@@ -1004,8 +1202,10 @@ def deploy(
         Phase.VPS: phase_vps,
         Phase.KUBECONFIG: phase_kubeconfig,
         Phase.KUBERNETES: phase_kubernetes,
+        Phase.AUTH: phase_auth,
         Phase.APP: phase_app,
         Phase.MONITORING: phase_monitoring,
+        Phase.ANALYTICS: phase_analytics,
         Phase.VERIFY: phase_verify,
     }
 
@@ -1066,8 +1266,10 @@ def print_summary(config: Config) -> None:
     table.add_row("VPS", f"{config.vps_name} ({config.vps_ip})")
     table.add_row("Relay URL", f"https://{config.relay_fqdn}")
     table.add_row("P2P Relay", f"{config.vps_ip}:4001 (iroh)")
+    table.add_row("Auth URL", f"https://{config.auth_fqdn}")
     table.add_row("ArgoCD URL", f"https://{config.argocd_fqdn}")
     table.add_row("Grafana URL", f"https://{config.grafana_fqdn}")
+    table.add_row("Plausible URL", f"https://{config.plausible_fqdn}")
     table.add_row("Health Check", f"https://{config.relay_fqdn}/health")
 
     console.print("\n")

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plausible-config
+  namespace: plausible
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/component: analytics
+data:
+  BASE_URL: "https://plausible.mydia.dev"
+  DATABASE_URL: "postgres://plausible:plausible@plausible-db:5432/plausible"
+  CLICKHOUSE_DATABASE_URL: "http://plausible-events-db:8123/plausible_events"
+  DISABLE_REGISTRATION: "invite_only"
