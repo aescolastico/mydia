@@ -350,7 +350,7 @@ class ShowDetailScreen extends ConsumerWidget {
                         final title =
                             '${show.title} - ${nextEp.episodeCode}';
                         context.push(
-                          '/player/episode/${nextEp.id}?fileId=${file.id}&title=${Uri.encodeComponent(title)}',
+                          '/player/episode/${nextEp.id}?fileId=${file.id}&title=${Uri.encodeComponent(title)}&showId=$id&seasonNumber=${nextEp.seasonNumber}',
                         );
                       },
                     ),
@@ -744,7 +744,7 @@ class ShowDetailScreen extends ConsumerWidget {
                                   ? '${show.title} - ${episode.episodeCode}'
                                   : episode.title;
                               context.push(
-                                '/player/episode/${episode.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(title)}',
+                                '/player/episode/${episode.id}?fileId=${selectedFile.id}&title=${Uri.encodeComponent(title)}&showId=$id&seasonNumber=${episode.seasonNumber}',
                               );
                             }
                           }

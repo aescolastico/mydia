@@ -190,7 +190,7 @@ class EpisodeDetailScreen extends ConsumerWidget {
                       files: episode.files,
                       onFileSelected: (file) {
                         context.push(
-                          '/player/episode/${episode.id}?fileId=${file.id}&title=${Uri.encodeComponent(episode.fullTitle)}',
+                          '/player/episode/${episode.id}?fileId=${file.id}&title=${Uri.encodeComponent(episode.fullTitle)}&showId=${episode.show.id}&seasonNumber=${episode.seasonNumber}',
                         );
                       },
                     ),

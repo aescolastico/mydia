@@ -1065,7 +1065,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
     // Navigate to new episode
     context.go(
-      '/player/$episodeId/episode/$fileId?title=${Uri.encodeComponent(title)}&showId=${widget.showId}&seasonNumber=${widget.seasonNumber}',
+      '/player/episode/$episodeId?fileId=$fileId&title=${Uri.encodeComponent(title)}&showId=${widget.showId}&seasonNumber=${widget.seasonNumber}',
     );
   }
 
