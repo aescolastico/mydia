@@ -409,8 +409,11 @@ defmodule MetadataRelay.Router do
     with {:ok, user_token} <- get_trakt_user_token(conn) do
       handler =
         case type do
-          "history" -> fn -> TraktHandler.remove_from_history(conn.body_params, user_token) end
-          "ratings" -> fn -> TraktHandler.remove_ratings(conn.body_params, user_token) end
+          "history" ->
+            fn -> TraktHandler.remove_from_history(conn.body_params, user_token) end
+
+          "ratings" ->
+            fn -> TraktHandler.remove_ratings(conn.body_params, user_token) end
 
           "watchlist" ->
             fn -> TraktHandler.remove_from_watchlist(conn.body_params, user_token) end
