@@ -150,24 +150,30 @@ defmodule Mydia.P2p.Server do
   end
 
   def handle_call(:status, _from, state) do
-    # Get relay_connected from NIF since the event may not be reliably sent
-    network_stats = P2p.get_network_stats(state.resource)
+    # Get relay info from NIF, with fallback if NIF resource isn't ready yet
+    {relay_connected, relay_url, peer_connection_type} =
+      try do
+        network_stats = P2p.get_network_stats(state.resource)
+        relay_url = network_stats.relay_url || extract_relay_url_from_node_addr(state.node_addr)
 
-    # Try to get relay_url from network_stats first, fallback to extracting from node_addr
-    relay_url = network_stats.relay_url || extract_relay_url_from_node_addr(state.node_addr)
+        pct =
+          if network_stats.peer_connection_type != "none",
+            do: network_stats.peer_connection_type,
+            else: nil
 
-    # Get connection type from network stats (computed from first connected peer)
-    peer_connection_type =
-      if network_stats.peer_connection_type != "none",
-        do: network_stats.peer_connection_type,
-        else: nil
+        {network_stats.relay_connected, relay_url, pct}
+      rescue
+        ArgumentError ->
+          Logger.warning("P2P: get_network_stats NIF not ready, returning defaults")
+          {false, extract_relay_url_from_node_addr(state.node_addr), nil}
+      end
 
     status = %Status{
       node_id: state.node_id,
       node_addr: state.node_addr,
       running: true,
       connected_peers: map_size(state.connected_peers),
-      relay_connected: network_stats.relay_connected,
+      relay_connected: relay_connected,
       relay_url: relay_url,
       peer_connection_type: peer_connection_type
     }
@@ -176,7 +182,21 @@ defmodule Mydia.P2p.Server do
   end
 
   def handle_call(:network_stats, _from, state) do
-    stats = P2p.get_network_stats(state.resource)
+    stats =
+      try do
+        P2p.get_network_stats(state.resource)
+      rescue
+        ArgumentError ->
+          Logger.warning("P2P: get_network_stats NIF not ready")
+
+          %P2p.NetworkStats{
+            connected_peers: 0,
+            relay_connected: false,
+            relay_url: nil,
+            peer_connection_type: "none"
+          }
+      end
+
     {:reply, stats, state}
   end
 
