@@ -81,6 +81,12 @@ defmodule MetadataRelay.Plug.Cache do
 
   defp serve_cached_response(conn, cached_response) do
     MetadataRelay.Metrics.inc("metadata_relay_cache_hits_total")
+
+    case service_from_path(conn.request_path) do
+      nil -> :ok
+      service -> MetadataRelay.Metrics.inc("metadata_relay_requests_total", service: service, status: "ok")
+    end
+
     %{status: status, headers: headers, body: body} = cached_response
 
     conn
@@ -88,6 +94,13 @@ defmodule MetadataRelay.Plug.Cache do
     |> send_resp(status, body)
     |> halt()
   end
+
+  defp service_from_path("/tmdb/" <> _), do: "tmdb"
+  defp service_from_path("/tvdb/" <> _), do: "tvdb"
+  defp service_from_path("/music/" <> _), do: "music"
+  defp service_from_path("/openlibrary/" <> _), do: "openlibrary"
+  defp service_from_path("/api/v1/subtitles/" <> _), do: "opensubtitles"
+  defp service_from_path(_), do: nil
 
   defp cache_response(conn, cache_key) do
     # Only cache successful GET responses

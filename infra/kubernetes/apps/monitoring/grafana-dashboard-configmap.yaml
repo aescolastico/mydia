@@ -650,7 +650,7 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "metadata_relay_cache_hits_total / (metadata_relay_cache_hits_total + metadata_relay_cache_misses_total) * 100 or vector(0)",
+              "expr": "sum(metadata_relay_cache_hits_total) / (sum(metadata_relay_cache_hits_total) + sum(metadata_relay_cache_misses_total)) * 100 or vector(0)",
               "legendFormat": "",
               "refId": "A"
             }
@@ -685,7 +685,7 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "metadata_relay_crash_reports_total or vector(0)",
+              "expr": "sum(metadata_relay_crash_reports_total) or vector(0)",
               "legendFormat": "",
               "refId": "A"
             }
@@ -720,7 +720,7 @@ data:
           "type": "stat",
           "targets": [
             {
-              "expr": "metadata_relay_rate_limited_total or vector(0)",
+              "expr": "sum(metadata_relay_rate_limited_total) or vector(0)",
               "legendFormat": "",
               "refId": "A"
             }
