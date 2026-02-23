@@ -83,8 +83,11 @@ defmodule MetadataRelay.Plug.Cache do
     MetadataRelay.Metrics.inc("metadata_relay_cache_hits_total")
 
     case service_from_path(conn.request_path) do
-      nil -> :ok
-      service -> MetadataRelay.Metrics.inc("metadata_relay_requests_total", service: service, status: "ok")
+      nil ->
+        :ok
+
+      service ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total", service: service, status: "ok")
     end
 
     %{status: status, headers: headers, body: body} = cached_response
