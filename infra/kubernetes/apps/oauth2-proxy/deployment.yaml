@@ -35,6 +35,7 @@ spec:
             - --cookie-secure=true
             - --cookie-samesite=lax
             - --upstream=static://202
+            - --redirect-url=https://auth.mydia.dev/oauth2/callback
           env:
             - name: OAUTH2_PROXY_CLIENT_ID
               valueFrom:
