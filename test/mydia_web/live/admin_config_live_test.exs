@@ -426,12 +426,13 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       |> render_click()
 
       # Fill in the form with Prowlarr details pointing to our mock
+      # Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues in CI
       view
       |> form("#indexer-form",
         indexer_config: %{
           name: "Test Prowlarr",
           type: "prowlarr",
-          base_url: "http://localhost:#{bypass.port}",
+          base_url: "http://127.0.0.1:#{bypass.port}",
           api_key: "test-api-key",
           enabled: "true",
           priority: "1"
@@ -441,12 +442,11 @@ defmodule MydiaWeb.AdminConfigLiveTest do
 
       # Click the "Test Connection" button - this is the exact flow that was crashing
       # with KeyError: key :use_ssl not found (issue #28)
-      view
-      |> element(~s{button[phx-click="test_indexer_connection"]})
-      |> render_click()
+      html =
+        view
+        |> element(~s{button[phx-click="test_indexer_connection"]})
+        |> render_click()
 
-      # Use render(view) to get the full page with flash after the event completes
-      html = render(view)
       assert html =~ "Connection successful"
       assert html =~ "1.25.0"
     end
