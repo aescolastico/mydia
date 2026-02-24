@@ -235,8 +235,10 @@ defmodule Mydia.Indexers do
   end
 
   def test_connection(%{type: type} = config) when is_atom(type) do
+    adapter_config = maybe_convert_base_url(config)
+
     with {:ok, adapter} <- Adapter.Registry.get_adapter(type) do
-      adapter.test_connection(config)
+      adapter.test_connection(adapter_config)
     end
   end
 
@@ -466,6 +468,26 @@ defmodule Mydia.Indexers do
       }
     }
   end
+
+  # Converts a plain config map with base_url into the adapter format with host/port/use_ssl.
+  # This handles the case where test_connection is called from the UI with a raw config map
+  # rather than an IndexerConfig struct.
+  defp maybe_convert_base_url(%{base_url: base_url} = config) when is_binary(base_url) do
+    uri = URI.parse(base_url)
+
+    config
+    |> Map.put(:host, uri.host || "localhost")
+    |> Map.put(:port, uri.port || default_port(uri.scheme))
+    |> Map.put(:use_ssl, uri.scheme == "https")
+    |> Map.put(:name, Map.get(config, :name, "Test"))
+    |> Map.put_new(:options, %{
+      indexer_ids: [],
+      categories: [],
+      base_path: uri.path
+    })
+  end
+
+  defp maybe_convert_base_url(config), do: config
 
   defp default_port("https"), do: 443
   defp default_port("http"), do: 80

@@ -414,6 +414,70 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       assert html =~ "Prowlarr"
       refute has_element?(view, ~s{div[class*="modal-open"]})
     end
+
+    test "test connection succeeds with valid prowlarr server", %{view: view} do
+      # Set up a mock Prowlarr server
+      bypass = Bypass.open()
+      Mydia.IndexerMock.mock_prowlarr_status(bypass, version: "1.25.0")
+
+      # Open the new indexer modal
+      view
+      |> element(~s{button[phx-click="new_indexer"]})
+      |> render_click()
+
+      # Fill in the form with Prowlarr details pointing to our mock
+      view
+      |> form("#indexer-form",
+        indexer_config: %{
+          name: "Test Prowlarr",
+          type: "prowlarr",
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-api-key",
+          enabled: "true",
+          priority: "1"
+        }
+      )
+      |> render_change()
+
+      # Click the "Test Connection" button - this is the exact flow that was crashing
+      # with KeyError: key :use_ssl not found (issue #28)
+      html =
+        view
+        |> element(~s{button[phx-click="test_indexer_connection"]})
+        |> render_click()
+
+      assert html =~ "Connection successful"
+      assert html =~ "1.25.0"
+    end
+
+    test "test connection shows error for unreachable prowlarr server", %{view: view} do
+      # Open the new indexer modal
+      view
+      |> element(~s{button[phx-click="new_indexer"]})
+      |> render_click()
+
+      # Fill in the form with a Prowlarr URL that doesn't exist
+      view
+      |> form("#indexer-form",
+        indexer_config: %{
+          name: "Unreachable Prowlarr",
+          type: "prowlarr",
+          base_url: "http://localhost:19999",
+          api_key: "test-api-key",
+          enabled: "true",
+          priority: "1"
+        }
+      )
+      |> render_change()
+
+      # Click test connection - should show an error, NOT crash with KeyError
+      html =
+        view
+        |> element(~s{button[phx-click="test_indexer_connection"]})
+        |> render_click()
+
+      assert html =~ "Connection failed"
+    end
   end
 
   describe "General Settings" do

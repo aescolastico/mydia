@@ -392,4 +392,75 @@ defmodule Mydia.IndexersTest do
       assert {:ok, _results} = Indexers.search_all("Movie's \"Name\" (2024)")
     end
   end
+
+  describe "test_connection/1" do
+    setup do
+      Indexers.register_adapters()
+      :ok
+    end
+
+    test "works with raw config map containing base_url (UI flow)" do
+      bypass = Bypass.open()
+      IndexerMock.mock_prowlarr_status(bypass, version: "1.25.0")
+
+      # This is the exact shape the LiveView sends when clicking "Test Connection"
+      config = %{
+        type: :prowlarr,
+        base_url: "http://localhost:#{bypass.port}",
+        api_key: "test-api-key"
+      }
+
+      assert {:ok, info} = Indexers.test_connection(config)
+      assert info.version == "1.25.0"
+    end
+
+    test "works with raw config map using HTTPS base_url" do
+      # Verify use_ssl is correctly derived from https:// scheme
+      # We can't easily test a real HTTPS connection, but we can verify
+      # the config conversion doesn't crash
+      config = %{
+        type: :prowlarr,
+        base_url: "https://prowlarr.example.com:9696",
+        api_key: "test-api-key"
+      }
+
+      # This will fail to connect (no server), but should NOT crash with KeyError
+      assert {:error, _} = Indexers.test_connection(config)
+    end
+
+    test "works with IndexerConfig struct" do
+      bypass = Bypass.open()
+      IndexerMock.mock_prowlarr_status(bypass, version: "1.25.0")
+
+      {:ok, indexer_config} =
+        Settings.create_indexer_config(%{
+          name: "Test Prowlarr",
+          type: :prowlarr,
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-api-key",
+          enabled: true
+        })
+
+      assert {:ok, info} = Indexers.test_connection(indexer_config)
+      assert info.version == "1.25.0"
+    end
+
+    test "works with already-converted adapter config (host/port/use_ssl)" do
+      bypass = Bypass.open()
+      IndexerMock.mock_prowlarr_status(bypass, version: "1.25.0")
+
+      # This is the shape adapters expect directly
+      config = %{
+        type: :prowlarr,
+        host: "localhost",
+        port: bypass.port,
+        api_key: "test-api-key",
+        use_ssl: false,
+        options: %{base_path: nil}
+      }
+
+      assert {:ok, info} = Indexers.test_connection(config)
+      assert info.version == "1.25.0"
+    end
+  end
 end
