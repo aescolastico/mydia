@@ -89,40 +89,38 @@ defmodule MydiaWeb.MediaLive.Show.Components do
           <% end %>
         <% end %>
 
-        <div>
-          <div class="text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-1">
-            Search
+        <div class="grid grid-cols-2 gap-2">
+          <div class="col-span-2">
+            <div class="text-xs font-semibold text-base-content/50 uppercase tracking-wider mb-1">
+              Search
+            </div>
           </div>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              phx-click="auto_search_download"
-              class="btn btn-primary flex-1"
-              disabled={@auto_searching || !can_auto_search?(@media_item, @downloads_with_status)}
-            >
-              <%= if @auto_searching do %>
-                <span class="loading loading-spinner loading-sm"></span> Searching...
-              <% else %>
-                <.icon name="hero-bolt" class="w-5 h-5" /> Auto
-              <% end %>
-            </button>
-            <button
-              type="button"
-              phx-click="manual_search"
-              class="btn btn-outline flex-1"
-            >
-              <.icon name="hero-magnifying-glass" class="w-5 h-5" /> Manual
-            </button>
-          </div>
-        </div>
+          <button
+            type="button"
+            phx-click="auto_search_download"
+            class="btn btn-primary"
+            disabled={@auto_searching || !can_auto_search?(@media_item, @downloads_with_status)}
+          >
+            <%= if @auto_searching do %>
+              <span class="loading loading-spinner loading-sm"></span> Searching...
+            <% else %>
+              <.icon name="hero-bolt" class="w-5 h-5" /> Auto
+            <% end %>
+          </button>
+          <button
+            type="button"
+            phx-click="manual_search"
+            class="btn btn-outline"
+          >
+            <.icon name="hero-magnifying-glass" class="w-5 h-5" /> Manual
+          </button>
 
-        <%!-- Favorite and Collection actions --%>
-        <div class="flex gap-2">
+          <%!-- Favorite and Collection actions --%>
           <button
             type="button"
             phx-click="toggle_favorite"
             class={[
-              "btn flex-1",
+              "btn",
               @is_favorite && "btn-error",
               !@is_favorite && "btn-outline"
             ]}
@@ -135,7 +133,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
             <span class="hidden sm:inline">{if @is_favorite, do: "Favorited", else: "Favorite"}</span>
           </button>
 
-          <div class="dropdown dropdown-end flex-1">
+          <div class="dropdown dropdown-end">
             <div tabindex="0" role="button" class="btn btn-outline w-full">
               <.icon name="hero-folder-plus" class="w-5 h-5" />
               <span class="hidden sm:inline">Collection</span>
@@ -193,7 +191,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
           </div>
         </div>
 
-        <%!-- Secondary actions: stacked on mobile --%>
+        <%!-- Secondary actions --%>
         <div class="flex flex-col gap-2">
           <%= if @media_item.type == "tv_show" do %>
             <%!-- Monitoring Preset Dropdown (TV shows only) --%>
