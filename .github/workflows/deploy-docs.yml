@@ -51,7 +51,6 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           uv run --project docs mike deploy --push --update-aliases dev
-          uv run --project docs mike set-default --push dev
 
       - name: Deploy manual version
         if: github.event_name == 'workflow_dispatch'
@@ -59,7 +58,6 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           if [ "$VERSION" = "dev" ]; then
             uv run --project docs mike deploy --push --update-aliases dev
-            uv run --project docs mike set-default --push dev
           else
             uv run --project docs mike delete --push latest || true
             uv run --project docs mike deploy --push --update-aliases "$VERSION" latest
