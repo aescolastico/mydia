@@ -10,6 +10,7 @@ defmodule Mydia.Collections.SmartRulesFields do
   alias Mydia.Repo
   alias Mydia.Media.MediaItem
   alias Mydia.Media.MediaCategory
+  alias Mydia.DB
 
   @doc """
   Returns field definitions with their types, operators, and value options.
@@ -175,10 +176,12 @@ defmodule Mydia.Collections.SmartRulesFields do
   """
   def genre_values do
     # Query distinct genres from metadata JSON
+    json_val = json_extract_dynamic(:metadata, "$.genres")
+
     query =
       from(m in MediaItem,
-        select: fragment("json_extract(metadata, '$.genres')"),
-        where: not is_nil(fragment("json_extract(metadata, '$.genres')"))
+        select: ^json_val,
+        where: not is_nil(^json_val)
       )
 
     Repo.all(query)
@@ -236,10 +239,12 @@ defmodule Mydia.Collections.SmartRulesFields do
     }
 
     # Query distinct languages from metadata JSON
+    json_val = json_extract_dynamic(:metadata, "$.original_language")
+
     query =
       from(m in MediaItem,
-        select: fragment("json_extract(metadata, '$.original_language')"),
-        where: not is_nil(fragment("json_extract(metadata, '$.original_language')")),
+        select: ^json_val,
+        where: not is_nil(^json_val),
         distinct: true
       )
 
@@ -257,10 +262,12 @@ defmodule Mydia.Collections.SmartRulesFields do
   """
   def status_values do
     # Query distinct status values from metadata JSON
+    json_val = json_extract_dynamic(:metadata, "$.status")
+
     query =
       from(m in MediaItem,
-        select: fragment("json_extract(metadata, '$.status')"),
-        where: not is_nil(fragment("json_extract(metadata, '$.status')")),
+        select: ^json_val,
+        where: not is_nil(^json_val),
         distinct: true
       )
 
@@ -268,5 +275,15 @@ defmodule Mydia.Collections.SmartRulesFields do
     |> Enum.filter(&is_binary/1)
     |> Enum.sort()
     |> Enum.map(fn status -> {status, status} end)
+  end
+
+  # Returns a dynamic expression for extracting a JSON value, adapter-aware
+  defp json_extract_dynamic(field_atom, path) do
+    if DB.postgres?() do
+      pg_key = DB.sqlite_path_to_postgres_key(path)
+      dynamic([q], fragment("?::jsonb ->> ?", field(q, ^field_atom), ^pg_key))
+    else
+      dynamic([q], fragment("json_extract(?, ?)", field(q, ^field_atom), ^path))
+    end
   end
 end

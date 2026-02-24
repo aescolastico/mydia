@@ -75,7 +75,7 @@ jobs:
         run: mix test --cover
 
   test-postgres:
-    name: Test / PostgreSQL Migrations
+    name: Test / PostgreSQL
     runs-on: ubuntu-latest
 
     services:
@@ -105,6 +105,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Setup Elixir
         uses: erlef/setup-beam@v1
         with:
@@ -118,6 +121,14 @@ jobs:
           key: ${{ runner.os }}-deps-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-deps-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: _build
+          key: ${{ runner.os }}-build-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-
 
       - name: Install dependencies
         run: mix deps.get
@@ -133,6 +144,9 @@ jobs:
 
       - name: Verify migrations
         run: mix ecto.migrations
+
+      - name: Run tests
+        run: mix test --cover
 
   test-player:
     name: Test / Player

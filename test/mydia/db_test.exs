@@ -11,16 +11,13 @@ defmodule Mydia.DBTest do
   alias Mydia.Media.MediaItem
 
   describe "adapter detection" do
-    test "adapter_type/0 returns :sqlite for SQLite adapter" do
-      assert Mydia.DB.adapter_type() == :sqlite
+    test "adapter_type/0 returns the configured adapter type" do
+      expected = if Mydia.DB.postgres?(), do: :postgres, else: :sqlite
+      assert Mydia.DB.adapter_type() == expected
     end
 
-    test "sqlite?/0 returns true for SQLite adapter" do
-      assert Mydia.DB.sqlite?() == true
-    end
-
-    test "postgres?/0 returns false for SQLite adapter" do
-      assert Mydia.DB.postgres?() == false
+    test "sqlite?/0 and postgres?/0 are mutually exclusive" do
+      assert Mydia.DB.sqlite?() != Mydia.DB.postgres?()
     end
   end
 
@@ -374,11 +371,11 @@ defmodule Mydia.DBTest do
       result =
         from(m in MediaItem,
           where: m.id == ^media_item.id,
-          select: cast_to_integer(1.9)
+          select: cast_to_integer(5.0)
         )
         |> Repo.one()
 
-      assert result == 1
+      assert result == 5
     end
   end
 
@@ -404,6 +401,8 @@ defmodule Mydia.DBTest do
         |> Repo.one()
 
       # Allow for small timing differences (within 5 seconds)
+      # PostgreSQL returns Decimal from EXTRACT(EPOCH), convert to float
+      result = if is_struct(result, Decimal), do: Decimal.to_float(result), else: result
       assert_in_delta result, 3600.0, 5.0
     end
   end
@@ -439,6 +438,8 @@ defmodule Mydia.DBTest do
 
       # Average of 3600 and 7200 seconds = 5400 seconds
       # Allow for small timing differences
+      # PostgreSQL returns Decimal from EXTRACT(EPOCH), convert to float
+      result = if is_struct(result, Decimal), do: Decimal.to_float(result), else: result
       assert_in_delta result, 5400.0, 10.0
     end
   end

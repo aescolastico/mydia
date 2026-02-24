@@ -131,7 +131,7 @@ defmodule Mydia.DB do
       when is_atom(field_atom) and is_binary(path) and is_binary(value) do
     if postgres?() do
       pg_key = sqlite_path_to_postgres_key(path)
-      dynamic([q], fragment("? ->> ?", field(q, ^field_atom), ^pg_key) == ^value)
+      dynamic([q], fragment("?::jsonb ->> ?", field(q, ^field_atom), ^pg_key) == ^value)
     else
       dynamic([q], fragment("json_extract(?, ?)", field(q, ^field_atom), ^path) == ^value)
     end
@@ -164,7 +164,11 @@ defmodule Mydia.DB do
       when is_atom(field_atom) and is_binary(path) and is_integer(value) do
     if postgres?() do
       pg_key = sqlite_path_to_postgres_key(path)
-      dynamic([q], fragment("(? ->> ?)::integer", field(q, ^field_atom), ^pg_key) == ^value)
+
+      dynamic(
+        [q],
+        fragment("(?::jsonb ->> ?)::integer", field(q, ^field_atom), ^pg_key) == ^value
+      )
     else
       dynamic(
         [q],
@@ -198,7 +202,7 @@ defmodule Mydia.DB do
   def json_is_true(field_atom, path) when is_atom(field_atom) and is_binary(path) do
     if postgres?() do
       pg_key = sqlite_path_to_postgres_key(path)
-      dynamic([q], fragment("(? ->> ?)::boolean", field(q, ^field_atom), ^pg_key))
+      dynamic([q], fragment("(?::jsonb ->> ?)::boolean", field(q, ^field_atom), ^pg_key))
     else
       # SQLite json_extract returns 1 for JSON boolean true, or might store "true" string
       dynamic(
@@ -234,7 +238,7 @@ defmodule Mydia.DB do
   def json_is_not_null(field_atom, path) when is_atom(field_atom) and is_binary(path) do
     if postgres?() do
       pg_key = sqlite_path_to_postgres_key(path)
-      dynamic([q], not is_nil(fragment("? ->> ?", field(q, ^field_atom), ^pg_key)))
+      dynamic([q], not is_nil(fragment("?::jsonb ->> ?", field(q, ^field_atom), ^pg_key)))
     else
       dynamic([q], not is_nil(fragment("json_extract(?, ?)", field(q, ^field_atom), ^path)))
     end
@@ -265,7 +269,7 @@ defmodule Mydia.DB do
   def json_is_null(field_atom, path) when is_atom(field_atom) and is_binary(path) do
     if postgres?() do
       pg_key = sqlite_path_to_postgres_key(path)
-      dynamic([q], is_nil(fragment("? ->> ?", field(q, ^field_atom), ^pg_key)))
+      dynamic([q], is_nil(fragment("?::jsonb ->> ?", field(q, ^field_atom), ^pg_key)))
     else
       dynamic([q], is_nil(fragment("json_extract(?, ?)", field(q, ^field_atom), ^path)))
     end
@@ -308,7 +312,7 @@ defmodule Mydia.DB do
       pg_key = sqlite_path_to_postgres_key(path)
 
       quote do
-        fragment("? ->> ?", unquote(field), unquote(pg_key))
+        fragment("?::jsonb ->> ?", unquote(field), unquote(pg_key))
       end
     else
       quote do
@@ -340,7 +344,7 @@ defmodule Mydia.DB do
       pg_key = sqlite_path_to_postgres_key(path)
 
       quote do
-        fragment("(? ->> ?)::integer", unquote(field), unquote(pg_key))
+        fragment("(?::jsonb ->> ?)::integer", unquote(field), unquote(pg_key))
       end
     else
       quote do
@@ -380,7 +384,7 @@ defmodule Mydia.DB do
       pg_key = sqlite_path_to_postgres_key(path)
 
       quote do
-        fragment("(? ->> ?)::boolean", unquote(field), unquote(pg_key))
+        fragment("(?::jsonb ->> ?)::boolean", unquote(field), unquote(pg_key))
       end
     else
       quote do
@@ -414,7 +418,7 @@ defmodule Mydia.DB do
       pg_key = sqlite_path_to_postgres_key(path)
 
       quote do
-        not is_nil(fragment("? ->> ?", unquote(field), unquote(pg_key)))
+        not is_nil(fragment("?::jsonb ->> ?", unquote(field), unquote(pg_key)))
       end
     else
       quote do

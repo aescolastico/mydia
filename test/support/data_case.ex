@@ -20,9 +20,14 @@ defmodule Mydia.DataCase do
   use ExUnit.CaseTemplate
 
   using opts do
-    # Force async: false for SQLite to prevent Database busy errors
-    # Override any async: true setting from the test module
-    async_mode = Keyword.get(opts, :async, false) && false
+    # PostgreSQL handles concurrent test access fine via the Ecto SQL Sandbox.
+    # SQLite does not, so force async: false to prevent "Database busy" errors.
+    async_mode =
+      if Mydia.DB.postgres?() do
+        Keyword.get(opts, :async, false)
+      else
+        false
+      end
 
     quote do
       use ExUnit.Case, async: unquote(async_mode)

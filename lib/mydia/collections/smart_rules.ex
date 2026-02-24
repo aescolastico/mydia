@@ -47,6 +47,7 @@ defmodule Mydia.Collections.SmartRules do
   import Ecto.Query, warn: false
   alias Mydia.Media.MediaItem
   alias Mydia.Repo
+  alias Mydia.DB
 
   @valid_fields ~w(
     category type year title monitored
@@ -495,69 +496,61 @@ defmodule Mydia.Collections.SmartRules do
   defp build_dynamic("monitored", "eq", true), do: dynamic([m], m.monitored == true)
   defp build_dynamic("monitored", "eq", false), do: dynamic([m], m.monitored == false)
 
-  # Metadata fields - using SQLite json_extract
-  defp build_dynamic("metadata.vote_average", "gte", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.vote_average') >= ?", ^value))
-  end
+  # Metadata fields - adapter-aware JSON extraction
+  defp build_dynamic("metadata.vote_average", op, value) when op in ~w(gte gt lte lt eq) do
+    json_val = json_extract_numeric(:metadata, "$.vote_average")
 
-  defp build_dynamic("metadata.vote_average", "gt", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.vote_average') > ?", ^value))
-  end
-
-  defp build_dynamic("metadata.vote_average", "lte", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.vote_average') <= ?", ^value))
-  end
-
-  defp build_dynamic("metadata.vote_average", "lt", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.vote_average') < ?", ^value))
-  end
-
-  defp build_dynamic("metadata.vote_average", "eq", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.vote_average') = ?", ^value))
+    case op do
+      "gte" -> dynamic([m], ^json_val >= ^value)
+      "gt" -> dynamic([m], ^json_val > ^value)
+      "lte" -> dynamic([m], ^json_val <= ^value)
+      "lt" -> dynamic([m], ^json_val < ^value)
+      "eq" -> dynamic([m], ^json_val == ^value)
+    end
   end
 
   defp build_dynamic("metadata.vote_average", "between", [min, max]) do
-    dynamic(
-      [m],
-      fragment(
-        "json_extract(metadata, '$.vote_average') >= ? AND json_extract(metadata, '$.vote_average') <= ?",
-        ^min,
-        ^max
-      )
-    )
+    json_val = json_extract_numeric(:metadata, "$.vote_average")
+    dynamic([m], ^json_val >= ^min and ^json_val <= ^max)
   end
 
   defp build_dynamic("metadata.genres", "contains", value) do
-    # SQLite JSON array search using LIKE on the JSON string
+    # JSON array search using LIKE on the JSON string representation
     pattern = "%\"#{value}\"%"
-    dynamic([m], fragment("json_extract(metadata, '$.genres') LIKE ?", ^pattern))
+    json_val = json_extract_dynamic(:metadata, "$.genres")
+    dynamic([m], like(^json_val, ^pattern))
   end
 
   defp build_dynamic("metadata.genres", "contains_any", values) when is_list(values) do
-    # Build OR conditions for each value
+    json_val = json_extract_dynamic(:metadata, "$.genres")
+
     Enum.reduce(values, dynamic([m], false), fn value, acc ->
       pattern = "%\"#{value}\"%"
-      dynamic([m], ^acc or fragment("json_extract(metadata, '$.genres') LIKE ?", ^pattern))
+      dynamic([m], ^acc or like(^json_val, ^pattern))
     end)
   end
 
   defp build_dynamic("metadata.original_language", "eq", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.original_language') = ?", ^value))
+    dynamic([m], ^DB.json_equals(:metadata, "$.original_language", value))
   end
 
   defp build_dynamic("metadata.original_language", "in", values) when is_list(values) do
+    json_val = json_extract_dynamic(:metadata, "$.original_language")
+
     Enum.reduce(values, dynamic([m], false), fn value, acc ->
-      dynamic([m], ^acc or fragment("json_extract(metadata, '$.original_language') = ?", ^value))
+      dynamic([m], ^acc or ^json_val == ^value)
     end)
   end
 
   defp build_dynamic("metadata.status", "eq", value) do
-    dynamic([m], fragment("json_extract(metadata, '$.status') = ?", ^value))
+    dynamic([m], ^DB.json_equals(:metadata, "$.status", value))
   end
 
   defp build_dynamic("metadata.status", "in", values) when is_list(values) do
+    json_val = json_extract_dynamic(:metadata, "$.status")
+
     Enum.reduce(values, dynamic([m], false), fn value, acc ->
-      dynamic([m], ^acc or fragment("json_extract(metadata, '$.status') = ?", ^value))
+      dynamic([m], ^acc or ^json_val == ^value)
     end)
   end
 
@@ -621,12 +614,13 @@ defmodule Mydia.Collections.SmartRules do
   defp do_apply_sort(query, "added_date", "asc"), do: order_by(query, [m], asc: m.inserted_at)
   defp do_apply_sort(query, "added_date", "desc"), do: order_by(query, [m], desc: m.inserted_at)
 
-  defp do_apply_sort(query, "rating", "asc") do
-    order_by(query, [m], fragment("json_extract(metadata, '$.vote_average') ASC"))
-  end
+  defp do_apply_sort(query, "rating", direction) do
+    json_val = json_extract_numeric(:metadata, "$.vote_average")
 
-  defp do_apply_sort(query, "rating", "desc") do
-    order_by(query, [m], fragment("json_extract(metadata, '$.vote_average') DESC"))
+    case direction do
+      "asc" -> order_by(query, [m], asc: ^json_val)
+      "desc" -> order_by(query, [m], desc: ^json_val)
+    end
   end
 
   defp do_apply_sort(query, _, _), do: query
@@ -655,4 +649,25 @@ defmodule Mydia.Collections.SmartRules do
   defp maybe_preload(query, nil), do: query
   defp maybe_preload(query, []), do: query
   defp maybe_preload(query, preloads), do: preload(query, ^preloads)
+
+  # Returns a dynamic expression for extracting a JSON value, adapter-aware
+  defp json_extract_dynamic(field_atom, path) do
+    if DB.postgres?() do
+      pg_key = DB.sqlite_path_to_postgres_key(path)
+      dynamic([q], fragment("?::jsonb ->> ?", field(q, ^field_atom), ^pg_key))
+    else
+      dynamic([q], fragment("json_extract(?, ?)", field(q, ^field_atom), ^path))
+    end
+  end
+
+  # Returns a dynamic expression for extracting a numeric JSON value.
+  # On PostgreSQL, casts the result to numeric since ->> returns text.
+  defp json_extract_numeric(field_atom, path) do
+    if DB.postgres?() do
+      pg_key = DB.sqlite_path_to_postgres_key(path)
+      dynamic([q], fragment("(?::jsonb ->> ?)::numeric", field(q, ^field_atom), ^pg_key))
+    else
+      dynamic([q], fragment("json_extract(?, ?)", field(q, ^field_atom), ^path))
+    end
+  end
 end

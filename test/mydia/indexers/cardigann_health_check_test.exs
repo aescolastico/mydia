@@ -10,7 +10,7 @@ defmodule Mydia.Indexers.CardigannHealthCheckTest do
   describe "test_connection/2" do
     test "returns error when definition not found" do
       assert {:error, "Indexer definition not found"} =
-               CardigannHealthCheck.test_connection("nonexistent-id")
+               CardigannHealthCheck.test_connection(Ecto.UUID.generate())
     end
 
     test "tests connection for valid public indexer" do
