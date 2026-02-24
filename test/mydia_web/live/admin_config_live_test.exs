@@ -441,11 +441,12 @@ defmodule MydiaWeb.AdminConfigLiveTest do
 
       # Click the "Test Connection" button - this is the exact flow that was crashing
       # with KeyError: key :use_ssl not found (issue #28)
-      html =
-        view
-        |> element(~s{button[phx-click="test_indexer_connection"]})
-        |> render_click()
+      view
+      |> element(~s{button[phx-click="test_indexer_connection"]})
+      |> render_click()
 
+      # Use render(view) to get the full page with flash after the event completes
+      html = render(view)
       assert html =~ "Connection successful"
       assert html =~ "1.25.0"
     end
