@@ -102,6 +102,9 @@ docs/.venv/
 # Compiled Rust NIFs (built by Rustler during compilation)
 /priv/native/
 
+# Playwright MCP
+.playwright-mcp/
+
 # Terraform
 *.tfstate
 *.tfstate.*
