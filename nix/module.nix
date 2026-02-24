@@ -242,7 +242,7 @@ in
         FLARESOLVERR_MAX_TIMEOUT = toString cfg.flareSolverr.maxTimeout;
       } // cfg.extraEnvironment;
 
-      path = [ cfg.package pkgs.ffmpeg ];
+      path = [ cfg.package pkgs.ffmpeg pkgs.openssl ];
 
       serviceConfig = {
         Type = "exec";
@@ -260,13 +260,16 @@ in
           fi
           if [ -f "$CREDENTIALS_DIRECTORY/GUARDIAN_SECRET_KEY" ]; then
             export GUARDIAN_SECRET_KEY=$(cat "$CREDENTIALS_DIRECTORY/GUARDIAN_SECRET_KEY")
+          else
+            # Fall back to SECRET_KEY_BASE if GUARDIAN_SECRET_KEY not configured
+            export GUARDIAN_SECRET_KEY="''${SECRET_KEY_BASE}"
           fi
 
           # Create database directory if it doesn't exist
           mkdir -p "$(dirname "${cfg.databasePath}")"
 
           # Run migrations
-          ${cfg.package}/bin/mydia eval "Ecto.Migrator.run(Mydia.Repo, :up, all: true)"
+          ${cfg.package}/bin/mydia eval "Mydia.Release.migrate()"
         '';
 
         ExecStart = let
@@ -278,6 +281,9 @@ in
             fi
             if [ -f "$CREDENTIALS_DIRECTORY/GUARDIAN_SECRET_KEY" ]; then
               export GUARDIAN_SECRET_KEY=$(cat "$CREDENTIALS_DIRECTORY/GUARDIAN_SECRET_KEY")
+            else
+              # Fall back to SECRET_KEY_BASE if GUARDIAN_SECRET_KEY not configured
+              export GUARDIAN_SECRET_KEY="''${SECRET_KEY_BASE}"
             fi
           '';
 

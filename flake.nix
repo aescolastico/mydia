@@ -25,24 +25,17 @@
           sha256 = "be3324cc454a42d80951cf6023b9954e9ff27c6daa255483b3e8d608670303f5";
         };
 
+        # Pre-fetch Rust/Cargo dependencies for the p2p NIF (required for sandbox build)
+        cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
+          src = ./native/mydia_p2p;
+          hash = "sha256-VcrP8X42fT2n0LvO8VtmZGEpquyxQrall8KuUyMUvLc=";
+        };
+
         # Import Mix dependencies from deps.nix with overrides for Nix sandbox builds
         mixNixDeps = import ./deps.nix {
           lib = pkgs.lib;
           beamPackages = beamPackages;
           overrides = final: prev: {
-            # Bundlex: patch pkg-config for Nix sandbox
-            bundlex = prev.bundlex.override {
-              postPatch = ''
-                substituteInPlace lib/bundlex/toolchain/common/unix/os_deps.ex \
-                  --replace 'Application.get_env(:bundlex, :disable_precompiled_os_deps, false)' \
-                            'Application.get_env(:bundlex, :disable_precompiled_os_deps, true)' \
-                  --replace 'System.cmd("pkg-config"' \
-                            'System.cmd("${pkgs.pkg-config}/bin/pkg-config"' \
-                  --replace 'System.cmd("which", ["pkg-config"])' \
-                            '{"${pkgs.pkg-config}/bin/pkg-config\n", 0}'
-              '';
-            };
-
             # lazy_html: prefetch lexbor and configure fine.hpp
             lazy_html = prev.lazy_html.override {
               nativeBuildInputs = [ pkgs.cmake pkgs.gnumake pkgs.gcc ];
@@ -71,46 +64,6 @@
               '';
             };
 
-            # shmex: needs bunch_native source for bundlex
-            shmex = prev.shmex.override {
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                chmod -R u+w deps
-              '';
-            };
-
-            # unifex: Skip native compilation by removing bundlex from compilers
-            unifex = prev.unifex.override {
-              postPatch = ''
-                # Remove bundlex compiler to skip native compilation
-                # Natives will be compiled in the final mixRelease build
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                chmod -R u+w deps
-              '';
-            };
-
-            # membrane_common_c: Skip native compilation by removing bundlex from compilers
-            membrane_common_c = prev.membrane_common_c.override {
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
-              '';
-            };
-
             # argon2_elixir: needs HOME for elixir_make cache
             argon2_elixir = prev.argon2_elixir.override {
               preBuild = ''
@@ -123,93 +76,6 @@
             bcrypt_elixir = prev.bcrypt_elixir.override {
               preBuild = ''
                 export HOME=/tmp
-                mkdir -p /tmp/.cache/elixir_make
-              '';
-            };
-
-            # Membrane plugins: Skip native compilation by removing bundlex from compilers
-            membrane_aac_fdk_plugin = prev.membrane_aac_fdk_plugin.override {
-              buildInputs = [ pkgs.fdk_aac pkgs.ffmpeg_6-headless ];
-              HOME = "/tmp";
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
-                mkdir -p /tmp/.cache/elixir_make
-              '';
-            };
-            membrane_ffmpeg_swresample_plugin = prev.membrane_ffmpeg_swresample_plugin.override {
-              buildInputs = [ pkgs.ffmpeg_6-headless ];
-              HOME = "/tmp";
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
-                mkdir -p /tmp/.cache/elixir_make
-              '';
-            };
-            membrane_ffmpeg_swscale_plugin = prev.membrane_ffmpeg_swscale_plugin.override {
-              buildInputs = [ pkgs.ffmpeg_6-headless ];
-              HOME = "/tmp";
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
-                mkdir -p /tmp/.cache/elixir_make
-              '';
-            };
-            membrane_h264_ffmpeg_plugin = prev.membrane_h264_ffmpeg_plugin.override {
-              buildInputs = [ pkgs.ffmpeg_6-headless ];
-              HOME = "/tmp";
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
-                mkdir -p /tmp/.cache/elixir_make
-              '';
-            };
-            membrane_h265_ffmpeg_plugin = prev.membrane_h265_ffmpeg_plugin.override {
-              buildInputs = [ pkgs.ffmpeg_6-headless ];
-              HOME = "/tmp";
-              postPatch = ''
-                sed -i 's/compilers: \[:bundlex, :unifex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:unifex, :bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-                sed -i 's/compilers: \[:bundlex\] ++ Mix.compilers()/compilers: Mix.compilers()/' mix.exs
-              '';
-              preConfigure = ''
-                mkdir -p deps
-                cp -r ${prev.bunch_native.src} deps/bunch_native
-                cp -r ${prev.shmex.src} deps/shmex
-                cp -r ${prev.unifex.src} deps/unifex
-                chmod -R u+w deps
                 mkdir -p /tmp/.cache/elixir_make
               '';
             };
@@ -280,18 +146,16 @@
           '';
         };
 
-        # Extract version from mix.exs
+        # Extract default version from mix.exs version() function
         version = let
           content = builtins.readFile ./mix.exs;
-          # Replace newlines with spaces to enable single-line regex matching
           singleLine = builtins.replaceStrings ["\n"] [" "] content;
-          matched = builtins.match ''.*version: "([^"]+)".*'' singleLine;
-        in builtins.head matched;
+          # Match the fallback: nil -> "0.0.0-dev"
+          matched = builtins.match ''.*nil -> "([0-9]+[.][0-9]+[.][0-9]+[^"]*)".*'' singleLine;
+        in if matched != null then builtins.head matched else "0.0.0-dev";
 
-      in
-      {
-        # Production package
-        packages.default = beamPackages.mixRelease {
+        # Production package (extracted so it can be reused in checks)
+        mydia = beamPackages.mixRelease {
           pname = "mydia";
           inherit version;
           src = ./.;
@@ -303,10 +167,11 @@
             pkgs.nodejs
             pkgs.git
             pkgs.npmHooks.npmConfigHook
+            pkgs.rustc
+            pkgs.cargo
           ];
 
           # Runtime dependencies for NIFs
-          # Use ffmpeg_6 for compatibility with membrane plugins
           buildInputs = [
             pkgs.sqlite
             pkgs.ffmpeg_6-headless
@@ -325,8 +190,7 @@
           inherit npmDeps;
           npmRoot = "assets";
 
-          # Create missing deps symlinks for packages that don't have /src at root
-          # but do have source in lib/erlang/lib/*/src (buildRebar3 packages)
+          # Create missing deps symlinks and set up Cargo vendoring for Rust NIF
           postConfigure = ''
             echo "=== postConfigure: Creating missing deps symlinks ==="
 
@@ -345,6 +209,16 @@
 
             echo "=== postConfigure: Done. deps/ count ==="
             ls deps/ | wc -l
+
+            # Set up Cargo vendoring for the Rust p2p NIF
+            mkdir -p native/mydia_p2p/.cargo
+            cat > native/mydia_p2p/.cargo/config.toml <<CARGO_EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "${cargoDeps}"
+            CARGO_EOF
           '';
 
           # Configure asset compilation
@@ -375,8 +249,24 @@
           # Post-install: wrap the release binary to include runtime deps
           postInstall = ''
             wrapProgram $out/bin/mydia \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg_6-headless pkgs.sqlite ]}
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg_6-headless pkgs.sqlite pkgs.openssl ]}
           '';
+        };
+
+      in
+      {
+        packages.default = mydia;
+
+        # Automated checks (run via `nix flake check`)
+        checks = {
+          # Verify the package builds successfully
+          package = mydia;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          # NixOS module VM test (Linux only — requires QEMU)
+          nixos-module = import ./nix/tests/module.nix {
+            inherit pkgs;
+            mydiaPackage = mydia;
+          };
         };
 
         devShells.default = pkgs.mkShell {
