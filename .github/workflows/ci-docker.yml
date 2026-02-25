@@ -46,7 +46,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ${{ matrix.db }}
-        uses: docker/build-push-action@v6
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -55,5 +55,3 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.tag }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ matrix.db }}
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}/{1}:cache-{2},mode=max', env.REGISTRY, env.IMAGE_NAME, matrix.db) || '' }}
