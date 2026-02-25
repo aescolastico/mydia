@@ -154,118 +154,141 @@
           matched = builtins.match ''.*nil -> "([0-9]+[.][0-9]+[.][0-9]+[^"]*)".*'' singleLine;
         in if matched != null then builtins.head matched else "0.0.0-dev";
 
-        # Production package (extracted so it can be reused in checks)
-        mydia = beamPackages.mixRelease {
-          pname = "mydia";
-          inherit version;
-          src = ./.;
+        # Parameterized builder for Mydia variants (SQLite default, PostgreSQL)
+        mkMydia = { databaseType ? null, extraBuildInputs ? [], extraRuntimeDeps ? [] }:
+          beamPackages.mixRelease ({
+            pname = "mydia" + (if databaseType == "postgres" then "-postgres" else "");
+            inherit version;
+            src = ./.;
 
-          mixNixDeps = mixNixDeps;
+            mixNixDeps = mixNixDeps;
 
-          # Build-time dependencies
-          nativeBuildInputs = [
-            pkgs.nodejs
-            pkgs.git
-            pkgs.npmHooks.npmConfigHook
-            pkgs.rustc
-            pkgs.cargo
-          ];
+            # Build-time dependencies
+            nativeBuildInputs = [
+              pkgs.nodejs
+              pkgs.git
+              pkgs.npmHooks.npmConfigHook
+              pkgs.rustc
+              pkgs.cargo
+            ];
 
-          # Runtime dependencies for NIFs
-          buildInputs = [
-            pkgs.sqlite
-            pkgs.ffmpeg_6-headless
-          ];
+            # Runtime dependencies for NIFs
+            buildInputs = [
+              pkgs.sqlite
+              pkgs.ffmpeg_6-headless
+            ] ++ extraBuildInputs;
 
-          # Don't strip symbols (needed for Erlang NIFs)
-          dontStrip = true;
+            # Don't strip symbols (needed for Erlang NIFs)
+            dontStrip = true;
 
-          # Set HOME to a writable directory for elixir_make cache
-          HOME = "/tmp";
+            # Set HOME to a writable directory for elixir_make cache
+            HOME = "/tmp";
 
-          # Remove dev/test dependencies from the build
-          removeCookie = false;
+            # Remove dev/test dependencies from the build
+            removeCookie = false;
 
-          # Pre-fetched npm dependencies
-          inherit npmDeps;
-          npmRoot = "assets";
+            # Pre-fetched npm dependencies
+            inherit npmDeps;
+            npmRoot = "assets";
 
-          # Create missing deps symlinks and set up Cargo vendoring for Rust NIF
-          postConfigure = ''
-            echo "=== postConfigure: Creating missing deps symlinks ==="
+            # Create missing deps symlinks and set up Cargo vendoring for Rust NIF
+            postConfigure = ''
+              echo "=== postConfigure: Creating missing deps symlinks ==="
 
-            # Create deps symlinks for packages linked in _build/prod/lib
-            # but missing from deps/ (e.g., buildRebar3 packages like hackney, luerl)
-            for lib_dir in _build/prod/lib/*; do
-              dep_name=$(basename "$lib_dir")
-              if [ ! -e "deps/$dep_name" ]; then
-                # Follow the symlink to get the actual nix store path
-                real_lib=$(readlink -f "$lib_dir")
-                # Link to the full app directory (not just /src) so Mix can find .app files
-                echo "  Creating symlink: deps/$dep_name -> $real_lib"
-                ln -s "$real_lib" "deps/$dep_name"
-              fi
-            done
+              # Create deps symlinks for packages linked in _build/prod/lib
+              # but missing from deps/ (e.g., buildRebar3 packages like hackney, luerl)
+              for lib_dir in _build/prod/lib/*; do
+                dep_name=$(basename "$lib_dir")
+                if [ ! -e "deps/$dep_name" ]; then
+                  # Follow the symlink to get the actual nix store path
+                  real_lib=$(readlink -f "$lib_dir")
+                  # Link to the full app directory (not just /src) so Mix can find .app files
+                  echo "  Creating symlink: deps/$dep_name -> $real_lib"
+                  ln -s "$real_lib" "deps/$dep_name"
+                fi
+              done
 
-            echo "=== postConfigure: Done. deps/ count ==="
-            ls deps/ | wc -l
+              echo "=== postConfigure: Done. deps/ count ==="
+              ls deps/ | wc -l
 
-            # Set up Cargo vendoring for the Rust p2p NIF
-            mkdir -p native/mydia_p2p/.cargo
-            cat > native/mydia_p2p/.cargo/config.toml <<CARGO_EOF
-            [source.crates-io]
-            replace-with = "vendored-sources"
+              # Set up Cargo vendoring for the Rust p2p NIF
+              mkdir -p native/mydia_p2p/.cargo
+              cat > native/mydia_p2p/.cargo/config.toml <<CARGO_EOF
+              [source.crates-io]
+              replace-with = "vendored-sources"
 
-            [source.vendored-sources]
-            directory = "${cargoDeps}"
-            CARGO_EOF
-          '';
+              [source.vendored-sources]
+              directory = "${cargoDeps}"
+              CARGO_EOF
+            '';
 
-          # Configure asset compilation
-          preBuild = ''
-            # Copy heroicons to deps (git dependency, not handled by mixNixDeps)
-            mkdir -p deps/heroicons
-            cp -r ${heroicons}/optimized deps/heroicons/
+            # Configure asset compilation
+            preBuild = ''
+              # Copy heroicons to deps (git dependency, not handled by mixNixDeps)
+              mkdir -p deps/heroicons
+              cp -r ${heroicons}/optimized deps/heroicons/
 
-            # Install npm dependencies from cache (npmConfigHook sets up the cache)
-            cd assets
-            npm ci --ignore-scripts
-            cd ..
+              # Install npm dependencies from cache (npmConfigHook sets up the cache)
+              cd assets
+              npm ci --ignore-scripts
+              cd ..
 
-            # Link platform-specific binaries for esbuild and tailwind
-            # Use tailwindcss v4 binary (patched for NixOS)
-            mkdir -p _build
-            ln -sf ${pkgs.esbuild}/bin/esbuild _build/esbuild-${platformSuffix}
-            ln -sf ${tailwindcss_4}/bin/tailwindcss _build/tailwind-${platformSuffix}
+              # Link platform-specific binaries for esbuild and tailwind
+              # Use tailwindcss v4 binary (patched for NixOS)
+              mkdir -p _build
+              ln -sf ${pkgs.esbuild}/bin/esbuild _build/esbuild-${platformSuffix}
+              ln -sf ${tailwindcss_4}/bin/tailwindcss _build/tailwind-${platformSuffix}
 
-            # Build assets (use --no-deps-check to skip lock verification for Nix-managed deps)
-            export MIX_ENV=prod
-            mix do compile --no-deps-check, assets.deploy
-          '';
+              # Build assets (use --no-deps-check to skip lock verification for Nix-managed deps)
+              export MIX_ENV=prod
+              mix do compile --no-deps-check, assets.deploy
+            '';
 
-          # Set environment for production
-          MIX_ENV = "prod";
+            # Set environment for production
+            MIX_ENV = "prod";
 
-          # Post-install: wrap the release binary to include runtime deps
-          postInstall = ''
-            wrapProgram $out/bin/mydia \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg_6-headless pkgs.sqlite pkgs.openssl ]}
-          '';
+            # Post-install: wrap the release binary to include runtime deps
+            postInstall = ''
+              wrapProgram $out/bin/mydia \
+                --prefix PATH : ${pkgs.lib.makeBinPath (
+                  [ pkgs.ffmpeg_6-headless pkgs.sqlite pkgs.openssl ] ++ extraRuntimeDeps
+                )}
+            '';
+          } // pkgs.lib.optionalAttrs (databaseType != null) {
+            DATABASE_TYPE = databaseType;
+          });
+
+        # SQLite variant (default)
+        mydia = mkMydia {};
+
+        # PostgreSQL variant
+        mydia-postgres = mkMydia {
+          databaseType = "postgres";
+          extraBuildInputs = [ pkgs.postgresql ];
+          extraRuntimeDeps = [ pkgs.postgresql ];
         };
 
       in
       {
-        packages.default = mydia;
+        packages = {
+          default = mydia;
+          postgres = mydia-postgres;
+        };
 
         # Automated checks (run via `nix flake check`)
         checks = {
-          # Verify the package builds successfully
+          # Verify both package variants build successfully
           package = mydia;
+          package-postgres = mydia-postgres;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-          # NixOS module VM test (Linux only — requires QEMU)
+          # NixOS module VM tests (Linux only — requires QEMU)
           nixos-module = import ./nix/tests/module.nix {
             inherit pkgs;
             mydiaPackage = mydia;
+          };
+          nixos-module-postgres = import ./nix/tests/module-postgres.nix {
+            inherit pkgs;
+            mydiaPackage = mydia-postgres;
           };
         };
 

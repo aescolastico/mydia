@@ -66,10 +66,56 @@ in
       description = "IP address to listen on";
     };
 
-    databasePath = mkOption {
-      type = types.path;
-      default = "/var/lib/mydia/mydia.db";
-      description = "Path to the SQLite database file";
+    database = {
+      type = mkOption {
+        type = types.enum [ "sqlite" "postgres" ];
+        default = "sqlite";
+        description = "Database backend. Must match the package variant being used.";
+      };
+
+      # SQLite options
+      path = mkOption {
+        type = types.path;
+        default = "/var/lib/mydia/mydia.db";
+        description = "Path to the SQLite database file (only used when type = sqlite)";
+      };
+
+      # PostgreSQL options
+      host = mkOption {
+        type = types.str;
+        default = "localhost";
+        description = "PostgreSQL host (only used when type = postgres)";
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 5432;
+        description = "PostgreSQL port (only used when type = postgres)";
+      };
+
+      name = mkOption {
+        type = types.str;
+        default = "mydia";
+        description = "PostgreSQL database name (only used when type = postgres)";
+      };
+
+      user = mkOption {
+        type = types.str;
+        default = "mydia";
+        description = "PostgreSQL user (only used when type = postgres)";
+      };
+
+      passwordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "Path to file containing PostgreSQL password. Not needed when using local peer auth (only used when type = postgres)";
+      };
+
+      createLocally = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Whether to configure a local PostgreSQL instance (only used when type = postgres)";
+      };
     };
 
     dataDir = mkOption {
@@ -218,18 +264,27 @@ in
     systemd.services.mydia = {
       description = "Mydia Media Manager";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "network.target" ]
+        ++ optional (cfg.database.type == "postgres" && cfg.database.createLocally) "postgresql.service";
+      requires =
+        optional (cfg.database.type == "postgres" && cfg.database.createLocally) "postgresql.service";
 
       environment = {
         PORT = toString cfg.port;
         PHX_HOST = cfg.host;
         PHX_IP = cfg.listenAddress;
         PHX_SERVER = "true";
-        DATABASE_PATH = cfg.databasePath;
         LOG_LEVEL = cfg.logLevel;
         RELEASE_COOKIE = "mydia_nixos";
         RELEASE_DISTRIBUTION = "none";
         HOME = cfg.dataDir;
+      } // lib.optionalAttrs (cfg.database.type == "sqlite") {
+        DATABASE_PATH = cfg.database.path;
+      } // lib.optionalAttrs (cfg.database.type == "postgres") {
+        DATABASE_HOST = cfg.database.host;
+        DATABASE_PORT = toString cfg.database.port;
+        DATABASE_NAME = cfg.database.name;
+        DATABASE_USER = cfg.database.user;
       } // lib.optionalAttrs cfg.oidc.enable {
         OIDC_ISSUER = cfg.oidc.issuer;
         OIDC_SCOPES = lib.concatStringsSep " " cfg.oidc.scopes;
@@ -251,7 +306,18 @@ in
         WorkingDirectory = cfg.dataDir;
 
         # Run migrations before starting
-        ExecStartPre = pkgs.writeShellScript "mydia-migrate" ''
+        ExecStartPre = let
+          loadDbPassword = optionalString (cfg.database.type == "postgres" && cfg.database.passwordFile != null) ''
+            # Load PostgreSQL password
+            if [ -f "$CREDENTIALS_DIRECTORY/DATABASE_PASSWORD" ]; then
+              export DATABASE_PASSWORD=$(cat "$CREDENTIALS_DIRECTORY/DATABASE_PASSWORD")
+            fi
+          '';
+          setupSqlite = optionalString (cfg.database.type == "sqlite") ''
+            # Create database directory if it doesn't exist
+            mkdir -p "$(dirname "${cfg.database.path}")"
+          '';
+        in pkgs.writeShellScript "mydia-migrate" ''
           set -euo pipefail
 
           # Load secrets
@@ -265,8 +331,8 @@ in
             export GUARDIAN_SECRET_KEY="''${SECRET_KEY_BASE}"
           fi
 
-          # Create database directory if it doesn't exist
-          mkdir -p "$(dirname "${cfg.databasePath}")"
+          ${setupSqlite}
+          ${loadDbPassword}
 
           # Run migrations
           ${cfg.package}/bin/mydia eval "Mydia.Release.migrate()"
@@ -284,6 +350,13 @@ in
             else
               # Fall back to SECRET_KEY_BASE if GUARDIAN_SECRET_KEY not configured
               export GUARDIAN_SECRET_KEY="''${SECRET_KEY_BASE}"
+            fi
+          '';
+
+          loadDbPassword = optionalString (cfg.database.type == "postgres" && cfg.database.passwordFile != null) ''
+            # Load PostgreSQL password
+            if [ -f "$CREDENTIALS_DIRECTORY/DATABASE_PASSWORD" ]; then
+              export DATABASE_PASSWORD=$(cat "$CREDENTIALS_DIRECTORY/DATABASE_PASSWORD")
             fi
           '';
 
@@ -321,6 +394,7 @@ in
           set -euo pipefail
 
           ${loadSecrets}
+          ${loadDbPassword}
           ${loadOidcSecrets}
           ${loadDownloadClientSecrets}
           ${downloadClientEnvs}
@@ -338,6 +412,8 @@ in
           [ "SECRET_KEY_BASE:${cfg.secretKeyBaseFile}" ]
           ++ optional (cfg.guardianSecretKeyFile != null)
             "GUARDIAN_SECRET_KEY:${cfg.guardianSecretKeyFile}"
+          ++ optional (cfg.database.type == "postgres" && cfg.database.passwordFile != null)
+            "DATABASE_PASSWORD:${cfg.database.passwordFile}"
           ++ optionals cfg.oidc.enable [
             "OIDC_CLIENT_ID:${cfg.oidc.clientIdFile}"
             "OIDC_CLIENT_SECRET:${cfg.oidc.clientSecretFile}"
@@ -382,6 +458,21 @@ in
     };
 
     users.groups.${cfg.group} = { };
+
+    # Auto-configure local PostgreSQL when requested
+    services.postgresql = mkIf (cfg.database.type == "postgres" && cfg.database.createLocally) {
+      enable = true;
+      ensureDatabases = [ cfg.database.name ];
+      ensureUsers = [{
+        name = cfg.database.user;
+        ensureDBOwnership = true;
+      }];
+      # Allow the mydia user to connect via TCP without a password
+      authentication = ''
+        host ${cfg.database.name} ${cfg.database.user} 127.0.0.1/32 trust
+        host ${cfg.database.name} ${cfg.database.user} ::1/128 trust
+      '';
+    };
 
     # Open firewall if requested
     networking.firewall.allowedTCPPorts = mkIf cfg.openFirewall [ cfg.port ];
