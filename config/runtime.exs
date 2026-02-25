@@ -59,15 +59,21 @@ if config_env() == :prod do
   # Database configuration based on compile-time adapter
   case compiled_adapter do
     Ecto.Adapters.Postgres ->
-      config :mydia, Mydia.Repo,
-        hostname: System.get_env("DATABASE_HOST") || "localhost",
-        port: String.to_integer(System.get_env("DATABASE_PORT") || "5432"),
-        database: System.get_env("DATABASE_NAME") || "mydia",
-        username: System.get_env("DATABASE_USER") || "postgres",
-        password: System.get_env("DATABASE_PASSWORD"),
-        pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-        # Increased timeout to handle long-running library scans (60 seconds)
-        timeout: 60_000
+      ssl_opt =
+        if System.get_env("DATABASE_SSL_MODE") == "disable", do: [ssl: false], else: []
+
+      config :mydia,
+             Mydia.Repo,
+             [
+               hostname: System.get_env("DATABASE_HOST") || "localhost",
+               port: String.to_integer(System.get_env("DATABASE_PORT") || "5432"),
+               database: System.get_env("DATABASE_NAME") || "mydia",
+               username: System.get_env("DATABASE_USER") || "postgres",
+               password: System.get_env("DATABASE_PASSWORD"),
+               pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+               # Increased timeout to handle long-running library scans (60 seconds)
+               timeout: 60_000
+             ] ++ ssl_opt
 
     Ecto.Adapters.SQLite3 ->
       database_path =

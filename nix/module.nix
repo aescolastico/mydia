@@ -116,6 +116,12 @@ in
         default = true;
         description = "Whether to configure a local PostgreSQL instance (only used when type = postgres)";
       };
+
+      sslMode = mkOption {
+        type = types.enum [ "verify" "disable" ];
+        default = "disable";
+        description = "SSL mode for PostgreSQL connections. Set to 'verify' for remote PostgreSQL with SSL (only used when type = postgres)";
+      };
     };
 
     dataDir = mkOption {
@@ -285,6 +291,7 @@ in
         DATABASE_PORT = toString cfg.database.port;
         DATABASE_NAME = cfg.database.name;
         DATABASE_USER = cfg.database.user;
+        DATABASE_SSL_MODE = cfg.database.sslMode;
       } // lib.optionalAttrs cfg.oidc.enable {
         OIDC_ISSUER = cfg.oidc.issuer;
         OIDC_SCOPES = lib.concatStringsSep " " cfg.oidc.scopes;
