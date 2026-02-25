@@ -59,6 +59,8 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   @behaviour Mydia.Downloads.Client
 
+  require Logger
+
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
 
@@ -95,7 +97,12 @@ defmodule Mydia.Downloads.Client.Transmission do
         {:ok, torrent_info["hashString"]}
 
       {:ok, %{"result" => "success", "arguments" => %{"torrent-duplicate" => torrent_info}}} ->
-        {:error, Error.duplicate_torrent("Torrent already exists", %{id: torrent_info["id"]})}
+        Logger.info("Torrent already in client, treating as success",
+          hash: torrent_info["hashString"],
+          name: torrent_info["name"]
+        )
+
+        {:ok, torrent_info["hashString"]}
 
       {:ok, %{"result" => error_msg}} ->
         {:error, Error.api_error("Failed to add torrent", %{result: error_msg})}

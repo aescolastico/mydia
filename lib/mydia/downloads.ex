@@ -485,7 +485,8 @@ defmodule Mydia.Downloads do
     with :ok <- check_for_duplicate_download(search_result, opts),
          {:ok, client_config, client_id, detected_type} <-
            select_and_add_to_client(search_result, opts),
-         {:ok, download} <- create_download_record(search_result, client_config, client_id, opts) do
+         {:ok, download} <-
+           create_download_record_with_retry(search_result, client_config, client_id, opts) do
       # Use detected type as fallback if protocol wasn't set
       final_type = download_type || detected_type
 
@@ -665,23 +666,79 @@ defmodule Mydia.Downloads do
           where(base_query, [d], d.download_url == ^search_result.download_url)
       end
 
-    case Repo.exists?(query) do
-      true ->
-        season_info =
-          case search_result.metadata do
-            %SearchResultMetadata{season_pack: true, season_number: sn} -> " (season #{sn})"
-            _ -> ""
-          end
+    active_downloads = Repo.all(query)
 
-        Logger.info("Skipping download - active download already exists#{season_info}",
-          media_item_id: media_item_id,
-          episode_id: episode_id
-        )
+    if active_downloads == [] do
+      :ok
+    else
+      # Verify each "active" download still exists in the download client
+      case verify_downloads_in_client(active_downloads) do
+        :all_stale ->
+          # All were stale/orphaned - allow the new download
+          :ok
 
-        {:error, :duplicate_download}
+        :has_active ->
+          season_info =
+            case search_result.metadata do
+              %SearchResultMetadata{season_pack: true, season_number: sn} -> " (season #{sn})"
+              _ -> ""
+            end
 
-      false ->
-        :ok
+          Logger.info("Skipping download - active download already exists#{season_info}",
+            media_item_id: media_item_id,
+            episode_id: episode_id
+          )
+
+          {:error, :duplicate_download}
+      end
+    end
+  end
+
+  defp verify_downloads_in_client(downloads) do
+    has_active =
+      Enum.any?(downloads, fn download ->
+        case verify_single_download_in_client(download) do
+          :active -> true
+          :stale -> false
+        end
+      end)
+
+    if has_active, do: :has_active, else: :all_stale
+  end
+
+  defp verify_single_download_in_client(download) do
+    with {:ok, client_config} <- find_client_config(download.download_client),
+         {:ok, adapter} <- get_adapter_for_client(client_config) do
+      client_map_config = config_to_map(client_config)
+
+      case Client.get_status(adapter, client_map_config, download.download_client_id) do
+        {:ok, _status} ->
+          :active
+
+        {:error, %{type: :not_found}} ->
+          Logger.warning("Active download not found in client, marking as failed",
+            download_id: download.id,
+            title: download.title,
+            client: download.download_client
+          )
+
+          mark_download_failed(download, "Torrent no longer exists in download client")
+          :stale
+
+        {:error, reason} ->
+          # Client error (connection issue, etc.) - assume download is still active
+          # to avoid accidentally re-downloading
+          Logger.warning("Could not verify download in client, assuming active",
+            download_id: download.id,
+            reason: inspect(reason)
+          )
+
+          :active
+      end
+    else
+      {:error, _reason} ->
+        # Client config not found - can't verify, assume active
+        :active
     end
   end
 
@@ -892,6 +949,55 @@ defmodule Mydia.Downloads do
     }
 
     create_download(attrs)
+  end
+
+  defp create_download_record_with_retry(search_result, client_config, client_id, opts) do
+    case create_download_record(search_result, client_config, client_id, opts) do
+      {:ok, download} ->
+        {:ok, download}
+
+      {:error, %Ecto.Changeset{} = changeset}
+      when is_struct(changeset, Ecto.Changeset) ->
+        if has_unique_constraint_error?(changeset, :download_client_id) do
+          Logger.warning(
+            "Unique constraint on download_client_id, cleaning stale record and retrying",
+            client: client_config.name,
+            client_id: client_id
+          )
+
+          case find_stale_download(client_config.name, client_id) do
+            nil ->
+              {:error, changeset}
+
+            stale_download ->
+              Logger.info("Deleting stale download record",
+                download_id: stale_download.id,
+                title: stale_download.title
+              )
+
+              delete_download(stale_download)
+              create_download_record(search_result, client_config, client_id, opts)
+          end
+        else
+          {:error, changeset}
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp has_unique_constraint_error?(%Ecto.Changeset{} = changeset, field) do
+    Enum.any?(changeset.errors, fn
+      {^field, {_msg, opts}} -> Keyword.get(opts, :constraint) == :unique
+      _ -> false
+    end)
+  end
+
+  defp find_stale_download(client_name, client_id) do
+    Download
+    |> where([d], d.download_client == ^client_name and d.download_client_id == ^client_id)
+    |> Repo.one()
   end
 
   ## Private Functions - Client Status Fetching
