@@ -248,6 +248,15 @@ defmodule Mydia.Jobs do
     Repo.aggregate(query, :count, :id)
   end
 
+  @doc """
+  Cancels a job by its ID.
+
+  Returns `:ok` if the job was cancelled, or `{:error, reason}` if it could not be cancelled.
+  """
+  def cancel_job(job_id) when is_integer(job_id) do
+    Oban.cancel_job(job_id)
+  end
+
   # Private helpers
 
   defp find_cron_plugin(plugins) do

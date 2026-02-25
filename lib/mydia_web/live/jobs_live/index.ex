@@ -117,6 +117,19 @@ defmodule MydiaWeb.JobsLive.Index do
     end
   end
 
+  def handle_event("cancel_job", %{"id" => job_id}, socket) do
+    case Jobs.cancel_job(String.to_integer(job_id)) do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Job cancelled")
+         |> load_job_history(reset: true)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to cancel job")}
+    end
+  end
+
   def handle_event("refresh", _params, socket) do
     {:noreply,
      socket
