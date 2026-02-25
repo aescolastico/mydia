@@ -16,7 +16,7 @@ defmodule Mydia.Library do
   def total_storage_bytes do
     MediaFile
     |> where([f], is_nil(f.trashed_at))
-    |> select([f], sum(f.size))
+    |> select([f], type(sum(f.size), :integer))
     |> Repo.one()
     |> Kernel.||(0)
   end
