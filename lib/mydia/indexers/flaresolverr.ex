@@ -135,7 +135,7 @@ defmodule Mydia.Indexers.FlareSolverr do
         cmd: "sessions.list"
       }
 
-      case Req.post(url, json: body, connect_timeout: 5_000, receive_timeout: 10_000) do
+      case Req.post(url, json: body, connect_options: [timeout: 5_000], receive_timeout: 10_000) do
         {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
           {:ok,
            %{
@@ -146,6 +146,9 @@ defmodule Mydia.Indexers.FlareSolverr do
 
         {:ok, %Req.Response{status: status, body: body}} ->
           {:error, {:http_error, status, body}}
+
+        {:error, %Req.TransportError{reason: reason}} ->
+          {:error, {:connection_error, reason}}
 
         {:error, %Mint.TransportError{reason: reason}} ->
           {:error, {:connection_error, reason}}
@@ -232,9 +235,17 @@ defmodule Mydia.Indexers.FlareSolverr do
         Logger.error("FlareSolverr HTTP error #{status}: #{inspect(body)}")
         {:error, {:http_error, status, body}}
 
+      {:error, %Req.TransportError{reason: :timeout}} ->
+        Logger.warning("FlareSolverr request timeout for #{url}")
+        {:error, :timeout}
+
       {:error, %Mint.TransportError{reason: :timeout}} ->
         Logger.warning("FlareSolverr request timeout for #{url}")
         {:error, :timeout}
+
+      {:error, %Req.TransportError{reason: reason}} ->
+        Logger.error("FlareSolverr connection error: #{inspect(reason)}")
+        {:error, {:connection_error, reason}}
 
       {:error, %Mint.TransportError{reason: reason}} ->
         Logger.error("FlareSolverr connection error: #{inspect(reason)}")

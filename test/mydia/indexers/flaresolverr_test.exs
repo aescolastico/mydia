@@ -273,4 +273,207 @@ defmodule Mydia.Indexers.FlareSolverrTest do
       if original, do: Application.put_env(:mydia, :flaresolverr, original)
     end
   end
+
+  # HTTP-level tests using Bypass to exercise real Req.post calls
+
+  describe "health_check/0 via HTTP" do
+    setup do
+      bypass = Bypass.open()
+      original = Application.get_env(:mydia, :flaresolverr)
+
+      Application.put_env(:mydia, :flaresolverr,
+        enabled: true,
+        url: "http://localhost:#{bypass.port}"
+      )
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :flaresolverr, original)
+        else
+          Application.delete_env(:mydia, :flaresolverr)
+        end
+      end)
+
+      %{bypass: bypass}
+    end
+
+    test "returns ok with status, version, and sessions on 200", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert %{"cmd" => "sessions.list"} = Jason.decode!(body)
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "status" => "ok",
+            "version" => "3.3.21",
+            "sessions" => ["session-abc"]
+          })
+        )
+      end)
+
+      assert {:ok, result} = FlareSolverr.health_check()
+      assert result.status == "ok"
+      assert result.version == "3.3.21"
+      assert result.sessions == ["session-abc"]
+    end
+
+    test "returns http_error on non-200 status", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(500, Jason.encode!(%{"error" => "internal"}))
+      end)
+
+      assert {:error, {:http_error, 500, _body}} = FlareSolverr.health_check()
+    end
+
+    test "returns connection_error when service is down", %{bypass: bypass} do
+      Bypass.down(bypass)
+
+      assert {:error, {:connection_error, _reason}} = FlareSolverr.health_check()
+    end
+  end
+
+  describe "get/2 via HTTP" do
+    setup do
+      bypass = Bypass.open()
+      original = Application.get_env(:mydia, :flaresolverr)
+
+      Application.put_env(:mydia, :flaresolverr,
+        enabled: true,
+        url: "http://localhost:#{bypass.port}",
+        timeout: 30_000,
+        max_timeout: 60_000
+      )
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :flaresolverr, original)
+        else
+          Application.delete_env(:mydia, :flaresolverr)
+        end
+      end)
+
+      %{bypass: bypass}
+    end
+
+    test "returns parsed Response on successful challenge solve", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(body)
+        assert decoded["cmd"] == "request.get"
+        assert decoded["url"] == "https://protected.example.com"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "status" => "ok",
+            "message" => "Challenge solved!",
+            "solution" => %{
+              "url" => "https://protected.example.com",
+              "status" => 200,
+              "response" => "<html>solved</html>",
+              "cookies" => [
+                %{"name" => "cf_clearance", "value" => "token123", "domain" => ".example.com"}
+              ],
+              "userAgent" => "Mozilla/5.0 Test"
+            },
+            "startTimestamp" => 1_000_000,
+            "endTimestamp" => 1_005_000,
+            "version" => "3.3.21"
+          })
+        )
+      end)
+
+      assert {:ok, %Response{} = response} = FlareSolverr.get("https://protected.example.com")
+      assert response.status == "ok"
+      assert Response.body(response) == "<html>solved</html>"
+      assert Response.user_agent(response) == "Mozilla/5.0 Test"
+    end
+
+    test "returns challenge_failed error on error response", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "status" => "error",
+            "message" => "Challenge detection failed after 60s"
+          })
+        )
+      end)
+
+      assert {:error, {:challenge_failed, "Challenge detection failed after 60s"}} =
+               FlareSolverr.get("https://protected.example.com")
+    end
+
+    test "returns http_error on 500", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(500, Jason.encode!(%{"error" => "server error"}))
+      end)
+
+      assert {:error, {:http_error, 500, _}} =
+               FlareSolverr.get("https://protected.example.com")
+    end
+
+    test "returns connection_error when service is down", %{bypass: bypass} do
+      Bypass.down(bypass)
+
+      assert {:error, {:connection_error, _}} =
+               FlareSolverr.get("https://protected.example.com")
+    end
+  end
+
+  describe "available?/0 via HTTP" do
+    setup do
+      bypass = Bypass.open()
+      original = Application.get_env(:mydia, :flaresolverr)
+
+      Application.put_env(:mydia, :flaresolverr,
+        enabled: true,
+        url: "http://localhost:#{bypass.port}"
+      )
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :flaresolverr, original)
+        else
+          Application.delete_env(:mydia, :flaresolverr)
+        end
+      end)
+
+      %{bypass: bypass}
+    end
+
+    test "returns true when service is healthy", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "status" => "ok",
+            "version" => "3.3.21",
+            "sessions" => []
+          })
+        )
+      end)
+
+      assert FlareSolverr.available?()
+    end
+
+    test "returns false when service is down", %{bypass: bypass} do
+      Bypass.down(bypass)
+
+      refute FlareSolverr.available?()
+    end
+  end
 end
