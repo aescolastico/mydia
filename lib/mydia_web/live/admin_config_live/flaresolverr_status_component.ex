@@ -160,23 +160,27 @@ defmodule MydiaWeb.AdminConfigLive.FlareSolverrStatusComponent do
   defp status_bg_class(:healthy), do: "bg-success/10"
   defp status_bg_class(:unhealthy), do: "bg-error/10"
   defp status_bg_class(:disabled), do: "bg-base-200"
+  defp status_bg_class(:loading), do: "bg-base-200"
   defp status_bg_class(_), do: "bg-warning/10"
 
   # Icon color
   defp status_icon_class(:healthy), do: "text-success"
   defp status_icon_class(:unhealthy), do: "text-error"
   defp status_icon_class(:disabled), do: "text-base-content/40"
+  defp status_icon_class(:loading), do: "text-base-content/40"
   defp status_icon_class(_), do: "text-warning"
 
   # Status pill styling
   defp status_pill_class(:healthy), do: "bg-success/10 text-success"
   defp status_pill_class(:unhealthy), do: "bg-error/10 text-error"
   defp status_pill_class(:disabled), do: "bg-base-200 text-base-content/60"
+  defp status_pill_class(:loading), do: "bg-base-200 text-base-content/60"
   defp status_pill_class(_), do: "bg-warning/10 text-warning"
 
   defp status_label(:healthy), do: "Healthy"
   defp status_label(:unhealthy), do: "Unhealthy"
   defp status_label(:disabled), do: "Disabled"
+  defp status_label(:loading), do: "Checking..."
   defp status_label(:not_configured), do: "Not Configured"
   defp status_label(_), do: "Unknown"
 

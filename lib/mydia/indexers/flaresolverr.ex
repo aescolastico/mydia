@@ -135,7 +135,7 @@ defmodule Mydia.Indexers.FlareSolverr do
         cmd: "sessions.list"
       }
 
-      case Req.post(url, json: body, receive_timeout: 10_000) do
+      case Req.post(url, json: body, connect_timeout: 5_000, receive_timeout: 10_000) do
         {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
           {:ok,
            %{

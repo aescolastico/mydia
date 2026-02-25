@@ -54,9 +54,11 @@ defmodule MydiaWeb.AdminConfigLive.Index do
      |> assign(:remote_access_enabled, remote_access_enabled?())
      |> assign(:reorganizing_library_ids, MapSet.new())
      |> assign(:reclassifying_library_ids, MapSet.new())
+     |> assign(:flaresolverr_status, %{configured: false, status: :loading})
      |> load_configuration_data()
      |> load_system_data()
-     |> load_player_data()}
+     |> load_player_data()
+     |> check_flaresolverr_async()}
   end
 
   @impl true
@@ -71,7 +73,22 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
   @impl true
   def handle_info(:refresh_system_data, socket) do
-    {:noreply, load_system_data(socket)}
+    {:noreply,
+     socket
+     |> load_system_data()
+     |> check_flaresolverr_async()}
+  end
+
+  @impl true
+  def handle_info({ref, {:flaresolverr_status, status}}, socket) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, assign(socket, :flaresolverr_status, status)}
+  end
+
+  # Ignore DOWN messages from async tasks (e.g. flaresolverr health check)
+  @impl true
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket) do
+    {:noreply, socket}
   end
 
   # Player session handlers
@@ -1828,6 +1845,7 @@ defmodule MydiaWeb.AdminConfigLive.Index do
            :info,
            "FlareSolverr connection successful! Version: #{version}, Active sessions: #{sessions}"
          )
+         |> assign(:flaresolverr_status, FlareSolverrStatusComponent.get_status())
          |> load_system_data()}
 
       {:error, :disabled} ->
@@ -3253,7 +3271,16 @@ defmodule MydiaWeb.AdminConfigLive.Index do
     socket
     |> assign(:database_info, get_database_info())
     |> assign(:system_info, get_system_info())
-    |> assign(:flaresolverr_status, FlareSolverrStatusComponent.get_status())
+  end
+
+  defp check_flaresolverr_async(socket) do
+    if connected?(socket) do
+      Task.async(fn ->
+        {:flaresolverr_status, FlareSolverrStatusComponent.get_status()}
+      end)
+    end
+
+    socket
   end
 
   defp get_database_info do
