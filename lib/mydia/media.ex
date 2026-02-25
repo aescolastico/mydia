@@ -985,6 +985,15 @@ defmodule Mydia.Media do
           end
       end
 
+    # If we have a TMDB ID but no TVDB ID, try to discover the TVDB ID
+    # so we can use the preferred TVDB provider for TV shows
+    {provider_id, provider_source, media_item} =
+      if provider_source == :tmdb and is_nil(media_item.tvdb_id) do
+        maybe_discover_tvdb_id(media_item, provider_id, config)
+      else
+        {provider_id, provider_source, media_item}
+      end
+
     # If no provider ID, try to recover it by searching by title
     {provider_id, provider_source, media_item} =
       if is_nil(provider_id) or provider_id == "" do
@@ -1748,6 +1757,32 @@ defmodule Mydia.Media do
          |> Repo.update() do
       {:ok, updated_item} -> updated_item
       {:error, _} -> media_item
+    end
+  end
+
+  # Attempts to discover a TVDB ID for a TV show that only has a TMDB ID.
+  # On success, updates the media item and switches to the TVDB provider.
+  # On failure, returns the original TMDB provider info unchanged.
+  defp maybe_discover_tvdb_id(%MediaItem{} = media_item, tmdb_provider_id, config) do
+    Logger.info("Attempting TVDB discovery for TMDB-only TV show",
+      media_item_id: media_item.id,
+      title: media_item.title,
+      tmdb_id: media_item.tmdb_id
+    )
+
+    case do_recover_provider_id_by_title(media_item, :tv_show, config) do
+      {:ok, recovered_id, updated_item} when not is_nil(updated_item.tvdb_id) ->
+        Logger.info("Discovered TVDB ID for TV show",
+          media_item_id: media_item.id,
+          title: media_item.title,
+          tvdb_id: updated_item.tvdb_id
+        )
+
+        {to_string(recovered_id), :tvdb, updated_item}
+
+      _ ->
+        # Discovery failed or didn't find a TVDB match — keep using TMDB
+        {tmdb_provider_id, :tmdb, media_item}
     end
   end
 
