@@ -28,6 +28,7 @@
           # lazy_html: prefetch lexbor and configure fine.hpp
           lazy_html = prev.lazy_html.override {
             nativeBuildInputs = [ pkgs.cmake pkgs.gnumake pkgs.gcc ];
+            dontUseCmakeConfigure = true;
 
             preConfigure = ''
               mkdir -p _build/c/third_party/lexbor
