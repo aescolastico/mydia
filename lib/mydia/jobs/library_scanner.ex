@@ -416,9 +416,9 @@ defmodule Mydia.Jobs.LibraryScanner do
       end
     end)
 
-    # Delete removed files
+    # Trash removed files (soft-delete for recovery)
     Enum.each(changes.deleted_files, fn media_file ->
-      Library.delete_media_file(media_file)
+      Library.trash_media_file(media_file)
     end)
 
     # Find existing files missing thumbnails
@@ -530,27 +530,54 @@ defmodule Mydia.Jobs.LibraryScanner do
               # Calculate relative path from library root
               relative_path = Path.relative_to(file_info.path, library_path.path)
 
-              case Library.create_scanned_media_file(%{
-                     library_path_id: library_path.id,
-                     relative_path: relative_path,
-                     size: file_info.size,
-                     verified_at: DateTime.utc_now()
-                   }) do
-                {:ok, media_file} ->
-                  Logger.debug("Added new media file",
-                    path: file_info.path,
-                    relative_path: relative_path
-                  )
+              # Check if a trashed file with the same path exists — restore it instead of creating a duplicate
+              case Library.get_media_file_by_relative_path(
+                     library_path.id,
+                     relative_path,
+                     include_trashed: true
+                   ) do
+                %{trashed_at: trashed_at} = trashed_file when not is_nil(trashed_at) ->
+                  case Library.restore_media_file(trashed_file) do
+                    {:ok, restored_file} ->
+                      Logger.info("Restored trashed media file",
+                        path: file_info.path,
+                        relative_path: relative_path
+                      )
 
-                  {:ok, media_file, file_info}
+                      {:ok, restored_file, file_info}
 
-                {:error, changeset} ->
-                  Logger.error("Failed to create media file",
-                    path: file_info.path,
-                    errors: inspect(changeset.errors)
-                  )
+                    {:error, _reason} ->
+                      Logger.error("Failed to restore trashed media file",
+                        path: file_info.path,
+                        relative_path: relative_path
+                      )
 
-                  {:error, file_info}
+                      {:error, file_info}
+                  end
+
+                _ ->
+                  case Library.create_scanned_media_file(%{
+                         library_path_id: library_path.id,
+                         relative_path: relative_path,
+                         size: file_info.size,
+                         verified_at: DateTime.utc_now()
+                       }) do
+                    {:ok, media_file} ->
+                      Logger.debug("Added new media file",
+                        path: file_info.path,
+                        relative_path: relative_path
+                      )
+
+                      {:ok, media_file, file_info}
+
+                    {:error, changeset} ->
+                      Logger.error("Failed to create media file",
+                        path: file_info.path,
+                        errors: inspect(changeset.errors)
+                      )
+
+                      {:error, file_info}
+                  end
               end
             end)
           end)
@@ -637,16 +664,16 @@ defmodule Mydia.Jobs.LibraryScanner do
          }}
       )
 
-      # Process batch in a transaction
+      # Process batch in a transaction — trash instead of hard-delete
       Repo.transaction(fn ->
         Enum.each(batch, fn media_file ->
-          {:ok, _} = Library.delete_media_file(media_file)
+          {:ok, _} = Library.trash_media_file(media_file)
 
           # Preload library_path association for path resolution
           media_file = Mydia.Repo.preload(media_file, :library_path)
           absolute_path = Mydia.Library.MediaFile.absolute_path(media_file)
 
-          Logger.debug("Deleted media file record", path: absolute_path)
+          Logger.debug("Trashed media file record", path: absolute_path)
         end)
       end)
     end)

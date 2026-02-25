@@ -4,10 +4,13 @@ defmodule MydiaWeb.MediaLive.Show.Loaders do
   Handles loading media items, downloads, timeline events, and related data.
   """
 
+  import Ecto.Query, warn: false
+
   alias Mydia.Media
   alias Mydia.Downloads
   alias Mydia.Events
   alias Mydia.Subtitles
+  alias Mydia.Library.MediaFile
 
   def load_media_item(id) do
     preload_list = build_preload_list()
@@ -15,10 +18,14 @@ defmodule MydiaWeb.MediaLive.Show.Loaders do
   end
 
   defp build_preload_list do
+    # Filter out trashed media files from preloads
+    active_files_query =
+      from(mf in MediaFile, where: is_nil(mf.trashed_at), preload: :library_path)
+
     [
       quality_profile: [],
-      episodes: [media_files: :library_path, downloads: :media_item],
-      media_files: :library_path,
+      episodes: [media_files: active_files_query, downloads: :media_item],
+      media_files: active_files_query,
       downloads: []
     ]
   end

@@ -27,6 +27,9 @@ defmodule Mydia.Library.MediaFile do
     field :phash, :string
     field :generated_at, :utc_datetime
 
+    # Soft-delete: files missing from disk are trashed for 30 days before permanent deletion
+    field :trashed_at, :utc_datetime
+
     # Relative path storage (Phase 1)
     field :relative_path, :string
     belongs_to :library_path, Mydia.Settings.LibraryPath
@@ -85,7 +88,8 @@ defmodule Mydia.Library.MediaFile do
       :vtt_blob,
       :preview_blob,
       :phash,
-      :generated_at
+      :generated_at,
+      :trashed_at
     ])
     |> validate_required([:relative_path, :library_path_id])
     |> validate_one_parent()
@@ -128,7 +132,8 @@ defmodule Mydia.Library.MediaFile do
       :vtt_blob,
       :preview_blob,
       :phash,
-      :generated_at
+      :generated_at,
+      :trashed_at
     ])
     |> validate_required([:relative_path, :library_path_id])
     |> validate_parent_exclusivity()

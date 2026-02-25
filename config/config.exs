@@ -287,13 +287,19 @@ config :mydia, Oban,
        # Refresh metadata for all monitored items weekly on Sunday at 5 AM
        {"0 5 * * 0", Mydia.Jobs.MetadataRefresh, args: %{"refresh_all" => true}},
        # Refresh Trakt tokens approaching expiry daily at 6 AM
-       {"0 6 * * *", Mydia.Jobs.TraktTokenRefresh}
+       {"0 6 * * *", Mydia.Jobs.TraktTokenRefresh},
+       # Permanently delete trashed media files past retention period daily at 5 AM
+       {"0 5 * * *", Mydia.Jobs.TrashCleanup}
      ]}
   ]
 
 # Event retention configuration
 # Events older than this will be automatically deleted
 config :mydia, :event_retention_days, 90
+
+# Trash retention configuration
+# Trashed media files older than this will be permanently deleted
+config :mydia, :trash_retention_days, 30
 
 # HLS Streaming configuration
 config :mydia, :streaming,

@@ -1995,7 +1995,7 @@ defmodule MydiaWeb.MediaLive.Show do
 
     parts =
       if deleted > 0,
-        do: parts ++ ["removed #{deleted} missing file(s)"],
+        do: parts ++ ["moved #{deleted} file(s) to trash"],
         else: parts
 
     parts = parts ++ ["refreshed metadata for #{refreshed} file(s)"]

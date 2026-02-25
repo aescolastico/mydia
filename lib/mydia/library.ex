@@ -15,6 +15,7 @@ defmodule Mydia.Library do
   """
   def total_storage_bytes do
     MediaFile
+    |> where([f], is_nil(f.trashed_at))
     |> select([f], sum(f.size))
     |> Repo.one()
     |> Kernel.||(0)
@@ -44,6 +45,7 @@ defmodule Mydia.Library do
     MediaFile
     |> where([mf], mf.library_path_id == ^library_path_id)
     |> where([mf], not is_nil(mf.media_item_id))
+    |> where([mf], is_nil(mf.trashed_at))
     |> select([mf], mf.media_item_id)
     |> distinct(true)
     |> Repo.all()
@@ -160,8 +162,16 @@ defmodule Mydia.Library do
   Gets a media file by its relative path and library_path_id.
   """
   def get_media_file_by_relative_path(library_path_id, relative_path, opts \\ []) do
-    MediaFile
-    |> where([f], f.library_path_id == ^library_path_id and f.relative_path == ^relative_path)
+    query =
+      MediaFile
+      |> where([f], f.library_path_id == ^library_path_id and f.relative_path == ^relative_path)
+
+    query =
+      if Keyword.get(opts, :include_trashed, false),
+        do: query,
+        else: where(query, [f], is_nil(f.trashed_at))
+
+    query
     |> maybe_preload(opts[:preload])
     |> Repo.one()
   end
@@ -287,6 +297,44 @@ defmodule Mydia.Library do
   end
 
   @doc """
+  Moves a media file to trash by setting `trashed_at` to now.
+
+  Trashed files are excluded from all queries by default and will be
+  permanently deleted after the configured retention period (default 30 days).
+  """
+  def trash_media_file(%MediaFile{} = media_file) do
+    media_file
+    |> Ecto.Changeset.change(trashed_at: DateTime.utc_now() |> DateTime.truncate(:second))
+    |> Repo.update()
+  end
+
+  @doc """
+  Restores a trashed media file by clearing `trashed_at`.
+  """
+  def restore_media_file(%MediaFile{} = media_file) do
+    media_file
+    |> Ecto.Changeset.change(trashed_at: nil)
+    |> Repo.update()
+  end
+
+  @doc """
+  Permanently deletes all media files that have been trashed for longer than `days`.
+
+  Returns `{:ok, count}` with the number of permanently deleted files.
+  """
+  def purge_old_trashed_media_files(days \\ 30) do
+    cutoff = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.add(-days, :day)
+
+    {count, _} =
+      from(f in MediaFile,
+        where: not is_nil(f.trashed_at) and f.trashed_at < ^cutoff
+      )
+      |> Repo.delete_all()
+
+    {:ok, count}
+  end
+
+  @doc """
   Deletes the physical file from disk for a media file record.
 
   Returns `:ok` if the file was successfully deleted or doesn't exist,
@@ -398,6 +446,7 @@ defmodule Mydia.Library do
       MediaFile
       |> where([mf], mf.media_item_id == ^media_item_id)
       |> where([mf], is_nil(mf.episode_id))
+      |> where([mf], is_nil(mf.trashed_at))
       |> Repo.all()
 
     Logger.info(
@@ -561,14 +610,14 @@ defmodule Mydia.Library do
                   end
                 end)
 
-              deleted_count =
+              trashed_count =
                 Enum.count(missing_files, fn file ->
-                  match?({:ok, _}, delete_media_file(file))
+                  match?({:ok, _}, trash_media_file(file))
                 end)
 
               Logger.info("Found new files during re-scan",
                 new_file_count: length(new_files),
-                deleted_files: deleted_count,
+                trashed_files: trashed_count,
                 total_scanned: length(scan_result.files)
               )
 
@@ -597,7 +646,7 @@ defmodule Mydia.Library do
               Logger.info("Re-scan complete",
                 media_item_id: media_item_id,
                 new_files: created_count,
-                deleted_files: deleted_count,
+                deleted_files: trashed_count,
                 matched: matched_count,
                 errors: length(create_errors)
               )
@@ -605,9 +654,32 @@ defmodule Mydia.Library do
               {:ok,
                %{
                  new_files: created_count,
-                 deleted_files: deleted_count,
+                 deleted_files: trashed_count,
                  matched: matched_count,
                  errors: create_errors
+               }}
+
+            {:error, :not_found} ->
+              # Directory no longer exists — trash all files for the series
+              existing_files =
+                get_media_files_for_item(media_item_id, preload: [:library_path])
+
+              trashed_count =
+                Enum.count(existing_files, fn file ->
+                  match?({:ok, _}, trash_media_file(file))
+                end)
+
+              Logger.info("Series directory missing, trashed all files",
+                media_item_id: media_item_id,
+                trashed_files: trashed_count
+              )
+
+              {:ok,
+               %{
+                 new_files: 0,
+                 deleted_files: trashed_count,
+                 matched: 0,
+                 errors: []
                }}
 
             {:error, reason} ->
@@ -714,15 +786,15 @@ defmodule Mydia.Library do
                     end
                 end)
 
-              deleted_count =
+              trashed_count =
                 Enum.count(missing_files, fn file ->
-                  match?({:ok, _}, delete_media_file(file))
+                  match?({:ok, _}, trash_media_file(file))
                 end)
 
               Logger.info("Found new files for season during re-scan",
                 season: season_number,
                 new_file_count: length(new_files),
-                deleted_files: deleted_count,
+                trashed_files: trashed_count,
                 total_season_files: length(season_files)
               )
 
@@ -754,7 +826,7 @@ defmodule Mydia.Library do
                 media_item_id: media_item_id,
                 season: season_number,
                 new_files: created_count,
-                deleted_files: deleted_count,
+                deleted_files: trashed_count,
                 matched: matched_count,
                 errors: length(create_errors)
               )
@@ -762,9 +834,48 @@ defmodule Mydia.Library do
               {:ok,
                %{
                  new_files: created_count,
-                 deleted_files: deleted_count,
+                 deleted_files: trashed_count,
                  matched: matched_count,
                  errors: create_errors
+               }}
+
+            {:error, :not_found} ->
+              # Directory no longer exists — trash all season files
+              existing_files =
+                get_media_files_for_item(media_item_id, preload: [:library_path, :episode])
+
+              season_existing =
+                Enum.filter(existing_files, fn file ->
+                  cond do
+                    file.episode && file.episode.season_number == season_number ->
+                      true
+
+                    is_nil(file.episode) ->
+                      parsed = FileParser.parse(Path.basename(file.relative_path || ""))
+                      parsed.season == season_number
+
+                    true ->
+                      false
+                  end
+                end)
+
+              trashed_count =
+                Enum.count(season_existing, fn file ->
+                  match?({:ok, _}, trash_media_file(file))
+                end)
+
+              Logger.info("Season directory missing, trashed season files",
+                media_item_id: media_item_id,
+                season: season_number,
+                trashed_files: trashed_count
+              )
+
+              {:ok,
+               %{
+                 new_files: 0,
+                 deleted_files: trashed_count,
+                 matched: 0,
+                 errors: []
                }}
 
             {:error, reason} ->
@@ -851,14 +962,14 @@ defmodule Mydia.Library do
                   end
                 end)
 
-              deleted_count =
+              trashed_count =
                 Enum.count(missing_files, fn file ->
-                  match?({:ok, _}, delete_media_file(file))
+                  match?({:ok, _}, trash_media_file(file))
                 end)
 
               Logger.info("Found new files during movie re-scan",
                 new_file_count: length(new_files),
-                deleted_files: deleted_count,
+                trashed_files: trashed_count,
                 total_scanned: length(scan_result.files)
               )
 
@@ -869,15 +980,37 @@ defmodule Mydia.Library do
               Logger.info("Movie re-scan complete",
                 media_item_id: media_item_id,
                 new_files: created_count,
-                deleted_files: deleted_count,
+                deleted_files: trashed_count,
                 errors: length(create_errors)
               )
 
               {:ok,
                %{
                  new_files: created_count,
-                 deleted_files: deleted_count,
+                 deleted_files: trashed_count,
                  errors: create_errors
+               }}
+
+            {:error, :not_found} ->
+              # Directory no longer exists — trash all files for the movie
+              existing_files =
+                get_media_files_for_item(media_item_id, preload: [:library_path])
+
+              trashed_count =
+                Enum.count(existing_files, fn file ->
+                  match?({:ok, _}, trash_media_file(file))
+                end)
+
+              Logger.info("Movie directory missing, trashed all files",
+                media_item_id: media_item_id,
+                trashed_files: trashed_count
+              )
+
+              {:ok,
+               %{
+                 new_files: 0,
+                 deleted_files: trashed_count,
+                 errors: []
                }}
 
             {:error, reason} ->
@@ -1092,6 +1225,7 @@ defmodule Mydia.Library do
   def list_orphaned_media_files(opts \\ []) do
     MediaFile
     |> where([f], is_nil(f.media_item_id) and is_nil(f.episode_id))
+    |> where([f], is_nil(f.trashed_at))
     |> maybe_preload(opts[:preload])
     |> Repo.all()
   end
@@ -1317,7 +1451,16 @@ defmodule Mydia.Library do
   end
 
   defp apply_media_file_filters(query, opts) do
+    # Exclude trashed files by default unless include_trashed: true
+    query =
+      if Keyword.get(opts, :include_trashed, false),
+        do: query,
+        else: where(query, [f], is_nil(f.trashed_at))
+
     Enum.reduce(opts, query, fn
+      {:include_trashed, _}, query ->
+        query
+
       {:media_item_id, media_item_id}, query ->
         # For TV shows, files are associated through episodes, not directly
         # So we need to find files where:
