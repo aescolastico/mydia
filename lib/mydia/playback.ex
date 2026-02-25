@@ -213,12 +213,15 @@ defmodule Mydia.Playback do
   def get_next_episode(media_item_id, user_id) do
     alias Mydia.Media
 
+    active_files_query =
+      from(mf in Mydia.Library.MediaFile, where: is_nil(mf.trashed_at))
+
     # Get all episodes for the series, ordered by season and episode number
     episodes =
       from(e in Media.Episode,
         where: e.media_item_id == ^media_item_id,
         order_by: [asc: e.season_number, asc: e.episode_number],
-        preload: [:media_files]
+        preload: [media_files: ^active_files_query]
       )
       |> Repo.all()
 

@@ -35,6 +35,7 @@ defmodule Mydia.Jobs.MovieSearch do
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
   alias Mydia.Indexers.ReleaseRanker
+  alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
   alias Phoenix.PubSub
 
@@ -297,7 +298,7 @@ defmodule Mydia.Jobs.MovieSearch do
       MediaItem
       |> where([m], m.type == "movie")
       |> where([m], m.monitored == true)
-      |> join(:left, [m], mf in assoc(m, :media_files))
+      |> join(:left, [m], mf in MediaFile, on: mf.media_item_id == m.id and is_nil(mf.trashed_at))
       |> group_by([m], m.id)
       |> having([m, mf], count(mf.id) == 0)
       |> Repo.all()

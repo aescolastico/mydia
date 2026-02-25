@@ -56,6 +56,7 @@ defmodule Mydia.Jobs.TVShowSearch do
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Media.{MediaItem, Episode}
+  alias Mydia.Library.MediaFile
   alias Phoenix.PubSub
 
   # Get min_seeders from config (defaults to 0 for Usenet compatibility)
@@ -372,7 +373,7 @@ defmodule Mydia.Jobs.TVShowSearch do
       |> join(:inner, [e], m in assoc(e, :media_item))
       |> where([e, m], e.monitored == true and m.monitored == true)
       |> where([e], e.air_date <= ^today)
-      |> join(:left, [e], mf in assoc(e, :media_files))
+      |> join(:left, [e], mf in MediaFile, on: mf.episode_id == e.id and is_nil(mf.trashed_at))
       |> group_by([e], e.id)
       |> having([_e, _m, mf], count(mf.id) == 0)
       |> preload(:media_item)
@@ -393,7 +394,7 @@ defmodule Mydia.Jobs.TVShowSearch do
       |> where([e, m], e.media_item_id == ^media_item_id)
       |> where([e, m], e.monitored == true and m.monitored == true)
       |> where([e], e.air_date <= ^today)
-      |> join(:left, [e], mf in assoc(e, :media_files))
+      |> join(:left, [e], mf in MediaFile, on: mf.episode_id == e.id and is_nil(mf.trashed_at))
       |> group_by([e], e.id)
       |> having([_e, _m, mf], count(mf.id) == 0)
       |> preload(:media_item)
@@ -412,7 +413,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     |> where([e], e.season_number == ^season_number)
     |> where([e, m], e.monitored == true and m.monitored == true)
     |> where([e], e.air_date <= ^today)
-    |> join(:left, [e], mf in assoc(e, :media_files))
+    |> join(:left, [e], mf in MediaFile, on: mf.episode_id == e.id and is_nil(mf.trashed_at))
     |> group_by([e], e.id)
     |> having([_e, _m, mf], count(mf.id) == 0)
     |> preload(:media_item)
@@ -1249,7 +1250,8 @@ defmodule Mydia.Jobs.TVShowSearch do
   ## Private Functions - Helpers
 
   defp has_media_files?(%Episode{} = episode) do
-    episode = Repo.preload(episode, :media_files, force: true)
+    active_files_query = from(mf in MediaFile, where: is_nil(mf.trashed_at))
+    episode = Repo.preload(episode, [media_files: active_files_query], force: true)
     length(episode.media_files) > 0
   end
 

@@ -3,6 +3,8 @@ defmodule Mydia.Library.FileRenamer do
   Handles renaming media files to follow a consistent naming convention.
   """
 
+  import Ecto.Query, warn: false
+
   alias Mydia.Library.MediaFile
   alias Mydia.Media.{MediaItem, Episode}
   alias Mydia.Repo
@@ -70,7 +72,13 @@ defmodule Mydia.Library.FileRenamer do
   Returns a list of preview maps.
   """
   def generate_rename_previews_for_media_item(%MediaItem{} = media_item) do
-    media_item = Repo.preload(media_item, [:media_files, episodes: :media_files])
+    active_files_query = from(mf in MediaFile, where: is_nil(mf.trashed_at))
+
+    media_item =
+      Repo.preload(media_item,
+        media_files: active_files_query,
+        episodes: [media_files: active_files_query]
+      )
 
     # Get all media file IDs (both movie files and episode files)
     file_ids =

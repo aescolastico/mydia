@@ -192,7 +192,8 @@ defmodule Mydia.Integrations.Trakt.Sync do
     movies =
       from(m in Media.MediaItem,
         where: m.type == "movie",
-        join: f in assoc(m, :media_files),
+        join: f in Mydia.Library.MediaFile,
+        on: f.media_item_id == m.id and is_nil(f.trashed_at),
         distinct: true
       )
       |> Repo.all()
@@ -211,7 +212,7 @@ defmodule Mydia.Integrations.Trakt.Sync do
         where: m.type == "tv_show",
         join: e in assoc(m, :episodes),
         join: f in Mydia.Library.MediaFile,
-        on: f.episode_id == e.id,
+        on: f.episode_id == e.id and is_nil(f.trashed_at),
         distinct: true
       )
       |> Repo.all()

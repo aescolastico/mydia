@@ -284,10 +284,17 @@ defmodule MydiaWeb.MediaLive.Index do
            reason: if(new_monitored_status, do: "Monitoring enabled", else: "Monitoring disabled")
          ) do
       {:ok, _updated_item} ->
-        # Refetch with proper preloads to match the stream items
+        # Refetch with proper preloads to match the stream items (exclude trashed files)
+        import Ecto.Query
+        active_files_query = from(mf in Mydia.Library.MediaFile, where: is_nil(mf.trashed_at))
+
         updated_item_with_preloads =
           Media.get_media_item!(id,
-            preload: [:media_files, :downloads, episodes: [:media_files, :downloads]]
+            preload: [
+              :downloads,
+              media_files: active_files_query,
+              episodes: [media_files: active_files_query, downloads: []]
+            ]
           )
 
         {:noreply,
@@ -656,19 +663,20 @@ defmodule MydiaWeb.MediaLive.Index do
   defp build_query_opts(assigns) do
     user_id = assigns.current_user.id
 
-    # Build preload query for progress filtered by current user
+    # Build preload queries filtered by current user / active (non-trashed) files
     import Ecto.Query
     progress_query = from p in Mydia.Playback.Progress, where: p.user_id == ^user_id
+    active_files_query = from(mf in Mydia.Library.MediaFile, where: is_nil(mf.trashed_at))
 
     []
     |> maybe_add_filter(:type, assigns.filter_type)
     |> maybe_add_filter(:monitored, assigns.filter_monitored)
     |> maybe_add_filter(:library_path_type, assigns[:filter_library_type])
     |> Keyword.put(:preload, [
-      :media_files,
       :downloads,
+      media_files: active_files_query,
       playback_progress: progress_query,
-      episodes: [:media_files, :downloads]
+      episodes: [media_files: active_files_query, downloads: []]
     ])
   end
 

@@ -6,6 +6,8 @@ defmodule Mydia.Streaming.Candidates do
   to provide consistent candidate lists for media files.
   """
 
+  import Ecto.Query, warn: false
+
   alias Mydia.Library.MediaFile
   alias Mydia.Streaming.{CodecString, Compatibility}
 
@@ -15,11 +17,14 @@ defmodule Mydia.Streaming.Candidates do
   Returns `{:ok, media_file}` or `{:error, reason}`.
   """
   def resolve_media_file(content_type, id) do
+    active_files_query =
+      from(mf in MediaFile, where: is_nil(mf.trashed_at), preload: :library_path)
+
     case content_type do
       "movie" ->
         try do
           media_item =
-            Mydia.Media.get_media_item!(id, preload: [media_files: :library_path])
+            Mydia.Media.get_media_item!(id, preload: [media_files: active_files_query])
 
           case media_item.media_files do
             [media_file | _] -> {:ok, media_file}
@@ -31,7 +36,7 @@ defmodule Mydia.Streaming.Candidates do
 
       "episode" ->
         try do
-          episode = Mydia.Media.get_episode!(id, preload: [media_files: :library_path])
+          episode = Mydia.Media.get_episode!(id, preload: [media_files: active_files_query])
 
           case episode.media_files do
             [media_file | _] -> {:ok, media_file}
