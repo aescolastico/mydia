@@ -970,6 +970,52 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Re-fetches metadata from the provider and updates the media item.
+
+  Determines the provider (TVDB/TMDB) from the media item's IDs,
+  fetches fresh metadata via `Metadata.fetch_by_id/3` (uncached),
+  and updates the media item's metadata field. For TV shows, also
+  refreshes episodes.
+
+  ## Returns
+    - `{:ok, media_item}` - Updated media item
+    - `{:error, reason}` - Error reason
+  """
+  def refresh_metadata(%MediaItem{} = media_item) do
+    alias Mydia.Metadata
+
+    config = Metadata.default_relay_config()
+    media_type = if media_item.type == "tv_show", do: :tv_show, else: :movie
+
+    {provider_id, provider_source} =
+      cond do
+        media_item.tvdb_id -> {to_string(media_item.tvdb_id), :tvdb}
+        media_item.tmdb_id -> {to_string(media_item.tmdb_id), :tmdb}
+        true -> {nil, nil}
+      end
+
+    if is_nil(provider_id) do
+      {:error, :missing_provider_id}
+    else
+      fetch_opts = [
+        media_type: media_type,
+        provider: provider_source,
+        append_to_response: ["credits", "images", "videos", "keywords"]
+      ]
+
+      case Metadata.fetch_by_id(config, provider_id, fetch_opts) do
+        {:ok, full_metadata} ->
+          attrs = %{metadata: full_metadata}
+          update_media_item(media_item, attrs, reason: "Metadata refreshed from provider")
+
+        {:error, reason} ->
+          Logger.warning("Failed to refresh metadata for #{media_item.title}: #{inspect(reason)}")
+          {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
 
   This function is useful for:

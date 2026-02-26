@@ -289,31 +289,41 @@ defmodule MydiaWeb.MediaLive.Show do
   def handle_event("refresh_metadata", _params, socket) do
     media_item = socket.assigns.media_item
 
-    case media_item.type do
-      "tv_show" ->
-        # Refresh episodes for TV shows
-        case Media.refresh_episodes_for_tv_show(media_item) do
+    # Re-fetch metadata from provider (backdrop, poster, etc.)
+    metadata_result = Media.refresh_metadata(media_item)
+
+    case {media_item.type, metadata_result} do
+      {"tv_show", {:ok, updated_item}} ->
+        # Also refresh episodes for TV shows
+        case Media.refresh_episodes_for_tv_show(updated_item, force: true) do
           {:ok, count} ->
             {:noreply,
              socket
-             |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-             |> put_flash(:info, "Refreshed metadata: #{count} episodes added")}
-
-          {:error, :missing_provider_id} ->
-            {:noreply,
-             put_flash(socket, :error, "Cannot refresh: Missing provider ID (TMDB/TVDB)")}
+             |> assign(:media_item, load_media_item(media_item.id))
+             |> put_flash(:info, "Refreshed metadata: #{count} episodes updated")}
 
           {:error, reason} ->
+            # Metadata was updated but episodes failed - still show the updated item
             {:noreply,
-             put_flash(socket, :error, "Failed to refresh metadata: #{inspect(reason)}")}
+             socket
+             |> assign(:media_item, load_media_item(media_item.id))
+             |> put_flash(
+               :warning,
+               "Metadata refreshed but episode refresh failed: #{inspect(reason)}"
+             )}
         end
 
-      "movie" ->
-        # For movies, just reload metadata (future enhancement could update movie details)
+      {"movie", {:ok, _updated_item}} ->
         {:noreply,
          socket
-         |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
+         |> assign(:media_item, load_media_item(media_item.id))
          |> put_flash(:info, "Metadata refreshed")}
+
+      {_, {:error, :missing_provider_id}} ->
+        {:noreply, put_flash(socket, :error, "Cannot refresh: Missing provider ID (TMDB/TVDB)")}
+
+      {_, {:error, reason}} ->
+        {:noreply, put_flash(socket, :error, "Failed to refresh metadata: #{inspect(reason)}")}
     end
   end
 
@@ -505,7 +515,7 @@ defmodule MydiaWeb.MediaLive.Show do
           {:noreply,
            socket
            |> put_flash(:info, message)
-           |> push_navigate(to: ~p"/media")}
+           |> push_navigate(to: media_type_path(media_item.type))}
 
         {:error, _changeset} ->
           {:noreply,
@@ -2007,6 +2017,10 @@ defmodule MydiaWeb.MediaLive.Show do
 
     "#{prefix} complete! #{Enum.join(parts, ", ")}"
   end
+
+  defp media_type_path("movie"), do: ~p"/movies"
+  defp media_type_path("tv_show"), do: ~p"/tv"
+  defp media_type_path(_), do: ~p"/"
 
   # Collection helpers
 

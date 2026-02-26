@@ -184,6 +184,43 @@ defmodule Mydia.Metadata do
   end
 
   @doc """
+  Fetches detailed metadata with caching to reduce API calls.
+
+  This is a cached wrapper around `fetch_by_id/3` that caches results
+  for 1 hour to reduce redundant API calls during bulk imports.
+
+  Results are cached by provider_id, media_type, and append_to_response.
+
+  ## Parameters
+    - `config` - Provider configuration map
+    - `provider_id` - Provider-specific ID for the media item
+    - `opts` - Fetch options (same as `fetch_by_id/3`)
+
+  ## Examples
+
+      iex> config = Mydia.Metadata.default_relay_config()
+      iex> Mydia.Metadata.fetch_by_id_cached(config, "603", media_type: :movie)
+      {:ok, %{provider_id: "603", title: "The Matrix", ...}}
+  """
+  def fetch_by_id_cached(%{type: type} = config, provider_id, opts \\ []) when is_atom(type) do
+    alias Mydia.Metadata.Cache
+
+    media_type = Keyword.get(opts, :media_type, :movie)
+    append = Keyword.get(opts, :append_to_response, []) |> Enum.sort() |> Enum.join(",")
+    language = Keyword.get(opts, :language, "en-US")
+
+    cache_key = "fetch_by_id:#{provider_id}:#{media_type}:#{language}:#{append}"
+
+    Cache.fetch(
+      cache_key,
+      fn ->
+        fetch_by_id(config, provider_id, opts)
+      end,
+      ttl: :timer.hours(1)
+    )
+  end
+
+  @doc """
   Fetches images for a specific media item.
 
   ## Parameters

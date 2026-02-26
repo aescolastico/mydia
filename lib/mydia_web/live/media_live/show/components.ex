@@ -39,7 +39,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
     <div class="w-full md:w-64 lg:w-80 flex-shrink-0">
       <%!-- Poster - centered and smaller on mobile --%>
       <div class="card bg-base-100 shadow-xl mb-4 mx-auto w-48 sm:w-56 md:w-full">
-        <figure class="aspect-[2/3] bg-base-300">
+        <figure class="aspect-[2/3] bg-base-300 overflow-hidden rounded-t-2xl">
           <img
             src={get_poster_url(@media_item)}
             alt={@media_item.title}

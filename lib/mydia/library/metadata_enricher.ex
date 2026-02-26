@@ -10,7 +10,7 @@ defmodule Mydia.Library.MetadataEnricher do
   """
 
   require Logger
-  alias Mydia.{Media, Metadata, Settings}
+  alias Mydia.{Media, Metadata, Repo, Settings}
 
   @doc """
   Enriches a media item with full metadata from the provider.
@@ -65,13 +65,12 @@ defmodule Mydia.Library.MetadataEnricher do
             # Add media_file_id to match_result so it can be used for episode file association
             match_result_with_file_id =
               if media_file_id do
-                Logger.info("""
-                Adding media_file_id to match_result for episode association:
-                  media_file_id: #{inspect(media_file_id)}
-                  season: #{inspect(match_result.parsed_info.season)}
-                  episodes: #{inspect(match_result.parsed_info.episodes)}
-                  parsed_info type: #{inspect(match_result.parsed_info.type)}
-                """)
+                Logger.debug(
+                  "Adding media_file_id to match_result for episode association: " <>
+                    "media_file_id=#{inspect(media_file_id)}, " <>
+                    "season=#{inspect(match_result.parsed_info.season)}, " <>
+                    "episodes=#{inspect(match_result.parsed_info.episodes)}"
+                )
 
                 Map.put(match_result, :media_file_id, media_file_id)
               else
@@ -79,7 +78,18 @@ defmodule Mydia.Library.MetadataEnricher do
                 match_result
               end
 
-            enrich_episodes(media_item, provider_id, config, match_result_with_file_id)
+            # Fast path: if episodes already exist, skip full enrichment and
+            # just associate the file with its target episode via DB lookup
+            if episodes_exist_for_show?(media_item) do
+              Logger.debug("Fast path: episodes exist, skipping enrichment",
+                media_item_id: media_item.id,
+                title: media_item.title
+              )
+
+              associate_file_with_target_episodes(media_item, match_result_with_file_id)
+            else
+              enrich_episodes(media_item, provider_id, config, match_result_with_file_id)
+            end
           end
 
           {:ok, media_item}
@@ -159,7 +169,7 @@ defmodule Mydia.Library.MetadataEnricher do
       {:ok, full_metadata} ->
         attrs = build_media_item_attrs(full_metadata, media_type, match_result)
 
-        case Media.create_media_item(attrs) do
+        case Media.create_media_item(attrs, skip_episode_refresh: true) do
           {:ok, media_item} ->
             # Episodes will be fetched by enrich_episodes if needed
             {:ok, media_item}
@@ -174,23 +184,34 @@ defmodule Mydia.Library.MetadataEnricher do
   end
 
   defp update_existing_media_item(existing_item, provider_id, media_type, config) do
-    Logger.debug("Updating existing media item",
-      id: existing_item.id,
-      provider_id: provider_id
-    )
+    # Skip re-fetching metadata if the item was recently updated (within the last hour)
+    # This avoids redundant HTTP calls when importing multiple files for the same show
+    if recently_enriched?(existing_item) do
+      Logger.debug("Skipping metadata re-fetch for recently enriched item",
+        id: existing_item.id,
+        title: existing_item.title
+      )
 
-    case fetch_full_metadata(provider_id, media_type, config) do
-      {:ok, full_metadata} ->
-        attrs = build_media_item_attrs(full_metadata, media_type, %{})
-        Media.update_media_item(existing_item, attrs, reason: "Metadata enriched")
+      {:ok, existing_item}
+    else
+      Logger.debug("Updating existing media item",
+        id: existing_item.id,
+        provider_id: provider_id
+      )
 
-      {:error, reason} ->
-        Logger.warning("Failed to fetch updated metadata, returning existing item",
-          id: existing_item.id,
-          reason: reason
-        )
+      case fetch_full_metadata(provider_id, media_type, config) do
+        {:ok, full_metadata} ->
+          attrs = build_media_item_attrs(full_metadata, media_type, %{})
+          Media.update_media_item(existing_item, attrs, reason: "Metadata enriched")
 
-        {:ok, existing_item}
+        {:error, reason} ->
+          Logger.warning("Failed to fetch updated metadata, returning existing item",
+            id: existing_item.id,
+            reason: reason
+          )
+
+          {:ok, existing_item}
+      end
     end
   end
 
@@ -200,7 +221,7 @@ defmodule Mydia.Library.MetadataEnricher do
       append_to_response: ["credits", "images", "videos", "keywords"]
     ]
 
-    Metadata.fetch_by_id(config, provider_id, fetch_opts)
+    Metadata.fetch_by_id_cached(config, provider_id, fetch_opts)
   end
 
   defp build_media_item_attrs(metadata, media_type, match_result) do
@@ -298,7 +319,7 @@ defmodule Mydia.Library.MetadataEnricher do
   end
 
   defp enrich_episodes(media_item, provider_id, config, match_result) do
-    Logger.info("Fetching episodes for TV show",
+    Logger.debug("Fetching episodes for TV show",
       media_item_id: media_item.id,
       title: media_item.title
     )
@@ -319,7 +340,7 @@ defmodule Mydia.Library.MetadataEnricher do
             []
           end
 
-        case Metadata.fetch_season(config, provider_id, season_num, fetch_opts) do
+        case Metadata.fetch_season_cached(config, provider_id, season_num, fetch_opts) do
           {:ok, season_data} ->
             create_episodes_for_season(media_item, season_data)
 
@@ -374,7 +395,7 @@ defmodule Mydia.Library.MetadataEnricher do
          }
        )
        when is_binary(media_file_id) and is_list(episode_numbers) do
-    Logger.info("Associating file with target episodes via direct lookup",
+    Logger.debug("Associating file with target episodes via direct lookup",
       media_item_id: media_item.id,
       season: season,
       episode_numbers: episode_numbers,
@@ -415,7 +436,7 @@ defmodule Mydia.Library.MetadataEnricher do
 
     case Mydia.Library.update_media_file(media_file, %{episode_id: episode.id}) do
       {:ok, _updated_file} ->
-        Logger.info("Associated file with episode",
+        Logger.debug("Associated file with episode",
           episode_id: episode.id,
           season: episode.season_number,
           episode: episode.episode_number,
@@ -438,6 +459,23 @@ defmodule Mydia.Library.MetadataEnricher do
       )
 
       :ok
+  end
+
+  # Checks if episodes already exist in the database for a given TV show.
+  # Used to determine if we can skip the full episode enrichment HTTP calls.
+  defp episodes_exist_for_show?(media_item) do
+    import Ecto.Query, only: [from: 2]
+
+    Repo.exists?(
+      from(e in Mydia.Media.Episode, where: e.media_item_id == ^media_item.id, limit: 1)
+    )
+  end
+
+  # Checks if a media item was recently enriched (within the last hour).
+  # Used to skip redundant metadata re-fetches during bulk imports.
+  defp recently_enriched?(media_item) do
+    one_hour_ago = DateTime.add(DateTime.utc_now(), -3600, :second)
+    DateTime.compare(media_item.updated_at, one_hour_ago) == :gt
   end
 
   # Validates that the media type is compatible with the library path type

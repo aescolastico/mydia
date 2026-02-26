@@ -419,10 +419,19 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   defp transform_tvdb_image(_), do: nil
 
+  # TVDB artwork type IDs returned as integers by the API
+  @tvdb_artwork_type_ids %{
+    "background" => 3,
+    "poster" => 2,
+    "banner" => 1
+  }
+
   # Extract specific artwork type from artworks list
   defp transform_tvdb_artwork(nil, _type), do: nil
 
   defp transform_tvdb_artwork(artworks, type) when is_list(artworks) do
+    type_id = Map.get(@tvdb_artwork_type_ids, type)
+
     artwork =
       Enum.find(artworks, fn
         # Handle artwork as a map with type info
@@ -432,7 +441,10 @@ defmodule Mydia.Metadata.Provider.Relay do
         %{"type" => artwork_type} when is_binary(artwork_type) ->
           artwork_type == type
 
-        # Skip non-map entries (e.g., integer IDs)
+        # Handle integer type IDs from TVDB API
+        %{"type" => artwork_type_id} when is_integer(artwork_type_id) and not is_nil(type_id) ->
+          artwork_type_id == type_id
+
         _ ->
           false
       end)
