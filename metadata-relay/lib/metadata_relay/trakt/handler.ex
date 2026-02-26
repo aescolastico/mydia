@@ -10,31 +10,29 @@ defmodule MetadataRelay.Trakt.Handler do
 
   alias MetadataRelay.Trakt.Client
 
-  # ── Config ──────────────────────────────────────────────────────────
+  # ── Device Auth ─────────────────────────────────────────────────────
 
   @doc """
-  Returns the Trakt client_id so Mydia instances can build authorize URLs.
+  Requests a device code for the device authorization flow.
+  Returns device_code, user_code, verification_url, expires_in, interval.
   """
-  def get_config do
-    {:ok, %{client_id: Client.client_id()}}
+  def generate_device_code do
+    body = %{client_id: Client.client_id()}
+    Client.post("/oauth/device/code", body)
   end
 
-  # ── OAuth ───────────────────────────────────────────────────────────
-
   @doc """
-  Exchange an authorization code for access + refresh tokens.
-  The relay injects `client_id` and `client_secret` automatically.
+  Polls for the device token after the user has entered the code.
+  Returns tokens on success, or an HTTP error status for pending/expired/denied states.
   """
-  def exchange_code(params) do
+  def poll_device_token(params) do
     body = %{
-      code: Map.fetch!(params, "code"),
-      redirect_uri: Map.fetch!(params, "redirect_uri"),
-      grant_type: "authorization_code",
+      code: Map.fetch!(params, "device_code"),
       client_id: Client.client_id(),
       client_secret: Client.client_secret()
     }
 
-    Client.post("/oauth/token", body)
+    Client.post("/oauth/device/token", body)
   end
 
   @doc """

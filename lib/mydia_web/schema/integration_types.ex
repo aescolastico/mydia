@@ -16,9 +16,25 @@ defmodule MydiaWeb.Schema.IntegrationTypes do
     field :enabled, non_null(:boolean)
     field :external_username, :string
     field :last_synced_at, :datetime
-    field :auth_url, :string, description: "URL to redirect user for Trakt authorization"
 
     field :settings, :trakt_settings
+  end
+
+  @desc "Device code for Trakt.tv device authorization flow"
+  object :trakt_device_code do
+    field :device_code, non_null(:string)
+    field :user_code, non_null(:string)
+    field :verification_url, non_null(:string)
+    field :expires_in, non_null(:integer)
+    field :interval, non_null(:integer)
+  end
+
+  @desc "Result of polling for a Trakt.tv device token"
+  object :trakt_device_poll_result do
+    field :status, non_null(:string),
+      description: "One of: authorized, pending, expired, denied, error"
+
+    field :integration, :trakt_integration
   end
 
   @desc "Trakt integration settings"
@@ -52,11 +68,18 @@ defmodule MydiaWeb.Schema.IntegrationTypes do
   # ── Mutations ─────────────────────────────────────────────────────────
 
   object :integration_mutations do
-    @desc "Connect Trakt.tv by exchanging an authorization code"
-    field :connect_trakt, :trakt_integration do
-      arg(:code, non_null(:string), description: "Authorization code from Trakt OAuth")
-      arg(:redirect_uri, non_null(:string), description: "Redirect URI used in the OAuth flow")
-      resolve(&IntegrationResolver.connect_trakt/3)
+    @desc "Generate a device code for Trakt.tv device authorization"
+    field :generate_trakt_device_code, :trakt_device_code do
+      resolve(&IntegrationResolver.generate_device_code/3)
+    end
+
+    @desc "Poll for a Trakt.tv device token after user enters the code"
+    field :poll_trakt_device, :trakt_device_poll_result do
+      arg(:device_code, non_null(:string),
+        description: "Device code from generate_trakt_device_code"
+      )
+
+      resolve(&IntegrationResolver.poll_device_token/3)
     end
 
     @desc "Disconnect Trakt.tv integration"

@@ -20,15 +20,12 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
       user ->
         case Integrations.get_user_integration(user.id, "trakt") do
           nil ->
-            auth_url = build_auth_url()
-
             {:ok,
              %{
                connected: false,
                enabled: false,
                external_username: nil,
                last_synced_at: nil,
-               auth_url: auth_url,
                settings: %{scrobbling: false, auto_sync: false}
              }}
 
@@ -40,7 +37,6 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
                enabled: integration.enabled,
                external_username: integration.external_username,
                last_synced_at: integration.last_synced_at,
-               auth_url: nil,
                settings: build_settings(integration)
              }}
         end
@@ -48,16 +44,42 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
   end
 
   @doc """
-  Connects Trakt by exchanging an authorization code for tokens.
-  Alternative to the browser OAuth callback.
+  Generates a device code for the Trakt device authorization flow.
   """
-  def connect_trakt(_parent, %{code: code, redirect_uri: redirect_uri}, %{context: context}) do
+  def generate_device_code(_parent, _args, %{context: context}) do
+    case context[:current_user] do
+      nil ->
+        {:error, "Authentication required"}
+
+      _user ->
+        case Client.generate_device_code() do
+          {:ok, data} ->
+            {:ok,
+             %{
+               device_code: data["device_code"],
+               user_code: data["user_code"],
+               verification_url: data["verification_url"],
+               expires_in: data["expires_in"],
+               interval: data["interval"]
+             }}
+
+          {:error, reason} ->
+            {:error, "Failed to generate device code: #{inspect(reason)}"}
+        end
+    end
+  end
+
+  @doc """
+  Polls for the device token after the user has entered the code on Trakt.
+  Returns status + integration on success.
+  """
+  def poll_device_token(_parent, %{device_code: device_code}, %{context: context}) do
     case context[:current_user] do
       nil ->
         {:error, "Authentication required"}
 
       user ->
-        case Client.exchange_code(code, redirect_uri) do
+        case Client.poll_device_token(device_code) do
           {:ok, token_data} ->
             attrs = %{
               provider: "trakt",
@@ -71,21 +93,35 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
               {:ok, integration} ->
                 {:ok,
                  %{
-                   id: integration.id,
-                   connected: true,
-                   enabled: integration.enabled,
-                   external_username: integration.external_username,
-                   last_synced_at: nil,
-                   auth_url: nil,
-                   settings: build_settings(integration)
+                   status: "authorized",
+                   integration: %{
+                     id: integration.id,
+                     connected: true,
+                     enabled: integration.enabled,
+                     external_username: integration.external_username,
+                     last_synced_at: nil,
+                     settings: build_settings(integration)
+                   }
                  }}
 
               {:error, changeset} ->
                 {:error, "Failed to save integration: #{inspect(changeset.errors)}"}
             end
 
-          {:error, reason} ->
-            {:error, "Failed to exchange code: #{inspect(reason)}"}
+          {:error, {:http_error, 400, _}} ->
+            {:ok, %{status: "pending", integration: nil}}
+
+          {:error, {:http_error, 410, _}} ->
+            {:ok, %{status: "expired", integration: nil}}
+
+          {:error, {:http_error, 418, _}} ->
+            {:ok, %{status: "denied", integration: nil}}
+
+          {:error, {:http_error, 429, _}} ->
+            {:ok, %{status: "slow_down", integration: nil}}
+
+          {:error, _reason} ->
+            {:ok, %{status: "error", integration: nil}}
         end
     end
   end
@@ -151,7 +187,6 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
                    enabled: updated.enabled,
                    external_username: updated.external_username,
                    last_synced_at: updated.last_synced_at,
-                   auth_url: nil,
                    settings: build_settings(updated)
                  }}
 
@@ -184,20 +219,6 @@ defmodule MydiaWeb.Schema.Resolvers.IntegrationResolver do
   end
 
   # ── Private ─────────────────────────────────────────────────────────
-
-  defp build_auth_url do
-    case Client.get_config() do
-      {:ok, %{"client_id" => client_id}} ->
-        "https://trakt.tv/oauth/authorize?" <>
-          URI.encode_query(%{
-            response_type: "code",
-            client_id: client_id
-          })
-
-      _ ->
-        nil
-    end
-  end
 
   defp build_settings(%UserIntegration{settings: nil}) do
     %{scrobbling: true, auto_sync: false}

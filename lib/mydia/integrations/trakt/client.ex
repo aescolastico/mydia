@@ -9,21 +9,26 @@ defmodule Mydia.Integrations.Trakt.Client do
 
   require Logger
 
+  # ── Device Auth ────────────────────────────────────────────────────
+
+  @doc """
+  Requests a device code for the device authorization flow.
+  Returns device_code, user_code, verification_url, expires_in, interval.
+  """
+  def generate_device_code do
+    post("/trakt/oauth/device/code", %{})
+  end
+
+  @doc """
+  Polls for the device token after the user has entered the code.
+  Returns `{:ok, token_data}` on success, or `{:error, {:http_error, status, body}}`
+  for pending (400), expired (410), denied (418), slow down (429).
+  """
+  def poll_device_token(device_code) do
+    post("/trakt/oauth/device/token", %{device_code: device_code})
+  end
+
   # ── OAuth ───────────────────────────────────────────────────────────
-
-  @doc """
-  Fetches the Trakt client_id from the relay for building authorize URLs.
-  """
-  def get_config do
-    get("/trakt/config")
-  end
-
-  @doc """
-  Exchanges an authorization code for tokens via the relay.
-  """
-  def exchange_code(code, redirect_uri) do
-    post("/trakt/oauth/token", %{code: code, redirect_uri: redirect_uri})
-  end
 
   @doc """
   Refreshes an expired token via the relay.
@@ -87,7 +92,7 @@ defmodule Mydia.Integrations.Trakt.Client do
 
   # ── HTTP Helpers ────────────────────────────────────────────────────
 
-  defp get(path, opts \\ []) do
+  defp get(path, opts) do
     {user_token, opts} = Keyword.pop(opts, :user_token)
     params = Keyword.get(opts, :params, [])
     headers = build_headers(user_token)

@@ -229,38 +229,19 @@ defmodule Mydia.Integrations.Trakt.Sync do
 
   # ── Matching Helpers ────────────────────────────────────────────────
 
+  # Trakt uses string keys for IDs; normalize to atoms for Media.find_by_external_ids/1
   defp find_media_item_by_ids(ids) do
-    imdb = Map.get(ids, "imdb")
-    tmdb = Map.get(ids, "tmdb")
-    tvdb = Map.get(ids, "tvdb")
+    normalized =
+      ids
+      |> Map.take(["imdb", "tmdb", "tvdb"])
+      |> Map.new(fn {k, v} -> {String.to_existing_atom(k), v} end)
 
-    cond do
-      imdb ->
-        Repo.get_by(Media.MediaItem, imdb_id: imdb)
-
-      tvdb ->
-        Repo.get_by(Media.MediaItem, tvdb_id: tvdb)
-
-      tmdb ->
-        Repo.get_by(Media.MediaItem, tmdb_id: tmdb)
-
-      true ->
-        nil
-    end
+    Media.find_by_external_ids(normalized)
   end
 
-  defp find_episode(show_id, season, number) when is_integer(season) and is_integer(number) do
-    from(e in Media.Episode,
-      where:
-        e.media_item_id == ^show_id and
-          e.season_number == ^season and
-          e.episode_number == ^number,
-      limit: 1
-    )
-    |> Repo.one()
+  defp find_episode(show_id, season, number) do
+    Media.find_episode(show_id, season, number)
   end
-
-  defp find_episode(_, _, _), do: nil
 
   # ── Trakt Payload Builders ─────────────────────────────────────────
 
