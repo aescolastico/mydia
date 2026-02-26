@@ -48,15 +48,6 @@ defmodule MydiaWeb.MediaLive.Index do
     {:noreply, apply_action(socket, socket.assigns.live_action, params)}
   end
 
-  defp apply_action(socket, :index, _params) do
-    socket
-    |> assign(:page_title, "Media Library")
-    |> assign(:filter_type, nil)
-    |> assign(:filter_library_type, nil)
-    |> assign(:specialized_library_type, nil)
-    |> load_media_items(reset: true)
-  end
-
   defp apply_action(socket, :movies, _params) do
     socket
     |> assign(:page_title, "Movies")

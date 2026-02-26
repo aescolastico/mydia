@@ -124,7 +124,6 @@ defmodule MydiaWeb.Router do
       ] do
       live "/", DashboardLive.Index, :index
       live "/discover", DiscoverLive.Index, :index
-      live "/media", MediaLive.Index, :index
       live "/media/:id", MediaLive.Show, :show
       live "/movies", MediaLive.Index, :movies
       live "/movies/:id", MediaLive.Show, :show

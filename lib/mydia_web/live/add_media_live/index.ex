@@ -469,7 +469,7 @@ defmodule MydiaWeb.AddMediaLive.Index do
 
   defp media_library_path(:movie), do: ~p"/movies"
   defp media_library_path(:tv_show), do: ~p"/tv"
-  defp media_library_path(_), do: ~p"/media"
+  defp media_library_path(_), do: ~p"/"
 
   defp navigate_back(socket) do
     push_navigate(socket, to: media_library_path(socket.assigns.media_type))

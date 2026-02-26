@@ -1112,18 +1112,9 @@ defmodule MydiaWeb.AdminConfigLive.Index do
         }
       end
 
-    # Set loading state
-    socket = assign(socket, :testing_download_client_connection, true)
-
-    # Test the connection with a timeout
-    task =
-      Task.async(fn ->
-        test_client_connection(test_config)
-      end)
-
-    case Task.yield(task, 10_000) || Task.shutdown(task) do
-      {:ok, {:ok, info}} ->
-        # Extract version or other info from response
+    # Test the connection (adapters already handle timeouts via receive_timeout)
+    case test_client_connection(test_config) do
+      {:ok, info} ->
         version_info =
           cond do
             Map.has_key?(info, :version) ->
@@ -1141,7 +1132,7 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          |> assign(:testing_download_client_connection, false)
          |> put_flash(:info, "Connection successful! #{version_info}")}
 
-      {:ok, {:error, error}} ->
+      {:error, error} ->
         MydiaLogger.log_warning(:liveview, "Download client connection test failed",
           operation: :test_download_client_connection,
           error: error,
@@ -1159,19 +1150,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          socket
          |> assign(:testing_download_client_connection, false)
          |> put_flash(:error, "Connection failed: #{error_msg}")}
-
-      nil ->
-        # Task timed out
-        MydiaLogger.log_warning(:liveview, "Download client connection test timed out",
-          operation: :test_download_client_connection,
-          client_type: type,
-          user_id: socket.assigns.current_user.id
-        )
-
-        {:noreply,
-         socket
-         |> assign(:testing_download_client_connection, false)
-         |> put_flash(:error, "Connection test timed out after 10 seconds")}
     end
   end
 
@@ -1455,18 +1433,9 @@ defmodule MydiaWeb.AdminConfigLive.Index do
       api_key: params.api_key
     }
 
-    # Set loading state
-    socket = assign(socket, :testing_indexer_connection, true)
-
-    # Test the connection with a timeout
-    task =
-      Task.async(fn ->
-        Mydia.Indexers.test_connection(test_config)
-      end)
-
-    case Task.yield(task, 10_000) || Task.shutdown(task) do
-      {:ok, {:ok, info}} ->
-        # Extract version or other info from response
+    # Test the connection (Req already handles timeouts via receive_timeout)
+    case Mydia.Indexers.test_connection(test_config) do
+      {:ok, info} ->
         version = Map.get(info, :version, "unknown")
 
         {:noreply,
@@ -1474,7 +1443,7 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          |> assign(:testing_indexer_connection, false)
          |> put_flash(:info, "Connection successful! Version: #{version}")}
 
-      {:ok, {:error, error}} ->
+      {:error, error} ->
         MydiaLogger.log_warning(:liveview, "Indexer connection test failed",
           operation: :test_indexer_connection,
           error: error,
@@ -1492,19 +1461,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          socket
          |> assign(:testing_indexer_connection, false)
          |> put_flash(:error, "Connection failed: #{error_msg}")}
-
-      nil ->
-        # Task timed out
-        MydiaLogger.log_warning(:liveview, "Indexer connection test timed out",
-          operation: :test_indexer_connection,
-          indexer_type: type,
-          user_id: socket.assigns.current_user.id
-        )
-
-        {:noreply,
-         socket
-         |> assign(:testing_indexer_connection, false)
-         |> put_flash(:error, "Connection test timed out after 10 seconds")}
     end
   end
 
@@ -2463,25 +2419,17 @@ defmodule MydiaWeb.AdminConfigLive.Index do
       name: params.name || "Test"
     }
 
-    # Set loading state
-    socket = assign(socket, :testing_media_server_connection, true)
-
-    # Test the connection with a timeout
+    # Test the connection (adapters already handle timeouts via receive_timeout)
     adapter = MediaServerClient.adapter_for(test_config)
 
-    task =
-      Task.async(fn ->
-        adapter.test_connection(test_config)
-      end)
-
-    case Task.yield(task, 10_000) || Task.shutdown(task) do
-      {:ok, :ok} ->
+    case adapter.test_connection(test_config) do
+      :ok ->
         {:noreply,
          socket
          |> assign(:testing_media_server_connection, false)
          |> put_flash(:info, "Connection successful!")}
 
-      {:ok, {:error, reason}} ->
+      {:error, reason} ->
         MydiaLogger.log_warning(:liveview, "Media server connection test failed",
           operation: :test_media_server_connection,
           server_type: type,
@@ -2493,19 +2441,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          socket
          |> assign(:testing_media_server_connection, false)
          |> put_flash(:error, "Connection failed: #{reason}")}
-
-      nil ->
-        # Task timed out
-        MydiaLogger.log_warning(:liveview, "Media server connection test timed out",
-          operation: :test_media_server_connection,
-          server_type: type,
-          user_id: socket.assigns.current_user.id
-        )
-
-        {:noreply,
-         socket
-         |> assign(:testing_media_server_connection, false)
-         |> put_flash(:error, "Connection test timed out after 10 seconds")}
     end
   end
 

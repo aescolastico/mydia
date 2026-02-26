@@ -267,7 +267,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
   end
 
   def handle_event("cancel", _params, socket) do
-    {:noreply, push_navigate(socket, to: ~p"/media")}
+    {:noreply, push_navigate(socket, to: ~p"/")}
   end
 
   def handle_event("resume_session", _params, socket) do
