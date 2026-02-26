@@ -202,6 +202,34 @@ defmodule MydiaWeb.FeatureCase do
   end
 
   @doc """
+  Creates a guest user for feature tests.
+  """
+  def create_guest_user(attrs \\ %{}) do
+    default_attrs = %{
+      email: "guest-#{System.unique_integer([:positive])}@example.com",
+      username: "guest#{System.unique_integer([:positive])}",
+      password: "password123",
+      role: "guest"
+    }
+
+    {:ok, user} =
+      default_attrs
+      |> Map.merge(attrs)
+      |> Mydia.Accounts.create_user()
+
+    user
+  end
+
+  @doc """
+  Creates a guest user and logs them in via the browser.
+  Returns the session with the guest user logged in.
+  """
+  def login_as_guest(session) do
+    user = create_guest_user()
+    login(session, user.username, "password123")
+  end
+
+  @doc """
   Asserts that the current path matches the expected path.
   """
   def assert_path(session, expected_path) do
@@ -292,6 +320,26 @@ defmodule MydiaWeb.FeatureCase do
     else
       :timer.sleep(500)
       assert_has_text_with_retry(session, text, attempts - 1)
+    end
+  end
+
+  @doc """
+  Asserts that the page source contains the given text, with retry.
+  Uses page_source instead of has_text? to avoid chromedriver log endpoint hangs.
+  Useful after execute_script calls that trigger LiveView updates.
+  """
+  def assert_page_contains(session, text, attempts \\ 20) do
+    if attempts <= 0 do
+      raise "Expected page source to contain '#{text}' but it was not found after retries"
+    end
+
+    html = Wallaby.Browser.page_source(session)
+
+    if String.contains?(html, text) do
+      session
+    else
+      :timer.sleep(500)
+      assert_page_contains(session, text, attempts - 1)
     end
   end
 
