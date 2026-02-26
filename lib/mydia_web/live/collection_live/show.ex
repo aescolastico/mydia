@@ -233,7 +233,7 @@ defmodule MydiaWeb.CollectionLive.Show do
             <% end %>
 
             <.link navigate={item_href(item)} class="block">
-              <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200">
+              <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200 overflow-hidden">
                 <figure class="relative aspect-[2/3] overflow-hidden bg-base-300">
                   <img
                     :if={item.poster_url}

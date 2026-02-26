@@ -209,11 +209,14 @@ defmodule MydiaWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm font-medium text-base-content/80">{@label}</span>
         <select
           id={@id}
           name={@name}
-          class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
+          class={[
+            @class || "w-full select bg-base-200/50 transition-colors duration-150 focus:bg-base-100",
+            @errors != [] && (@error_class || "select-error")
+          ]}
           multiple={@multiple}
           {@rest}
         >
@@ -230,12 +233,13 @@ defmodule MydiaWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm font-medium text-base-content/80">{@label}</span>
         <textarea
           id={@id}
           name={@name}
           class={[
-            @class || "w-full textarea",
+            @class ||
+              "w-full textarea bg-base-200/50 transition-colors duration-150 focus:bg-base-100",
             @errors != [] && (@error_class || "textarea-error")
           ]}
           {@rest}
@@ -251,14 +255,14 @@ defmodule MydiaWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-sm font-medium text-base-content/80">{@label}</span>
         <input
           type={@type}
           name={@name}
           id={@id}
           value={Phoenix.HTML.Form.normalize_value(@type, @value)}
           class={[
-            @class || "w-full input",
+            @class || "w-full input bg-base-200/50 transition-colors duration-150 focus:bg-base-100",
             @errors != [] && (@error_class || "input-error")
           ]}
           {@rest}

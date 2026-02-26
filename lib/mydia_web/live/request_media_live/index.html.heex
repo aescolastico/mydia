@@ -71,7 +71,7 @@
           <%= for {result, index} <- Enum.with_index(@search_results) do %>
             <% is_requested = MapSet.member?(@requested_items, result[:id]) %>
             <% is_requesting = @requesting_index == index %>
-            <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow">
+            <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow overflow-hidden">
               <figure class="relative aspect-[2/3] overflow-hidden bg-base-300">
                 <img
                   src={get_poster_url(result)}

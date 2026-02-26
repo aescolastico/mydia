@@ -160,7 +160,7 @@
             <% media_item_id = Map.get(@added_item_ids, tmdb_id) %>
             <% is_added = !is_nil(media_item_id) %>
             <% is_adding = @adding_index == index %>
-            <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow">
+            <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow overflow-hidden">
               <figure class="relative aspect-[2/3] overflow-hidden bg-base-300">
                 <img
                   src={get_poster_url(result)}

@@ -94,8 +94,8 @@ export default plugin(
         // DaisyUI v5 structural variables
         "--border": "1px", // global border width
         "--radius-selector": "1rem", // checkboxes, toggles, radios
-        "--radius-field": "0.25rem", // input fields
-        "--radius-box": "0.5rem", // boxes, dropdowns
+        "--radius-field": "0.5rem", // input fields
+        "--radius-box": "0.75rem", // boxes, dropdowns
         "--size-selector": "0.25rem", // selector component sizing
         "--size-field": "0.25rem", // field component sizing
       },
@@ -191,8 +191,8 @@ export default plugin(
         // DaisyUI v5 structural variables
         "--border": "1px", // global border width
         "--radius-selector": "1rem", // checkboxes, toggles, radios
-        "--radius-field": "0.25rem", // input fields
-        "--radius-box": "0.5rem", // boxes, dropdowns
+        "--radius-field": "0.5rem", // input fields
+        "--radius-box": "0.75rem", // boxes, dropdowns
         "--size-selector": "0.25rem", // selector component sizing
         "--size-field": "0.25rem", // field component sizing
       },

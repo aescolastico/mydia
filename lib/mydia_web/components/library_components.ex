@@ -189,7 +189,7 @@ defmodule MydiaWeb.LibraryComponents do
         </button>
       <% end %>
 
-      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200">
+      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200 overflow-hidden">
         <.link navigate={@href}>
           <figure class="relative aspect-[2/3] overflow-hidden bg-base-300">
             <img

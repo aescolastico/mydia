@@ -37,6 +37,19 @@
   display: none !important;
 }
 
+/* Form input polish */
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: 2px solid oklch(var(--p) / 0.5);
+  outline-offset: 0px;
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: oklch(var(--bc) / 0.35);
+}
+
 /* This file is for your main application CSS */
 
 /* Hide badges when selection mode is active */

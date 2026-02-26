@@ -23,7 +23,7 @@ defmodule MydiaWeb.PlaylistComponents do
   def playlist_card(assigns) do
     ~H"""
     <.link navigate={~p"/music/playlists/#{@playlist.id}"} class="group">
-      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow">
+      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow overflow-hidden">
         <figure class="relative aspect-square bg-base-200">
           <%= if @playlist.cover_url do %>
             <img

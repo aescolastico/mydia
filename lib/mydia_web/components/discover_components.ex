@@ -33,7 +33,7 @@ defmodule MydiaWeb.DiscoverComponents do
 
   def trending_card(assigns) do
     ~H"""
-    <div class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow relative">
+    <div class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
       <%= if (vote = Map.get(@item, :vote_average)) && vote > 0 do %>
         <div class="absolute top-2 left-2 z-10">
           <div class="badge badge-warning gap-1 shadow-md">

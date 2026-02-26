@@ -114,7 +114,7 @@ defmodule MydiaWeb.CollectionComponents do
   def collection_card(assigns) do
     ~H"""
     <div class="relative group">
-      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200">
+      <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow duration-200 overflow-hidden">
         <.link navigate={@href}>
           <figure class="relative aspect-[2/3] overflow-hidden bg-base-300">
             <.poster_collage poster_paths={@poster_paths} collection_type={@collection.type} />
