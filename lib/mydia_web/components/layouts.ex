@@ -120,6 +120,14 @@ defmodule MydiaWeb.Layouts do
               </li>
               <li>
                 <.link
+                  navigate="/discover"
+                  class={nav_active?(@current_path, "/discover", false) && "active"}
+                >
+                  <.icon name="hero-sparkles" class="w-5 h-5" /> Discover
+                </.link>
+              </li>
+              <li>
+                <.link
                   navigate="/movies"
                   class={nav_active?(@current_path, "/movies", false) && "active"}
                 >
@@ -499,6 +507,12 @@ defmodule MydiaWeb.Layouts do
       </div>
 
       <.dock_link path="/" current_path={@current_path} icon="hero-home" label="Home" exact />
+      <.dock_link
+        path="/discover"
+        current_path={@current_path}
+        icon="hero-sparkles"
+        label="Discover"
+      />
 
       <%= if @current_user && @current_user.role == "guest" do %>
         <.dock_link

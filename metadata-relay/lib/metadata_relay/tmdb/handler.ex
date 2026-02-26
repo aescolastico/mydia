@@ -137,6 +137,38 @@ defmodule MetadataRelay.TMDB.Handler do
   end
 
   @doc """
+  GET /tmdb/movies/discover
+  Discover movies with filters (genre, year, language, rating, sort).
+  """
+  def discover_movies(params) do
+    Client.get("/discover/movie", params: params)
+  end
+
+  @doc """
+  GET /tmdb/tv/discover
+  Discover TV shows with filters (genre, year, language, rating, sort).
+  """
+  def discover_tv(params) do
+    Client.get("/discover/tv", params: params)
+  end
+
+  @doc """
+  GET /tmdb/genre/movie
+  Get the list of movie genres.
+  """
+  def genre_movie_list(params) do
+    Client.get("/genre/movie/list", params: params)
+  end
+
+  @doc """
+  GET /tmdb/genre/tv
+  Get the list of TV show genres.
+  """
+  def genre_tv_list(params) do
+    Client.get("/genre/tv/list", params: params)
+  end
+
+  @doc """
   GET /tmdb/list/{id}
   Get a user-created TMDB list.
   """

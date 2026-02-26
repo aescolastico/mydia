@@ -6,6 +6,7 @@ defmodule MydiaWeb.DashboardLive.Index do
   alias Mydia.Metadata
   alias Mydia.MediaRequests
   alias Mydia.Accounts.Authorization
+  alias MydiaWeb.Live.Helpers.MediaAddHelpers
 
   @impl true
   def mount(_params, _session, socket) do
@@ -156,7 +157,7 @@ defmodule MydiaWeb.DashboardLive.Index do
         enriched_movies =
           movies
           |> Enum.take(10)
-          |> enrich_with_library_status(socket.assigns.library_status_map)
+          |> MediaAddHelpers.enrich_with_library_status(socket.assigns.library_status_map)
 
         {:noreply,
          socket
@@ -177,7 +178,7 @@ defmodule MydiaWeb.DashboardLive.Index do
         enriched_shows =
           shows
           |> Enum.take(10)
-          |> enrich_with_library_status(socket.assigns.library_status_map)
+          |> MediaAddHelpers.enrich_with_library_status(socket.assigns.library_status_map)
 
         {:noreply,
          socket
@@ -199,9 +200,7 @@ defmodule MydiaWeb.DashboardLive.Index do
   end
 
   def handle_info({:fetch_detail_metadata, tmdb_id, media_type}, socket) do
-    config = Metadata.default_relay_config()
-
-    case Metadata.fetch_by_id(config, tmdb_id, media_type: media_type) do
+    case MediaAddHelpers.fetch_detail_metadata(tmdb_id, media_type) do
       {:ok, metadata} ->
         {:noreply,
          socket
@@ -215,70 +214,40 @@ defmodule MydiaWeb.DashboardLive.Index do
   end
 
   def handle_info({:add_media_to_library, provider_id, media_type}, socket) do
-    # Convert provider_id to integer for consistent map key type
-    provider_id_int =
-      case provider_id do
-        id when is_integer(id) -> id
-        id when is_binary(id) -> String.to_integer(id)
-      end
+    case MediaAddHelpers.handle_add_media_to_library(
+           provider_id,
+           media_type,
+           socket.assigns.library_status_map
+         ) do
+      {:ok, media_item, updated_map} ->
+        # Re-enrich trending items with updated library status
+        trending_movies =
+          MediaAddHelpers.enrich_with_library_status(
+            socket.assigns.trending_movies,
+            updated_map
+          )
 
-    config = Metadata.default_relay_config()
+        trending_tv =
+          MediaAddHelpers.enrich_with_library_status(socket.assigns.trending_tv, updated_map)
 
-    # Trending items always come from TMDB, so use provider: :tmdb for fetch
-    # This ensures we fetch from TMDB even for TV shows (since the ID is a TMDB ID)
-    fetch_opts = [media_type: media_type, provider: :tmdb]
+        {:noreply,
+         socket
+         |> assign(:adding_item_id, nil)
+         |> assign(:library_status_map, updated_map)
+         |> assign(:trending_movies, trending_movies)
+         |> assign(:trending_tv, trending_tv)
+         |> put_flash(:info, "#{media_item.title} has been added to your library")}
 
-    case Metadata.fetch_by_id(config, provider_id, fetch_opts) do
-      {:ok, metadata} ->
-        attrs = build_media_item_attrs(metadata, media_type)
+      {:error, {:changeset, changeset}} ->
+        {:noreply,
+         socket
+         |> assign(:adding_item_id, nil)
+         |> put_flash(
+           :error,
+           "Failed to add: #{MediaAddHelpers.format_changeset_errors(changeset)}"
+         )}
 
-        # For TV shows, also look up TVDB ID by title+year for proper storage
-        attrs =
-          if media_type == :tv_show do
-            lookup_and_add_tvdb_id(attrs, config)
-          else
-            attrs
-          end
-
-        case Media.create_media_item(attrs) do
-          {:ok, media_item} ->
-            # Create episodes for TV shows if monitored
-            if media_type == :tv_show and media_item.monitored do
-              create_episodes_for_media(media_item, metadata)
-            end
-
-            # Update library status map with integer key
-            library_status_map =
-              Map.put(socket.assigns.library_status_map, provider_id_int, %{
-                in_library: true,
-                monitored: media_item.monitored,
-                type: if(media_type == :movie, do: "movie", else: "tv_show"),
-                id: media_item.id
-              })
-
-            # Re-enrich trending items with updated library status
-            trending_movies =
-              enrich_with_library_status(socket.assigns.trending_movies, library_status_map)
-
-            trending_tv =
-              enrich_with_library_status(socket.assigns.trending_tv, library_status_map)
-
-            {:noreply,
-             socket
-             |> assign(:adding_item_id, nil)
-             |> assign(:library_status_map, library_status_map)
-             |> assign(:trending_movies, trending_movies)
-             |> assign(:trending_tv, trending_tv)
-             |> put_flash(:info, "#{media_item.title} has been added to your library")}
-
-          {:error, changeset} ->
-            {:noreply,
-             socket
-             |> assign(:adding_item_id, nil)
-             |> put_flash(:error, "Failed to add: #{format_changeset_errors(changeset)}")}
-        end
-
-      {:error, reason} ->
+      {:error, {:metadata, reason}} ->
         {:noreply,
          socket
          |> assign(:adding_item_id, nil)
@@ -287,159 +256,6 @@ defmodule MydiaWeb.DashboardLive.Index do
   end
 
   ## Private Helpers
-
-  defp enrich_with_library_status(items, library_status_map) do
-    Enum.map(items, fn item ->
-      # Convert provider_id to integer for map lookup
-      provider_id_int =
-        case item.provider_id do
-          id when is_integer(id) -> id
-          id when is_binary(id) -> String.to_integer(id)
-          nil -> nil
-        end
-
-      # Check both direct key and {:tvdb, id} key for TV shows
-      library_status =
-        Map.get(library_status_map, provider_id_int) ||
-          Map.get(library_status_map, {:tvdb, provider_id_int}) ||
-          %{in_library: false}
-
-      Map.merge(item, %{
-        in_library: library_status[:in_library] || false,
-        monitored: library_status[:monitored] || false,
-        id: library_status[:id]
-      })
-    end)
-  end
-
-  defp build_media_item_attrs(metadata, media_type) do
-    type_string = if media_type == :movie, do: "movie", else: "tv_show"
-
-    # Extract provider_id and convert to integer
-    provider_id =
-      case metadata.provider_id do
-        nil -> nil
-        id when is_integer(id) -> id
-        id when is_binary(id) -> String.to_integer(id)
-      end
-
-    %{
-      type: type_string,
-      title: metadata.title,
-      original_title: metadata.original_title,
-      year: extract_year(metadata),
-      tmdb_id: provider_id,
-      imdb_id: metadata.imdb_id,
-      metadata: metadata,
-      monitored: true
-    }
-  end
-
-  # Look up the TVDB ID for a TV show by searching TVDB by title+year
-  defp lookup_and_add_tvdb_id(attrs, config) do
-    search_opts =
-      if attrs[:year] do
-        [media_type: :tv_show, provider: :tvdb, year: attrs[:year]]
-      else
-        [media_type: :tv_show, provider: :tvdb]
-      end
-
-    case Metadata.search(config, attrs.title, search_opts) do
-      {:ok, [first | _]} ->
-        case Integer.parse(first.provider_id) do
-          {tvdb_id, ""} -> Map.put(attrs, :tvdb_id, tvdb_id)
-          _ -> attrs
-        end
-
-      _ ->
-        attrs
-    end
-  end
-
-  defp extract_year(metadata) do
-    cond do
-      metadata.year ->
-        metadata.year
-
-      metadata.release_date || metadata.first_air_date ->
-        date_value = metadata.release_date || metadata.first_air_date
-        extract_year_from_date(date_value)
-
-      true ->
-        nil
-    end
-  end
-
-  defp extract_year_from_date(%Date{} = date), do: date.year
-
-  defp extract_year_from_date(date_str) when is_binary(date_str) do
-    case Date.from_iso8601(date_str) do
-      {:ok, date} -> date.year
-      _ -> nil
-    end
-  end
-
-  defp extract_year_from_date(_), do: nil
-
-  defp create_episodes_for_media(media_item, metadata) do
-    # Get seasons from metadata
-    seasons = metadata.seasons || []
-
-    # Create episodes for all seasons
-    Enum.each(seasons, fn season ->
-      create_season_episodes(media_item, season)
-    end)
-  end
-
-  defp create_season_episodes(media_item, season) do
-    config = Metadata.default_relay_config()
-
-    case Metadata.fetch_season(
-           config,
-           to_string(media_item.tmdb_id),
-           season.season_number
-         ) do
-      {:ok, season_data} ->
-        episodes = season_data.episodes || []
-
-        Enum.each(episodes, fn episode ->
-          Media.create_episode(%{
-            media_item_id: media_item.id,
-            season_number: episode.season_number,
-            episode_number: episode.episode_number,
-            title: episode.name,
-            air_date: parse_air_date(episode.air_date),
-            metadata: episode,
-            monitored: true
-          })
-        end)
-
-      {:error, _reason} ->
-        :ok
-    end
-  end
-
-  defp parse_air_date(nil), do: nil
-  defp parse_air_date(%Date{} = date), do: date
-
-  defp parse_air_date(date_str) when is_binary(date_str) do
-    case Date.from_iso8601(date_str) do
-      {:ok, date} -> date
-      _ -> nil
-    end
-  end
-
-  defp parse_air_date(_), do: nil
-
-  defp format_changeset_errors(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {key, value}, acc_msg ->
-        String.replace(acc_msg, "%{#{key}}", to_string(value))
-      end)
-    end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
-  end
 
   defp format_bytes(bytes) when bytes < 1024, do: "#{bytes} B"
 

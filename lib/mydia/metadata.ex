@@ -423,6 +423,97 @@ defmodule Mydia.Metadata do
   end
 
   @doc """
+  Fetches a curated list (trending, popular, upcoming, etc.) with caching.
+
+  ## Parameters
+    - `list_type` - One of :trending, :popular, :upcoming, :now_playing, :on_the_air, :airing_today
+    - `opts` - Options including :media_type, :page, :language
+
+  ## Examples
+
+      iex> Mydia.Metadata.fetch_curated_list(:popular, media_type: :movie, page: 1)
+      {:ok, %{results: [...], page: 1, total_pages: 500}}
+  """
+  def fetch_curated_list(list_type, opts \\ []) do
+    alias Mydia.Metadata.Cache
+    alias Mydia.Metadata.Provider.Relay
+
+    media_type = Keyword.get(opts, :media_type, :movie)
+    page = Keyword.get(opts, :page, 1)
+
+    cache_key = "curated:#{list_type}:#{media_type}:#{page}"
+
+    Cache.fetch(
+      cache_key,
+      fn ->
+        Relay.fetch_curated(default_relay_config(), list_type, opts)
+      end,
+      ttl: :timer.minutes(30)
+    )
+  end
+
+  @doc """
+  Discovers media with filters (genres, year, language, rating, sort) with caching.
+
+  ## Parameters
+    - `media_type` - :movie or :tv_show
+    - `opts` - Filter options including :genres, :year, :original_language, :min_rating, :sort_by, :page
+
+  ## Examples
+
+      iex> Mydia.Metadata.discover(:movie, genres: "28,12", year: 2024, sort_by: "vote_average.desc")
+      {:ok, %{results: [...], page: 1, total_pages: 100}}
+  """
+  def discover(media_type, opts \\ []) do
+    alias Mydia.Metadata.Cache
+    alias Mydia.Metadata.Provider.Relay
+
+    page = Keyword.get(opts, :page, 1)
+    genres = Keyword.get(opts, :genres)
+    original_language = Keyword.get(opts, :original_language)
+    year = Keyword.get(opts, :year)
+    min_rating = Keyword.get(opts, :min_rating)
+    sort_by = Keyword.get(opts, :sort_by, "popularity.desc")
+
+    cache_key =
+      "discover:#{media_type}:#{genres}:#{original_language}:#{year}:#{min_rating}:#{sort_by}:#{page}"
+
+    Cache.fetch(
+      cache_key,
+      fn ->
+        Relay.fetch_discover(default_relay_config(), media_type, opts)
+      end,
+      ttl: :timer.minutes(15)
+    )
+  end
+
+  @doc """
+  Fetches genre list for a media type with caching (24hr TTL).
+
+  ## Parameters
+    - `media_type` - :movie or :tv_show
+
+  ## Examples
+
+      iex> Mydia.Metadata.genres(:movie)
+      {:ok, [%{id: 28, name: "Action"}, %{id: 12, name: "Adventure"}, ...]}
+  """
+  def genres(media_type) do
+    alias Mydia.Metadata.Cache
+    alias Mydia.Metadata.Provider.Relay
+
+    cache_key = "genres:#{media_type}"
+
+    Cache.fetch(
+      cache_key,
+      fn ->
+        Relay.fetch_genres(default_relay_config(), media_type)
+      end,
+      ttl: :timer.hours(24)
+    )
+  end
+
+  @doc """
   Gets the default music relay configuration.
   """
   def default_music_relay_config do

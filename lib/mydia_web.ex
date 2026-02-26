@@ -91,6 +91,8 @@ defmodule MydiaWeb do
       import MydiaWeb.LibraryComponents
       # Collection components for collection views
       import MydiaWeb.CollectionComponents
+      # Discover/trending components for media cards
+      import MydiaWeb.DiscoverComponents
       # Metadata search components
       import MydiaWeb.Live.Components.MetadataSearchForm
 

@@ -852,4 +852,127 @@ defmodule Mydia.MediaTest do
       assert count == 0
     end
   end
+
+  describe "list_movies_by_release_date/3" do
+    alias Mydia.Media.Structs.CalendarEntry
+
+    import Mydia.MediaFixtures
+
+    test "returns movies with release dates in range" do
+      media_item_fixture(%{
+        type: "movie",
+        title: "In Range Movie",
+        year: 2025,
+        metadata: %{
+          provider_id: "1",
+          provider: :metadata_relay,
+          media_type: :movie,
+          release_date: ~D[2025-06-15]
+        }
+      })
+
+      entries = Media.list_movies_by_release_date(~D[2025-06-01], ~D[2025-06-30])
+
+      assert [%CalendarEntry{} = entry] = entries
+      assert entry.title == "In Range Movie"
+      assert entry.air_date == ~D[2025-06-15]
+      assert entry.type == "movie"
+    end
+
+    test "excludes movies with release dates outside range" do
+      media_item_fixture(%{
+        type: "movie",
+        title: "Before Range",
+        year: 2025,
+        metadata: %{
+          provider_id: "2",
+          provider: :metadata_relay,
+          media_type: :movie,
+          release_date: ~D[2025-05-31]
+        }
+      })
+
+      media_item_fixture(%{
+        type: "movie",
+        title: "After Range",
+        year: 2025,
+        metadata: %{
+          provider_id: "3",
+          provider: :metadata_relay,
+          media_type: :movie,
+          release_date: ~D[2025-07-01]
+        }
+      })
+
+      entries = Media.list_movies_by_release_date(~D[2025-06-01], ~D[2025-06-30])
+      assert entries == []
+    end
+
+    test "excludes movies without release dates" do
+      media_item_fixture(%{
+        type: "movie",
+        title: "No Release Date",
+        year: 2025,
+        metadata: %{genres: ["Drama"]}
+      })
+
+      entries = Media.list_movies_by_release_date(~D[2025-01-01], ~D[2025-12-31])
+      assert entries == []
+    end
+
+    test "includes boundary dates" do
+      media_item_fixture(%{
+        type: "movie",
+        title: "Start Boundary",
+        year: 2025,
+        metadata: %{
+          provider_id: "4",
+          provider: :metadata_relay,
+          media_type: :movie,
+          release_date: ~D[2025-06-01]
+        }
+      })
+
+      media_item_fixture(%{
+        type: "movie",
+        title: "End Boundary",
+        year: 2025,
+        metadata: %{
+          provider_id: "5",
+          provider: :metadata_relay,
+          media_type: :movie,
+          release_date: ~D[2025-06-30]
+        }
+      })
+
+      entries = Media.list_movies_by_release_date(~D[2025-06-01], ~D[2025-06-30])
+      assert length(entries) == 2
+      titles = Enum.map(entries, & &1.title)
+      assert "Start Boundary" in titles
+      assert "End Boundary" in titles
+    end
+
+    test "sets has_files and has_downloads correctly" do
+      movie =
+        media_item_fixture(%{
+          type: "movie",
+          title: "Movie With File",
+          year: 2025,
+          metadata: %{
+            provider_id: "6",
+            provider: :metadata_relay,
+            media_type: :movie,
+            release_date: ~D[2025-06-15]
+          }
+        })
+
+      media_file_fixture(media_item_id: movie.id)
+
+      entries = Media.list_movies_by_release_date(~D[2025-06-01], ~D[2025-06-30])
+
+      assert [%CalendarEntry{} = entry] = entries
+      assert entry.has_files == true
+      assert entry.has_downloads == false
+    end
+  end
 end

@@ -121,6 +121,30 @@ defmodule MetadataRelay.Router do
     handle_tmdb_request(conn, fn -> Handler.airing_today_tv(params) end)
   end
 
+  # TMDB Discover Movies (with genre/year/language/rating filters)
+  get "/tmdb/movies/discover" do
+    params = extract_query_params(conn)
+    handle_tmdb_request(conn, fn -> Handler.discover_movies(params) end)
+  end
+
+  # TMDB Discover TV
+  get "/tmdb/tv/discover" do
+    params = extract_query_params(conn)
+    handle_tmdb_request(conn, fn -> Handler.discover_tv(params) end)
+  end
+
+  # TMDB Movie Genre List
+  get "/tmdb/genre/movie" do
+    params = extract_query_params(conn)
+    handle_tmdb_request(conn, fn -> Handler.genre_movie_list(params) end)
+  end
+
+  # TMDB TV Genre List
+  get "/tmdb/genre/tv" do
+    params = extract_query_params(conn)
+    handle_tmdb_request(conn, fn -> Handler.genre_tv_list(params) end)
+  end
+
   # TMDB User List (must come before /tmdb/movies/:id)
   get "/tmdb/list/:id" do
     params = extract_query_params(conn)
@@ -317,14 +341,18 @@ defmodule MetadataRelay.Router do
   # Trakt.tv API Proxy
   # ============================================================================
 
-  # Trakt config (public, returns client_id for authorize URL construction)
-  get "/trakt/config" do
-    handle_trakt_request(conn, fn -> TraktHandler.get_config() end)
+  # Trakt Device Auth: generate device code
+  post "/trakt/oauth/device/code" do
+    handle_trakt_request(conn, fn -> TraktHandler.generate_device_code() end)
   end
 
-  # Trakt OAuth: exchange authorization code for tokens
-  post "/trakt/oauth/token" do
-    handle_trakt_request(conn, fn -> TraktHandler.exchange_code(conn.body_params) end)
+  # Trakt Device Auth: poll for device token
+  # Passes Trakt's HTTP status codes through transparently
+  # (400=pending, 410=expired, 418=denied, 429=slow down)
+  post "/trakt/oauth/device/token" do
+    handle_trakt_device_poll(conn, fn ->
+      TraktHandler.poll_device_token(conn.body_params)
+    end)
   end
 
   # Trakt OAuth: refresh expired token
@@ -900,6 +928,47 @@ defmodule MetadataRelay.Router do
     |> put_resp_header("retry-after", to_string(retry_after_seconds))
     |> put_resp_content_type("application/json")
     |> send_resp(429, Jason.encode!(error_response))
+  end
+
+  # Trakt device poll handler — passes Trakt's HTTP status codes through transparently
+  # so the client can distinguish pending (400), expired (410), denied (418), slow down (429)
+  defp handle_trakt_device_poll(conn, handler_fn) do
+    case handler_fn.() do
+      {:ok, body} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "trakt",
+          status: "ok"
+        )
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(body))
+
+      {:error, {:http_error, status, body}} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "trakt",
+          status: "poll"
+        )
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(status, Jason.encode!(body))
+
+      {:error, reason} ->
+        MetadataRelay.Metrics.inc("metadata_relay_requests_total",
+          service: "trakt",
+          status: "error"
+        )
+
+        error_response = %{
+          error: "Internal server error",
+          message: inspect(reason)
+        }
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(error_response))
+    end
   end
 
   # Trakt request handler

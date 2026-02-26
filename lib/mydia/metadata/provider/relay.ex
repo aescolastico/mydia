@@ -690,6 +690,119 @@ defmodule Mydia.Metadata.Provider.Relay do
     end
   end
 
+  @doc """
+  Fetches a curated list (trending, popular, upcoming, now_playing, on_the_air, airing_today).
+
+  Returns `{:ok, %{results: [SearchResult], page: int, total_pages: int}}`.
+  """
+  def fetch_curated(config, list_type, opts \\ []) do
+    media_type = Keyword.get(opts, :media_type, :movie)
+    language = Keyword.get(opts, :language, @default_language)
+    page = Keyword.get(opts, :page, 1)
+
+    endpoint = build_curated_endpoint(list_type, media_type)
+
+    params = [
+      language: language,
+      page: page
+    ]
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: params) do
+      {:ok, %{status: 200, body: body}} ->
+        results = parse_search_results(body, media_type)
+        total_pages = body["total_pages"] || 1
+
+        {:ok, %{results: results, page: page, total_pages: total_pages}}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error,
+         Error.api_error("Fetch curated list failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Discovers media with filters (genre, year, language, rating, sort).
+
+  Returns `{:ok, %{results: [SearchResult], page: int, total_pages: int}}`.
+  """
+  def fetch_discover(config, media_type, opts \\ []) do
+    language = Keyword.get(opts, :language, @default_language)
+    page = Keyword.get(opts, :page, 1)
+    genres = Keyword.get(opts, :genres)
+    original_language = Keyword.get(opts, :original_language)
+    year = Keyword.get(opts, :year)
+    min_rating = Keyword.get(opts, :min_rating)
+    sort_by = Keyword.get(opts, :sort_by, "popularity.desc")
+
+    endpoint =
+      case media_type do
+        :tv_show -> "/tmdb/tv/discover"
+        _ -> "/tmdb/movies/discover"
+      end
+
+    params =
+      [language: language, page: page, sort_by: sort_by]
+      |> maybe_add_param(:with_genres, genres)
+      |> maybe_add_param(:with_original_language, original_language)
+      |> maybe_add_param(year_param_key(media_type), year)
+      |> maybe_add_param(:"vote_average.gte", min_rating)
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: params) do
+      {:ok, %{status: 200, body: body}} ->
+        results = parse_search_results(body, media_type)
+        total_pages = body["total_pages"] || 1
+
+        {:ok, %{results: results, page: page, total_pages: total_pages}}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("Discover failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Fetches the list of genres for a media type.
+
+  Returns `{:ok, [%{id: integer, name: string}]}`.
+  """
+  def fetch_genres(config, media_type) do
+    endpoint =
+      case media_type do
+        :tv_show -> "/tmdb/genre/tv"
+        _ -> "/tmdb/genre/movie"
+      end
+
+    req = HTTP.new_request(config)
+
+    case HTTP.get(req, endpoint, params: []) do
+      {:ok, %{status: 200, body: %{"genres" => genres}}} when is_list(genres) ->
+        parsed =
+          Enum.map(genres, fn g ->
+            %{id: g["id"], name: g["name"]}
+          end)
+
+        {:ok, parsed}
+
+      {:ok, %{status: 200, body: _}} ->
+        {:ok, []}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, Error.api_error("Fetch genres failed with status #{status}", %{body: body})}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
   ## Private Functions
 
   defp when_valid_query(query, callback) when is_binary(query) and byte_size(query) > 0 do
@@ -713,6 +826,17 @@ defmodule Mydia.Metadata.Provider.Relay do
   defp build_trending_endpoint(:movie), do: "/tmdb/movies/trending"
   defp build_trending_endpoint(:tv_show), do: "/tmdb/tv/trending"
   defp build_trending_endpoint(_), do: "/tmdb/movies/trending"
+
+  defp build_curated_endpoint(:trending, media_type), do: build_trending_endpoint(media_type)
+  defp build_curated_endpoint(:popular, :tv_show), do: "/tmdb/tv/popular"
+  defp build_curated_endpoint(:popular, _), do: "/tmdb/movies/popular"
+  defp build_curated_endpoint(:upcoming, _), do: "/tmdb/movies/upcoming"
+  defp build_curated_endpoint(:now_playing, _), do: "/tmdb/movies/now_playing"
+  defp build_curated_endpoint(:on_the_air, _), do: "/tmdb/tv/on_the_air"
+  defp build_curated_endpoint(:airing_today, _), do: "/tmdb/tv/airing_today"
+
+  defp year_param_key(:tv_show), do: :first_air_date_year
+  defp year_param_key(_), do: :primary_release_year
 
   defp maybe_add_year(params, nil, _media_type), do: params
   defp maybe_add_year(params, year, :movie), do: params ++ [year: year]

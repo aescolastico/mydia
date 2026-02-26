@@ -68,6 +68,42 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Finds a media item by external IDs using cascading lookup: IMDB → TVDB → TMDB.
+
+  Accepts a map with atom keys: `%{imdb: id, tvdb: id, tmdb: id}`.
+  Returns nil if no match is found.
+  """
+  def find_by_external_ids(ids) when is_map(ids) do
+    imdb = Map.get(ids, :imdb)
+    tvdb = Map.get(ids, :tvdb)
+    tmdb = Map.get(ids, :tmdb)
+
+    cond do
+      imdb -> Repo.get_by(MediaItem, imdb_id: imdb)
+      tvdb -> Repo.get_by(MediaItem, tvdb_id: tvdb)
+      tmdb -> Repo.get_by(MediaItem, tmdb_id: tmdb)
+      true -> nil
+    end
+  end
+
+  @doc """
+  Finds an episode by show ID, season number, and episode number.
+
+  Returns nil if no match is found or if season/episode are not integers.
+  """
+  def find_episode(show_id, season_number, episode_number)
+      when is_integer(season_number) and is_integer(episode_number) do
+    Episode
+    |> where([e], e.media_item_id == ^show_id)
+    |> where([e], e.season_number == ^season_number)
+    |> where([e], e.episode_number == ^episode_number)
+    |> limit(1)
+    |> Repo.one()
+  end
+
+  def find_episode(_, _, _), do: nil
+
+  @doc """
   Creates a media item.
 
   For TV shows, this automatically fetches and creates all episodes from the
@@ -1216,23 +1252,13 @@ defmodule Mydia.Media do
     query
     |> Repo.all()
     |> Enum.filter(fn item ->
-      case item.metadata do
-        %{"release_date" => date_str} when is_binary(date_str) ->
-          case Date.from_iso8601(date_str) do
-            {:ok, date} ->
-              Date.compare(date, start_date) != :lt and Date.compare(date, end_date) != :gt
+      release_date = item.metadata && item.metadata.release_date
 
-            _ ->
-              false
-          end
-
-        _ ->
-          false
-      end
+      release_date != nil and
+        Date.compare(release_date, start_date) != :lt and
+        Date.compare(release_date, end_date) != :gt
     end)
     |> Enum.map(fn item ->
-      {:ok, release_date} = Date.from_iso8601(item.metadata["release_date"])
-
       has_files =
         Repo.exists?(from f in Mydia.Library.MediaFile, where: f.media_item_id == ^item.id)
 
@@ -1241,7 +1267,7 @@ defmodule Mydia.Media do
 
       CalendarEntry.new_movie(
         id: item.id,
-        air_date: release_date,
+        air_date: item.metadata.release_date,
         title: item.title,
         media_item_id: item.id,
         media_item_title: item.title,

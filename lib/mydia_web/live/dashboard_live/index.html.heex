@@ -195,79 +195,12 @@
       <% true -> %>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
           <%= for movie <- @trending_movies do %>
-            <div class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow relative">
-              <%= if movie.in_library do %>
-                <div class="absolute top-2 right-2 z-10">
-                  <%= if movie.monitored do %>
-                    <div class="badge badge-success gap-1 shadow-md">
-                      <.icon name="hero-check-circle" class="w-3 h-3" />
-                      <span class="text-xs">In Library</span>
-                    </div>
-                  <% else %>
-                    <div class="badge badge-ghost gap-1 shadow-md">
-                      <.icon name="hero-minus-circle" class="w-3 h-3" />
-                      <span class="text-xs">Unmonitored</span>
-                    </div>
-                  <% end %>
-                </div>
-              <% end %>
-              <figure
-                class="aspect-[2/3] bg-base-300 cursor-pointer"
-                phx-click="show_details"
-                phx-value-id={movie.provider_id}
-                phx-value-type="movie"
-              >
-                <%= if movie.poster_path do %>
-                  <img
-                    src={ImageUrl.poster_url(movie.poster_path)}
-                    alt={movie.title}
-                    class="w-full h-full object-cover"
-                  />
-                <% else %>
-                  <div class="flex items-center justify-center w-full h-full">
-                    <.icon name="hero-film" class="w-16 h-16 text-base-content/20" />
-                  </div>
-                <% end %>
-              </figure>
-              <div class="card-body p-3">
-                <h3 class="font-semibold text-sm line-clamp-2" title={movie.title}>
-                  {movie.title}
-                </h3>
-                <%= if movie.year do %>
-                  <p class="text-xs text-base-content/60">{movie.year}</p>
-                <% end %>
-                <%= if not movie.in_library do %>
-                  <%= if @current_user && @current_user.role == "guest" do %>
-                    <%!-- Guest users request content --%>
-                    <.link
-                      navigate={~p"/request/movie?tmdb_id=#{movie.provider_id}"}
-                      class="btn btn-primary btn-sm mt-2 w-full"
-                    >
-                      <.icon name="hero-paper-airplane" class="w-4 h-4" /> Request
-                    </.link>
-                  <% else %>
-                    <%!-- Admin users add directly --%>
-                    <button
-                      phx-click="add_to_library"
-                      phx-value-tmdb_id={movie.provider_id}
-                      phx-value-media_type="movie"
-                      disabled={@adding_item_id == to_string(movie.provider_id)}
-                      class="btn btn-primary btn-sm mt-2 w-full"
-                    >
-                      <%= if @adding_item_id == to_string(movie.provider_id) do %>
-                        <span class="loading loading-spinner loading-xs"></span> Adding...
-                      <% else %>
-                        <.icon name="hero-plus" class="w-4 h-4" /> Add to Library
-                      <% end %>
-                    </button>
-                  <% end %>
-                <% else %>
-                  <.link navigate={"/movies/#{movie.id}"} class="btn btn-ghost btn-sm mt-2 w-full">
-                    <.icon name="hero-arrow-right" class="w-4 h-4" /> Go to Movie
-                  </.link>
-                <% end %>
-              </div>
-            </div>
+            <.trending_card
+              item={movie}
+              media_type={:movie}
+              current_user={@current_user}
+              adding_item_id={@adding_item_id}
+            />
           <% end %>
         </div>
     <% end %>
@@ -295,79 +228,12 @@
       <% true -> %>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
           <%= for show <- @trending_tv do %>
-            <div class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow relative">
-              <%= if show.in_library do %>
-                <div class="absolute top-2 right-2 z-10">
-                  <%= if show.monitored do %>
-                    <div class="badge badge-success gap-1 shadow-md">
-                      <.icon name="hero-check-circle" class="w-3 h-3" />
-                      <span class="text-xs">In Library</span>
-                    </div>
-                  <% else %>
-                    <div class="badge badge-ghost gap-1 shadow-md">
-                      <.icon name="hero-minus-circle" class="w-3 h-3" />
-                      <span class="text-xs">Unmonitored</span>
-                    </div>
-                  <% end %>
-                </div>
-              <% end %>
-              <figure
-                class="aspect-[2/3] bg-base-300 cursor-pointer"
-                phx-click="show_details"
-                phx-value-id={show.provider_id}
-                phx-value-type="tv_show"
-              >
-                <%= if show.poster_path do %>
-                  <img
-                    src={ImageUrl.poster_url(show.poster_path)}
-                    alt={show.title}
-                    class="w-full h-full object-cover"
-                  />
-                <% else %>
-                  <div class="flex items-center justify-center w-full h-full">
-                    <.icon name="hero-tv" class="w-16 h-16 text-base-content/20" />
-                  </div>
-                <% end %>
-              </figure>
-              <div class="card-body p-3">
-                <h3 class="font-semibold text-sm line-clamp-2" title={show.title}>
-                  {show.title}
-                </h3>
-                <%= if show.year do %>
-                  <p class="text-xs text-base-content/60">{show.year}</p>
-                <% end %>
-                <%= if not show.in_library do %>
-                  <%= if @current_user && @current_user.role == "guest" do %>
-                    <%!-- Guest users request content --%>
-                    <.link
-                      navigate={~p"/request/series?tmdb_id=#{show.provider_id}"}
-                      class="btn btn-primary btn-sm mt-2 w-full"
-                    >
-                      <.icon name="hero-paper-airplane" class="w-4 h-4" /> Request
-                    </.link>
-                  <% else %>
-                    <%!-- Admin users add directly --%>
-                    <button
-                      phx-click="add_to_library"
-                      phx-value-tmdb_id={show.provider_id}
-                      phx-value-media_type="tv_show"
-                      disabled={@adding_item_id == to_string(show.provider_id)}
-                      class="btn btn-primary btn-sm mt-2 w-full"
-                    >
-                      <%= if @adding_item_id == to_string(show.provider_id) do %>
-                        <span class="loading loading-spinner loading-xs"></span> Adding...
-                      <% else %>
-                        <.icon name="hero-plus" class="w-4 h-4" /> Add to Library
-                      <% end %>
-                    </button>
-                  <% end %>
-                <% else %>
-                  <.link navigate={"/tv/#{show.id}"} class="btn btn-ghost btn-sm mt-2 w-full">
-                    <.icon name="hero-arrow-right" class="w-4 h-4" /> Go to Show
-                  </.link>
-                <% end %>
-              </div>
-            </div>
+            <.trending_card
+              item={show}
+              media_type={:tv_show}
+              current_user={@current_user}
+              adding_item_id={@adding_item_id}
+            />
           <% end %>
         </div>
     <% end %>

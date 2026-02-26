@@ -1,0 +1,537 @@
+defmodule MydiaWeb.DiscoverLive.Index do
+  use MydiaWeb, :live_view
+
+  alias Mydia.Media
+  alias Mydia.Metadata
+  alias MydiaWeb.Live.Helpers.MediaAddHelpers
+
+  @languages [
+    {"en", "English"},
+    {"ja", "Japanese"},
+    {"ko", "Korean"},
+    {"es", "Spanish"},
+    {"fr", "French"},
+    {"de", "German"},
+    {"it", "Italian"},
+    {"pt", "Portuguese"},
+    {"zh", "Chinese"},
+    {"hi", "Hindi"},
+    {"ru", "Russian"},
+    {"ar", "Arabic"},
+    {"th", "Thai"},
+    {"tr", "Turkish"},
+    {"pl", "Polish"},
+    {"nl", "Dutch"},
+    {"sv", "Swedish"},
+    {"da", "Danish"},
+    {"no", "Norwegian"},
+    {"fi", "Finnish"}
+  ]
+
+  @movie_categories [
+    {:trending, "Trending"},
+    {:popular, "Popular"},
+    {:upcoming, "Upcoming"},
+    {:now_playing, "Now Playing"}
+  ]
+
+  @tv_categories [
+    {:trending, "Trending"},
+    {:popular, "Popular"},
+    {:on_the_air, "On The Air"},
+    {:airing_today, "Airing Today"}
+  ]
+
+  @sort_options [
+    {"popularity.desc", "Most Popular"},
+    {"vote_average.desc", "Highest Rated"},
+    {"primary_release_date.desc", "Newest First"},
+    {"primary_release_date.asc", "Oldest First"}
+  ]
+
+  @impl true
+  def mount(_params, _session, socket) do
+    socket =
+      socket
+      |> assign(:page_title, "Discover")
+      |> assign(:languages, @languages)
+      |> assign(:sort_options, @sort_options)
+      |> assign(:items, [])
+      |> assign(:loading, true)
+      |> assign(:loading_more, false)
+      |> assign(:page, 1)
+      |> assign(:total_pages, 1)
+      |> assign(:has_more, false)
+      |> assign(:genres, [])
+      |> assign(:library_status_map, %{})
+      |> assign(:adding_item_id, nil)
+      |> assign(:selected_item, nil)
+      |> assign(:selected_metadata, nil)
+      |> assign(:detail_loading, false)
+
+    {:ok, socket}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    if connected?(socket) do
+      media_type = parse_media_type(params["type"])
+      category = parse_category(params["category"], media_type)
+      search_query = params["q"] || ""
+      search_mode = search_query != ""
+
+      # Parse filter params
+      selected_genres = parse_genres_param(params["genre"])
+      selected_language = params["language"]
+      selected_year = parse_year_param(params["year"])
+      min_rating = parse_rating_param(params["rating"])
+      sort_by = params["sort"] || "popularity.desc"
+      page = parse_page_param(params["page"])
+
+      # Determine if filters are active or discover mode is explicitly selected
+      filters_active? =
+        selected_genres != [] or selected_language != nil or
+          selected_year != nil or min_rating != nil
+
+      effective_category =
+        if filters_active? or category == :discover, do: :discover, else: category
+
+      categories =
+        if media_type == :tv_show, do: @tv_categories, else: @movie_categories
+
+      socket =
+        socket
+        |> assign(:media_type, media_type)
+        |> assign(:category, effective_category)
+        |> assign(:categories, categories)
+        |> assign(:search_query, search_query)
+        |> assign(:search_mode, search_mode)
+        |> assign(:selected_genres, selected_genres)
+        |> assign(:selected_language, selected_language)
+        |> assign(:selected_year, selected_year)
+        |> assign(:min_rating, min_rating)
+        |> assign(:sort_by, sort_by)
+        |> assign(:page, page)
+        |> assign(:items, [])
+        |> assign(:loading, true)
+        |> assign(:has_more, false)
+
+      # Load genres if not loaded yet or media type changed
+      socket =
+        if socket.assigns.genres == [] do
+          send(self(), :load_genres)
+          socket
+        else
+          socket
+        end
+
+      # Load library status map
+      library_status_map = Media.get_library_status_map()
+      socket = assign(socket, :library_status_map, library_status_map)
+
+      send(self(), :load_data)
+
+      {:noreply, socket}
+    else
+      # Pre-assign defaults for initial (disconnected) render
+      {:noreply,
+       socket
+       |> assign(:media_type, :movie)
+       |> assign(:category, :trending)
+       |> assign(:categories, @movie_categories)
+       |> assign(:search_query, "")
+       |> assign(:search_mode, false)
+       |> assign(:selected_genres, [])
+       |> assign(:selected_language, nil)
+       |> assign(:selected_year, nil)
+       |> assign(:min_rating, nil)
+       |> assign(:sort_by, "popularity.desc")}
+    end
+  end
+
+  # Events
+
+  @impl true
+  def handle_event("switch_media_type", %{"type" => type}, socket) do
+    params = %{"type" => type}
+    {:noreply, push_patch(socket, to: ~p"/discover?#{params}")}
+  end
+
+  def handle_event("switch_category", %{"category" => category}, socket) do
+    params = build_url_params(socket.assigns, category: category)
+    {:noreply, push_patch(socket, to: ~p"/discover?#{params}")}
+  end
+
+  def handle_event("search", %{"q" => query}, socket) do
+    query = String.trim(query)
+
+    params =
+      if query == "" do
+        %{"type" => to_string(socket.assigns.media_type)}
+      else
+        %{"type" => to_string(socket.assigns.media_type), "q" => query}
+      end
+
+    {:noreply, push_patch(socket, to: ~p"/discover?#{params}")}
+  end
+
+  def handle_event("clear_search", _, socket) do
+    params = %{"type" => to_string(socket.assigns.media_type)}
+    {:noreply, push_patch(socket, to: ~p"/discover?#{params}")}
+  end
+
+  def handle_event("apply_filters", params, socket) do
+    url_params =
+      build_url_params(socket.assigns,
+        genre: params["genre"],
+        language: params["language"],
+        year: params["year"],
+        rating: params["rating"],
+        sort: params["sort"]
+      )
+
+    {:noreply, push_patch(socket, to: ~p"/discover?#{url_params}")}
+  end
+
+  def handle_event("clear_filters", _, socket) do
+    params = %{"type" => to_string(socket.assigns.media_type)}
+    {:noreply, push_patch(socket, to: ~p"/discover?#{params}")}
+  end
+
+  def handle_event("load_more", _, socket) do
+    if socket.assigns.has_more and not socket.assigns.loading_more do
+      next_page = socket.assigns.page + 1
+      send(self(), {:load_page, next_page})
+      {:noreply, assign(socket, :loading_more, true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event(
+        "add_to_library",
+        %{"tmdb_id" => provider_id, "media_type" => media_type},
+        socket
+      ) do
+    media_type_atom = String.to_existing_atom(media_type)
+    socket = assign(socket, :adding_item_id, provider_id)
+    send(self(), {:add_media_to_library, provider_id, media_type_atom})
+    {:noreply, socket}
+  end
+
+  def handle_event("show_details", %{"id" => id, "type" => type}, socket) do
+    media_type = String.to_existing_atom(type)
+    item = Enum.find(socket.assigns.items, &(&1.provider_id == id))
+
+    case item do
+      nil ->
+        {:noreply, socket}
+
+      item ->
+        send(self(), {:fetch_detail_metadata, id, media_type})
+
+        {:noreply,
+         socket
+         |> assign(:selected_item, item)
+         |> assign(:selected_metadata, nil)
+         |> assign(:detail_loading, true)}
+    end
+  end
+
+  def handle_event("close_details", _, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_item, nil)
+     |> assign(:selected_metadata, nil)
+     |> assign(:detail_loading, false)}
+  end
+
+  # Info handlers
+
+  @impl true
+  def handle_info(:load_genres, socket) do
+    case Metadata.genres(socket.assigns.media_type) do
+      {:ok, genres} ->
+        {:noreply, assign(socket, :genres, genres)}
+
+      {:error, _} ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info(:load_data, socket) do
+    %{
+      media_type: media_type,
+      search_mode: search_mode,
+      search_query: search_query,
+      category: category,
+      page: page
+    } = socket.assigns
+
+    result =
+      cond do
+        search_mode ->
+          config = Metadata.default_relay_config()
+          Metadata.search_cached(config, search_query, media_type: media_type, page: page)
+
+        category == :discover ->
+          discover_opts = build_discover_opts(socket.assigns)
+          Metadata.discover(media_type, discover_opts)
+
+        true ->
+          Metadata.fetch_curated_list(category, media_type: media_type, page: page)
+      end
+
+    socket = handle_load_result(socket, result, :replace)
+    {:noreply, socket}
+  end
+
+  def handle_info({:load_page, page}, socket) do
+    %{
+      media_type: media_type,
+      search_mode: search_mode,
+      search_query: search_query,
+      category: category
+    } = socket.assigns
+
+    result =
+      cond do
+        search_mode ->
+          config = Metadata.default_relay_config()
+          Metadata.search_cached(config, search_query, media_type: media_type, page: page)
+
+        category == :discover ->
+          discover_opts = build_discover_opts(socket.assigns) |> Keyword.put(:page, page)
+          Metadata.discover(media_type, discover_opts)
+
+        true ->
+          Metadata.fetch_curated_list(category, media_type: media_type, page: page)
+      end
+
+    socket = handle_load_result(socket, result, :append)
+    {:noreply, assign(socket, :loading_more, false)}
+  end
+
+  def handle_info({:fetch_detail_metadata, tmdb_id, media_type}, socket) do
+    case MediaAddHelpers.fetch_detail_metadata(tmdb_id, media_type) do
+      {:ok, metadata} ->
+        {:noreply,
+         socket
+         |> assign(:selected_metadata, metadata)
+         |> assign(:detail_loading, false)}
+
+      {:error, _reason} ->
+        {:noreply, assign(socket, :detail_loading, false)}
+    end
+  end
+
+  def handle_info({:add_media_to_library, provider_id, media_type}, socket) do
+    case MediaAddHelpers.handle_add_media_to_library(
+           provider_id,
+           media_type,
+           socket.assigns.library_status_map
+         ) do
+      {:ok, media_item, updated_map} ->
+        items =
+          MediaAddHelpers.enrich_with_library_status(socket.assigns.items, updated_map)
+
+        {:noreply,
+         socket
+         |> assign(:adding_item_id, nil)
+         |> assign(:library_status_map, updated_map)
+         |> assign(:items, items)
+         |> put_flash(:info, "#{media_item.title} has been added to your library")}
+
+      {:error, {:changeset, changeset}} ->
+        {:noreply,
+         socket
+         |> assign(:adding_item_id, nil)
+         |> put_flash(
+           :error,
+           "Failed to add: #{MediaAddHelpers.format_changeset_errors(changeset)}"
+         )}
+
+      {:error, {:metadata, reason}} ->
+        {:noreply,
+         socket
+         |> assign(:adding_item_id, nil)
+         |> put_flash(:error, "Failed to fetch metadata: #{inspect(reason)}")}
+    end
+  end
+
+  # Private helpers
+
+  defp handle_load_result(socket, result, mode) do
+    case result do
+      {:ok, %{results: results, page: page, total_pages: total_pages}} ->
+        enriched =
+          MediaAddHelpers.enrich_with_library_status(results, socket.assigns.library_status_map)
+
+        items =
+          if mode == :append do
+            socket.assigns.items ++ enriched
+          else
+            enriched
+          end
+
+        socket
+        |> assign(:items, items)
+        |> assign(:page, page)
+        |> assign(:total_pages, total_pages)
+        |> assign(:has_more, page < total_pages)
+        |> assign(:loading, false)
+
+      {:ok, results} when is_list(results) ->
+        # Search returns a flat list
+        enriched =
+          MediaAddHelpers.enrich_with_library_status(results, socket.assigns.library_status_map)
+
+        items =
+          if mode == :append do
+            socket.assigns.items ++ enriched
+          else
+            enriched
+          end
+
+        socket
+        |> assign(:items, items)
+        |> assign(:has_more, false)
+        |> assign(:loading, false)
+
+      {:error, _} ->
+        socket
+        |> assign(:items, if(mode == :append, do: socket.assigns.items, else: []))
+        |> assign(:loading, false)
+    end
+  end
+
+  defp build_discover_opts(assigns) do
+    opts = [page: assigns.page]
+
+    opts =
+      if assigns.selected_genres != [] do
+        Keyword.put(opts, :genres, Enum.join(assigns.selected_genres, ","))
+      else
+        opts
+      end
+
+    opts =
+      if assigns.selected_language do
+        Keyword.put(opts, :original_language, assigns.selected_language)
+      else
+        opts
+      end
+
+    opts =
+      if assigns.selected_year do
+        Keyword.put(opts, :year, assigns.selected_year)
+      else
+        opts
+      end
+
+    opts =
+      if assigns.min_rating do
+        Keyword.put(opts, :min_rating, assigns.min_rating)
+      else
+        opts
+      end
+
+    Keyword.put(opts, :sort_by, assigns.sort_by)
+  end
+
+  defp build_url_params(assigns, overrides) do
+    params = %{"type" => to_string(assigns.media_type)}
+
+    category = Keyword.get(overrides, :category, to_string(assigns.category))
+
+    params =
+      if category != "trending" do
+        Map.put(params, "category", category)
+      else
+        params
+      end
+
+    genre = Keyword.get(overrides, :genre)
+
+    params =
+      cond do
+        genre != nil and genre != "" ->
+          Map.put(params, "genre", genre)
+
+        assigns.selected_genres != [] ->
+          Map.put(params, "genre", Enum.join(assigns.selected_genres, ","))
+
+        true ->
+          params
+      end
+
+    language = Keyword.get(overrides, :language, assigns.selected_language)
+
+    params =
+      if language && language != "", do: Map.put(params, "language", language), else: params
+
+    year = Keyword.get(overrides, :year, assigns.selected_year)
+    params = if year && year != "", do: Map.put(params, "year", to_string(year)), else: params
+
+    rating = Keyword.get(overrides, :rating, assigns.min_rating)
+
+    params =
+      if rating && rating != "", do: Map.put(params, "rating", to_string(rating)), else: params
+
+    sort = Keyword.get(overrides, :sort, assigns.sort_by)
+    params = if sort && sort != "popularity.desc", do: Map.put(params, "sort", sort), else: params
+
+    params
+  end
+
+  defp parse_media_type("tv_show"), do: :tv_show
+  defp parse_media_type(_), do: :movie
+
+  defp parse_category(nil, _), do: :trending
+  defp parse_category("discover", _), do: :discover
+  defp parse_category("popular", _), do: :popular
+  defp parse_category("upcoming", :movie), do: :upcoming
+  defp parse_category("now_playing", :movie), do: :now_playing
+  defp parse_category("on_the_air", :tv_show), do: :on_the_air
+  defp parse_category("airing_today", :tv_show), do: :airing_today
+  defp parse_category(_, _), do: :trending
+
+  defp parse_genres_param(nil), do: []
+  defp parse_genres_param(""), do: []
+
+  defp parse_genres_param(genres_string) do
+    genres_string
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp parse_year_param(nil), do: nil
+  defp parse_year_param(""), do: nil
+
+  defp parse_year_param(year_string) do
+    case Integer.parse(year_string) do
+      {year, ""} when year > 1900 and year < 2100 -> year
+      _ -> nil
+    end
+  end
+
+  defp parse_rating_param(nil), do: nil
+  defp parse_rating_param(""), do: nil
+
+  defp parse_rating_param(rating_string) do
+    case Float.parse(rating_string) do
+      {rating, _} when rating >= 0 and rating <= 10 -> rating
+      _ -> nil
+    end
+  end
+
+  defp parse_page_param(nil), do: 1
+
+  defp parse_page_param(page_string) do
+    case Integer.parse(page_string) do
+      {page, ""} when page > 0 -> page
+      _ -> 1
+    end
+  end
+end

@@ -86,6 +86,18 @@ export default plugin(
         "--border-btn": "1px", // border width of buttons
         "--tab-border": "1px", // border width of tabs
         "--tab-radius": "0.5rem", // border radius of tabs
+
+        // Effects
+        "--depth": "1", // subtle depth/shadow on interactive components
+        "--noise": "0", // no texture noise
+
+        // DaisyUI v5 structural variables
+        "--border": "1px", // global border width
+        "--radius-selector": "1rem", // checkboxes, toggles, radios
+        "--radius-field": "0.25rem", // input fields
+        "--radius-box": "0.5rem", // boxes, dropdowns
+        "--size-selector": "0.25rem", // selector component sizing
+        "--size-field": "0.25rem", // field component sizing
       },
 
       '[data-theme="mydia-light"]': {
@@ -171,6 +183,18 @@ export default plugin(
         "--border-btn": "1px", // border width of buttons
         "--tab-border": "1px", // border width of tabs
         "--tab-radius": "0.5rem", // border radius of tabs
+
+        // Effects
+        "--depth": "1", // subtle depth/shadow on interactive components
+        "--noise": "0", // no texture noise
+
+        // DaisyUI v5 structural variables
+        "--border": "1px", // global border width
+        "--radius-selector": "1rem", // checkboxes, toggles, radios
+        "--radius-field": "0.25rem", // input fields
+        "--radius-box": "0.5rem", // boxes, dropdowns
+        "--size-selector": "0.25rem", // selector component sizing
+        "--size-field": "0.25rem", // field component sizing
       },
     });
   },
