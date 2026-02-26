@@ -2140,6 +2140,19 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
   @impl true
   def handle_event("save_media_server", %{"media_server_config" => params}, socket) do
+    # Merge connection_settings with existing values to preserve fields like last_watched_sync_at
+    params =
+      case socket.assigns.media_server_mode do
+        :edit ->
+          existing = socket.assigns.editing_media_server.connection_settings || %{}
+          new_settings = Map.get(params, "connection_settings", %{})
+          merged = Map.merge(existing, new_settings)
+          Map.put(params, "connection_settings", merged)
+
+        :new ->
+          params
+      end
+
     result =
       case socket.assigns.media_server_mode do
         :new ->
@@ -2398,6 +2411,31 @@ defmodule MydiaWeb.AdminConfigLive.Index do
          socket
          |> put_flash(:error, "Connection failed: #{reason}")
          |> load_configuration_data()}
+    end
+  end
+
+  @impl true
+  def handle_event("sync_watched", %{"id" => id}, socket) do
+    server = Settings.get_media_server_config!(id)
+    user_id = socket.assigns.current_user.id
+
+    changeset =
+      Mydia.Jobs.MediaServerWatchedSync.new(%{
+        "config_id" => server.id,
+        "user_id" => user_id
+      })
+
+    case Oban.insert(changeset) do
+      {:ok, _job} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Watched sync started for #{server.name}")
+         |> load_configuration_data()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Failed to start watched sync for #{server.name}")}
     end
   end
 

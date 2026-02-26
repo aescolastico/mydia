@@ -289,7 +289,9 @@ config :mydia, Oban,
        # Refresh Trakt tokens approaching expiry daily at 6 AM
        {"0 6 * * *", Mydia.Jobs.TraktTokenRefresh},
        # Permanently delete trashed media files past retention period daily at 5 AM
-       {"0 5 * * *", Mydia.Jobs.TrashCleanup}
+       {"0 5 * * *", Mydia.Jobs.TrashCleanup},
+       # Sync watched status with media servers every 30 minutes
+       {"*/30 * * * *", Mydia.Jobs.MediaServerWatchedSync, args: %{"mode" => "all_enabled"}}
      ]}
   ]
 
