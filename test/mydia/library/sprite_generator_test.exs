@@ -1,5 +1,5 @@
 defmodule Mydia.Library.SpriteGeneratorTest do
-  use Mydia.DataCase, async: true
+  use Mydia.DataCase, async: false
 
   alias Mydia.Library.SpriteGenerator
   alias Mydia.Library.GeneratedMedia

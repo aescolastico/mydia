@@ -600,9 +600,9 @@ defmodule MydiaWeb.Features.ImportTest do
       session
       |> js_click("button[phx-click='toggle_season_collapse']")
 
-      # Verify inline season/episode editing inputs are visible
+      # Verify inline season/episode editing inputs are visible (S and E inputs)
       session
-      |> assert_has(Query.css("input[name='value']"))
+      |> assert_has(Query.css("input[name='value']", count: 2))
     end
   end
 

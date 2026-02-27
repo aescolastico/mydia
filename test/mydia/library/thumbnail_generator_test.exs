@@ -1,5 +1,5 @@
 defmodule Mydia.Library.ThumbnailGeneratorTest do
-  use Mydia.DataCase, async: true
+  use Mydia.DataCase, async: false
 
   alias Mydia.Library.ThumbnailGenerator
   alias Mydia.Library.GeneratedMedia

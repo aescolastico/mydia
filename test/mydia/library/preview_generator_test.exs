@@ -1,5 +1,5 @@
 defmodule Mydia.Library.PreviewGeneratorTest do
-  use Mydia.DataCase, async: true
+  use Mydia.DataCase, async: false
 
   alias Mydia.Library.PreviewGenerator
   alias Mydia.Library.GeneratedMedia

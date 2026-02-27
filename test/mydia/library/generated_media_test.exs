@@ -1,5 +1,5 @@
 defmodule Mydia.Library.GeneratedMediaTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mydia.Library.GeneratedMedia
 
