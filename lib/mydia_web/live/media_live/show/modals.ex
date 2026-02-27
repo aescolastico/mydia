@@ -463,6 +463,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   attr :manual_search_query, :string, required: true
   attr :searching, :boolean, required: true
   attr :downloading_release_url, :string, default: nil
+  attr :download_error, :any, default: nil
   attr :results_empty?, :boolean, required: true
   attr :streams, :map, required: true
   attr :quality_filter, :string, default: nil
@@ -560,6 +561,13 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
         <% end %>
         <%!-- Modal Body --%>
         <div class="flex-1 overflow-y-auto">
+          <%!-- Inline Download Error --%>
+          <%= if @download_error do %>
+            <div class="alert alert-error mx-4 mt-3 mb-1">
+              <.icon name="hero-exclamation-circle" class="w-5 h-5 shrink-0" />
+              <span class="text-sm">{@download_error}</span>
+            </div>
+          <% end %>
           <%!-- Loading State --%>
           <%= if @searching do %>
             <div class="flex flex-col items-center justify-center py-16">
@@ -756,31 +764,33 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                 </div>
                 <%!-- Download Action --%>
                 <div class="flex items-center">
-                  <button
-                    class={[
-                      "btn btn-primary btn-sm",
-                      @downloading_release_url == result.download_url && "btn-disabled"
-                    ]}
-                    phx-click="download_from_search"
-                    phx-value-download-url={result.download_url}
-                    phx-value-title={result.title}
-                    phx-value-indexer={result.indexer}
-                    phx-value-size={result.size || 0}
-                    phx-value-seeders={result.seeders || 0}
-                    phx-value-leechers={result.leechers || 0}
-                    phx-value-quality={get_search_quality_badge(result) || "Unknown"}
-                    title="Download this release"
-                    disabled={@downloading_release_url == result.download_url}
-                  >
-                    <%= if @downloading_release_url == result.download_url do %>
-                      <span class="loading loading-spinner loading-xs"></span>
-                    <% else %>
-                      <.icon name="hero-arrow-down-tray" class="w-4 h-4" />
-                    <% end %>
-                    <span class="hidden sm:inline">
-                      {if @downloading_release_url == result.download_url, do: "...", else: "Download"}
-                    </span>
-                  </button>
+                  <%= if Map.get(result, :downloaded) do %>
+                    <button class="btn btn-success btn-sm btn-disabled" disabled>
+                      <.icon name="hero-check" class="w-4 h-4" />
+                      <span class="hidden sm:inline">Grabbed</span>
+                    </button>
+                  <% else %>
+                    <button
+                      class="btn btn-primary btn-sm group/dl [&.phx-click-loading]:btn-disabled [&.phx-click-loading]:pointer-events-none"
+                      phx-click="download_from_search"
+                      phx-value-download-url={result.download_url}
+                      phx-value-title={result.title}
+                      phx-value-indexer={result.indexer}
+                      phx-value-size={result.size || 0}
+                      phx-value-seeders={result.seeders || 0}
+                      phx-value-leechers={result.leechers || 0}
+                      phx-value-quality={get_search_quality_badge(result) || "Unknown"}
+                      title="Download this release"
+                    >
+                      <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline">
+                      </span>
+                      <.icon
+                        name="hero-arrow-down-tray"
+                        class="w-4 h-4 group-[.phx-click-loading]/dl:hidden"
+                      />
+                      <span class="hidden sm:inline">Download</span>
+                    </button>
+                  <% end %>
                 </div>
               </li>
             </ul>

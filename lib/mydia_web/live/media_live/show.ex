@@ -81,6 +81,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:manual_search_context, nil)
      |> assign(:searching, false)
      |> assign(:downloading_release_url, nil)
+     |> assign(:download_error, nil)
      |> assign(:min_seeders, 0)
      |> assign(:quality_filter, nil)
      |> assign(:sort_by, :quality)
@@ -230,6 +231,7 @@ defmodule MydiaWeb.MediaLive.Show do
        |> assign(:manual_search_context, %{type: :media_item})
        |> assign(:searching, true)
        |> assign(:results_empty?, false)
+       |> assign(:download_error, nil)
        |> stream(:search_results, [], reset: true)
        |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
     else
@@ -637,6 +639,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:manual_search_context, %{type: :episode, episode_id: episode_id})
      |> assign(:searching, true)
      |> assign(:results_empty?, false)
+     |> assign(:download_error, nil)
      |> stream(:search_results, [], reset: true)
      |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
   end
@@ -660,6 +663,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:manual_search_context, %{type: :season, season_number: season_num})
      |> assign(:searching, true)
      |> assign(:results_empty?, false)
+     |> assign(:download_error, nil)
      |> stream(:search_results, [], reset: true)
      |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
   end
@@ -1000,6 +1004,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:searching, false)
      |> assign(:results_empty?, false)
      |> assign(:raw_search_results, [])
+     |> assign(:download_error, nil)
      |> stream(:search_results, [], reset: true)}
   end
 
@@ -1091,7 +1096,7 @@ defmodule MydiaWeb.MediaLive.Show do
          # Add small delay to ensure UI feedback is visible
          result = Downloads.initiate_download(search_result, opts)
          Process.sleep(400)
-         {result, title, media_item.id}
+         {result, title, media_item.id, download_url}
        end)}
     else
       {:unauthorized, socket} -> {:noreply, socket}
@@ -1850,27 +1855,64 @@ defmodule MydiaWeb.MediaLive.Show do
 
   # Download from search async handlers
 
-  def handle_async(:download_release, {:ok, {{:ok, _download}, title, media_item_id}}, socket) do
+  def handle_async(
+        :download_release,
+        {:ok, {{:ok, _download}, title, media_item_id, download_url}},
+        socket
+      ) do
     Logger.info("Download initiated: #{title}")
 
-    {:noreply,
-     socket
-     |> assign(:downloading_release_url, nil)
-     |> put_flash(:info, "Download started: #{title}")
-     |> assign(:media_item, load_media_item(media_item_id))
-     |> assign(
-       :downloads_with_status,
-       load_downloads_with_status(load_media_item(media_item_id))
-     )}
+    socket =
+      socket
+      |> assign(:downloading_release_url, nil)
+      |> assign(:download_error, nil)
+      |> assign(:media_item, load_media_item(media_item_id))
+      |> assign(
+        :downloads_with_status,
+        load_downloads_with_status(load_media_item(media_item_id))
+      )
+
+    # Re-stream the downloaded item with downloaded: true so the button
+    # re-renders as "Grabbed". Stream items don't react to assign changes,
+    # so we must re-insert the item itself.
+    raw_results = Map.get(socket.assigns, :raw_search_results, [])
+    assigns = socket.assigns
+    media_item = assigns.media_item
+
+    media_type = if media_item.type == "movie", do: :movie, else: :episode
+    filtered = filter_search_results(raw_results, assigns)
+
+    sorted =
+      sort_search_results(
+        filtered,
+        assigns.sort_by,
+        media_item.quality_profile,
+        media_type,
+        Map.get(assigns, :manual_search_query)
+      )
+
+    prepared = prepare_for_stream(sorted)
+
+    socket =
+      case Enum.find(prepared, &(&1.download_url == download_url)) do
+        nil -> socket
+        item -> stream_insert(socket, :search_results, Map.put(item, :downloaded, true))
+      end
+
+    {:noreply, socket}
   end
 
-  def handle_async(:download_release, {:ok, {{:error, reason}, title, _media_item_id}}, socket) do
+  def handle_async(
+        :download_release,
+        {:ok, {{:error, reason}, title, _media_item_id, _download_url}},
+        socket
+      ) do
     Logger.error("Failed to initiate download for #{title}: #{inspect(reason)}")
 
     {:noreply,
      socket
      |> assign(:downloading_release_url, nil)
-     |> put_flash(:error, "Failed to start download: #{inspect(reason)}")}
+     |> assign(:download_error, "Failed to start download: #{inspect(reason)}")}
   end
 
   def handle_async(:download_release, {:exit, reason}, socket) do
@@ -1879,7 +1921,7 @@ defmodule MydiaWeb.MediaLive.Show do
     {:noreply,
      socket
      |> assign(:downloading_release_url, nil)
-     |> put_flash(:error, "Download failed unexpectedly")}
+     |> assign(:download_error, "Download failed unexpectedly")}
   end
 
   # Subtitle async handlers
