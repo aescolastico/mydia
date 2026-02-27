@@ -98,8 +98,9 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         {:error, Error.rate_limited("Rate limit exceeded")}
 
       {:ok, %Req.Response{status: status, body: body}} ->
-        Logger.error("Prowlarr search failed with status #{status}: #{inspect(body)}")
-        {:error, Error.search_failed("HTTP #{status}")}
+        message = extract_error_message(body)
+        Logger.warning("Prowlarr search failed (HTTP #{status}): #{message}")
+        {:error, Error.search_failed(message)}
 
       {:error, %Mint.TransportError{reason: :timeout}} ->
         {:error, Error.connection_failed("Request timeout")}
@@ -145,6 +146,15 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
   end
 
   ## Private Functions
+
+  # Extracts a clean error message from Prowlarr error responses.
+  # Prowlarr returns JSON with "message" and "description" keys on errors.
+  defp extract_error_message(%{"message" => message}) when is_binary(message) and message != "",
+    do: message
+
+  defp extract_error_message(body) when is_map(body), do: inspect(body)
+  defp extract_error_message(body) when is_binary(body), do: body
+  defp extract_error_message(body), do: inspect(body)
 
   defp build_url(config, path) do
     scheme = if Map.get(config, :use_ssl, false), do: "https", else: "http"
