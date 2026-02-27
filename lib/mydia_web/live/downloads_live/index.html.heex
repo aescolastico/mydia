@@ -330,22 +330,22 @@
         <%!-- Expandable raw details --%>
         <div class="list-col-wrap col-span-full">
           <details class="group w-full">
-            <summary class="text-xs text-base-content/50 cursor-pointer hover:text-base-content flex items-center gap-1.5 py-1">
+            <summary class="text-sm text-base-content/70 cursor-pointer hover:text-base-content flex items-center gap-1.5 py-1">
               <.icon
                 name="hero-chevron-right"
                 class="w-3.5 h-3.5 transition-transform group-open:rotate-90"
               /> Details
             </summary>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mt-2 text-xs text-base-content/70 pb-1">
-              <%!-- Release name (full width) --%>
-              <div class="sm:col-span-2">
-                <span class="text-base-content/40">Release</span>
-                <p class="font-mono text-base-content/60 break-all mt-0.5">{download.title}</p>
+            <div class="flex flex-col gap-2 mt-2 text-sm text-base-content pb-1">
+              <%!-- Release name --%>
+              <div>
+                <span class="text-base-content/60">Release</span>
+                <p class="font-mono text-base-content/80 break-all mt-0.5">{download.title}</p>
               </div>
               <%!-- Client --%>
               <%= if download.download_client do %>
                 <div>
-                  <span class="text-base-content/40">Client</span>
+                  <span class="text-base-content/60">Client</span>
                   <p class="mt-0.5">{download.download_client}</p>
                 </div>
               <% end %>
@@ -353,7 +353,7 @@
               <% protocol = format_protocol(get_metadata_value(download, "download_protocol")) %>
               <%= if protocol do %>
                 <div>
-                  <span class="text-base-content/40">Protocol</span>
+                  <span class="text-base-content/60">Protocol</span>
                   <p class="mt-0.5">
                     <span class="badge badge-xs badge-outline">{protocol}</span>
                   </p>
@@ -364,7 +364,7 @@
               <% quality_str = QualityInfo.format(quality) %>
               <%= if quality_str && quality_str != "" do %>
                 <div>
-                  <span class="text-base-content/40">Quality</span>
+                  <span class="text-base-content/60">Quality</span>
                   <p class="mt-0.5">
                     <span class="badge badge-xs badge-outline">{quality_str}</span>
                   </p>
@@ -372,12 +372,9 @@
               <% end %>
               <%!-- Save Path --%>
               <%= if download.save_path do %>
-                <div class="sm:col-span-2">
-                  <span class="text-base-content/40">Save Path</span>
-                  <p
-                    class="font-mono text-base-content/60 truncate mt-0.5"
-                    title={download.save_path}
-                  >
+                <div>
+                  <span class="text-base-content/60">Save Path</span>
+                  <p class="font-mono text-base-content/80 break-all mt-0.5">
                     {download.save_path}
                   </p>
                 </div>
@@ -385,11 +382,8 @@
               <%!-- Client ID --%>
               <%= if download.download_client_id do %>
                 <div>
-                  <span class="text-base-content/40">Client ID</span>
-                  <p
-                    class="font-mono text-base-content/60 truncate mt-0.5"
-                    title={download.download_client_id}
-                  >
+                  <span class="text-base-content/60">Client ID</span>
+                  <p class="font-mono text-base-content/80 break-all mt-0.5">
                     {download.download_client_id}
                   </p>
                 </div>
@@ -398,14 +392,14 @@
               <% leechers = get_metadata_value(download, "leechers") %>
               <%= if leechers do %>
                 <div>
-                  <span class="text-base-content/40">Leechers</span>
+                  <span class="text-base-content/60">Leechers</span>
                   <p class="mt-0.5">{leechers}</p>
                 </div>
               <% end %>
               <%!-- Added --%>
               <%= if download.inserted_at do %>
                 <div>
-                  <span class="text-base-content/40">Added</span>
+                  <span class="text-base-content/60">Added</span>
                   <p class="mt-0.5">{format_relative_time(download.inserted_at)}</p>
                 </div>
               <% end %>
