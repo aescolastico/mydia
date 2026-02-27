@@ -665,6 +665,12 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
+  defp format_protocol(:nzb), do: "Usenet"
+  defp format_protocol(:torrent), do: "Torrent"
+  defp format_protocol("nzb"), do: "Usenet"
+  defp format_protocol("torrent"), do: "Torrent"
+  defp format_protocol(_), do: nil
+
   defp format_next_retry(nil), do: "—"
 
   defp format_next_retry(%DateTime{} = dt) do
