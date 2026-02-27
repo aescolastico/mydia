@@ -23,7 +23,6 @@ defmodule MydiaWeb.Schema do
   import_types(MydiaWeb.Schema.MediaTypes)
   import_types(MydiaWeb.Schema.QueryTypes)
   import_types(MydiaWeb.Schema.MutationTypes)
-  import_types(MydiaWeb.Schema.IntegrationTypes)
   import_types(MydiaWeb.Schema.SubscriptionTypes)
 
   query do
@@ -35,7 +34,6 @@ defmodule MydiaWeb.Schema do
     import_fields(:remote_access_queries)
     import_fields(:streaming_queries)
     import_fields(:collection_queries)
-    import_fields(:integration_queries)
   end
 
   mutation do
@@ -46,7 +44,6 @@ defmodule MydiaWeb.Schema do
     import_fields(:device_mutations)
     import_fields(:streaming_mutations)
     import_fields(:download_mutations)
-    import_fields(:integration_mutations)
   end
 
   subscription do
