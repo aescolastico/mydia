@@ -428,6 +428,318 @@ defmodule Mydia.Indexers.CardigannResultParserTest do
       # and return empty results since no HTML elements match
       assert {:ok, []} = CardigannResultParser.parse_results(definition, response, "Test")
     end
+
+    test "navigates dotted JSON paths without $. prefix" do
+      # Bug: "data.movies" was treated as single key "data.movies" instead of ["data", "movies"]
+      definition = %Parsed{
+        id: "test",
+        name: "Test Nested JSON",
+        search: %{
+          rows: %{selector: "data.movies"},
+          fields: %{
+            :title => %{selector: "name", filters: []},
+            :download => %{selector: "magnet", filters: []},
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_response = %{
+        "status" => "ok",
+        "data" => %{
+          "movies" => [
+            %{
+              "name" => "Test Movie",
+              "magnet" => "magnet:?xt=urn:btih:abc123",
+              "seeds" => 50,
+              "peers" => 10
+            }
+          ]
+        }
+      }
+
+      response = %{status: 200, body: json_response}
+
+      assert {:ok, [result]} =
+               CardigannResultParser.parse_results(definition, response, "TestNested")
+
+      assert result.title == "Test Movie"
+      assert result.download_url == "magnet:?xt=urn:btih:abc123"
+      assert result.seeders == 50
+    end
+
+    test "expands rows.attribute sub-arrays with parent access via .. prefix" do
+      # Bug: YTS-style definitions have movies with nested torrents arrays.
+      # Each torrent should become its own row, with parent movie fields
+      # accessible via ".." prefix selectors.
+      definition = %Parsed{
+        id: "test",
+        name: "Test Attribute Expansion",
+        search: %{
+          rows: %{selector: "data.movies", attribute: "torrents"},
+          fields: %{
+            :title => %{selector: "..title_long", filters: []},
+            :download => %{selector: "url", filters: []},
+            :size => %{selector: "size_bytes", filters: []},
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_response = %{
+        "data" => %{
+          "movies" => [
+            %{
+              "title_long" => "Zootopia 2 (2025)",
+              "torrents" => [
+                %{
+                  "url" => "https://example.com/download/720p",
+                  "size_bytes" => 1_040_554_394,
+                  "seeds" => 100,
+                  "peers" => 50,
+                  "quality" => "720p"
+                },
+                %{
+                  "url" => "https://example.com/download/1080p",
+                  "size_bytes" => 2_136_746_230,
+                  "seeds" => 200,
+                  "peers" => 75,
+                  "quality" => "1080p"
+                }
+              ]
+            }
+          ]
+        }
+      }
+
+      response = %{status: 200, body: json_response}
+
+      assert {:ok, results} =
+               CardigannResultParser.parse_results(definition, response, "TestExpand")
+
+      # Two torrents should produce two result rows
+      assert length(results) == 2
+
+      [r720, r1080] = results
+
+      # Both rows should have the parent movie's title
+      assert r720.title == "Zootopia 2 (2025)"
+      assert r1080.title == "Zootopia 2 (2025)"
+
+      # Each row should have its own torrent-specific fields
+      assert r720.download_url == "https://example.com/download/720p"
+      assert r720.size == 1_040_554_394
+      assert r720.seeders == 100
+
+      assert r1080.download_url == "https://example.com/download/1080p"
+      assert r1080.size == 2_136_746_230
+      assert r1080.seeders == 200
+    end
+
+    test "renders .Result template variables in JSON filter args" do
+      # Bug: Go templates like {{ .Result._quality }} in filter args were not
+      # resolved because the JSON parser didn't build a .Result context from
+      # previously extracted field values.
+      definition = %Parsed{
+        id: "test",
+        name: "Test Result Templates",
+        search: %{
+          rows: %{selector: "data.movies", attribute: "torrents"},
+          fields: %{
+            :_quality => %{selector: "quality", filters: []},
+            :_codec => %{selector: "video_codec", filters: []},
+            :title => %{
+              selector: "..title_long",
+              filters: [
+                %{
+                  "name" => "append",
+                  "args" => " {{ .Result._quality }} {{ .Result._codec }}"
+                }
+              ]
+            },
+            :download => %{selector: "url", filters: []},
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_response = %{
+        "data" => %{
+          "movies" => [
+            %{
+              "title_long" => "Test Movie (2025)",
+              "torrents" => [
+                %{
+                  "url" => "https://example.com/download/abc",
+                  "quality" => "1080p",
+                  "video_codec" => "x265",
+                  "seeds" => 50,
+                  "peers" => 10
+                }
+              ]
+            }
+          ]
+        }
+      }
+
+      response = %{status: 200, body: json_response}
+
+      template_context = %{
+        config: %{"sitelink" => "https://example.com/"},
+        keywords: "test"
+      }
+
+      assert {:ok, [result]} =
+               CardigannResultParser.parse_results(definition, response, "TestTemplates",
+                 template_context: template_context
+               )
+
+      # The title should have the quality and codec appended via template rendering
+      assert result.title == "Test Movie (2025) 1080p x265"
+    end
+
+    test "renders .Config template variables in JSON filter args" do
+      # Bug: {{ .Config.sitelink }} in URL filters was not resolved because
+      # no template context was passed to the JSON parser.
+      definition = %Parsed{
+        id: "test",
+        name: "Test Config Templates",
+        search: %{
+          rows: %{selector: "$.results"},
+          fields: %{
+            :title => %{selector: "name", filters: []},
+            :download => %{
+              selector: "download_path",
+              filters: [
+                %{
+                  "name" => "prepend",
+                  "args" => "{{ .Config.sitelink }}"
+                }
+              ]
+            },
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_body =
+        Jason.encode!(%{
+          "results" => [
+            %{
+              "name" => "Test Item",
+              "download_path" => "torrent/download/ABC123",
+              "seeds" => 10,
+              "peers" => 5
+            }
+          ]
+        })
+
+      response = %{status: 200, body: json_body}
+
+      template_context = %{
+        config: %{"sitelink" => "https://example.com/"},
+        keywords: "test"
+      }
+
+      assert {:ok, [result]} =
+               CardigannResultParser.parse_results(definition, response, "TestConfig",
+                 template_context: template_context
+               )
+
+      assert result.download_url == "https://example.com/torrent/download/ABC123"
+    end
+
+    test "handles multiple movies with multiple torrents each" do
+      definition = %Parsed{
+        id: "test",
+        name: "Test Multi Expand",
+        search: %{
+          rows: %{selector: "data.movies", attribute: "torrents"},
+          fields: %{
+            :title => %{selector: "..title", filters: []},
+            :download => %{selector: "url", filters: []},
+            :size => %{selector: "size_bytes", filters: []},
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_response = %{
+        "data" => %{
+          "movies" => [
+            %{
+              "title" => "Movie A",
+              "torrents" => [
+                %{"url" => "https://x.com/a1", "size_bytes" => 100, "seeds" => 10, "peers" => 1},
+                %{"url" => "https://x.com/a2", "size_bytes" => 200, "seeds" => 20, "peers" => 2}
+              ]
+            },
+            %{
+              "title" => "Movie B",
+              "torrents" => [
+                %{"url" => "https://x.com/b1", "size_bytes" => 300, "seeds" => 30, "peers" => 3}
+              ]
+            }
+          ]
+        }
+      }
+
+      response = %{status: 200, body: json_response}
+
+      assert {:ok, results} =
+               CardigannResultParser.parse_results(definition, response, "TestMulti")
+
+      # 2 torrents from Movie A + 1 from Movie B = 3 rows
+      assert length(results) == 3
+
+      titles = Enum.map(results, & &1.title)
+      assert titles == ["Movie A", "Movie A", "Movie B"]
+
+      download_urls = Enum.map(results, & &1.download_url)
+      assert download_urls == ["https://x.com/a1", "https://x.com/a2", "https://x.com/b1"]
+    end
+
+    test "falls back gracefully when rows.attribute key is missing from items" do
+      definition = %Parsed{
+        id: "test",
+        name: "Test Missing Attribute",
+        search: %{
+          rows: %{selector: "$.items", attribute: "children"},
+          fields: %{
+            :title => %{selector: "name", filters: []},
+            :download => %{selector: "link", filters: []},
+            :seeders => %{selector: "seeds", filters: []},
+            :leechers => %{selector: "peers", filters: []}
+          }
+        }
+      }
+
+      json_body =
+        Jason.encode!(%{
+          "items" => [
+            %{
+              "name" => "No Children Item",
+              "link" => "magnet:?xt=urn:btih:aaa",
+              "seeds" => 5,
+              "peers" => 1
+            }
+          ]
+        })
+
+      response = %{status: 200, body: json_body}
+
+      # When attribute key doesn't exist, the parent row should be kept as-is
+      assert {:ok, [result]} =
+               CardigannResultParser.parse_results(definition, response, "TestFallback")
+
+      assert result.title == "No Children Item"
+      assert result.download_url == "magnet:?xt=urn:btih:aaa"
+    end
   end
 
   describe "HTML field extraction" do

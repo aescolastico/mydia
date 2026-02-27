@@ -9,18 +9,14 @@ defmodule Mydia.Indexers.CardigannCompat do
   require Logger
 
   alias Mydia.Indexers.CardigannParser
+  alias Mydia.Indexers.CardigannFilters
   alias Mydia.Indexers.DefinitionSync
-
-  @implemented_filters ~w(
-    replace re_replace append prepend trim split urldecode
-    regexp dateparse timeparse timeago reltime fuzzytime
-    tolower toupper urlencode htmldecode querystring
-  )
 
   @doc """
   Returns the list of currently implemented filter names.
+  Delegates to `CardigannFilters.implemented_filters/0`.
   """
-  def implemented_filters, do: @implemented_filters
+  defdelegate implemented_filters, to: CardigannFilters
 
   @doc """
   Runs a full compatibility analysis against all upstream definitions.
@@ -73,7 +69,8 @@ defmodule Mydia.Indexers.CardigannCompat do
       {:ok, parsed} ->
         filters = extract_filters_from_parsed(parsed)
         filter_names = filters |> Enum.map(& &1.name) |> Enum.uniq()
-        missing = Enum.reject(filter_names, &(&1 in @implemented_filters))
+        impl = CardigannFilters.implemented_filters()
+        missing = Enum.reject(filter_names, &(&1 in impl))
 
         status =
           cond do

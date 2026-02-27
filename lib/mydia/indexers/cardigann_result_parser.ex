@@ -29,7 +29,16 @@ defmodule Mydia.Indexers.CardigannResultParser do
   - `append` - Append string
   - `prepend` - Prepend string
   - `trim` - Trim whitespace
-  - `dateparse` - Parse date strings
+  - `split` - Split string and return part at index
+  - `urldecode` - URL-decode strings
+  - `regexp` - Regex extraction (first capture group)
+  - `dateparse`/`timeparse` - Parse date with Go format layout
+  - `timeago`/`reltime` - Parse relative time ("2 hours ago")
+  - `fuzzytime` - Parse various date formats (Today, Yesterday, timestamps)
+  - `tolower`/`toupper` - Case conversion
+  - `urlencode` - URL-encode strings
+  - `htmldecode` - Decode HTML entities
+  - `querystring` - Extract URL query parameter value
 
   ## Examples
 
@@ -778,141 +787,34 @@ defmodule Mydia.Indexers.CardigannResultParser do
 
   defp render_template_in_string(value, _template_context), do: value
 
-  defp apply_single_filter(value, %{name: "replace", args: [pattern, replacement]}) do
-    {:ok, String.replace(value, pattern, replacement)}
+  # Delegate all filter application to the CardigannFilters module
+  defp apply_single_filter(value, filter) do
+    Mydia.Indexers.CardigannFilters.apply(filter, value)
   end
-
-  defp apply_single_filter(value, %{"name" => "replace", "args" => [pattern, replacement]}) do
-    {:ok, String.replace(value, pattern, replacement)}
-  end
-
-  defp apply_single_filter(value, %{name: "re_replace", args: [pattern, replacement]}) do
-    apply_re_replace(value, pattern, replacement)
-  end
-
-  defp apply_single_filter(value, %{"name" => "re_replace", "args" => [pattern, replacement]}) do
-    apply_re_replace(value, pattern, replacement)
-  end
-
-  defp apply_single_filter(value, %{name: "append", args: [suffix]}) do
-    {:ok, value <> suffix}
-  end
-
-  defp apply_single_filter(value, %{"name" => "append", "args" => [suffix]}) do
-    {:ok, value <> suffix}
-  end
-
-  defp apply_single_filter(value, %{name: "prepend", args: [prefix]}) do
-    {:ok, prefix <> value}
-  end
-
-  defp apply_single_filter(value, %{"name" => "prepend", "args" => [prefix]}) do
-    {:ok, prefix <> value}
-  end
-
-  defp apply_single_filter(value, %{name: "trim"}) do
-    {:ok, String.trim(value)}
-  end
-
-  defp apply_single_filter(value, %{"name" => "trim"}) do
-    {:ok, String.trim(value)}
-  end
-
-  # split filter - splits string by delimiter and returns the part at the given index
-  # args: [delimiter, index] where index is 0-based
-  defp apply_single_filter(value, %{name: "split", args: [delimiter, index]}) do
-    apply_split_filter(value, delimiter, index)
-  end
-
-  defp apply_single_filter(value, %{"name" => "split", "args" => [delimiter, index]}) do
-    apply_split_filter(value, delimiter, index)
-  end
-
-  # urldecode filter - decodes URL-encoded strings
-  defp apply_single_filter(value, %{name: "urldecode"}) do
-    {:ok, URI.decode(value)}
-  end
-
-  defp apply_single_filter(value, %{"name" => "urldecode"}) do
-    {:ok, URI.decode(value)}
-  end
-
-  defp apply_single_filter(value, _unknown_filter) do
-    # Unknown filter, just pass through
-    {:ok, value}
-  end
-
-  # Helper for split filter
-  defp apply_split_filter(value, delimiter, index) when is_binary(value) do
-    parts = String.split(value, delimiter)
-    index = if is_binary(index), do: String.to_integer(index), else: index
-
-    case Enum.at(parts, index) do
-      nil -> {:ok, ""}
-      part -> {:ok, part}
-    end
-  end
-
-  defp apply_split_filter(value, _delimiter, _index), do: {:ok, value}
-
-  # Applies regex replacement with Go-to-PCRE pattern conversion
-  defp apply_re_replace(value, pattern, replacement) do
-    # Convert Go-specific patterns to PCRE equivalents
-    pcre_pattern = convert_go_regex_to_pcre(pattern)
-    # Convert Go-style backreferences ($1, $2) to Elixir-style (\1, \2)
-    elixir_replacement = convert_go_backrefs_to_elixir(replacement)
-
-    case Regex.compile(pcre_pattern, [:unicode]) do
-      {:ok, regex} ->
-        {:ok, Regex.replace(regex, value, elixir_replacement)}
-
-      {:error, reason} ->
-        # Log and skip filter instead of failing - allows extraction to continue
-        Logger.warning(
-          "Skipping invalid regex filter: #{inspect(reason)} for pattern: #{inspect(pattern)}"
-        )
-
-        {:ok, value}
-    end
-  end
-
-  # Converts Go regex patterns to PCRE equivalents
-  defp convert_go_regex_to_pcre(pattern) when is_binary(pattern) do
-    # Go uses \p{IsFoo} for Unicode properties, PCRE uses \p{Foo}
-    # Examples: \p{IsCyrillic} -> \p{Cyrillic}, \p{IsLatin} -> \p{Latin}
-    Regex.replace(~r/\\p\{Is(\w+)\}/, pattern, "\\p{\\1}")
-  end
-
-  defp convert_go_regex_to_pcre(pattern), do: pattern
-
-  # Converts Go-style backreferences ($1, $2, etc.) to Elixir-style (\1, \2, etc.)
-  defp convert_go_backrefs_to_elixir(replacement) when is_binary(replacement) do
-    # Replace $1, $2, ... $9 with \1, \2, ... \9
-    # Also handle $0 for full match
-    Regex.replace(~r/\$(\d)/, replacement, "\\\\\\1")
-  end
-
-  defp convert_go_backrefs_to_elixir(replacement), do: replacement
 
   # JSON Parsing Functions
 
-  defp extract_json_rows(json, %{rows: %{selector: selector}}) do
+  defp extract_json_rows(json, %{rows: row_config}) do
+    selector = Map.get(row_config, :selector) || Map.get(row_config, "selector")
+    attribute = Map.get(row_config, :attribute) || Map.get(row_config, "attribute")
+
     case navigate_json_path(json, selector) do
       {:ok, rows} when is_list(rows) ->
-        {:ok, rows}
+        # If attribute is set (e.g., "torrents"), expand sub-arrays within each row.
+        # Each sub-item becomes its own row with a "__parent" key for ".." prefix access.
+        expanded = maybe_expand_attribute(rows, attribute)
+        {:ok, expanded}
 
       {:ok, single_value} ->
         {:ok, [single_value]}
 
       {:error, :path_not_found} ->
-        # Log available keys to help diagnose the issue
         available_keys = if is_map(json), do: Map.keys(json), else: []
 
         Logger.warning(
           "JSON path not found: #{selector}. Available top-level keys: #{inspect(available_keys)}"
         )
 
-        # Return empty results instead of failing
         {:ok, []}
 
       error ->
@@ -922,6 +824,24 @@ defmodule Mydia.Indexers.CardigannResultParser do
 
   defp extract_json_rows(_json, _search_config) do
     {:error, Error.search_failed("No row selector configured for JSON")}
+  end
+
+  defp maybe_expand_attribute(rows, nil), do: rows
+  defp maybe_expand_attribute(rows, ""), do: rows
+
+  defp maybe_expand_attribute(rows, attribute) when is_binary(attribute) do
+    Enum.flat_map(rows, fn parent_row when is_map(parent_row) ->
+      case Map.get(parent_row, attribute) do
+        sub_items when is_list(sub_items) ->
+          Enum.map(sub_items, fn sub_item when is_map(sub_item) ->
+            Map.put(sub_item, "__parent", parent_row)
+          end)
+
+        _ ->
+          # No sub-array, keep parent as-is
+          [parent_row]
+      end
+    end)
   end
 
   defp navigate_json_path(json, "$") do
@@ -937,8 +857,9 @@ defmodule Mydia.Indexers.CardigannResultParser do
   end
 
   defp navigate_json_path(json, path) do
-    # Assume it's a simple property name
-    navigate_json_path_parts(json, [path])
+    # Split dotted paths (e.g., "data.movies" → ["data", "movies"])
+    parts = String.split(path, ".")
+    navigate_json_path_parts(json, parts)
   end
 
   defp navigate_json_path_parts(value, []) do
@@ -968,9 +889,10 @@ defmodule Mydia.Indexers.CardigannResultParser do
   end
 
   defp parse_single_json_row(row, fields, template_context) when is_map(row) do
-    field_values =
+    # First pass: extract raw values without applying filters that need .Result context
+    raw_values =
       Enum.reduce(fields, %{}, fn {field_name, field_config}, acc ->
-        case extract_json_field_value(row, field_config, template_context) do
+        case extract_json_raw_value(row, field_config) do
           {:ok, value} ->
             Map.put(acc, field_name, value)
 
@@ -979,29 +901,97 @@ defmodule Mydia.Indexers.CardigannResultParser do
         end
       end)
 
+    # Build a result context for template rendering (e.g., {{ .Result._quality }})
+    result_context =
+      raw_values
+      |> Enum.map(fn {key, value} ->
+        key_str = if is_atom(key), do: Atom.to_string(key), else: key
+        {key_str, value}
+      end)
+      |> Map.new()
+
+    full_context = Map.put(template_context, :result, result_context)
+
+    # Second pass: apply filters with the full template context
+    field_values =
+      Enum.reduce(fields, %{}, fn {field_name, field_config}, acc ->
+        case extract_json_field_value(row, field_config, full_context) do
+          {:ok, value} ->
+            Map.put(acc, field_name, value)
+
+          {:error, _reason} ->
+            acc
+        end
+      end)
+
+    # Handle compound fields (title_default + title_optional → title)
+    field_values = combine_compound_fields(field_values)
+
     # Only return row if we got at least title and download
-    if Map.has_key?(field_values, "title") && Map.has_key?(field_values, "download") do
+    has_title = Map.has_key?(field_values, :title) || Map.has_key?(field_values, "title")
+    has_download = Map.has_key?(field_values, :download) || Map.has_key?(field_values, "download")
+
+    if has_title && has_download do
       field_values
     else
       nil
     end
   end
 
-  defp extract_json_field_value(row, field_config, template_context) when is_map(field_config) do
+  defp extract_json_raw_value(row, field_config) when is_map(field_config) do
     selector = Map.get(field_config, :selector) || Map.get(field_config, "selector")
-    filters = Map.get(field_config, :filters) || Map.get(field_config, "filters", [])
 
     with {:ok, raw_value} <- get_json_value_by_selector(row, selector),
          {:ok, str_value} <- ensure_string(raw_value) do
-      apply_filters(str_value, filters, template_context)
+      {:ok, str_value}
+    end
+  end
+
+  defp extract_json_field_value(row, field_config, template_context) when is_map(field_config) do
+    selector = Map.get(field_config, :selector) || Map.get(field_config, "selector")
+    filters = Map.get(field_config, :filters) || Map.get(field_config, "filters", [])
+    text_template = Map.get(field_config, :text) || Map.get(field_config, "text")
+
+    cond do
+      # Text-based field: render template with .Result context
+      is_binary(text_template) and text_template != "" ->
+        compute_text_field(field_config, %{}, template_context)
+
+      # Selector-based field: extract value then apply filters
+      true ->
+        with {:ok, raw_value} <- get_json_value_by_selector(row, selector),
+             {:ok, str_value} <- ensure_string(raw_value) do
+          apply_filters(str_value, filters, template_context)
+        end
+    end
+  end
+
+  defp get_json_value_by_selector(row, ".." <> parent_selector) when is_binary(parent_selector) do
+    # ".." prefix means access parent object's field (set via rows.attribute expansion)
+    case Map.get(row, "__parent") do
+      parent when is_map(parent) ->
+        case Map.get(parent, parent_selector) do
+          nil -> {:error, :not_found}
+          value -> {:ok, value}
+        end
+
+      _ ->
+        {:error, :no_parent}
     end
   end
 
   defp get_json_value_by_selector(row, selector) when is_binary(selector) do
-    # Simple property access
+    # Simple property access - try direct key first, then dotted path
     case Map.get(row, selector) do
-      nil -> {:error, :not_found}
-      value -> {:ok, value}
+      nil ->
+        if String.contains?(selector, ".") do
+          navigate_json_path(row, selector)
+        else
+          {:error, :not_found}
+        end
+
+      value ->
+        {:ok, value}
     end
   end
 

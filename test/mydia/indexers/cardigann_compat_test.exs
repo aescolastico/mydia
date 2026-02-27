@@ -52,18 +52,18 @@ defmodule Mydia.Indexers.CardigannCompatTest do
       yaml =
         definition_with_filters([
           %{"name" => "trim"},
-          %{"name" => "validfilename"},
-          %{"name" => "diacritics"}
+          %{"name" => "validate"},
+          %{"name" => "andmatch"}
         ])
 
       result = CardigannCompat.analyze_definition(yaml, "test.yml")
 
       assert result.status == :partially_compatible
       assert "trim" in result.filters_used
-      assert "validfilename" in result.filters_used
-      assert "diacritics" in result.filters_used
-      assert "validfilename" in result.missing_filters
-      assert "diacritics" in result.missing_filters
+      assert "validate" in result.filters_used
+      assert "andmatch" in result.filters_used
+      assert "validate" in result.missing_filters
+      assert "andmatch" in result.missing_filters
       refute "trim" in result.missing_filters
     end
 
