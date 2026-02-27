@@ -1195,6 +1195,11 @@ defmodule MydiaWeb.ImportMediaLiveTest do
       # Verify original episode is displayed
       assert html =~ "Test Series"
 
+      # Expand the auto-collapsed season (high confidence matches are collapsed by default)
+      view
+      |> element("button[phx-click='toggle_season_collapse']")
+      |> render_click()
+
       # Click the edit button
       view
       |> element("button[phx-click='edit_file'][phx-value-index='0']")

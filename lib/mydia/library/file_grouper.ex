@@ -224,7 +224,7 @@ defmodule Mydia.Library.FileGrouper do
         GroupingState.new(%{
           title: match.title,
           provider_id: match.provider_id,
-          year: match.year
+          year: Map.get(match, :year)
         })
       )
 

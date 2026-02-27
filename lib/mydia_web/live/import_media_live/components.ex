@@ -589,6 +589,11 @@ defmodule MydiaWeb.ImportMediaLive.Components do
               <.icon name="hero-exclamation-circle" class="w-3 h-3" /> Partial
             </div>
           <% end %>
+          <%= if Map.get(match, :manually_edited, false) do %>
+            <div class="badge badge-xs badge-info gap-1">
+              <.icon name="hero-pencil" class="w-3 h-3" /> Edited
+            </div>
+          <% end %>
           <div class={"badge badge-xs " <> confidence_badge_class(match.match_confidence)}>
             {confidence_label(match.match_confidence)}
           </div>
@@ -803,7 +808,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
             <div class="flex-1 min-w-0">
               <p class="font-semibold text-sm truncate">
                 {match.title}
-                <%= if match.year do %>
+                <%= if Map.get(match, :year) do %>
                   ({match.year})
                 <% end %>
               </p>
@@ -815,6 +820,11 @@ defmodule MydiaWeb.ImportMediaLive.Components do
               </p>
             </div>
             <div class="flex items-center gap-2">
+              <%= if Map.get(match, :manually_edited, false) do %>
+                <div class="badge badge-xs badge-info gap-1">
+                  <.icon name="hero-pencil" class="w-3 h-3" /> Edited
+                </div>
+              <% end %>
               <div class={"badge badge-xs " <> confidence_badge_class(match.match_confidence)}>
                 {confidence_label(match.match_confidence)}
               </div>

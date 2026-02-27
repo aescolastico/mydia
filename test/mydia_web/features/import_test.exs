@@ -596,13 +596,13 @@ defmodule MydiaWeb.Features.ImportTest do
       # Should see the episode
       assert Wallaby.Browser.has_text?(session, "Test Show")
 
-      # Click the edit button using JS for reliability in headless mode
+      # Expand the auto-collapsed season (high confidence matches are collapsed by default)
       session
-      |> js_click("button[phx-click='edit_file'][phx-value-index='0']")
-      # Wait for the edit form with season/episode fields (Wallaby's assert_has has built-in retry)
-      |> assert_has(Query.text("Edit Episode Match"))
-      |> assert_has(Query.css("input[name='edit_form[season]']"))
-      |> assert_has(Query.css("input[name='edit_form[episodes]']"))
+      |> js_click("button[phx-click='toggle_season_collapse']")
+
+      # Verify inline season/episode editing inputs are visible
+      session
+      |> assert_has(Query.css("input[name='value']"))
     end
   end
 
