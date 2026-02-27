@@ -75,7 +75,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
     end
 
     test "displays search input field", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/media")
+      {:ok, view, html} = live(conn, ~p"/movies")
 
       assert html =~ "Search media"
       assert has_element?(view, "input[name='search']")
@@ -86,7 +86,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       movie1: _movie1,
       movie2: _movie2
     } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Search for "matrix" (lowercase)
       view
@@ -107,7 +107,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
     end
 
     test "search filters by year", %{conn: conn, movie1: _movie1, movie2: _movie2} do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Search for "1999"
       view
@@ -129,7 +129,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       japanese_movie: _japanese_movie,
       movie1: _movie1
     } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Search by original Japanese title (partial match)
       view
@@ -143,31 +143,30 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       assert has_element?(view, "#test-debug-info[data-search-query='千と'][data-stream-count='1']")
     end
 
-    test "search filters by overview/description", %{conn: conn, show1: _show1, movie2: _movie2} do
-      {:ok, view, _html} = live(conn, ~p"/media")
+    test "search filters by overview/description", %{conn: conn, movie1: _movie1, movie2: _movie2} do
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
-      # Search for "chemistry"
+      # Search for "dream-sharing" which matches Inception's overview
       view
       |> element("#library-search-form")
-      |> render_change(%{"search" => "chemistry"})
+      |> render_change(%{"search" => "dream-sharing"})
 
-      # Verify the stream was filtered correctly (should show only Breaking Bad)
+      # Verify the stream was filtered correctly (should show only Inception)
       # Note: Due to LiveView testing limitations with phx-update="stream",
       # we can't reliably test the rendered HTML. Instead, we verify the stream state
       # via data attributes.
       assert has_element?(
                view,
-               "#test-debug-info[data-search-query='chemistry'][data-stream-count='1']"
+               "#test-debug-info[data-search-query='dream-sharing'][data-stream-count='1']"
              )
     end
 
     test "clearing search shows all items", %{
       conn: conn,
       movie1: movie1,
-      movie2: movie2,
-      show1: show1
+      movie2: movie2
     } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # First, apply a search
       view
@@ -182,31 +181,27 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       |> element("#library-search-form")
       |> render_change(%{"search" => ""})
 
-      # All items should be visible again
+      # All movie items should be visible again
       assert has_element?(view, "#media-items", movie1.title)
       assert has_element?(view, "#media-items", movie2.title)
-      assert has_element?(view, "#media-items", show1.title)
     end
 
-    test "search works for both movies and TV shows", %{
+    test "search works for different movies", %{
       conn: conn,
       movie1: _movie1,
-      show1: _show1
+      movie2: _movie2
     } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
-      # Search for "Bad" - should match Breaking Bad
+      # Search for "Inception" - should match Inception
       view
       |> element("#library-search-form")
-      |> render_change(%{"search" => "Bad"})
+      |> render_change(%{"search" => "Inception"})
 
-      # Verify the stream was filtered correctly (should show only Breaking Bad)
-      # Note: Due to LiveView testing limitations with phx-update="stream",
-      # we can't reliably test the rendered HTML. Instead, we verify the stream state
-      # via data attributes.
+      # Verify the stream was filtered correctly (should show only Inception)
       assert has_element?(
                view,
-               "#test-debug-info[data-search-query='Bad'][data-stream-count='1']"
+               "#test-debug-info[data-search-query='Inception'][data-stream-count='1']"
              )
 
       # Search for "Matrix" - should match The Matrix
@@ -221,7 +216,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
     end
 
     test "search shows empty state when no results found", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Search for something that doesn't exist
       view
@@ -234,14 +229,14 @@ defmodule MydiaWeb.MediaLive.IndexTest do
     end
 
     test "search is debounced to avoid excessive filtering", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # The search input should have phx-debounce attribute
       assert has_element?(view, "input[name='search'][phx-debounce='300']")
     end
 
     test "search works in list view mode", %{conn: conn, movie1: _movie1, movie2: _movie2} do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Switch to list view
       view
@@ -267,7 +262,7 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       conn: conn,
       movie1: movie1
     } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Apply search in grid view
       view
@@ -291,25 +286,29 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       assert has_element?(view, "#media-items", movie1.title)
     end
 
-    test "search can be combined with monitoring filter", %{
-      conn: conn,
-      show1: _show1,
-      show2: _show2
-    } do
-      {:ok, view, _html} = live(conn, ~p"/media")
+    test "search can be combined with monitoring filter", %{conn: conn} do
+      # Create an unmonitored movie for this test
+      _unmonitored_movie =
+        media_item_fixture(%{
+          title: "Unmonitored Film",
+          original_title: nil,
+          year: 2020,
+          type: "movie",
+          monitored: false,
+          metadata: %{"overview" => "A test film that is not monitored"}
+        })
 
-      # Search for "Things"
+      {:ok, view, _html} = live(conn, ~p"/movies")
+
+      # Search for "Unmonitored"
       view
       |> element("#library-search-form")
-      |> render_change(%{"search" => "Things"})
+      |> render_change(%{"search" => "Unmonitored"})
 
-      # Verify the stream was filtered correctly (should show only Stranger Things)
-      # Note: Due to LiveView testing limitations with phx-update="stream",
-      # we can't reliably test the rendered HTML. Instead, we verify the stream state
-      # via data attributes.
+      # Verify the stream was filtered correctly (should show only Unmonitored Film)
       assert has_element?(
                view,
-               "#test-debug-info[data-search-query='Things'][data-stream-count='1']"
+               "#test-debug-info[data-search-query='Unmonitored'][data-stream-count='1']"
              )
 
       # Apply monitored filter
@@ -317,10 +316,10 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       |> element("form#library-filter-form")
       |> render_change(%{"monitored" => "true"})
 
-      # Should show 0 items (Stranger Things is unmonitored, Breaking Bad doesn't match search)
+      # Should show 0 items (Unmonitored Film is not monitored)
       assert has_element?(
                view,
-               "#test-debug-info[data-search-query='Things'][data-stream-count='0']"
+               "#test-debug-info[data-search-query='Unmonitored'][data-stream-count='0']"
              )
     end
   end

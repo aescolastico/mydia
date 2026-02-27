@@ -9,13 +9,13 @@ defmodule MydiaWeb.Live.UserAuthTest do
       user = user_fixture()
       conn = log_in_user(conn, user)
 
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       assert view
     end
 
     test "redirects unauthenticated user", %{conn: conn} do
-      {:error, {:redirect, redirect}} = live(conn, ~p"/media")
+      {:error, {:redirect, redirect}} = live(conn, ~p"/movies")
 
       assert redirect.to == "/auth/login"
       assert redirect.flash["error"] == "You must be logged in to access this page"
@@ -56,7 +56,7 @@ defmodule MydiaWeb.Live.UserAuthTest do
       user = user_fixture()
       conn = log_in_user(conn, user)
 
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # Verify navigation assigns are present by checking they exist in the rendered state
       # LiveView assigns are not directly accessible in tests, but we can verify the view renders
@@ -67,14 +67,14 @@ defmodule MydiaWeb.Live.UserAuthTest do
       user = user_fixture(%{role: "readonly"})
       conn = log_in_user(conn, user)
 
-      {:ok, view, _html} = live(conn, ~p"/media")
+      {:ok, view, _html} = live(conn, ~p"/movies")
 
       # View should render successfully with navigation data loaded
       assert view
     end
 
     test "handles missing current_user gracefully", %{conn: conn} do
-      {:error, {:redirect, _redirect}} = live(conn, ~p"/media")
+      {:error, {:redirect, _redirect}} = live(conn, ~p"/movies")
 
       # Should redirect, not crash
     end

@@ -100,9 +100,9 @@ defmodule MydiaWeb.Features.AuthTest do
 
       # Navigate to different pages
       session
-      |> visit("/media")
+      |> visit("/movies")
       |> wait_for_liveview()
-      |> assert_path("/media")
+      |> assert_path("/movies")
 
       assert Wallaby.Browser.has_text?(session, "Dashboard")
 
@@ -135,7 +135,7 @@ defmodule MydiaWeb.Features.AuthTest do
       _user = create_test_user()
 
       session
-      |> visit("/media")
+      |> visit("/movies")
 
       # Should be redirected to login page
       assert Wallaby.Browser.current_path(session) =~ ~r/\/auth\/(local\/)?login/
@@ -163,9 +163,9 @@ defmodule MydiaWeb.Features.AuthTest do
 
       # Should be able to access protected routes
       session
-      |> visit("/media")
+      |> visit("/movies")
       |> wait_for_liveview()
-      |> assert_path("/media")
+      |> assert_path("/movies")
 
       session
       |> visit("/downloads")
@@ -259,9 +259,9 @@ defmodule MydiaWeb.Features.AuthTest do
 
       # Should be able to access regular protected routes
       session
-      |> visit("/media")
+      |> visit("/movies")
       |> wait_for_liveview()
-      |> assert_path("/media")
+      |> assert_path("/movies")
 
       session
       |> visit("/downloads")

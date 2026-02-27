@@ -39,14 +39,14 @@ defmodule MydiaWeb.Features.GuestTest do
     end
 
     @tag :feature
-    test "guest can browse media page", %{session: session} do
+    test "guest can browse movies page", %{session: session} do
       login_as_guest(session)
       session |> wait_for_liveview()
 
       session
-      |> visit("/media")
+      |> visit("/movies")
       |> wait_for_liveview()
-      |> assert_path("/media")
+      |> assert_path("/movies")
     end
 
     @tag :feature
