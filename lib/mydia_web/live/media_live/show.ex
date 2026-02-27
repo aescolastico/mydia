@@ -1084,7 +1084,7 @@ defmodule MydiaWeb.MediaLive.Show do
 
       # Build options for initiate_download
       opts =
-        []
+        [manual: true]
         |> maybe_add_opt(:media_item_id, media_item_id)
         |> maybe_add_opt(:episode_id, episode_id)
 

@@ -619,11 +619,17 @@ defmodule Mydia.Downloads do
   defp check_for_duplicate_download(search_result, opts) do
     media_item_id = Keyword.get(opts, :media_item_id)
     episode_id = Keyword.get(opts, :episode_id)
+    manual? = Keyword.get(opts, :manual, false)
 
-    # First check for active downloads (not completed and not failed)
-    with :ok <- check_for_active_download(search_result, media_item_id, episode_id),
-         :ok <- check_for_existing_media_files(search_result, media_item_id, episode_id) do
-      :ok
+    # Always check for active downloads to prevent downloading the same thing twice
+    with :ok <- check_for_active_download(search_result, media_item_id, episode_id) do
+      # Skip media file check for manual downloads - the user explicitly chose this release
+      # (they may want to upgrade quality or grab a different version)
+      if manual? do
+        :ok
+      else
+        check_for_existing_media_files(search_result, media_item_id, episode_id)
+      end
     end
   end
 
@@ -748,7 +754,7 @@ defmodule Mydia.Downloads do
     cond do
       # For episodes, check if media files already exist for this episode
       episode_id ->
-        query = from(f in MediaFile, where: f.episode_id == ^episode_id)
+        query = from(f in MediaFile, where: f.episode_id == ^episode_id and is_nil(f.trashed_at))
 
         if Repo.exists?(query) do
           Logger.info("Skipping download - media files already exist for episode",
@@ -780,7 +786,7 @@ defmodule Mydia.Downloads do
         if episode_ids != [] do
           # Check if any of these episodes have media files
           media_files_query =
-            from(f in MediaFile, where: f.episode_id in ^episode_ids)
+            from(f in MediaFile, where: f.episode_id in ^episode_ids and is_nil(f.trashed_at))
 
           if Repo.exists?(media_files_query) do
             Logger.info(
@@ -814,8 +820,11 @@ defmodule Mydia.Downloads do
             :ok
 
           %MediaItem{type: "movie"} ->
-            # For movies, check if media files already exist
-            query = from(f in MediaFile, where: f.media_item_id == ^media_item_id)
+            # For movies, check if non-trashed media files already exist
+            query =
+              from(f in MediaFile,
+                where: f.media_item_id == ^media_item_id and is_nil(f.trashed_at)
+              )
 
             if Repo.exists?(query) do
               Logger.info("Skipping download - media files already exist for movie",
