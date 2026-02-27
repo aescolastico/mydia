@@ -1022,7 +1022,8 @@ defmodule Mydia.Jobs.MediaImport do
       case Client.remove_download(
              client_info.adapter,
              client_info.config,
-             client_info.client_id
+             client_info.client_id,
+             delete_files: true
            ) do
         :ok ->
           Logger.info("Removed download from client", download_id: download.id)
