@@ -967,7 +967,7 @@ defmodule Mydia.Downloads do
 
       {:error, %Ecto.Changeset{} = changeset}
       when is_struct(changeset, Ecto.Changeset) ->
-        if has_unique_constraint_error?(changeset, :download_client_id) do
+        if has_unique_constraint_error?(changeset, :download_client) do
           Logger.warning(
             "Unique constraint on download_client_id, cleaning stale record and retrying",
             client: client_config.name,

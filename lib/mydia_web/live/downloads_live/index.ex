@@ -390,6 +390,10 @@ defmodule MydiaWeb.DownloadsLive.Index do
     {:noreply, load_downloads(socket)}
   end
 
+  def handle_info({:search_completed, _media_item_id, _stats}, socket) do
+    {:noreply, load_downloads(socket)}
+  end
+
   # Private functions
 
   defp reload_stream(socket) do
