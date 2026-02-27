@@ -372,70 +372,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     end
   end
 
-  defp apply_batch_changes(file, batch_match, batch_season) do
-    match = file.match_result
-
-    # Apply match change (series/movie)
-    match =
-      if batch_match != nil do
-        provider_type =
-          case batch_match.type do
-            "tv_show" -> :tmdb
-            "movie" -> :tmdb
-            _ -> Map.get(match, :provider_type, :tmdb)
-          end
-
-        match
-        |> Map.merge(%{
-          title: batch_match.title,
-          provider_id: batch_match.provider_id,
-          provider_type: provider_type,
-          manually_edited: true,
-          year: batch_match.year || Map.get(match, :year)
-        })
-        |> then(fn m ->
-          # Update parsed_info type based on match type
-          parsed_info = Map.get(m, :parsed_info, %{})
-
-          new_type =
-            case batch_match.type do
-              "tv_show" -> :tv_show
-              "movie" -> :movie
-              _ -> Map.get(parsed_info, :type)
-            end
-
-          Map.put(m, :parsed_info, Map.put(parsed_info, :type, new_type))
-        end)
-      else
-        match
-      end
-
-    # Apply season change (only for TV shows)
-    match =
-      if String.trim(batch_season) != "" do
-        parsed_info = Map.get(match, :parsed_info, %{})
-        type = Map.get(parsed_info, :type)
-
-        if type in [:tv_show, "tv_show"] do
-          season_num =
-            case Integer.parse(batch_season) do
-              {n, _} -> n
-              :error -> Map.get(parsed_info, :season)
-            end
-
-          match
-          |> Map.put(:parsed_info, Map.put(parsed_info, :season, season_num))
-          |> Map.put(:manually_edited, true)
-        else
-          match
-        end
-      else
-        match
-      end
-
-    %{file | match_result: match}
-  end
-
   def handle_event("start_import", _params, socket) do
     with :ok <- Authorization.authorize_import_media(socket) do
       if MapSet.size(socket.assigns.selected_files) > 0 do
@@ -1034,6 +970,72 @@ defmodule MydiaWeb.ImportMediaLive.Index do
        content: json_data,
        mime_type: "application/json"
      })}
+  end
+
+  ## Batch Helpers
+
+  defp apply_batch_changes(file, batch_match, batch_season) do
+    match = file.match_result
+
+    # Apply match change (series/movie)
+    match =
+      if batch_match != nil do
+        provider_type =
+          case batch_match.type do
+            "tv_show" -> :tmdb
+            "movie" -> :tmdb
+            _ -> Map.get(match, :provider_type, :tmdb)
+          end
+
+        match
+        |> Map.merge(%{
+          title: batch_match.title,
+          provider_id: batch_match.provider_id,
+          provider_type: provider_type,
+          manually_edited: true,
+          year: batch_match.year || Map.get(match, :year)
+        })
+        |> then(fn m ->
+          # Update parsed_info type based on match type
+          parsed_info = Map.get(m, :parsed_info, %{})
+
+          new_type =
+            case batch_match.type do
+              "tv_show" -> :tv_show
+              "movie" -> :movie
+              _ -> Map.get(parsed_info, :type)
+            end
+
+          Map.put(m, :parsed_info, Map.put(parsed_info, :type, new_type))
+        end)
+      else
+        match
+      end
+
+    # Apply season change (only for TV shows)
+    match =
+      if String.trim(batch_season) != "" do
+        parsed_info = Map.get(match, :parsed_info, %{})
+        type = Map.get(parsed_info, :type)
+
+        if type in [:tv_show, "tv_show"] do
+          season_num =
+            case Integer.parse(batch_season) do
+              {n, _} -> n
+              :error -> Map.get(parsed_info, :season)
+            end
+
+          match
+          |> Map.put(:parsed_info, Map.put(parsed_info, :season, season_num))
+          |> Map.put(:manually_edited, true)
+        else
+          match
+        end
+      else
+        match
+      end
+
+    %{file | match_result: match}
   end
 
   ## Season Collapse Helpers
