@@ -132,6 +132,18 @@
             Loading {if @media_type == :movie, do: "movies", else: "TV shows"}...
           </p>
         </div>
+      <% @load_error != nil and @items == [] -> %>
+        <div class="flex flex-col items-center justify-center py-16 gap-4">
+          <div class="bg-error/10 rounded-full p-6">
+            <.icon name="hero-exclamation-triangle" class="w-10 h-10 text-error" />
+          </div>
+          <div class="text-center">
+            <p class="text-lg font-medium text-base-content/80">Unable to load results</p>
+            <p class="text-sm text-base-content/50 mt-1">
+              The metadata service is temporarily unavailable. Try a curated list instead.
+            </p>
+          </div>
+        </div>
       <% @items == [] -> %>
         <div class="flex flex-col items-center justify-center py-16 gap-4">
           <div class="bg-base-200 rounded-full p-6">

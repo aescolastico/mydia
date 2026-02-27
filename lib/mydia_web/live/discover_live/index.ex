@@ -1,6 +1,8 @@
 defmodule MydiaWeb.DiscoverLive.Index do
   use MydiaWeb, :live_view
 
+  require Logger
+
   alias Mydia.Media
   alias Mydia.Metadata
   alias MydiaWeb.Live.Helpers.MediaAddHelpers
@@ -67,6 +69,7 @@ defmodule MydiaWeb.DiscoverLive.Index do
       |> assign(:adding_item_id, nil)
       |> assign(:selected_item, nil)
       |> assign(:selected_metadata, nil)
+      |> assign(:load_error, nil)
       |> assign(:detail_loading, false)
 
     {:ok, socket}
@@ -114,6 +117,7 @@ defmodule MydiaWeb.DiscoverLive.Index do
         |> assign(:page, page)
         |> assign(:items, [])
         |> assign(:loading, true)
+        |> assign(:load_error, nil)
         |> assign(:has_more, false)
 
       # Load genres if not loaded yet or media type changed
@@ -254,7 +258,8 @@ defmodule MydiaWeb.DiscoverLive.Index do
       {:ok, genres} ->
         {:noreply, assign(socket, :genres, genres)}
 
-      {:error, _} ->
+      {:error, reason} ->
+        Logger.warning("Failed to load genres: #{inspect(reason)}")
         {:noreply, socket}
     end
   end
@@ -379,6 +384,7 @@ defmodule MydiaWeb.DiscoverLive.Index do
         |> assign(:page, page)
         |> assign(:total_pages, total_pages)
         |> assign(:has_more, page < total_pages)
+        |> assign(:load_error, nil)
         |> assign(:loading, false)
 
       {:ok, results} when is_list(results) ->
@@ -396,11 +402,15 @@ defmodule MydiaWeb.DiscoverLive.Index do
         socket
         |> assign(:items, items)
         |> assign(:has_more, false)
+        |> assign(:load_error, nil)
         |> assign(:loading, false)
 
-      {:error, _} ->
+      {:error, reason} ->
+        Logger.warning("Failed to load discover results: #{inspect(reason)}")
+
         socket
         |> assign(:items, if(mode == :append, do: socket.assigns.items, else: []))
+        |> assign(:load_error, reason)
         |> assign(:loading, false)
     end
   end
