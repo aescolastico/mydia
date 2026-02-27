@@ -7,6 +7,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
   season pack details (for TV shows).
   """
 
+  alias Mydia.Indexers.Structs.QualityInfo
+
   @enforce_keys [:size]
 
   defstruct [
@@ -23,7 +25,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
           size: integer(),
           seeders: integer() | nil,
           leechers: integer() | nil,
-          quality: String.t() | nil,
+          quality: QualityInfo.t() | nil,
           season_pack: boolean() | nil,
           season_number: integer() | nil,
           download_protocol: :torrent | :nzb | nil
@@ -72,15 +74,11 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
       %{size: 1024, seeders: 10, leechers: nil, quality: nil, season_pack: nil, season_number: nil, download_protocol: nil}
   """
   def to_map(%__MODULE__{} = metadata) do
-    # Convert quality struct to string representation if present
+    # Convert quality struct to a plain map for JSON storage
     quality =
       case metadata.quality do
-        %{__struct__: _} = struct ->
-          # If quality is a struct (QualityInfo), convert to map
-          Map.from_struct(struct)
-
-        other ->
-          other
+        %QualityInfo{} = qi -> Map.from_struct(qi)
+        other -> other
       end
 
     %{
@@ -113,12 +111,21 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
   def from_map(map) when is_map(map) do
     # Handle case where size might not be present in old records
     size = map["size"] || map[:size] || 0
+    raw_quality = map["quality"] || map[:quality]
+
+    # Reconstruct QualityInfo from plain map if stored as JSON object
+    quality =
+      case raw_quality do
+        %QualityInfo{} = qi -> qi
+        %{} = m -> QualityInfo.from_map(m)
+        _ -> nil
+      end
 
     new(%{
       size: size,
       seeders: map["seeders"] || map[:seeders],
       leechers: map["leechers"] || map[:leechers],
-      quality: map["quality"] || map[:quality],
+      quality: quality,
       season_pack: map["season_pack"] || map[:season_pack],
       season_number: map["season_number"] || map[:season_number],
       download_protocol: map["download_protocol"] || map[:download_protocol]

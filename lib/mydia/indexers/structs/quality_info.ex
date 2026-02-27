@@ -109,4 +109,62 @@ defmodule Mydia.Indexers.Structs.QualityInfo do
       quality.codec == nil &&
       quality.audio == nil
   end
+
+  @doc """
+  Formats a QualityInfo struct as a human-readable string.
+
+  Combines resolution, source, codec, and relevant flags into a compact label.
+
+  ## Examples
+
+      iex> format(%QualityInfo{resolution: "1080p", source: "BluRay", codec: "x264"})
+      "1080p BluRay x264"
+
+      iex> format(%QualityInfo{resolution: "2160p", source: "WEB-DL", hdr: true, hdr_format: "DV"})
+      "2160p WEB-DL DV"
+
+      iex> format(%QualityInfo{resolution: "1080p", source: "BluRay", proper: true})
+      "1080p BluRay PROPER"
+  """
+  def format(%__MODULE__{} = quality) do
+    [
+      quality.resolution,
+      quality.source,
+      quality.codec,
+      quality.audio,
+      if(quality.hdr && quality.hdr_format, do: quality.hdr_format),
+      if(quality.hdr && !quality.hdr_format, do: "HDR"),
+      if(quality.proper, do: "PROPER"),
+      if(quality.repack, do: "REPACK")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
+  end
+
+  def format(nil), do: nil
+
+  @doc """
+  Creates a QualityInfo struct from a plain map with string keys.
+
+  Used to reconstruct a QualityInfo from database-stored JSON data.
+
+  ## Examples
+
+      iex> from_map(%{"resolution" => "1080p", "source" => "BluRay", "hdr" => false})
+      %QualityInfo{resolution: "1080p", source: "BluRay", hdr: false, ...}
+  """
+  def from_map(nil), do: nil
+
+  def from_map(map) when is_map(map) do
+    new(%{
+      resolution: map["resolution"] || map[:resolution],
+      source: map["source"] || map[:source],
+      codec: map["codec"] || map[:codec],
+      audio: map["audio"] || map[:audio],
+      hdr: map["hdr"] || map[:hdr] || false,
+      hdr_format: map["hdr_format"] || map[:hdr_format],
+      proper: map["proper"] || map[:proper] || false,
+      repack: map["repack"] || map[:repack] || false
+    })
+  end
 end
