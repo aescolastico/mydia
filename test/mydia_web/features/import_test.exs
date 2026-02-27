@@ -839,6 +839,265 @@ defmodule MydiaWeb.Features.ImportTest do
     end
   end
 
+  describe "Issue #79 - Manual TV show matching shows correct media types" do
+    setup do
+      user = create_admin_user()
+
+      {:ok, series_path} =
+        Settings.create_library_path(%{
+          path: "/test/media/tv_issue79_#{System.unique_integer([:positive])}",
+          type: :series,
+          monitored: true
+        })
+
+      %{user: user, series_path: series_path}
+    end
+
+    @tag :feature
+    test "selecting a TV show result shows TV Series indicator and season/episode fields", %{
+      session: session,
+      user: user,
+      series_path: series_path
+    } do
+      session_id = Ecto.UUID.generate()
+
+      unmatched_file = %{
+        "file" => %{
+          "path" => "#{series_path.path}/Westworld S04E08.mp4",
+          "size" => 1_500_000_000
+        },
+        "match_result" => nil,
+        "import_status" => "pending"
+      }
+
+      grouped_unmatched = Map.put(unmatched_file, "index", 0)
+
+      session_data = %{
+        "matched_files" => [unmatched_file],
+        "grouped_files" => %{
+          "series" => [],
+          "movies" => [],
+          "ungrouped" => [grouped_unmatched],
+          "type_filtered" => []
+        },
+        "selected_files" => [],
+        "discovered_files" => [],
+        "detailed_results" => []
+      }
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 1, "matched" => 0, "unmatched" => 1},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Open the edit form for the unmatched file
+      session
+      |> js_click("button[phx-click='edit_file'][phx-value-index='0']")
+      |> assert_has(Query.text("Find Metadata Match"))
+
+      # Simulate selecting a TV show search result via LiveView event
+      session
+      |> push_liveview_event("select_search_result", %{
+        provider_id: "tv-73186",
+        title: "Westworld",
+        year: "2016",
+        type: "tv_show"
+      })
+
+      # Assert TV Series indicator is shown (provider_id is set, type is tv_show)
+      session
+      |> assert_page_contains("TV Series")
+
+      # Assert season/episode input fields are present
+      assert Wallaby.Browser.has_css?(session, "input[name='edit_form[season]']")
+      assert Wallaby.Browser.has_css?(session, "input[name='edit_form[episodes]']")
+
+      # Assert "Matched" label appears (provider_id is set)
+      html = Wallaby.Browser.page_source(session)
+      assert String.contains?(html, "tv-73186")
+    end
+
+    @tag :feature
+    test "selecting a movie result shows Movie indicator without season/episode fields", %{
+      session: session,
+      user: user,
+      series_path: series_path
+    } do
+      session_id = Ecto.UUID.generate()
+
+      unmatched_file = %{
+        "file" => %{
+          "path" => "#{series_path.path}/Unknown.Movie.2024.mkv",
+          "size" => 1_500_000_000
+        },
+        "match_result" => nil,
+        "import_status" => "pending"
+      }
+
+      grouped_unmatched = Map.put(unmatched_file, "index", 0)
+
+      session_data = %{
+        "matched_files" => [unmatched_file],
+        "grouped_files" => %{
+          "series" => [],
+          "movies" => [],
+          "ungrouped" => [grouped_unmatched],
+          "type_filtered" => []
+        },
+        "selected_files" => [],
+        "discovered_files" => [],
+        "detailed_results" => []
+      }
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 1, "matched" => 0, "unmatched" => 1},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Open the edit form
+      session
+      |> js_click("button[phx-click='edit_file'][phx-value-index='0']")
+      |> assert_has(Query.text("Find Metadata Match"))
+
+      # Simulate selecting a movie search result
+      session
+      |> push_liveview_event("select_search_result", %{
+        provider_id: "movie-27205",
+        title: "Inception",
+        year: "2010",
+        type: "movie"
+      })
+
+      # Assert Movie indicator is shown
+      session
+      |> assert_page_contains("Movie")
+
+      # Assert season/episode fields are NOT present
+      refute Wallaby.Browser.has_css?(session, "input[name='edit_form[season]']")
+      refute Wallaby.Browser.has_css?(session, "input[name='edit_form[episodes]']")
+    end
+
+    @tag :feature
+    test "can save a manually matched TV show and see it grouped correctly", %{
+      session: session,
+      user: user,
+      series_path: series_path
+    } do
+      session_id = Ecto.UUID.generate()
+
+      unmatched_file = %{
+        "file" => %{
+          "path" => "#{series_path.path}/Westworld S04E08.mp4",
+          "size" => 1_500_000_000
+        },
+        "match_result" => nil,
+        "import_status" => "pending"
+      }
+
+      grouped_unmatched = Map.put(unmatched_file, "index", 0)
+
+      session_data = %{
+        "matched_files" => [unmatched_file],
+        "grouped_files" => %{
+          "series" => [],
+          "movies" => [],
+          "ungrouped" => [grouped_unmatched],
+          "type_filtered" => []
+        },
+        "selected_files" => [],
+        "discovered_files" => [],
+        "detailed_results" => []
+      }
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 1, "matched" => 0, "unmatched" => 1},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Open the edit form
+      session
+      |> js_click("button[phx-click='edit_file'][phx-value-index='0']")
+      |> assert_has(Query.text("Find Metadata Match"))
+
+      # Simulate selecting a TV show search result
+      session
+      |> push_liveview_event("select_search_result", %{
+        provider_id: "tv-73186",
+        title: "Westworld",
+        year: "2016",
+        type: "tv_show"
+      })
+
+      # Wait for TV Series indicator to confirm selection was processed
+      session
+      |> assert_page_contains("TV Series")
+
+      # Fill in season and episodes
+      session
+      |> Wallaby.Browser.fill_in(Query.css("input[name='edit_form[season]']"), with: "4")
+      |> Wallaby.Browser.fill_in(Query.css("input[name='edit_form[episodes]']"), with: "8")
+
+      # Submit the edit form
+      session
+      |> js_click("#edit-form-0 button[type='submit']")
+
+      # Verify the match was created successfully
+      assert wait_for_any_text(session, ["Match created successfully", "Westworld"], 20),
+             "Expected to see match confirmation or series title"
+
+      # Verify the file is now shown with Westworld title
+      assert Wallaby.Browser.has_text?(session, "Westworld")
+    end
+  end
+
   describe "Selection and toolbar" do
     setup do
       user = create_admin_user()
@@ -1013,6 +1272,275 @@ defmodule MydiaWeb.Features.ImportTest do
       # Should see the import button with count (button text is "Import (2)")
       assert Wallaby.Browser.has_css?(session, "button[phx-click='start_import']")
       assert Wallaby.Browser.has_text?(session, "Import (2)")
+    end
+  end
+
+  describe "Series re-match" do
+    setup do
+      user = create_admin_user()
+
+      {:ok, series_path} =
+        Settings.create_library_path(%{
+          path: "/test/media/tv_rematch_#{System.unique_integer([:positive])}",
+          type: :series,
+          monitored: true
+        })
+
+      # Build two episodes under the same series
+      episode1 = %{
+        "file" => %{
+          "path" => "#{series_path.path}/Wrong.Show.S01E01.mkv",
+          "size" => 500_000_000
+        },
+        "match_result" => %{
+          "title" => "Wrong Show",
+          "provider_id" => "tv-9999",
+          "provider_type" => "tmdb",
+          "year" => 2020,
+          "match_confidence" => 0.70,
+          "manually_edited" => false,
+          "metadata" => %{},
+          "parsed_info" => %{
+            "type" => "tv_show",
+            "season" => 1,
+            "episodes" => [1]
+          }
+        },
+        "import_status" => "pending"
+      }
+
+      episode2 = %{
+        "file" => %{
+          "path" => "#{series_path.path}/Wrong.Show.S01E02.mkv",
+          "size" => 500_000_000
+        },
+        "match_result" => %{
+          "title" => "Wrong Show",
+          "provider_id" => "tv-9999",
+          "provider_type" => "tmdb",
+          "year" => 2020,
+          "match_confidence" => 0.70,
+          "manually_edited" => false,
+          "metadata" => %{},
+          "parsed_info" => %{
+            "type" => "tv_show",
+            "season" => 1,
+            "episodes" => [2]
+          }
+        },
+        "import_status" => "pending"
+      }
+
+      grouped_series = %{
+        "title" => "Wrong Show",
+        "year" => 2020,
+        "provider_id" => "tv-9999",
+        "seasons" => [
+          %{
+            "season_number" => 1,
+            "episodes" => [
+              Map.put(episode1, "index", 0),
+              Map.put(episode2, "index", 1)
+            ]
+          }
+        ]
+      }
+
+      session_data = %{
+        "matched_files" => [episode1, episode2],
+        "grouped_files" => %{
+          "series" => [grouped_series],
+          "movies" => [],
+          "ungrouped" => [],
+          "type_filtered" => []
+        },
+        "selected_files" => [0, 1],
+        "discovered_files" => [],
+        "detailed_results" => []
+      }
+
+      %{
+        user: user,
+        series_path: series_path,
+        session_data: session_data
+      }
+    end
+
+    @tag :feature
+    test "series header shows edit button for re-matching", %{
+      session: session,
+      user: user,
+      series_path: series_path,
+      session_data: session_data
+    } do
+      session_id = Ecto.UUID.generate()
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 2, "matched" => 2, "unmatched" => 0},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Should see the series header
+      assert Wallaby.Browser.has_text?(session, "Wrong Show")
+
+      # Should have the edit (re-match) button on the series header
+      assert Wallaby.Browser.has_css?(session, "button[phx-click='edit_series']")
+    end
+
+    @tag :feature
+    test "clicking edit button opens inline search form", %{
+      session: session,
+      user: user,
+      series_path: series_path,
+      session_data: session_data
+    } do
+      session_id = Ecto.UUID.generate()
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 2, "matched" => 2, "unmatched" => 0},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Click the edit button on the series header
+      session
+      |> js_click("button[phx-click='edit_series']")
+      |> assert_has(Query.text("Re-match Series"))
+
+      # Should show the search input
+      assert Wallaby.Browser.has_css?(session, "input[name='query']")
+
+      # Should have a cancel button
+      assert Wallaby.Browser.has_css?(session, "button[phx-click='cancel_series_edit']")
+    end
+
+    @tag :feature
+    test "cancel button closes the inline search form", %{
+      session: session,
+      user: user,
+      series_path: series_path,
+      session_data: session_data
+    } do
+      session_id = Ecto.UUID.generate()
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 2, "matched" => 2, "unmatched" => 0},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Open the edit form
+      session
+      |> js_click("button[phx-click='edit_series']")
+      |> assert_has(Query.text("Re-match Series"))
+
+      # Cancel the edit
+      session
+      |> js_click("button[phx-click='cancel_series_edit']")
+
+      # Should be back to the normal header with the series title
+      assert Wallaby.Browser.has_text?(session, "Wrong Show")
+
+      # Search input should be gone
+      refute Wallaby.Browser.has_css?(session, "input[name='query']")
+    end
+
+    @tag :feature
+    test "selecting a search result updates all episodes in the series", %{
+      session: session,
+      user: user,
+      series_path: series_path,
+      session_data: session_data
+    } do
+      session_id = Ecto.UUID.generate()
+
+      {:ok, _import_session} =
+        Library.create_import_session(%{
+          id: session_id,
+          user_id: user.id,
+          step: :review,
+          scan_path: series_path.path,
+          session_data: session_data,
+          scan_stats: %{"total" => 2, "matched" => 2, "unmatched" => 0},
+          import_progress: %{"current" => 0, "total" => 0, "current_file" => nil},
+          import_results: %{"success" => 0, "failed" => 0, "skipped" => 0},
+          status: :active
+        })
+
+      session
+      |> login(user.username, "password123")
+      |> wait_for_liveview()
+
+      session
+      |> visit("/import?session_id=#{session_id}")
+      |> wait_for_liveview()
+
+      # Open the edit form
+      session
+      |> js_click("button[phx-click='edit_series']")
+      |> assert_has(Query.text("Re-match Series"))
+
+      # Simulate selecting a series result via LiveView event
+      session
+      |> push_liveview_event("select_series_rematch", %{
+        provider_id: "tv-1396",
+        title: "Breaking Bad",
+        year: "2008",
+        type: "tv_show"
+      })
+
+      # The series header should now show the new title
+      assert wait_for_any_text(session, ["Breaking Bad", "Updated 2 episode(s)"], 20),
+             "Expected to see the new series title or update confirmation"
+
+      # The old title should be gone from the series header
+      refute Wallaby.Browser.has_text?(session, "Wrong Show")
     end
   end
 end

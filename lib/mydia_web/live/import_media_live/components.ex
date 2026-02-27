@@ -398,6 +398,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
     * `:selected_files` - MapSet of selected file indices
   """
   attr :selected_files, :any, required: true
+  attr :batch_selected_count, :integer, default: 0
 
   def selection_controls(assigns) do
     ~H"""
@@ -408,30 +409,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
       data-fixed-id="selection-toolbar-fixed"
       class="flex items-center justify-between mb-3"
     >
-      <div class="flex gap-2">
-        <button type="button" class="btn btn-sm btn-outline" phx-click="select_all_files">
-          Select All
-        </button>
-        <button type="button" class="btn btn-sm btn-outline" phx-click="deselect_all_files">
-          Deselect All
-        </button>
-      </div>
-      <button
-        type="button"
-        class="btn btn-sm btn-primary"
-        phx-click="start_import"
-        disabled={MapSet.size(@selected_files) == 0}
-      >
-        <.icon name="hero-arrow-down-tray" class="w-4 h-4" /> Import ({MapSet.size(@selected_files)})
-      </button>
-    </div>
-
-    <%!-- Fixed toolbar (hidden by default, shown when scrolling past in-flow toolbar) --%>
-    <div
-      id="selection-toolbar-fixed"
-      class="hidden fixed top-14 lg:top-0 left-0 lg:left-64 right-0 z-20 bg-base-100 border-b border-base-300 shadow-sm px-4 py-2"
-    >
-      <div class="flex items-center justify-between max-w-7xl mx-auto">
+      <div class="flex items-center gap-4">
         <div class="flex gap-2">
           <button type="button" class="btn btn-sm btn-outline" phx-click="select_all_files">
             Select All
@@ -440,6 +418,28 @@ defmodule MydiaWeb.ImportMediaLive.Components do
             Deselect All
           </button>
         </div>
+        <%= if @batch_selected_count > 0 do %>
+          <div class="divider divider-horizontal mx-0"></div>
+          <div class="flex items-center gap-2">
+            <span class="badge badge-info badge-sm gap-1">
+              <.icon name="hero-pencil-square" class="w-3 h-3" />
+              {@batch_selected_count} selected for editing
+            </span>
+            <button type="button" class="btn btn-xs btn-ghost" phx-click="batch_deselect_all">
+              Clear
+            </button>
+          </div>
+        <% end %>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline btn-info"
+          phx-click="batch_select_all"
+          title="Select all matched files for batch editing"
+        >
+          <.icon name="hero-pencil-square" class="w-4 h-4" /> Batch Select
+        </button>
         <button
           type="button"
           class="btn btn-sm btn-primary"
@@ -451,155 +451,72 @@ defmodule MydiaWeb.ImportMediaLive.Components do
         </button>
       </div>
     </div>
+
+    <%!-- Fixed toolbar (hidden by default, shown when scrolling past in-flow toolbar) --%>
+    <div
+      id="selection-toolbar-fixed"
+      class="hidden fixed top-14 lg:top-0 left-0 lg:left-64 right-0 z-20 bg-base-100 border-b border-base-300 shadow-sm px-4 py-2"
+    >
+      <div class="flex items-center justify-between max-w-7xl mx-auto">
+        <div class="flex items-center gap-4">
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline" phx-click="select_all_files">
+              Select All
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" phx-click="deselect_all_files">
+              Deselect All
+            </button>
+          </div>
+          <%= if @batch_selected_count > 0 do %>
+            <span class="badge badge-info badge-sm gap-1">
+              <.icon name="hero-pencil-square" class="w-3 h-3" />
+              {@batch_selected_count} editing
+            </span>
+          <% end %>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-sm btn-primary"
+            phx-click="start_import"
+            disabled={MapSet.size(@selected_files) == 0}
+          >
+            <.icon name="hero-arrow-down-tray" class="w-4 h-4" />
+            Import ({MapSet.size(@selected_files)})
+          </button>
+        </div>
+      </div>
+    </div>
     """
   end
 
   @doc """
-  Renders an episode match as a compact list item.
+  Renders an episode match as a compact list item with inline season/episode editing.
 
   ## Attributes
     * `:episode` - Episode data with `:index`, `:file`, `:match_result`
     * `:is_selected` - Whether this episode is selected
-    * `:is_editing` - Whether this episode is being edited
-    * `:edit_form` - Edit form data (if editing)
-    * `:search_results` - Search results (if editing)
+    * `:is_editing` - Whether the series search is open for this episode
+    * `:edit_form` - Edit form data (if editing series)
+    * `:search_results` - Search results (if editing series)
   """
   attr :episode, :map, required: true
   attr :is_selected, :boolean, required: true
-  attr :is_editing, :boolean, required: true
+  attr :is_batch_selected, :boolean, default: false
+  attr :is_editing, :boolean, default: false
   attr :edit_form, :map, default: nil
   attr :search_results, :list, default: []
 
   def episode_list_item(assigns) do
     ~H"""
     <% match = @episode.match_result %>
-    <li class={"flex items-center gap-3 py-2 px-3 hover:bg-base-200/50 rounded-lg " <> if(@is_selected, do: "bg-primary/10", else: "")}>
-      <%= if @is_editing do %>
-        <%!-- Edit Form Card --%>
-        <div class="card card-compact bg-base-100 border border-primary/30 shadow-lg w-full">
-          <div class="card-body gap-4">
-            <%!-- Header --%>
-            <div class="flex items-start gap-3 pb-2 border-b border-base-300">
-              <div class="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0">
-                <.icon name="hero-tv" class="w-5 h-5 text-info" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <h4 class="font-semibold text-sm">Edit Episode Match</h4>
-                <p class="text-xs text-base-content/60 truncate">
-                  {Path.basename(@episode.file.path)}
-                </p>
-              </div>
-              <button
-                type="button"
-                class="btn btn-ghost btn-xs btn-circle"
-                phx-click="cancel_edit"
-              >
-                <.icon name="hero-x-mark" class="w-4 h-4" />
-              </button>
-            </div>
-
-            <.form
-              for={%{}}
-              phx-submit="save_edit"
-              id={"edit-form-#{@episode.index}"}
-              class="space-y-4"
-            >
-              <%!-- Series Title with Search --%>
-              <div class="form-control">
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium">Series Title</span>
-                  <%= if @edit_form["provider_id"] do %>
-                    <span class="label-text-alt text-xs text-success">
-                      <.icon name="hero-check-circle" class="w-3 h-3 inline" /> Matched
-                    </span>
-                  <% end %>
-                </label>
-                <div class="relative">
-                  <div class="join w-full">
-                    <span class="join-item flex items-center px-3 bg-base-200 border border-base-300 border-r-0">
-                      <.icon name="hero-magnifying-glass" class="w-4 h-4 text-base-content/50" />
-                    </span>
-                    <input
-                      type="text"
-                      name="edit_form[title]"
-                      value={@edit_form["title"]}
-                      class="input input-bordered input-sm join-item flex-1"
-                      phx-change="search_series"
-                      phx-debounce="300"
-                      autocomplete="off"
-                      placeholder="Search for series..."
-                    />
-                  </div>
-                  <%= if @search_results != [] do %>
-                    <.search_results_dropdown results={@search_results} />
-                  <% end %>
-                </div>
-              </div>
-
-              <input type="hidden" name="edit_form[provider_id]" value={@edit_form["provider_id"]} />
-              <input type="hidden" name="edit_form[type]" value={@edit_form["type"]} />
-
-              <%!-- Season/Episode/Year Grid --%>
-              <div class="grid grid-cols-3 gap-3">
-                <div class="form-control">
-                  <label class="label py-1">
-                    <span class="label-text text-xs font-medium">Season</span>
-                  </label>
-                  <input
-                    type="number"
-                    name="edit_form[season]"
-                    value={@edit_form["season"]}
-                    class="input input-bordered input-sm w-full"
-                    placeholder="1"
-                    min="0"
-                  />
-                </div>
-                <div class="form-control">
-                  <label class="label py-1">
-                    <span class="label-text text-xs font-medium">Episode(s)</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="edit_form[episodes]"
-                    value={@edit_form["episodes"]}
-                    class="input input-bordered input-sm w-full"
-                    placeholder="1, 2"
-                  />
-                </div>
-                <div class="form-control">
-                  <label class="label py-1">
-                    <span class="label-text text-xs font-medium">Year</span>
-                  </label>
-                  <input
-                    type="number"
-                    name="edit_form[year]"
-                    value={@edit_form["year"]}
-                    class="input input-bordered input-sm w-full"
-                    placeholder="2024"
-                    min="1900"
-                    max="2100"
-                  />
-                </div>
-              </div>
-              <p class="text-xs text-base-content/50 -mt-2">
-                <.icon name="hero-information-circle" class="w-3 h-3 inline" />
-                Use comma-separated values for multi-episode files
-              </p>
-
-              <%!-- Action Buttons --%>
-              <div class="card-actions justify-end pt-2 border-t border-base-300">
-                <button type="button" class="btn btn-ghost btn-sm" phx-click="cancel_edit">
-                  Cancel
-                </button>
-                <button type="submit" class="btn btn-primary btn-sm gap-1">
-                  <.icon name="hero-check" class="w-4 h-4" /> Save Changes
-                </button>
-              </div>
-            </.form>
-          </div>
-        </div>
-      <% else %>
-        <%!-- Normal Display --%>
+    <li class={[
+      "flex flex-col gap-1 py-2 px-3 hover:bg-base-200/50 rounded-lg",
+      @is_selected && "bg-primary/10",
+      @is_batch_selected && "bg-info/5",
+      Map.get(match, :match_type) == :partial_match && "bg-warning/5"
+    ]}>
+      <div class="flex items-center gap-3">
         <input
           type="checkbox"
           class="checkbox checkbox-primary checkbox-sm"
@@ -608,72 +525,152 @@ defmodule MydiaWeb.ImportMediaLive.Components do
           phx-value-index={@episode.index}
         />
         <div class="flex-1 min-w-0">
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex-1 min-w-0">
-              <%= if Map.get(match, :match_type) == :partial_match do %>
-                <p class="font-semibold text-sm truncate text-warning">
-                  {match.title}
-                  <%= if match.parsed_info.season do %>
-                    - S{String.pad_leading(to_string(match.parsed_info.season), 2, "0")}E{String.pad_leading(
-                      to_string(hd(match.parsed_info.episodes || [0])),
-                      2,
-                      "0"
-                    )}
-                  <% end %>
-                </p>
-                <p class="text-xs text-base-content/60 truncate">
-                  Parsed from: {Path.basename(@episode.file.path)}
-                </p>
-                <p class="text-xs text-warning">
-                  Episode not in database - will import with parsed info
-                </p>
-              <% else %>
-                <p class="font-medium text-sm truncate">
-                  {Path.basename(@episode.file.path)}
-                </p>
-                <div class="flex items-center gap-2 text-xs text-base-content/60">
-                  <%= if match.parsed_info.episodes do %>
-                    <span>
-                      Ep. {Enum.join(match.parsed_info.episodes, ", ")}
-                    </span>
-                  <% end %>
-                  <span>•</span>
-                  <span>{format_file_size(@episode.file.size)}</span>
-                </div>
-              <% end %>
+          <%= if Map.get(match, :match_type) == :partial_match do %>
+            <p class="font-semibold text-sm truncate text-warning">
+              Parsed from: {Path.basename(@episode.file.path)}
+            </p>
+            <p class="text-xs text-warning">
+              Episode not in database - will import with parsed info
+            </p>
+          <% else %>
+            <p class="font-medium text-sm truncate">
+              {Path.basename(@episode.file.path)}
+            </p>
+            <p class="text-xs text-base-content/60">
+              {format_file_size(@episode.file.size)}
+            </p>
+          <% end %>
+        </div>
+        <%!-- Inline Season Input --%>
+        <form
+          phx-change="update_episode_inline"
+          id={"inline-season-form-#{@episode.index}"}
+          phx-debounce="blur"
+          class="contents"
+        >
+          <input type="hidden" name="index" value={@episode.index} />
+          <input type="hidden" name="field" value="season" />
+          <label class="input input-xs w-16">
+            <span class="text-base-content/50 text-xs shrink-0 mr-1">S</span>
+            <input
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              name="value"
+              value={match.parsed_info.season}
+              class="grow min-w-0"
+            />
+          </label>
+        </form>
+        <%!-- Inline Episode Input --%>
+        <form
+          phx-change="update_episode_inline"
+          id={"inline-episode-form-#{@episode.index}"}
+          phx-debounce="blur"
+          class="contents"
+        >
+          <input type="hidden" name="index" value={@episode.index} />
+          <input type="hidden" name="field" value="episodes" />
+          <label class="input input-xs w-16">
+            <span class="text-base-content/50 text-xs shrink-0 mr-1">E</span>
+            <input
+              type="text"
+              name="value"
+              value={Enum.join(match.parsed_info.episodes || [], ", ")}
+              class="grow"
+              placeholder="1, 2"
+            />
+          </label>
+        </form>
+        <%!-- Badges --%>
+        <div class="flex items-center gap-1.5">
+          <%= if Map.get(match, :match_type) == :partial_match do %>
+            <div class="badge badge-xs badge-warning gap-1">
+              <.icon name="hero-exclamation-circle" class="w-3 h-3" /> Partial
             </div>
-            <div class="flex items-center gap-2">
-              <%= if Map.get(match, :match_type) == :partial_match do %>
-                <div class="badge badge-xs badge-warning gap-1">
-                  <.icon name="hero-exclamation-circle" class="w-3 h-3" /> Partial Match
-                </div>
-              <% end %>
-              <%= if Map.get(match, :manually_edited, false) do %>
-                <div class="badge badge-xs badge-info gap-1">
-                  <.icon name="hero-pencil" class="w-3 h-3" /> Edited
-                </div>
-              <% end %>
-              <div class={"badge badge-xs " <> confidence_badge_class(match.match_confidence)}>
-                {confidence_label(match.match_confidence)}
-              </div>
-              <button
-                type="button"
-                class="btn btn-xs btn-ghost"
-                phx-click="edit_file"
-                phx-value-index={@episode.index}
-              >
-                <.icon name="hero-pencil" class="w-3 h-3" />
-              </button>
-              <button
-                type="button"
-                class="btn btn-xs btn-ghost text-error"
-                phx-click="clear_match"
-                phx-value-index={@episode.index}
-              >
-                <.icon name="hero-x-mark" class="w-3 h-3" />
-              </button>
-            </div>
+          <% end %>
+          <div class={"badge badge-xs " <> confidence_badge_class(match.match_confidence)}>
+            {confidence_label(match.match_confidence)}
           </div>
+        </div>
+        <%!-- Edit Series Button --%>
+        <button
+          type="button"
+          class="btn btn-xs btn-ghost"
+          phx-click="edit_file"
+          phx-value-index={@episode.index}
+          title="Change series match"
+        >
+          <.icon name="hero-pencil" class="w-3 h-3" />
+        </button>
+        <%!-- Clear Match Button --%>
+        <button
+          type="button"
+          class="btn btn-xs btn-ghost text-error"
+          phx-click="clear_match"
+          phx-value-index={@episode.index}
+        >
+          <.icon name="hero-x-mark" class="w-3 h-3" />
+        </button>
+        <%!-- Batch Edit Checkbox --%>
+        <input
+          type="checkbox"
+          class="checkbox checkbox-info checkbox-sm"
+          checked={@is_batch_selected}
+          phx-click="batch_toggle_file"
+          phx-value-index={@episode.index}
+          data-batch-index={@episode.index}
+          title="Select for batch editing"
+        />
+      </div>
+      <%!-- Inline Series Search (shown when editing) --%>
+      <%= if @is_editing do %>
+        <div class="ml-9 mt-1">
+          <.form
+            for={%{}}
+            phx-submit="save_edit"
+            id={"edit-form-#{@episode.index}"}
+            class="flex items-center gap-2"
+          >
+            <div class="relative flex-1">
+              <div class="join w-full">
+                <span class="join-item flex items-center px-2 bg-base-200 border border-base-300 border-r-0">
+                  <.icon name="hero-magnifying-glass" class="w-3.5 h-3.5 text-base-content/50" />
+                </span>
+                <input
+                  type="text"
+                  name="edit_form[title]"
+                  value={@edit_form["title"]}
+                  class="input input-sm join-item flex-1"
+                  phx-change="search_series"
+                  phx-debounce="300"
+                  autocomplete="off"
+                  placeholder="Search for series..."
+                  autofocus
+                />
+              </div>
+              <%= if @search_results != [] do %>
+                <.search_results_dropdown results={@search_results} />
+              <% end %>
+            </div>
+            <input type="hidden" name="edit_form[provider_id]" value={@edit_form["provider_id"]} />
+            <input type="hidden" name="edit_form[type]" value={@edit_form["type"]} />
+            <input type="hidden" name="edit_form[season]" value={@edit_form["season"]} />
+            <input type="hidden" name="edit_form[episodes]" value={@edit_form["episodes"]} />
+            <%= if @edit_form["provider_id"] && @edit_form["provider_id"] != "" do %>
+              <button type="submit" class="btn btn-primary btn-sm btn-square" title="Apply match">
+                <.icon name="hero-check" class="w-4 h-4" />
+              </button>
+            <% end %>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm btn-square"
+              phx-click="cancel_edit"
+              title="Cancel"
+            >
+              <.icon name="hero-x-mark" class="w-4 h-4" />
+            </button>
+          </.form>
         </div>
       <% end %>
     </li>
@@ -692,6 +689,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
   """
   attr :movie, :map, required: true
   attr :is_selected, :boolean, required: true
+  attr :is_batch_selected, :boolean, default: false
   attr :is_editing, :boolean, required: true
   attr :edit_form, :map, default: nil
   attr :search_results, :list, default: []
@@ -699,7 +697,11 @@ defmodule MydiaWeb.ImportMediaLive.Components do
   def movie_list_item(assigns) do
     ~H"""
     <% match = @movie.match_result %>
-    <li class={"flex items-center gap-3 py-2 px-3 hover:bg-base-200/50 rounded-lg " <> if(@is_selected, do: "bg-primary/10", else: "")}>
+    <li class={[
+      "flex items-center gap-3 py-2 px-3 hover:bg-base-200/50 rounded-lg",
+      @is_selected && "bg-primary/10",
+      @is_batch_selected && "bg-info/5"
+    ]}>
       <%= if @is_editing do %>
         <%!-- Edit Form Card --%>
         <div class="card card-compact bg-base-100 border border-primary/30 shadow-lg w-full">
@@ -749,7 +751,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
                       type="text"
                       name="edit_form[title]"
                       value={@edit_form["title"]}
-                      class="input input-bordered input-sm join-item flex-1"
+                      class="input input-sm join-item flex-1"
                       phx-change="search_series"
                       phx-debounce="300"
                       autocomplete="off"
@@ -766,22 +768,6 @@ defmodule MydiaWeb.ImportMediaLive.Components do
               <input type="hidden" name="edit_form[type]" value={@edit_form["type"]} />
               <input type="hidden" name="edit_form[season]" value="" />
               <input type="hidden" name="edit_form[episodes]" value="" />
-
-              <%!-- Year Field --%>
-              <div class="form-control max-w-32">
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium">Year</span>
-                </label>
-                <input
-                  type="number"
-                  name="edit_form[year]"
-                  value={@edit_form["year"]}
-                  class="input input-bordered input-sm w-full"
-                  placeholder="2024"
-                  min="1900"
-                  max="2100"
-                />
-              </div>
 
               <%!-- Action Buttons --%>
               <div class="card-actions justify-end pt-2 border-t border-base-300">
@@ -829,11 +815,6 @@ defmodule MydiaWeb.ImportMediaLive.Components do
               </p>
             </div>
             <div class="flex items-center gap-2">
-              <%= if Map.get(match, :manually_edited, false) do %>
-                <div class="badge badge-xs badge-info gap-1">
-                  <.icon name="hero-pencil" class="w-3 h-3" /> Edited
-                </div>
-              <% end %>
               <div class={"badge badge-xs " <> confidence_badge_class(match.match_confidence)}>
                 {confidence_label(match.match_confidence)}
               </div>
@@ -854,6 +835,16 @@ defmodule MydiaWeb.ImportMediaLive.Components do
               >
                 <.icon name="hero-x-mark" class="w-3 h-3" />
               </button>
+              <%!-- Batch Edit Checkbox --%>
+              <input
+                type="checkbox"
+                class="checkbox checkbox-info checkbox-sm"
+                checked={@is_batch_selected}
+                phx-click="batch_toggle_file"
+                phx-value-index={@movie.index}
+                data-batch-index={@movie.index}
+                title="Select for batch editing"
+              />
             </div>
           </div>
         </div>
@@ -928,7 +919,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
                       type="text"
                       name="edit_form[title]"
                       value={@edit_form["title"]}
-                      class="input input-bordered input-sm join-item flex-1"
+                      class="input input-sm join-item flex-1"
                       phx-change="search_series"
                       phx-debounce="300"
                       autocomplete="off"
@@ -959,64 +950,34 @@ defmodule MydiaWeb.ImportMediaLive.Components do
 
               <%!-- Conditional Season/Episode Fields --%>
               <%= if @edit_form["type"] == "tv_show" do %>
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-2 gap-3">
                   <div class="form-control">
-                    <label class="label py-1">
-                      <span class="label-text text-xs font-medium">Season</span>
+                    <label class="input input-sm">
+                      <span class="label">Season</span>
+                      <input
+                        type="number"
+                        name="edit_form[season]"
+                        value={@edit_form["season"]}
+                        placeholder="1"
+                        min="0"
+                      />
                     </label>
-                    <input
-                      type="number"
-                      name="edit_form[season]"
-                      value={@edit_form["season"]}
-                      class="input input-bordered input-sm w-full"
-                      placeholder="1"
-                      min="0"
-                    />
                   </div>
                   <div class="form-control">
-                    <label class="label py-1">
-                      <span class="label-text text-xs font-medium">Episode(s)</span>
+                    <label class="input input-sm">
+                      <span class="label">Episode(s)</span>
+                      <input
+                        type="text"
+                        name="edit_form[episodes]"
+                        value={@edit_form["episodes"]}
+                        placeholder="1, 2"
+                      />
                     </label>
-                    <input
-                      type="text"
-                      name="edit_form[episodes]"
-                      value={@edit_form["episodes"]}
-                      class="input input-bordered input-sm w-full"
-                      placeholder="1, 2"
-                    />
-                  </div>
-                  <div class="form-control">
-                    <label class="label py-1">
-                      <span class="label-text text-xs font-medium">Year</span>
-                    </label>
-                    <input
-                      type="number"
-                      name="edit_form[year]"
-                      value={@edit_form["year"]}
-                      class="input input-bordered input-sm w-full"
-                      placeholder="2024"
-                      min="1900"
-                      max="2100"
-                    />
                   </div>
                 </div>
               <% else %>
                 <input type="hidden" name="edit_form[season]" value="" />
                 <input type="hidden" name="edit_form[episodes]" value="" />
-                <div class="form-control max-w-32">
-                  <label class="label py-1">
-                    <span class="label-text text-xs font-medium">Year</span>
-                  </label>
-                  <input
-                    type="number"
-                    name="edit_form[year]"
-                    value={@edit_form["year"]}
-                    class="input input-bordered input-sm w-full"
-                    placeholder="2024"
-                    min="1900"
-                    max="2100"
-                  />
-                </div>
               <% end %>
 
               <%!-- Action Buttons --%>
@@ -1419,6 +1380,236 @@ defmodule MydiaWeb.ImportMediaLive.Components do
                     else: "badge-accent"
                   )
                 ]}>
+                  {if(result.media_type == :tv_show or result.media_type == "tv_show",
+                    do: "TV Series",
+                    else: "Movie"
+                  )}
+                </span>
+              </div>
+            </div>
+          </button>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders a search results dropdown for series re-matching.
+  Only shows TV series results and fires the `select_series_rematch` event.
+
+  ## Attributes
+    * `:results` - List of search result maps
+  """
+  attr :results, :list, required: true
+
+  def series_search_results_dropdown(assigns) do
+    ~H"""
+    <div class="absolute z-20 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-xl max-h-56 overflow-y-auto">
+      <div class="py-1">
+        <%= for result <- @results do %>
+          <button
+            type="button"
+            class="w-full text-left px-3 py-2 hover:bg-primary/10 transition-colors flex items-center gap-3"
+            phx-click="select_series_rematch"
+            phx-value-provider_id={result.provider_id}
+            phx-value-title={result.title}
+            phx-value-year={result.year || ""}
+            phx-value-type={result.media_type}
+          >
+            <%= if result.poster_path do %>
+              <img
+                src={ImageUrl.image_url(result.poster_path, "w92")}
+                alt={result.title}
+                class="w-8 h-12 rounded object-cover shadow-sm"
+              />
+            <% else %>
+              <div class="w-8 h-8 rounded flex items-center justify-center shrink-0 bg-info/10 text-info">
+                <.icon name="hero-tv" class="w-4 h-4" />
+              </div>
+            <% end %>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-sm truncate">{result.title}</div>
+              <div class="flex items-center gap-2 text-xs text-base-content/60">
+                <%= if result.year do %>
+                  <span>{result.year}</span>
+                  <span>•</span>
+                <% end %>
+                <span class="text-info">TV Series</span>
+              </div>
+            </div>
+          </button>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  @doc """
+  Renders the batch edit toolbar that appears at the bottom of the screen.
+
+  Shows when at least one file is selected for batch editing, providing
+  a search input for series/movie, season number input, and apply button.
+
+  ## Attributes
+    * `:batch_selected_count` - Number of files selected for batch editing
+    * `:batch_search_query` - Current search text in toolbar
+    * `:batch_search_results` - Search results dropdown items
+    * `:batch_selected_match` - The chosen match (map with title, provider_id, year, type) or nil
+    * `:batch_season_value` - Current season input value
+    * `:library_type` - Library type atom (:series, :movies, :mixed, etc.)
+  """
+  attr :batch_selected_count, :integer, required: true
+  attr :batch_search_query, :string, default: ""
+  attr :batch_search_results, :list, default: []
+  attr :batch_selected_match, :map, default: nil
+  attr :batch_season_value, :string, default: ""
+  attr :library_type, :atom, default: nil
+
+  def batch_edit_toolbar(assigns) do
+    ~H"""
+    <div
+      id="batch-edit-toolbar"
+      class={[
+        "fixed bottom-0 left-0 lg:left-64 right-0 z-30 bg-base-100 border-t border-base-300 shadow-[0_-4px_12px_rgba(0,0,0,0.15)] transition-transform duration-300",
+        if(@batch_selected_count > 0, do: "translate-y-0", else: "translate-y-full")
+      ]}
+    >
+      <div class="max-w-7xl mx-auto px-4 py-3">
+        <div class="flex items-center gap-3 flex-wrap">
+          <%!-- Selected count --%>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="badge badge-info gap-1">
+              <.icon name="hero-pencil-square" class="w-3.5 h-3.5" />
+              {@batch_selected_count} selected
+            </span>
+            <button type="button" class="btn btn-xs btn-ghost" phx-click="batch_deselect_all">
+              Clear
+            </button>
+          </div>
+
+          <div class="divider divider-horizontal mx-0"></div>
+
+          <%!-- Series/Movie Search --%>
+          <div class="flex-1 min-w-48 max-w-sm relative">
+            <%= if @batch_selected_match do %>
+              <%!-- Show selected match as badge --%>
+              <div class="flex items-center gap-2">
+                <div class="badge badge-success gap-1">
+                  <.icon name="hero-check-circle" class="w-3.5 h-3.5" />
+                  {@batch_selected_match.title}
+                  <%= if @batch_selected_match.year do %>
+                    ({@batch_selected_match.year})
+                  <% end %>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-xs btn-ghost btn-circle"
+                  phx-click="batch_clear_match"
+                  title="Clear match"
+                >
+                  <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            <% else %>
+              <%!-- Search input --%>
+              <div class="join w-full">
+                <span class="join-item flex items-center px-2 bg-base-200 border border-base-300 border-r-0">
+                  <.icon name="hero-magnifying-glass" class="w-4 h-4 text-base-content/50" />
+                </span>
+                <input
+                  type="text"
+                  name="query"
+                  value={@batch_search_query}
+                  placeholder="Search series or movie..."
+                  class="input input-sm join-item flex-1"
+                  phx-keyup="batch_search"
+                  phx-debounce="300"
+                  autocomplete="off"
+                />
+              </div>
+              <%!-- Upward-opening dropdown --%>
+              <%= if @batch_search_results != [] do %>
+                <.batch_search_results_dropdown results={@batch_search_results} />
+              <% end %>
+            <% end %>
+          </div>
+
+          <%!-- Season Input (only for non-movie libraries) --%>
+          <%= if @library_type not in [:movies] do %>
+            <label class="input input-sm w-20">
+              <span class="text-base-content/50 text-xs shrink-0 mr-1">S</span>
+              <input
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                name="value"
+                value={@batch_season_value}
+                placeholder="#"
+                phx-keyup="batch_update_season"
+                phx-debounce="300"
+                class="grow min-w-0"
+              />
+            </label>
+          <% end %>
+
+          <%!-- Apply Button --%>
+          <button
+            type="button"
+            class="btn btn-sm btn-info shrink-0"
+            phx-click="batch_apply"
+            disabled={@batch_selected_match == nil and String.trim(@batch_season_value) == ""}
+          >
+            <.icon name="hero-check" class="w-4 h-4" /> Apply to {@batch_selected_count}
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :results, :list, required: true
+
+  defp batch_search_results_dropdown(assigns) do
+    ~H"""
+    <div class="absolute z-30 w-full bottom-full mb-1 bg-base-100 border border-base-300 rounded-lg shadow-xl max-h-56 overflow-y-auto">
+      <div class="py-1">
+        <%= for result <- @results do %>
+          <button
+            type="button"
+            class="w-full text-left px-3 py-2 hover:bg-info/10 transition-colors flex items-center gap-3"
+            phx-click="batch_select_search_result"
+            phx-value-provider_id={result.provider_id}
+            phx-value-title={result.title}
+            phx-value-year={result.year || ""}
+            phx-value-type={result.media_type}
+          >
+            <div class={[
+              "w-8 h-8 rounded flex items-center justify-center shrink-0",
+              if(result.media_type == :tv_show or result.media_type == "tv_show",
+                do: "bg-info/10 text-info",
+                else: "bg-accent/10 text-accent"
+              )
+            ]}>
+              <%= if result.media_type == :tv_show or result.media_type == "tv_show" do %>
+                <.icon name="hero-tv" class="w-4 h-4" />
+              <% else %>
+                <.icon name="hero-film" class="w-4 h-4" />
+              <% end %>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-sm truncate">{result.title}</div>
+              <div class="flex items-center gap-2 text-xs text-base-content/60">
+                <%= if result.year do %>
+                  <span>{result.year}</span>
+                  <span>•</span>
+                <% end %>
+                <span class={
+                  if(result.media_type == :tv_show or result.media_type == "tv_show",
+                    do: "text-info",
+                    else: "text-accent"
+                  )
+                }>
                   {if(result.media_type == :tv_show or result.media_type == "tv_show",
                     do: "TV Series",
                     else: "Movie"

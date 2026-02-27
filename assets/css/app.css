@@ -80,6 +80,13 @@
   border-left: 4px solid oklch(var(--p)) !important;
 }
 
+/* Fix DaisyUI list grid spanning when 4+ children exist in a row.
+   list-col-grow as 3rd child creates 3 explicit columns, but a 4th child
+   (e.g. actions) creates an implicit column that col-span-full won't cover. */
+.list .list-row:has(.list-col-grow:nth-child(3)):has(> :nth-child(4):not(.list-col-wrap)) {
+  --list-grid-cols: minmax(0, auto) minmax(0, auto) 1fr minmax(0, auto);
+}
+
 /* Non-selected list items get alternating backgrounds */
 .media-list-item:not([data-selected="true"]):nth-child(odd) {
   background-color: oklch(var(--b1));

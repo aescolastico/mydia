@@ -443,6 +443,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     PlexOAuth,
     DockNav,
     AddDirectUrl,
+    BatchSelect,
   },
   // Preserve Alpine.js state and selection across LiveView DOM patches
   dom: {
@@ -493,6 +494,40 @@ window.addEventListener("phx:download_export", (e) => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
+
+// Shift+click range selection for batch edit checkboxes
+const BatchSelect = {
+  mounted() {
+    this.lastClicked = null;
+
+    this.el.addEventListener("click", (e) => {
+      const checkbox = e.target.closest("input[data-batch-index]");
+      if (!checkbox) return;
+
+      if (e.shiftKey && this.lastClicked && this.lastClicked !== checkbox) {
+        e.preventDefault();
+
+        const all = [...this.el.querySelectorAll("input[data-batch-index]")];
+        const from = all.indexOf(this.lastClicked);
+        const to = all.indexOf(checkbox);
+        if (from === -1 || to === -1) return;
+
+        const [start, end] = from < to ? [from, to] : [to, from];
+        const indices = all.slice(start, end + 1).map(el => el.dataset.batchIndex);
+
+        this.pushEvent("batch_select_range", { indices: indices.join(",") });
+      }
+
+      this.lastClicked = checkbox;
+    });
+  },
+
+  updated() {
+    if (this.lastClicked && !this.el.contains(this.lastClicked)) {
+      this.lastClicked = null;
+    }
+  }
+};
 
 // Hook for adding direct URL
 const AddDirectUrl = {

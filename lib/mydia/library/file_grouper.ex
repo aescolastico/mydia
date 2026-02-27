@@ -229,7 +229,8 @@ defmodule Mydia.Library.FileGrouper do
       )
 
     # Get or create season entry
-    season_entry =
+    %SeasonState{} =
+      season_entry =
       Map.get(
         series_entry.seasons,
         season_num,

@@ -347,6 +347,37 @@ defmodule MydiaWeb.FeatureCase do
   Waits for any of the given texts to appear on the page.
   Returns true if any text is found, false after all attempts exhausted.
   """
+  @doc """
+  Pushes a LiveView event by injecting a temporary hidden button with phx-click
+  attributes and clicking it. More reliable than direct JS API calls because
+  Phoenix LiveView automatically binds phx-click handlers on new DOM elements.
+  """
+  def push_liveview_event(session, event, params) do
+    param_attrs =
+      params
+      |> Enum.map(fn {k, v} -> "el.setAttribute('phx-value-#{k}', '#{v}');" end)
+      |> Enum.join("\n")
+
+    Wallaby.Browser.execute_script(
+      session,
+      """
+      var el = document.createElement('button');
+      el.setAttribute('phx-click', '#{event}');
+      #{param_attrs}
+      el.style.display = 'none';
+      var container = document.querySelector('[data-phx-main]');
+      container.appendChild(el);
+      el.click();
+      setTimeout(function() { el.remove(); }, 100);
+      """,
+      []
+    )
+
+    :timer.sleep(2000)
+
+    session
+  end
+
   def wait_for_any_text(session, texts, attempts \\ 20) when is_list(texts) do
     if attempts <= 0 do
       false

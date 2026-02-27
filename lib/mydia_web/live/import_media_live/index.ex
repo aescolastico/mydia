@@ -52,10 +52,19 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     |> assign(:edit_form, nil)
     |> assign(:search_query, "")
     |> assign(:search_results, [])
+    |> assign(:editing_series_key, nil)
+    |> assign(:series_search_results, [])
     |> assign(:path_suggestions, [])
     |> assign(:show_path_suggestions, false)
     |> assign(:show_type_filtered, false)
     |> assign(:show_sample_filtered, false)
+    |> assign(:collapsed_seasons, MapSet.new())
+    # Batch edit state (ephemeral, not persisted)
+    |> assign(:batch_selected, MapSet.new())
+    |> assign(:batch_search_query, "")
+    |> assign(:batch_search_results, [])
+    |> assign(:batch_selected_match, nil)
+    |> assign(:batch_season_value, "")
     # Session recovery prompts
     |> assign(:show_resume_prompt, false)
     |> assign(:pending_session, nil)
@@ -204,6 +213,229 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     {:noreply, socket}
   end
 
+  ## Batch Edit Event Handlers
+
+  def handle_event("batch_select_range", %{"indices" => indices_str}, socket) do
+    indices =
+      indices_str
+      |> String.split(",")
+      |> Enum.map(&String.to_integer/1)
+      |> MapSet.new()
+
+    batch_selected = MapSet.union(socket.assigns.batch_selected, indices)
+    {:noreply, assign(socket, :batch_selected, batch_selected)}
+  end
+
+  def handle_event("batch_toggle_file", %{"index" => index_str}, socket) do
+    index = String.to_integer(index_str)
+    batch_selected = socket.assigns.batch_selected
+
+    batch_selected =
+      if MapSet.member?(batch_selected, index) do
+        MapSet.delete(batch_selected, index)
+      else
+        MapSet.put(batch_selected, index)
+      end
+
+    {:noreply, assign(socket, :batch_selected, batch_selected)}
+  end
+
+  def handle_event("batch_toggle_season", %{"indices" => indices_str}, socket) do
+    indices =
+      indices_str
+      |> String.split(",")
+      |> Enum.map(&String.to_integer/1)
+      |> MapSet.new()
+
+    batch_selected = socket.assigns.batch_selected
+    all_selected = MapSet.subset?(indices, batch_selected)
+
+    batch_selected =
+      if all_selected do
+        MapSet.difference(batch_selected, indices)
+      else
+        MapSet.union(batch_selected, indices)
+      end
+
+    {:noreply, assign(socket, :batch_selected, batch_selected)}
+  end
+
+  def handle_event("batch_select_all", _params, socket) do
+    matched_indices =
+      socket.assigns.matched_files
+      |> Enum.with_index()
+      |> Enum.filter(fn {file, _idx} -> file.match_result != nil end)
+      |> Enum.map(fn {_file, idx} -> idx end)
+      |> MapSet.new()
+
+    {:noreply, assign(socket, :batch_selected, matched_indices)}
+  end
+
+  def handle_event("batch_deselect_all", _params, socket) do
+    {:noreply, assign(socket, :batch_selected, MapSet.new())}
+  end
+
+  def handle_event("batch_search", %{"value" => query}, socket) do
+    if String.trim(query) != "" && String.length(query) >= 2 do
+      results =
+        search_metadata(
+          query,
+          socket.assigns.metadata_config,
+          socket.assigns.selected_library_path
+        )
+
+      {:noreply,
+       socket
+       |> assign(:batch_search_query, query)
+       |> assign(:batch_search_results, results)}
+    else
+      {:noreply,
+       socket
+       |> assign(:batch_search_query, query)
+       |> assign(:batch_search_results, [])}
+    end
+  end
+
+  def handle_event("batch_select_search_result", params, socket) do
+    match = %{
+      title: params["title"],
+      provider_id: params["provider_id"],
+      year: if(params["year"] != "", do: params["year"], else: nil),
+      type: params["type"]
+    }
+
+    {:noreply,
+     socket
+     |> assign(:batch_selected_match, match)
+     |> assign(:batch_search_query, match.title)
+     |> assign(:batch_search_results, [])}
+  end
+
+  def handle_event("batch_clear_match", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:batch_selected_match, nil)
+     |> assign(:batch_search_query, "")
+     |> assign(:batch_search_results, [])}
+  end
+
+  def handle_event("batch_update_season", %{"value" => value}, socket) do
+    {:noreply, assign(socket, :batch_season_value, value)}
+  end
+
+  def handle_event("batch_apply", _params, socket) do
+    batch_selected = socket.assigns.batch_selected
+    batch_match = socket.assigns.batch_selected_match
+    batch_season = socket.assigns.batch_season_value
+
+    has_match_change = batch_match != nil
+    has_season_change = String.trim(batch_season) != ""
+
+    if not has_match_change and not has_season_change do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "No changes to apply. Select a series/movie or enter a season number."
+       )}
+    else
+      updated_matched_files =
+        socket.assigns.matched_files
+        |> Enum.with_index()
+        |> Enum.map(fn {file, idx} ->
+          if MapSet.member?(batch_selected, idx) and file.match_result != nil do
+            apply_batch_changes(file, batch_match, batch_season)
+          else
+            file
+          end
+        end)
+
+      grouped_files =
+        FileGrouper.group_files(normalize_matched_files_types(updated_matched_files))
+
+      count = MapSet.size(batch_selected)
+
+      socket =
+        socket
+        |> assign(:matched_files, updated_matched_files)
+        |> assign(:grouped_files, grouped_files)
+        |> assign(:batch_selected, MapSet.new())
+        |> assign(:batch_search_query, "")
+        |> assign(:batch_search_results, [])
+        |> assign(:batch_selected_match, nil)
+        |> assign(:batch_season_value, "")
+        |> assign(:collapsed_seasons, compute_collapsed_seasons(grouped_files))
+        |> persist_session()
+        |> put_flash(:info, "Batch edit applied to #{count} file(s)")
+
+      {:noreply, socket}
+    end
+  end
+
+  defp apply_batch_changes(file, batch_match, batch_season) do
+    match = file.match_result
+
+    # Apply match change (series/movie)
+    match =
+      if batch_match != nil do
+        provider_type =
+          case batch_match.type do
+            "tv_show" -> :tmdb
+            "movie" -> :tmdb
+            _ -> Map.get(match, :provider_type, :tmdb)
+          end
+
+        match
+        |> Map.merge(%{
+          title: batch_match.title,
+          provider_id: batch_match.provider_id,
+          provider_type: provider_type,
+          manually_edited: true,
+          year: batch_match.year || Map.get(match, :year)
+        })
+        |> then(fn m ->
+          # Update parsed_info type based on match type
+          parsed_info = Map.get(m, :parsed_info, %{})
+
+          new_type =
+            case batch_match.type do
+              "tv_show" -> :tv_show
+              "movie" -> :movie
+              _ -> Map.get(parsed_info, :type)
+            end
+
+          Map.put(m, :parsed_info, Map.put(parsed_info, :type, new_type))
+        end)
+      else
+        match
+      end
+
+    # Apply season change (only for TV shows)
+    match =
+      if String.trim(batch_season) != "" do
+        parsed_info = Map.get(match, :parsed_info, %{})
+        type = Map.get(parsed_info, :type)
+
+        if type in [:tv_show, "tv_show"] do
+          season_num =
+            case Integer.parse(batch_season) do
+              {n, _} -> n
+              :error -> Map.get(parsed_info, :season)
+            end
+
+          match
+          |> Map.put(:parsed_info, Map.put(parsed_info, :season, season_num))
+          |> Map.put(:manually_edited, true)
+        else
+          match
+        end
+      else
+        match
+      end
+
+    %{file | match_result: match}
+  end
+
   def handle_event("start_import", _params, socket) do
     with :ok <- Authorization.authorize_import_media(socket) do
       if MapSet.size(socket.assigns.selected_files) > 0 do
@@ -262,6 +494,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
       |> assign(:import_results, %{success: 0, failed: 0, skipped: 0})
       |> assign(:detailed_results, [])
       |> assign(:show_type_filtered, false)
+      |> assign(:collapsed_seasons, MapSet.new())
 
     {:noreply, socket}
   end
@@ -314,6 +547,17 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     {:noreply, assign(socket, :show_sample_filtered, !socket.assigns.show_sample_filtered)}
   end
 
+  def handle_event("toggle_season_collapse", %{"season-id" => season_id}, socket) do
+    collapsed = socket.assigns.collapsed_seasons
+
+    collapsed =
+      if MapSet.member?(collapsed, season_id),
+        do: MapSet.delete(collapsed, season_id),
+        else: MapSet.put(collapsed, season_id)
+
+    {:noreply, assign(socket, :collapsed_seasons, collapsed)}
+  end
+
   def handle_event("edit_file", %{"index" => index_str}, socket) do
     index = String.to_integer(index_str)
     matched_file = Enum.at(socket.assigns.matched_files, index)
@@ -329,7 +573,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
           %{
             "title" => match.title,
             "provider_id" => match.provider_id,
-            "year" => to_string(match.year || ""),
             "season" => to_string(parsed_info.season || ""),
             "episodes" => Enum.join(parsed_info.episodes || [], ", "),
             "type" => to_string(parsed_info.type)
@@ -341,7 +584,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
           %{
             "title" => filename,
             "provider_id" => "",
-            "year" => "",
             "season" => "",
             "episodes" => "",
             "type" => "movie"
@@ -355,7 +597,9 @@ defmodule MydiaWeb.ImportMediaLive.Index do
        |> assign(:editing_file_index, index)
        |> assign(:edit_form, edit_form)
        |> assign(:search_query, search_query)
-       |> assign(:search_results, [])}
+       |> assign(:search_results, [])
+       |> assign(:editing_series_key, nil)
+       |> assign(:series_search_results, [])}
     else
       {:noreply, socket}
     end
@@ -368,6 +612,98 @@ defmodule MydiaWeb.ImportMediaLive.Index do
      |> assign(:edit_form, nil)
      |> assign(:search_query, "")
      |> assign(:search_results, [])}
+  end
+
+  def handle_event("edit_series", %{"series-key" => key}, socket) do
+    # Find the series title from grouped_files to pre-populate search
+    series =
+      Enum.find(socket.assigns.grouped_files.series, fn s ->
+        FileGrouper.series_key(s) == key
+      end)
+
+    search_query = if series, do: series.title, else: ""
+
+    {:noreply,
+     socket
+     |> assign(:editing_series_key, key)
+     |> assign(:series_search_results, [])
+     # Cancel any active episode edit
+     |> assign(:editing_file_index, nil)
+     |> assign(:edit_form, nil)
+     |> assign(:search_query, search_query)
+     |> assign(:search_results, [])}
+  end
+
+  def handle_event("cancel_series_edit", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:editing_series_key, nil)
+     |> assign(:series_search_results, [])}
+  end
+
+  def handle_event("search_for_series_rematch", %{"query" => query}, socket) do
+    if String.trim(query) != "" && String.length(query) >= 2 do
+      config = socket.assigns.metadata_config
+
+      tv_results =
+        case Metadata.search(config, query, media_type: :tv_show) do
+          {:ok, results} -> Enum.map(results, &Map.put(&1, :media_type, "tv_show"))
+          _ -> []
+        end
+
+      {:noreply, assign(socket, :series_search_results, Enum.take(tv_results, 10))}
+    else
+      {:noreply, assign(socket, :series_search_results, [])}
+    end
+  end
+
+  def handle_event("select_series_rematch", params, socket) do
+    changeset = validate_search_result(params)
+    target_key = socket.assigns.editing_series_key
+
+    if changeset.valid? && target_key do
+      validated_data = Ecto.Changeset.apply_changes(changeset)
+
+      # Find all episode indices belonging to this series
+      episode_indices = find_episode_indices_for_series(socket.assigns.matched_files, target_key)
+
+      # Update each episode's match_result with the new series info, preserving parsed_info
+      updated_matched_files =
+        Enum.reduce(episode_indices, socket.assigns.matched_files, fn idx, acc ->
+          matched_file = Enum.at(acc, idx)
+          parsed_info = matched_file.match_result.parsed_info
+
+          updated_match =
+            Map.merge(matched_file.match_result, %{
+              title: validated_data.title,
+              provider_id: validated_data.provider_id,
+              provider_type: :tmdb,
+              year: validated_data.year,
+              manually_edited: true,
+              parsed_info: normalize_parsed_info_type(parsed_info)
+            })
+
+          List.replace_at(acc, idx, %{matched_file | match_result: updated_match})
+        end)
+
+      grouped_files =
+        FileGrouper.group_files(normalize_matched_files_types(updated_matched_files))
+
+      count = length(episode_indices)
+
+      socket =
+        socket
+        |> assign(:matched_files, updated_matched_files)
+        |> assign(:grouped_files, grouped_files)
+        |> assign(:editing_series_key, nil)
+        |> assign(:series_search_results, [])
+        |> persist_session()
+        |> put_flash(:info, "Updated #{count} episode(s) to \"#{validated_data.title}\"")
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("save_edit", %{"edit_form" => form_params}, socket) do
@@ -389,7 +725,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
             Map.merge(matched_file.match_result, %{
               title: validated_data.title,
               provider_id: validated_data.provider_id,
-              year: validated_data.year,
               manually_edited: true,
               parsed_info:
                 Map.merge(matched_file.match_result.parsed_info, %{
@@ -405,7 +740,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
               title: validated_data.title,
               provider_id: validated_data.provider_id,
               provider_type: :tmdb,
-              year: validated_data.year,
               match_confidence: 1.0,
               manually_edited: true,
               metadata: %{},
@@ -424,7 +758,8 @@ defmodule MydiaWeb.ImportMediaLive.Index do
           List.replace_at(socket.assigns.matched_files, index, updated_matched_file)
 
         # Re-group files to update the hierarchical view
-        grouped_files = FileGrouper.group_files(updated_matched_files)
+        grouped_files =
+          FileGrouper.group_files(normalize_matched_files_types(updated_matched_files))
 
         # Recalculate scan stats if we just matched an unmatched file
         scan_stats =
@@ -486,8 +821,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
         socket.assigns.edit_form
         |> Map.put("title", validated_data.title)
         |> Map.put("provider_id", validated_data.provider_id)
-        |> Map.put("year", validated_data.year)
-        |> Map.put("type", validated_data.type)
+        |> Map.put("type", to_string(validated_data.type))
 
       {:noreply,
        socket
@@ -495,6 +829,63 @@ defmodule MydiaWeb.ImportMediaLive.Index do
        |> assign(:search_results, [])
        |> assign(:search_query, validated_data.title)
        |> persist_session()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event(
+        "update_episode_inline",
+        %{"index" => index_str, "field" => field, "value" => value},
+        socket
+      ) do
+    index = String.to_integer(index_str)
+    matched_file = Enum.at(socket.assigns.matched_files, index)
+
+    if matched_file && matched_file.match_result do
+      match = matched_file.match_result
+      parsed_info = match.parsed_info
+
+      case parse_inline_field(field, value) do
+        {:ok, parsed_value} ->
+          current_value =
+            case field do
+              "season" -> parsed_info.season
+              "episodes" -> parsed_info.episodes
+            end
+
+          if parsed_value == current_value do
+            {:noreply, socket}
+          else
+            updated_parsed_info =
+              case field do
+                "season" -> %{parsed_info | season: parsed_value}
+                "episodes" -> %{parsed_info | episodes: parsed_value}
+              end
+
+            updated_match =
+              Map.merge(match, %{parsed_info: updated_parsed_info, manually_edited: true})
+
+            updated_matched_file = %{matched_file | match_result: updated_match}
+
+            updated_matched_files =
+              List.replace_at(socket.assigns.matched_files, index, updated_matched_file)
+
+            grouped_files =
+              FileGrouper.group_files(normalize_matched_files_types(updated_matched_files))
+
+            socket =
+              socket
+              |> assign(:matched_files, updated_matched_files)
+              |> assign(:grouped_files, grouped_files)
+              |> persist_session()
+
+            {:noreply, socket}
+          end
+
+        :error ->
+          {:noreply, socket}
+      end
     else
       {:noreply, socket}
     end
@@ -512,7 +903,8 @@ defmodule MydiaWeb.ImportMediaLive.Index do
         List.replace_at(socket.assigns.matched_files, index, updated_matched_file)
 
       # Re-group files
-      grouped_files = FileGrouper.group_files(updated_matched_files)
+      grouped_files =
+        FileGrouper.group_files(normalize_matched_files_types(updated_matched_files))
 
       # Remove from selected files if it was selected
       selected_files = MapSet.delete(socket.assigns.selected_files, index)
@@ -644,27 +1036,72 @@ defmodule MydiaWeb.ImportMediaLive.Index do
      })}
   end
 
+  ## Season Collapse Helpers
+
+  @high_confidence_threshold 0.8
+
+  defp compute_collapsed_seasons(grouped_files) do
+    (grouped_files[:series] || [])
+    |> Enum.flat_map(fn series ->
+      sk = FileGrouper.series_key(series)
+
+      (series.seasons || [])
+      |> Enum.filter(fn season ->
+        eps = season.episodes || []
+
+        eps != [] and
+          Enum.all?(eps, fn ep ->
+            ep.match_result != nil and
+              ep.match_result.match_confidence >= @high_confidence_threshold
+          end)
+      end)
+      |> Enum.map(&season_collapse_id(sk, &1.season_number))
+    end)
+    |> MapSet.new()
+  end
+
+  defp season_collapse_id(series_key, season_number), do: "#{series_key}-S#{season_number}"
+
   ## Private Helpers
+
+  defp find_episode_indices_for_series(matched_files, target_key) do
+    matched_files
+    |> Enum.with_index()
+    |> Enum.filter(fn {mf, _idx} ->
+      mf.match_result != nil &&
+        mf.match_result.parsed_info != nil &&
+        to_string(mf.match_result.parsed_info.type) == "tv_show" &&
+        FileGrouper.series_key(mf.match_result) == target_key
+    end)
+    |> Enum.map(fn {_mf, idx} -> idx end)
+  end
+
+  # Session-restored data may store parsed_info.type as a string ("tv_show")
+  # but FileGrouper expects atoms (:tv_show). These helpers normalize types.
+  defp normalize_parsed_info_type(%{type: type} = parsed_info) when is_binary(type) do
+    %{parsed_info | type: String.to_existing_atom(type)}
+  end
+
+  defp normalize_parsed_info_type(parsed_info), do: parsed_info
+
+  defp normalize_matched_files_types(matched_files) do
+    Enum.map(matched_files, fn
+      %{match_result: %{parsed_info: parsed_info} = match} = mf when parsed_info != nil ->
+        %{mf | match_result: %{match | parsed_info: normalize_parsed_info_type(parsed_info)}}
+
+      mf ->
+        mf
+    end)
+  end
 
   defp perform_search(query, socket) do
     if String.trim(query) != "" && String.length(query) >= 2 do
-      # Search both movies and TV shows
-      config = socket.assigns.metadata_config
-
-      movie_results =
-        case Metadata.search(config, query, media_type: :movie) do
-          {:ok, results} -> Enum.map(results, &Map.put(&1, :media_type, "movie"))
-          _ -> []
-        end
-
-      tv_results =
-        case Metadata.search(config, query, media_type: :tv_show) do
-          {:ok, results} -> Enum.map(results, &Map.put(&1, :media_type, "tv"))
-          _ -> []
-        end
-
-      # Combine and limit to first 10 results
-      search_results = (movie_results ++ tv_results) |> Enum.take(10)
+      search_results =
+        search_metadata(
+          query,
+          socket.assigns.metadata_config,
+          socket.assigns.selected_library_path
+        )
 
       {:noreply,
        socket
@@ -676,6 +1113,37 @@ defmodule MydiaWeb.ImportMediaLive.Index do
        |> assign(:search_query, query)
        |> assign(:search_results, [])}
     end
+  end
+
+  # Shared metadata search helper used by both individual and batch search
+  defp search_metadata(query, config, library_path) do
+    library_type = library_path && library_path.type
+
+    # Only search media types compatible with the library
+    search_movie? = library_type not in [:series]
+    search_tv? = library_type not in [:movies]
+
+    movie_results =
+      if search_movie? do
+        case Metadata.search(config, query, media_type: :movie) do
+          {:ok, results} -> Enum.map(results, &Map.put(&1, :media_type, "movie"))
+          _ -> []
+        end
+      else
+        []
+      end
+
+    tv_results =
+      if search_tv? do
+        case Metadata.search(config, query, media_type: :tv_show) do
+          {:ok, results} -> Enum.map(results, &Map.put(&1, :media_type, "tv_show"))
+          _ -> []
+        end
+      else
+        []
+      end
+
+    (movie_results ++ tv_results) |> Enum.take(10)
   end
 
   ## Async Handlers
@@ -876,6 +1344,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
       |> assign(:step, :review)
       |> assign(:matched_files, regular_files)
       |> assign(:grouped_files, grouped_files)
+      |> assign(:collapsed_seasons, compute_collapsed_seasons(grouped_files))
       |> assign(:selected_files, auto_selected)
       |> assign(:scan_stats, %{
         total: length(matched_files),
@@ -1142,9 +1611,21 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     |> assign(:edit_form, nil)
     |> assign(:search_query, "")
     |> assign(:search_results, [])
+    |> assign(:editing_series_key, nil)
+    |> assign(:series_search_results, [])
     |> assign(:path_suggestions, [])
     |> assign(:show_path_suggestions, false)
     |> assign(:show_type_filtered, false)
+    |> assign(:show_sample_filtered, false)
+    # Batch edit state (ephemeral, not persisted)
+    |> assign(:batch_selected, MapSet.new())
+    |> assign(:batch_search_query, "")
+    |> assign(:batch_search_results, [])
+    |> assign(:batch_selected_match, nil)
+    |> assign(:batch_season_value, "")
+    |> then(fn socket ->
+      assign(socket, :collapsed_seasons, compute_collapsed_seasons(socket.assigns.grouped_files))
+    end)
   end
 
   defp persist_session(socket) do
@@ -1535,14 +2016,13 @@ defmodule MydiaWeb.ImportMediaLive.Index do
     types = %{
       title: :string,
       provider_id: :string,
-      year: :integer,
       season: :integer,
       episodes: {:array, :integer},
       type: :string
     }
 
     {%{}, types}
-    |> Ecto.Changeset.cast(params, [:title, :provider_id, :year, :season, :type])
+    |> Ecto.Changeset.cast(params, [:title, :provider_id, :season, :type])
     |> cast_episode_list(params["episodes"])
     |> Ecto.Changeset.validate_required([:title, :type])
     |> normalize_media_type()
@@ -1625,6 +2105,19 @@ defmodule MydiaWeb.ImportMediaLive.Index do
   end
 
   defp parse_episode_list(value) when is_list(value), do: {:ok, value}
+
+  defp parse_inline_field("season", value), do: parse_season_value(value)
+  defp parse_inline_field("episodes", value), do: parse_episode_list(value)
+  defp parse_inline_field(_, _), do: :error
+
+  defp parse_season_value(""), do: {:ok, nil}
+
+  defp parse_season_value(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {int, ""} when int >= 0 -> {:ok, int}
+      _ -> :error
+    end
+  end
 
   # Calculates the relative path and library_path_id for an absolute file path
   # Returns {library_path_id, relative_path}
