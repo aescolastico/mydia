@@ -86,6 +86,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:quality_filter, nil)
      |> assign(:sort_by, :quality)
      |> assign(:results_empty?, false)
+     |> assign(:indexer_errors, [])
      # Auto search state
      |> assign(:auto_searching, false)
      |> assign(:auto_searching_season, nil)
@@ -1004,6 +1005,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:searching, false)
      |> assign(:results_empty?, false)
      |> assign(:raw_search_results, [])
+     |> assign(:indexer_errors, [])
      |> assign(:download_error, nil)
      |> stream(:search_results, [], reset: true)}
   end
@@ -1569,7 +1571,7 @@ defmodule MydiaWeb.MediaLive.Show do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_async(:search, {:ok, {:ok, results}}, socket) do
+  def handle_async(:search, {:ok, {:ok, results, indexer_errors}}, socket) do
     start_time = System.monotonic_time(:millisecond)
 
     media_item = socket.assigns.media_item
@@ -1595,7 +1597,7 @@ defmodule MydiaWeb.MediaLive.Show do
     Logger.info(
       "Search completed: query=\"#{search_query}\", " <>
         "results=#{length(results)}, filtered=#{length(filtered_results)}, " <>
-        "processing_time=#{duration}ms"
+        "indexer_errors=#{length(indexer_errors)}, processing_time=#{duration}ms"
     )
 
     {:noreply,
@@ -1603,6 +1605,7 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:searching, false)
      |> assign(:results_empty?, sorted_results == [])
      |> assign(:raw_search_results, results)
+     |> assign(:indexer_errors, indexer_errors)
      |> stream(:search_results, prepared_results, reset: true)}
   end
 

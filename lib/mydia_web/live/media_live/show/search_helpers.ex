@@ -42,7 +42,10 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
       deduplicate: true
     ]
 
-    Indexers.search_all(query, opts)
+    {:ok, %{results: results, indexer_errors: indexer_errors}} =
+      Indexers.search_all(query, opts)
+
+    {:ok, results, indexer_errors}
   end
 
   def apply_search_filters(socket) do

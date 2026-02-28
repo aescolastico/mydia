@@ -183,7 +183,16 @@ defmodule Mydia.Jobs.MovieSearch do
     min_seeders = get_min_seeders()
 
     case Indexers.search_all(query, min_seeders: min_seeders) do
-      {:ok, []} ->
+      {:ok, %{results: [], indexer_errors: indexer_errors}} ->
+        if indexer_errors != [] do
+          Logger.warning("Movie search failed due to indexer errors",
+            media_item_id: movie.id,
+            title: movie.title,
+            query: query,
+            errors: inspect(indexer_errors)
+          )
+        end
+
         Logger.warning("No results found for movie",
           media_item_id: movie.id,
           title: movie.title,
@@ -203,7 +212,7 @@ defmodule Mydia.Jobs.MovieSearch do
            downloads_initiated: 0
          }}
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} results for movie",
           media_item_id: movie.id,
           title: movie.title
@@ -337,7 +346,16 @@ defmodule Mydia.Jobs.MovieSearch do
     min_seeders = get_min_seeders()
 
     case Indexers.search_all(query, min_seeders: min_seeders) do
-      {:ok, []} ->
+      {:ok, %{results: [], indexer_errors: indexer_errors}} ->
+        if indexer_errors != [] do
+          Logger.warning("Movie search failed due to indexer errors",
+            media_item_id: movie.id,
+            title: movie.title,
+            query: query,
+            errors: inspect(indexer_errors)
+          )
+        end
+
         Logger.warning("No results found for movie",
           media_item_id: movie.id,
           title: movie.title,
@@ -355,7 +373,7 @@ defmodule Mydia.Jobs.MovieSearch do
 
         :no_results
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} results for movie",
           media_item_id: movie.id,
           title: movie.title

@@ -69,6 +69,7 @@ defmodule MydiaWeb.SearchLive.Index do
      |> assign(:library_type_options, @library_type_options)
      |> assign(:sort_by, :quality)
      |> assign(:results_empty?, false)
+     |> assign(:indexer_errors, [])
      |> assign(:show_disambiguation_modal, false)
      |> assign(:metadata_matches, [])
      |> assign(:metadata_media_type, nil)
@@ -588,7 +589,7 @@ defmodule MydiaWeb.SearchLive.Index do
   end
 
   @impl true
-  def handle_async(:search, {:ok, {:ok, results}}, socket) do
+  def handle_async(:search, {:ok, {:ok, results, indexer_errors}}, socket) do
     start_time = System.monotonic_time(:millisecond)
 
     filtered_results = filter_results(results, socket.assigns)
@@ -599,7 +600,7 @@ defmodule MydiaWeb.SearchLive.Index do
     Logger.info(
       "Search completed: query=\"#{socket.assigns.search_query}\", " <>
         "results=#{length(results)}, filtered=#{length(filtered_results)}, " <>
-        "processing_time=#{duration}ms"
+        "indexer_errors=#{length(indexer_errors)}, processing_time=#{duration}ms"
     )
 
     # Store results in a map for quick lookup by download_url
@@ -618,6 +619,7 @@ defmodule MydiaWeb.SearchLive.Index do
      socket
      |> assign(:searching, false)
      |> assign(:results_empty?, sorted_results == [])
+     |> assign(:indexer_errors, indexer_errors)
      |> assign(:search_results_map, results_map)
      |> stream(:search_results, sorted_results, reset: true)}
   end
@@ -884,7 +886,10 @@ defmodule MydiaWeb.SearchLive.Index do
       indexer_ids: indexer_ids
     ]
 
-    Indexers.search_all(query, opts)
+    {:ok, %{results: results, indexer_errors: indexer_errors}} =
+      Indexers.search_all(query, opts)
+
+    {:ok, results, indexer_errors}
   end
 
   defp apply_filters(socket) do

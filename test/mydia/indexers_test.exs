@@ -87,7 +87,7 @@ defmodule Mydia.IndexersTest do
       # If runtime indexers exist, they will return results even when all DB indexers are disabled
       # In that case, we just verify the function succeeds but may return results
       # Otherwise, we expect an empty list
-      {:ok, results} = Indexers.search_all("test query")
+      {:ok, %{results: results}} = Indexers.search_all("test query")
 
       if Enum.empty?(enabled_runtime_indexers) do
         assert results == [], "Expected no results when all indexers are disabled"
@@ -101,7 +101,7 @@ defmodule Mydia.IndexersTest do
 
     test "searches all enabled indexers concurrently", %{indexer1: _, indexer2: _} do
       # Search across all enabled indexers (which are now mocked)
-      assert {:ok, results} = Indexers.search_all("ubuntu")
+      assert {:ok, %{results: results}} = Indexers.search_all("ubuntu")
       assert is_list(results)
       # Should have results from both mock indexers
       assert length(results) > 0
@@ -117,7 +117,7 @@ defmodule Mydia.IndexersTest do
       )
 
       # Test with minimum 10 seeders - should only return the high seeder result
-      assert {:ok, filtered} = Indexers.search_all("test", min_seeders: 10)
+      assert {:ok, %{results: filtered}} = Indexers.search_all("test", min_seeders: 10)
       assert is_list(filtered)
       # With min_seeders: 10, we should only get results with >= 10 seeders
       assert Enum.all?(filtered, fn result -> result.seeders >= 10 end)
@@ -132,7 +132,7 @@ defmodule Mydia.IndexersTest do
 
       IndexerMock.mock_prowlarr_search(bypass1, results: many_results)
 
-      assert {:ok, results} = Indexers.search_all("popular query", max_results: 5)
+      assert {:ok, %{results: results}} = Indexers.search_all("popular query", max_results: 5)
       assert length(results) <= 5
     end
 
@@ -140,26 +140,28 @@ defmodule Mydia.IndexersTest do
       # This test would verify deduplication works
       # In practice, you'd need to ensure the same torrent from multiple
       # indexers only appears once
-      assert {:ok, results} = Indexers.search_all("test", deduplicate: true)
+      assert {:ok, %{results: results}} = Indexers.search_all("test", deduplicate: true)
       assert is_list(results)
     end
 
     test "skips deduplication when deduplicate: false" do
-      assert {:ok, results} = Indexers.search_all("test", deduplicate: false)
+      assert {:ok, %{results: results}} = Indexers.search_all("test", deduplicate: false)
       assert is_list(results)
     end
 
     test "handles individual indexer failures gracefully" do
       # Even if one indexer fails, others should still return results
       # The function should not raise or return an error tuple
-      assert {:ok, results} = Indexers.search_all("test query")
+      assert {:ok, %{results: results, indexer_errors: _errors}} =
+               Indexers.search_all("test query")
+
       assert is_list(results)
     end
 
     test "ranks results by quality and seeders" do
       # Results should be sorted with highest quality/seeders first
       # This is tested indirectly through the ranking implementation
-      assert {:ok, results} = Indexers.search_all("test")
+      assert {:ok, %{results: results}} = Indexers.search_all("test")
       assert is_list(results)
     end
   end
@@ -372,7 +374,7 @@ defmodule Mydia.IndexersTest do
     test "completes within reasonable time for multiple indexers" do
       # Concurrent execution should be faster than sequential
       start_time = System.monotonic_time(:millisecond)
-      {:ok, _results} = Indexers.search_all("test query")
+      {:ok, %{results: _results}} = Indexers.search_all("test query")
       duration = System.monotonic_time(:millisecond) - start_time
 
       # With mocked responses, should complete quickly (under 5 seconds)
@@ -380,16 +382,16 @@ defmodule Mydia.IndexersTest do
     end
 
     test "handles empty query string" do
-      assert {:ok, _results} = Indexers.search_all("")
+      assert {:ok, %{results: _results}} = Indexers.search_all("")
     end
 
     test "handles very long query strings" do
       long_query = String.duplicate("word ", 100)
-      assert {:ok, _results} = Indexers.search_all(long_query)
+      assert {:ok, %{results: _results}} = Indexers.search_all(long_query)
     end
 
     test "handles special characters in query" do
-      assert {:ok, _results} = Indexers.search_all("Movie's \"Name\" (2024)")
+      assert {:ok, %{results: _results}} = Indexers.search_all("Movie's \"Name\" (2024)")
     end
   end
 

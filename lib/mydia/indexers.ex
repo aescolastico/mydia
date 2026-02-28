@@ -207,11 +207,11 @@ defmodule Mydia.Indexers do
 
     if all_indexers == [] do
       Logger.info("No enabled indexers found for query: #{query}")
-      {:ok, []}
+      {:ok, %{results: [], indexer_errors: []}}
     else
       start_time = System.monotonic_time(:millisecond)
 
-      results =
+      {all_results, indexer_errors} =
         all_indexers
         |> Task.async_stream(
           fn config -> search_with_metrics(config, query, opts) end,
@@ -219,14 +219,23 @@ defmodule Mydia.Indexers do
           max_concurrency: get_search_concurrency(),
           on_timeout: :kill_task
         )
-        |> Enum.flat_map(fn
-          {:ok, {_metrics, results}} ->
-            results
+        |> Enum.reduce({[], []}, fn
+          {:ok, {metrics, results}}, {acc_results, acc_errors} ->
+            if metrics.success do
+              {results ++ acc_results, acc_errors}
+            else
+              error = %{indexer: metrics.indexer, error: metrics.error}
+              {acc_results, [error | acc_errors]}
+            end
 
-          {:exit, reason} ->
+          {:exit, reason}, {acc_results, acc_errors} ->
             Logger.error("Indexer search task crashed: #{inspect(reason)}")
-            []
+            error = %{indexer: "unknown", error: "Task crashed: #{inspect(reason)}"}
+            {acc_results, [error | acc_errors]}
         end)
+
+      results =
+        all_results
         |> filter_by_seeders(min_seeders)
         |> then(fn results ->
           if should_deduplicate, do: deduplicate_results(results), else: results
@@ -238,10 +247,11 @@ defmodule Mydia.Indexers do
 
       Logger.info(
         "Search completed: query=#{query}, indexers=#{length(all_indexers)}, " <>
-          "cardigann=#{length(cardigann_configs)}, results=#{length(results)}, time=#{total_time}ms"
+          "cardigann=#{length(cardigann_configs)}, results=#{length(results)}, " <>
+          "errors=#{length(indexer_errors)}, time=#{total_time}ms"
       )
 
-      {:ok, results}
+      {:ok, %{results: results, indexer_errors: Enum.reverse(indexer_errors)}}
     end
   end
 
@@ -382,24 +392,25 @@ defmodule Mydia.Indexers do
     result =
       case search(config, query, opts) do
         {:ok, results} ->
-          {true, results}
+          {true, results, nil}
 
         {:error, error} ->
           Logger.warning("Indexer search failed for #{config.name}: #{inspect(error)}")
 
-          {false, []}
+          {false, [], format_indexer_error(error)}
       end
 
     end_time = System.monotonic_time(:millisecond)
     duration = end_time - start_time
 
-    {success, results} = result
+    {success, results, error_message} = result
 
     metrics = %{
       indexer: config.name,
       success: success,
       duration_ms: duration,
-      result_count: length(results)
+      result_count: length(results),
+      error: error_message
     }
 
     Logger.debug(
@@ -409,6 +420,10 @@ defmodule Mydia.Indexers do
 
     {metrics, results}
   end
+
+  defp format_indexer_error(%{message: message}) when is_binary(message), do: message
+  defp format_indexer_error(error) when is_binary(error), do: error
+  defp format_indexer_error(error), do: inspect(error)
 
   defp filter_by_seeders(results, min_seeders) when min_seeders > 0 do
     Enum.filter(results, fn result -> result.seeders >= min_seeders end)

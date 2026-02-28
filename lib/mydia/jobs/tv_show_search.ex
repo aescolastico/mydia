@@ -587,7 +587,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     new_count = search_count + 1
 
     case Indexers.search_all(query, min_seeders: get_min_seeders()) do
-      {:ok, []} ->
+      {:ok, %{results: []}} ->
         Logger.warning("No season pack results found, falling back to individual episodes",
           media_item_id: media_item.id,
           title: media_item.title,
@@ -611,7 +611,7 @@ defmodule Mydia.Jobs.TVShowSearch do
         # Fall back to searching individual episodes
         search_individual_episodes(episodes, new_count, args)
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} season pack results",
           media_item_id: media_item.id,
           title: media_item.title,
@@ -918,7 +918,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     )
 
     case Indexers.search_all(query, min_seeders: get_min_seeders()) do
-      {:ok, []} ->
+      {:ok, %{results: []}} ->
         Logger.warning("No results found for episode",
           episode_id: episode.id,
           show: episode.media_item.title,
@@ -939,7 +939,7 @@ defmodule Mydia.Jobs.TVShowSearch do
 
         :ok
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} results for episode",
           episode_id: episode.id,
           show: episode.media_item.title,
@@ -1583,7 +1583,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     new_count = search_count + 1
 
     case Indexers.search_all(query, min_seeders: get_min_seeders()) do
-      {:ok, []} ->
+      {:ok, %{results: []}} ->
         Logger.warning("No season pack results found, falling back to individual episodes",
           media_item_id: media_item.id,
           title: media_item.title,
@@ -1604,7 +1604,7 @@ defmodule Mydia.Jobs.TVShowSearch do
         # Fall back to searching individual episodes
         search_individual_episodes_with_stats(episodes, new_count, args)
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} season pack results",
           media_item_id: media_item.id,
           title: media_item.title,
@@ -1765,7 +1765,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     )
 
     case Indexers.search_all(query, min_seeders: get_min_seeders()) do
-      {:ok, []} ->
+      {:ok, %{results: []}} ->
         Logger.warning("No results found for episode",
           episode_id: episode.id,
           show: episode.media_item.title,
@@ -1783,7 +1783,7 @@ defmodule Mydia.Jobs.TVShowSearch do
 
         {:ok, 0}
 
-      {:ok, results} ->
+      {:ok, %{results: results}} ->
         Logger.info("Found #{length(results)} results for episode",
           episode_id: episode.id,
           show: episode.media_item.title,

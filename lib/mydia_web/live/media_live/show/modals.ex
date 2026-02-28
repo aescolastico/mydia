@@ -465,6 +465,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   attr :downloading_release_url, :string, default: nil
   attr :download_error, :any, default: nil
   attr :results_empty?, :boolean, required: true
+  attr :indexer_errors, :list, default: []
   attr :streams, :map, required: true
   attr :quality_filter, :string, default: nil
   attr :min_seeders, :integer, default: 0
@@ -566,6 +567,22 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             <div class="alert alert-error mx-4 mt-3 mb-1">
               <.icon name="hero-exclamation-circle" class="w-5 h-5 shrink-0" />
               <span class="text-sm">{@download_error}</span>
+            </div>
+          <% end %>
+          <%!-- Indexer Error Warning --%>
+          <%= if @indexer_errors != [] && !@searching do %>
+            <div class="alert alert-warning mx-4 mt-3 mb-1">
+              <.icon name="hero-exclamation-triangle" class="w-5 h-5 shrink-0" />
+              <div class="flex-1">
+                <div class="text-sm font-medium">
+                  {length(@indexer_errors)} indexer(s) failed
+                </div>
+                <ul class="text-xs opacity-80 mt-1">
+                  <%= for error <- @indexer_errors do %>
+                    <li>{error.indexer}: {error.error}</li>
+                  <% end %>
+                </ul>
+              </div>
             </div>
           <% end %>
           <%!-- Loading State --%>
