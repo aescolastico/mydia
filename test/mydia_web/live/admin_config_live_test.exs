@@ -442,28 +442,34 @@ defmodule MydiaWeb.AdminConfigLiveTest do
 
       # Click the "Test Connection" button - this is the exact flow that was crashing
       # with KeyError: key :use_ssl not found (issue #28)
-      html =
-        view
-        |> element(~s{button[phx-click="test_indexer_connection"]})
-        |> render_click()
+      view
+      |> element(~s{button[phx-click="test_indexer_connection"]})
+      |> render_click()
 
+      # Re-render to ensure flash messages are fully applied
+      html = render(view)
       assert html =~ "Connection successful"
       assert html =~ "1.25.0"
     end
 
     test "test connection shows error for unreachable prowlarr server", %{view: view} do
+      # Use a Bypass server that is immediately shut down for a reliable connection failure
+      bypass = Bypass.open()
+      Bypass.down(bypass)
+
       # Open the new indexer modal
       view
       |> element(~s{button[phx-click="new_indexer"]})
       |> render_click()
 
-      # Fill in the form with a Prowlarr URL that doesn't exist
+      # Fill in the form pointing to the downed Bypass server
+      # Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues in CI
       view
       |> form("#indexer-form",
         indexer_config: %{
           name: "Unreachable Prowlarr",
           type: "prowlarr",
-          base_url: "http://localhost:19999",
+          base_url: "http://127.0.0.1:#{bypass.port}",
           api_key: "test-api-key",
           enabled: "true",
           priority: "1"
@@ -472,11 +478,12 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       |> render_change()
 
       # Click test connection - should show an error, NOT crash with KeyError
-      html =
-        view
-        |> element(~s{button[phx-click="test_indexer_connection"]})
-        |> render_click()
+      view
+      |> element(~s{button[phx-click="test_indexer_connection"]})
+      |> render_click()
 
+      # Re-render to ensure flash messages are fully applied
+      html = render(view)
       assert html =~ "Connection failed"
     end
   end
