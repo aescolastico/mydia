@@ -101,6 +101,31 @@ defmodule Mydia.Indexers do
     end
   end
 
+  def search(%{type: type, id: id, rate_limit: rate_limit} = config, query, opts)
+      when is_atom(type) and is_binary(id) do
+    # Cardigann configs with id and rate_limit go through the rate limiter
+    case RateLimiter.check_rate_limit(id, rate_limit) do
+      :ok ->
+        with {:ok, adapter} <- Adapter.Registry.get_adapter(type) do
+          result = adapter.search(config, query, opts)
+
+          case result do
+            {:ok, _results} -> RateLimiter.record_request(id)
+            {:error, _} -> :ok
+          end
+
+          result
+        end
+
+      {:error, :rate_limited, retry_after} ->
+        Logger.warning(
+          "Rate limit exceeded for Cardigann indexer #{config[:name]}, retry after #{retry_after}ms"
+        )
+
+        {:error, Adapter.Error.rate_limited("Rate limit exceeded, retry after #{retry_after}ms")}
+    end
+  end
+
   def search(%{type: type} = config, query, opts) when is_atom(type) do
     with {:ok, adapter} <- Adapter.Registry.get_adapter(type) do
       adapter.search(config, query, opts)
@@ -191,7 +216,7 @@ defmodule Mydia.Indexers do
         |> Task.async_stream(
           fn config -> search_with_metrics(config, query, opts) end,
           timeout: :infinity,
-          max_concurrency: System.schedulers_online() * 2,
+          max_concurrency: get_search_concurrency(),
           on_timeout: :kill_task
         )
         |> Enum.flat_map(fn
@@ -336,8 +361,19 @@ defmodule Mydia.Indexers do
       name: definition.name,
       indexer_id: definition.indexer_id,
       enabled: definition.enabled,
-      user_settings: definition.config || %{}
+      user_settings: definition.config || %{},
+      rate_limit: get_default_cardigann_rate_limit()
     }
+  end
+
+  defp get_default_cardigann_rate_limit do
+    Application.get_env(:mydia, :indexer_search, [])
+    |> Keyword.get(:default_cardigann_rate_limit, 3)
+  end
+
+  defp get_search_concurrency do
+    Application.get_env(:mydia, :indexer_search, [])
+    |> Keyword.get(:max_concurrency, 2)
   end
 
   defp search_with_metrics(config, query, opts) do

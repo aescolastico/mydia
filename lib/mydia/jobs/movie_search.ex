@@ -61,7 +61,12 @@ defmodule Mydia.Jobs.MovieSearch do
 
       :ok
     else
-      results = Enum.map(movies, &search_movie(&1, args))
+      results =
+        Enum.map(movies, fn movie ->
+          result = search_movie(movie, args)
+          apply_search_delay()
+          result
+        end)
 
       successful = Enum.count(results, &(&1 == :ok))
       failed = Enum.count(results, &match?({:error, _}, &1))
@@ -539,6 +544,21 @@ defmodule Mydia.Jobs.MovieSearch do
         )
 
         {:error, reason}
+    end
+  end
+
+  ## Private Functions - Search Delay
+
+  defp get_search_delay_ms do
+    Application.get_env(:mydia, :episode_monitor, [])
+    |> Keyword.get(:search_delay_ms, 0)
+  end
+
+  defp apply_search_delay do
+    delay = get_search_delay_ms()
+
+    if delay > 0 do
+      Process.sleep(delay)
     end
   end
 

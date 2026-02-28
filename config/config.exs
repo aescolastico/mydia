@@ -270,10 +270,10 @@ config :mydia, Oban,
      crontab: [
        # Monitor downloads every 2 minutes
        {"*/2 * * * *", Mydia.Jobs.DownloadMonitor},
-       # Search for monitored movies every 30 minutes
-       {"*/30 * * * *", Mydia.Jobs.MovieSearch, args: %{"mode" => "all_monitored"}},
-       # Search for monitored TV shows every 15 minutes
-       {"*/15 * * * *", Mydia.Jobs.TVShowSearch, args: %{"mode" => "all_monitored"}},
+       # Search for monitored movies every hour
+       {"0 * * * *", Mydia.Jobs.MovieSearch, args: %{"mode" => "all_monitored"}},
+       # Search for monitored TV shows every 30 minutes
+       {"*/30 * * * *", Mydia.Jobs.TVShowSearch, args: %{"mode" => "all_monitored"}},
        # Clean up old events every Sunday at 2 AM
        {"0 2 * * 0", Mydia.Jobs.EventCleanup},
        # Sync Cardigann definitions daily at 3 AM
@@ -327,7 +327,7 @@ config :mydia,
 # Prevents excessive API usage that exhausts indexer quotas
 config :mydia, :episode_monitor,
   # Max total searches across all shows per execution (prevents quota exhaustion)
-  max_searches_per_run: 50,
+  max_searches_per_run: 200,
   # Max searches for a single show per execution (ensures fair distribution)
   max_searches_per_show: 10,
   # Max searches for a single season per execution (limits season pack fallback impact)
@@ -337,8 +337,9 @@ config :mydia, :episode_monitor,
   # Set to true to search for specials, or search manually via UI
   monitor_special_episodes: false,
   # Delay between searches in milliseconds (prevents rapid-fire API calls)
-  # Set to 0 to disable delays, 250-500ms recommended for respectful API usage
-  search_delay_ms: 250
+  # Also used by movie search to throttle between movie searches
+  # With 200 items × 3s delay = ~10 min per run, well within the 30-min interval
+  search_delay_ms: 3000
 
 # Auto-search seeder requirements
 # Controls the minimum seeder count for automatic searches
@@ -348,6 +349,16 @@ config :mydia, :auto_search,
   # Set to 3-5 for torrent-only setups to filter out dead torrents
   # This setting only affects automatic background searches, not manual searches
   min_seeders: 0
+
+# Indexer search throttling
+# Controls concurrency and rate limiting for indexer queries
+config :mydia, :indexer_search,
+  # Max concurrent indexer requests per search query
+  # Lower values reduce pressure on indexer sites
+  max_concurrency: 2,
+  # Default rate limit for Cardigann indexers (requests per minute per indexer)
+  # Cardigann indexers hit sites directly, so conservative limits prevent bans
+  default_cardigann_rate_limit: 3
 
 # Feature flags
 config :mydia, :features,
