@@ -183,16 +183,23 @@ defmodule Mydia.Indexers.CardigannResultParser do
         base_url \\ "",
         category_mappings \\ []
       ) do
-    with {:ok, document} <- parse_html_document(html_body),
+    # Convert encoding if needed (e.g., ISO-8859-1 → UTF-8)
+    converted_body = maybe_convert_encoding(html_body, definition.encoding)
+
+    with {:ok, document} <- parse_html_document(converted_body),
          {:ok, rows} <- extract_rows(document, definition.search, template_context) do
       Logger.info("[#{indexer_name}] Extracted #{length(rows)} rows from HTML")
 
       case parse_row_fields(rows, definition.search, document, template_context) do
         {:ok, parsed_rows} ->
-          Logger.info("[#{indexer_name}] Parsed #{length(parsed_rows)} rows successfully")
+          # Apply andmatch row-level filter if any field has it
+          filtered_rows =
+            apply_andmatch_filter(parsed_rows, definition.search, template_context)
+
+          Logger.info("[#{indexer_name}] Parsed #{length(filtered_rows)} rows successfully")
 
           results =
-            transform_to_search_results(parsed_rows, indexer_name, base_url, category_mappings)
+            transform_to_search_results(filtered_rows, indexer_name, base_url, category_mappings)
 
           Logger.info("[#{indexer_name}] Transformed to #{length(results)} search results")
           {:ok, results}
@@ -235,7 +242,7 @@ defmodule Mydia.Indexers.CardigannResultParser do
         category_mappings \\ []
       ) do
     with {:ok, json} <- Jason.decode(json_body),
-         {:ok, rows} <- extract_json_rows(json, definition.search) do
+         {:ok, rows} <- extract_json_rows(json, definition.search, template_context) do
       Logger.info("[#{indexer_name}] Extracted #{length(rows)} rows from JSON")
 
       case parse_json_row_fields(rows, definition.search, template_context) do
@@ -292,7 +299,7 @@ defmodule Mydia.Indexers.CardigannResultParser do
         category_mappings \\ []
       )
       when is_map(json) do
-    with {:ok, rows} <- extract_json_rows(json, definition.search),
+    with {:ok, rows} <- extract_json_rows(json, definition.search, template_context),
          {:ok, parsed_rows} <- parse_json_row_fields(rows, definition.search, template_context) do
       results =
         transform_to_search_results(parsed_rows, indexer_name, base_url, category_mappings)
@@ -319,7 +326,25 @@ defmodule Mydia.Indexers.CardigannResultParser do
     rendered_selector = render_selector_template(selector, template_context)
     Logger.info("Extracting rows with selector: #{inspect(rendered_selector)}")
     # Use enhanced find that supports :contains() pseudo-selector
-    rows = floki_find_with_contains(document, rendered_selector)
+    rows = floki_find_enhanced(document, rendered_selector)
+
+    # Browsers auto-insert <tbody> but Floki doesn't. If selector uses tbody and
+    # yields 0 results, retry without tbody to handle raw HTML tables.
+    rows =
+      if rows == [] and String.contains?(rendered_selector, "tbody") do
+        fallback_selector = String.replace(rendered_selector, "> tbody >", ">")
+        fallback_rows = floki_find_enhanced(document, fallback_selector)
+
+        if fallback_rows != [] do
+          Logger.info("Retried without tbody, found #{length(fallback_rows)} rows")
+          fallback_rows
+        else
+          rows
+        end
+      else
+        rows
+      end
+
     Logger.info("Found #{length(rows)} rows before filtering")
 
     # Debug: if no rows found, log some HTML structure info
@@ -352,7 +377,21 @@ defmodule Mydia.Indexers.CardigannResultParser do
           Enum.drop(rows, skip_count)
       end
 
-    {:ok, rows_after_skip}
+    # Apply 'count' to limit number of rows (e.g., skip footer/summary rows)
+    rows_limited =
+      case Map.get(row_config, :count) do
+        nil ->
+          rows_after_skip
+
+        count when is_integer(count) and count > 0 ->
+          Logger.info("Limiting to #{count} rows")
+          Enum.take(rows_after_skip, count)
+
+        _ ->
+          rows_after_skip
+      end
+
+    {:ok, rows_limited}
   end
 
   defp extract_rows(_document, _search_config, _template_context) do
@@ -374,60 +413,170 @@ defmodule Mydia.Indexers.CardigannResultParser do
 
   defp render_selector_template(selector, _template_context), do: selector
 
-  # Enhanced Floki.find that supports :contains() pseudo-selector
-  # Floki doesn't support :contains(), so we handle it manually
-  defp floki_find_with_contains(document, selector) do
-    # Handle comma-separated selectors (OR)
-    if String.contains?(selector, ",") do
-      selector
-      |> String.split(",")
+  # Enhanced Floki.find supporting :contains(), :has(), and :not() pseudo-selectors
+  # that Floki doesn't natively handle.
+  defp floki_find_enhanced(document, selector) do
+    # Handle comma-separated selectors (OR) - but be careful not to split
+    # inside pseudo-selector parentheses
+    parts = split_selector_on_commas(selector)
+
+    if length(parts) > 1 do
+      parts
       |> Enum.map(&String.trim/1)
-      |> Enum.flat_map(&floki_find_with_contains(document, &1))
+      |> Enum.flat_map(&floki_find_enhanced(document, &1))
       |> Enum.uniq()
     else
       floki_find_single_selector(document, selector)
     end
   end
 
+  # Split selector on commas that are not inside parentheses
+  defp split_selector_on_commas(selector) do
+    {parts, current, _depth} =
+      selector
+      |> String.graphemes()
+      |> Enum.reduce({[], [], 0}, fn char, {parts, current, depth} ->
+        cond do
+          char == "(" ->
+            {parts, [char | current], depth + 1}
+
+          char == ")" ->
+            {parts, [char | current], max(depth - 1, 0)}
+
+          char == "," and depth == 0 ->
+            {[current |> Enum.reverse() |> Enum.join() | parts], [], 0}
+
+          true ->
+            {parts, [char | current], depth}
+        end
+      end)
+
+    [current |> Enum.reverse() |> Enum.join() | parts] |> Enum.reverse()
+  end
+
+  # Regex matching :contains(), :has(), or :not() pseudo-selectors (supports both quote styles)
+  @pseudo_regex ~r/:(?:contains|has|not)\(\s*(?:['"]([^'"]*?)['"]|([^)]*?))\s*\)/
+
   defp floki_find_single_selector(document, selector) do
-    # Check if selector contains :contains()
-    case Regex.run(~r/:contains\(['"]([^'"]+)['"]\)/, selector) do
-      [full_match, text_to_find] ->
-        # Split selector at :contains() and process
-        [before_contains | rest] = String.split(selector, full_match, parts: 2)
-        after_contains = Enum.join(rest, "")
+    case Regex.run(@pseudo_regex, selector) do
+      nil ->
+        # No pseudo-selectors, use normal Floki.find
+        Floki.find(document, selector)
 
-        # Find elements matching the part before :contains
-        before_selector = String.trim(before_contains)
+      [full_match | _captures] ->
+        # Determine which pseudo-selector we hit
+        {pseudo_type, inner_arg} = parse_pseudo_match(full_match)
 
+        # Split selector around the pseudo-selector
+        [before_pseudo | rest] = String.split(selector, full_match, parts: 2)
+        after_pseudo = Enum.join(rest, "")
+
+        before_selector = String.trim(before_pseudo)
+
+        # Find candidate elements
         elements =
           if before_selector == "" do
-            # :contains at the start - search all elements
             [document]
           else
             Floki.find(document, before_selector)
           end
 
-        # Filter to only elements containing the text
-        matching_elements =
-          Enum.filter(elements, fn el ->
-            text = Floki.text(el)
-            String.contains?(text, text_to_find)
-          end)
+        # Apply the pseudo-selector filter
+        matching_elements = apply_pseudo_filter(elements, pseudo_type, inner_arg)
 
-        # If there's more selector after :contains, apply it
-        if String.trim(after_contains) == "" do
+        # If there's more selector after the pseudo, continue processing
+        if String.trim(after_pseudo) == "" do
           matching_elements
         else
-          # Apply the rest of the selector within matching elements
+          remaining = String.trim(after_pseudo)
+
+          # If remaining starts with a space, it's a descendant selector
           Enum.flat_map(matching_elements, fn el ->
-            floki_find_with_contains(el, String.trim(after_contains))
+            floki_find_enhanced(el, remaining)
           end)
         end
+    end
+  end
 
-      nil ->
-        # No :contains(), use normal Floki.find
-        Floki.find(document, selector)
+  defp parse_pseudo_match(match) do
+    cond do
+      String.starts_with?(match, ":contains(") ->
+        inner = extract_pseudo_inner(match, ":contains(")
+        {:contains, inner}
+
+      String.starts_with?(match, ":has(") ->
+        inner = extract_pseudo_inner(match, ":has(")
+        {:has, inner}
+
+      String.starts_with?(match, ":not(") ->
+        inner = extract_pseudo_inner(match, ":not(")
+        {:not, inner}
+
+      true ->
+        {:unknown, ""}
+    end
+  end
+
+  defp extract_pseudo_inner(match, prefix) do
+    match
+    |> String.trim_leading(prefix)
+    |> String.trim_trailing(")")
+    |> String.trim()
+    |> String.trim("'")
+    |> String.trim("\"")
+  end
+
+  defp apply_pseudo_filter(elements, :contains, text) do
+    Enum.filter(elements, fn el ->
+      el_text = Floki.text(el)
+      String.contains?(el_text, text)
+    end)
+  end
+
+  defp apply_pseudo_filter(elements, :has, child_selector) do
+    Enum.filter(elements, fn el ->
+      Floki.find(el, child_selector) != []
+    end)
+  end
+
+  defp apply_pseudo_filter(elements, :not, not_selector) do
+    Enum.filter(elements, fn el ->
+      not floki_node_matches?(el, not_selector)
+    end)
+  end
+
+  defp apply_pseudo_filter(elements, _, _), do: elements
+
+  # Applies andmatch row-level filtering: drops rows where the title doesn't contain
+  # all search keywords. Only active when any field has an "andmatch" filter.
+  defp apply_andmatch_filter(rows, %{fields: fields}, template_context) do
+    has_andmatch =
+      Enum.any?(fields, fn {_name, config} ->
+        filters = Map.get(config, :filters) || Map.get(config, "filters", [])
+
+        Enum.any?(filters, fn f ->
+          name = Map.get(f, :name) || Map.get(f, "name")
+          to_string(name) == "andmatch"
+        end)
+      end)
+
+    if has_andmatch do
+      keywords = template_context[:keywords] || ""
+      words = keywords |> String.downcase() |> String.split(~r/\s+/, trim: true)
+
+      if words == [] do
+        rows
+      else
+        Enum.filter(rows, fn row ->
+          title =
+            (Map.get(row, "title") || Map.get(row, :title) || "")
+            |> String.downcase()
+
+          Enum.all?(words, &String.contains?(title, &1))
+        end)
+      end
+    else
+      rows
     end
   end
 
@@ -507,9 +656,12 @@ defmodule Mydia.Indexers.CardigannResultParser do
     # Handle compound title fields (title_default, title_optional -> title)
     field_values = combine_compound_fields(field_values)
 
-    # Only return row if we got at least title and download
+    # Only return row if we got at least title and download/infohash
     has_title = Map.has_key?(field_values, "title") || Map.has_key?(field_values, :title)
-    has_download = Map.has_key?(field_values, "download") || Map.has_key?(field_values, :download)
+
+    has_download =
+      Map.has_key?(field_values, "download") || Map.has_key?(field_values, :download) ||
+        Map.has_key?(field_values, "infohash") || Map.has_key?(field_values, :infohash)
 
     if has_title && has_download do
       field_values
@@ -645,8 +797,17 @@ defmodule Mydia.Indexers.CardigannResultParser do
     selector = Map.get(field_config, :selector) || Map.get(field_config, "selector")
     attribute = Map.get(field_config, :attribute) || Map.get(field_config, "attribute")
     filters = Map.get(field_config, :filters) || Map.get(field_config, "filters", [])
+    remove = Map.get(field_config, :remove) || Map.get(field_config, "remove")
 
-    with {:ok, raw_value} <- extract_raw_value(row, selector, attribute) do
+    # If remove is configured, strip matching child elements before extraction
+    effective_row =
+      if remove do
+        remove_elements(row, remove)
+      else
+        row
+      end
+
+    with {:ok, raw_value} <- extract_raw_value(effective_row, selector, attribute) do
       apply_filters(raw_value, filters, template_context)
     end
   end
@@ -655,6 +816,46 @@ defmodule Mydia.Indexers.CardigannResultParser do
   defp extract_field_value(_row, _field_config, _template_context) do
     {:error, :invalid_field_config}
   end
+
+  # Removes child elements matching the given selector(s) from the HTML tree.
+  # The `remove` config can be a single selector string or a list of selectors.
+  defp remove_elements(row, remove_selector) when is_binary(remove_selector) do
+    Floki.traverse_and_update(row, fn
+      {tag, attrs, children} = node ->
+        # Check if this node matches the remove selector
+        if floki_node_matches?(node, remove_selector) do
+          nil
+        else
+          {tag, attrs, children}
+        end
+
+      other ->
+        other
+    end)
+  end
+
+  defp remove_elements(row, remove_selectors) when is_list(remove_selectors) do
+    Enum.reduce(remove_selectors, row, fn selector, acc ->
+      remove_elements(acc, to_string(selector))
+    end)
+  end
+
+  defp remove_elements(row, _), do: row
+
+  # Checks if a single HTML node matches a CSS selector by wrapping it in
+  # a temporary parent and running Floki.find
+  defp floki_node_matches?({_tag, _attrs, _children} = node, selector) do
+    wrapper = [{"div", [], [node]}]
+
+    case Floki.find(wrapper, "div > #{selector}") do
+      [] -> false
+      _ -> true
+    end
+  rescue
+    _ -> false
+  end
+
+  defp floki_node_matches?(_, _), do: false
 
   defp extract_raw_value(row, selector, nil) do
     # Extract text content
@@ -794,9 +995,16 @@ defmodule Mydia.Indexers.CardigannResultParser do
 
   # JSON Parsing Functions
 
-  defp extract_json_rows(json, %{rows: row_config}) do
-    selector = Map.get(row_config, :selector) || Map.get(row_config, "selector")
+  defp extract_json_rows(json, search_config, template_context) do
+    do_extract_json_rows(json, search_config, template_context)
+  end
+
+  defp do_extract_json_rows(json, %{rows: row_config}, template_context) do
+    raw_selector = Map.get(row_config, :selector) || Map.get(row_config, "selector")
     attribute = Map.get(row_config, :attribute) || Map.get(row_config, "attribute")
+
+    # Render Go templates in the row selector
+    selector = render_selector_template(raw_selector, template_context)
 
     case navigate_json_path(json, selector) do
       {:ok, rows} when is_list(rows) ->
@@ -822,7 +1030,7 @@ defmodule Mydia.Indexers.CardigannResultParser do
     end
   end
 
-  defp extract_json_rows(_json, _search_config) do
+  defp do_extract_json_rows(_json, _search_config, _template_context) do
     {:error, Error.search_failed("No row selector configured for JSON")}
   end
 
@@ -867,14 +1075,67 @@ defmodule Mydia.Indexers.CardigannResultParser do
   end
 
   defp navigate_json_path_parts(map, [key | rest]) when is_map(map) do
-    case Map.get(map, key) do
-      nil -> {:error, :path_not_found}
-      value -> navigate_json_path_parts(value, rest)
+    # Handle bracket notation: key[N] for array indexing or ["key-with-dashes"]
+    case parse_bracket_access(key) do
+      {:index, base_key, index} ->
+        # Access map key then array index: e.g., "items[0]"
+        with value when not is_nil(value) <- Map.get(map, base_key),
+             true <- is_list(value),
+             item when not is_nil(item) <- Enum.at(value, index) do
+          navigate_json_path_parts(item, rest)
+        else
+          _ -> {:error, :path_not_found}
+        end
+
+      {:quoted_key, quoted_key} ->
+        # Bracket notation with quoted key: $["key-with-dashes"]
+        case Map.get(map, quoted_key) do
+          nil -> {:error, :path_not_found}
+          value -> navigate_json_path_parts(value, rest)
+        end
+
+      :plain ->
+        case Map.get(map, key) do
+          nil -> {:error, :path_not_found}
+          value -> navigate_json_path_parts(value, rest)
+        end
+    end
+  end
+
+  defp navigate_json_path_parts(list, [key | rest]) when is_list(list) do
+    # Direct array index access
+    case Integer.parse(key) do
+      {index, ""} ->
+        case Enum.at(list, index) do
+          nil -> {:error, :path_not_found}
+          value -> navigate_json_path_parts(value, rest)
+        end
+
+      _ ->
+        {:error, :invalid_path}
     end
   end
 
   defp navigate_json_path_parts(_value, _path) do
     {:error, :invalid_path}
+  end
+
+  # Parses bracket access notation in JSON path keys
+  defp parse_bracket_access(key) do
+    cond do
+      # key[N] pattern - array index on a map value
+      Regex.match?(~r/^(.+)\[(\d+)\]$/, key) ->
+        [_, base_key, idx_str] = Regex.run(~r/^(.+)\[(\d+)\]$/, key)
+        {:index, base_key, String.to_integer(idx_str)}
+
+      # ["key"] or ['key'] pattern - quoted key access
+      Regex.match?(~r/^\[["'](.+?)["']\]$/, key) ->
+        [_, quoted_key] = Regex.run(~r/^\[["'](.+?)["']\]$/, key)
+        {:quoted_key, quoted_key}
+
+      true ->
+        :plain
+    end
   end
 
   defp parse_json_row_fields(rows, %{fields: fields}, template_context) do
@@ -927,9 +1188,12 @@ defmodule Mydia.Indexers.CardigannResultParser do
     # Handle compound fields (title_default + title_optional → title)
     field_values = combine_compound_fields(field_values)
 
-    # Only return row if we got at least title and download
+    # Only return row if we got at least title and download/infohash
     has_title = Map.has_key?(field_values, :title) || Map.has_key?(field_values, "title")
-    has_download = Map.has_key?(field_values, :download) || Map.has_key?(field_values, "download")
+
+    has_download =
+      Map.has_key?(field_values, :download) || Map.has_key?(field_values, "download") ||
+        Map.has_key?(field_values, :infohash) || Map.has_key?(field_values, "infohash")
 
     if has_title && has_download do
       field_values
@@ -1015,7 +1279,7 @@ defmodule Mydia.Indexers.CardigannResultParser do
     raw_size = get_field(row, "size", "0")
 
     with {:ok, title} <- get_required_field(row, "title"),
-         {:ok, download_url} <- get_required_field(row, "download"),
+         {:ok, download_url} <- get_download_or_magnet(row, title),
          size <- parse_size_with_title_fallback(raw_size, title),
          seeders <- parse_integer(get_field(row, "seeders", "0")),
          leechers <- parse_integer(get_field(row, "leechers", "0")) do
@@ -1112,6 +1376,25 @@ defmodule Mydia.Indexers.CardigannResultParser do
             # Ensure base URL doesn't end with a slash for clean joining
             base_trimmed = String.trim_trailing(base, "/")
             "#{base_trimmed}/#{url}"
+        end
+    end
+  end
+
+  # Gets download URL from 'download' field, or constructs magnet link from 'infohash'
+  defp get_download_or_magnet(row, title) do
+    case get_required_field(row, "download") do
+      {:ok, url} ->
+        {:ok, url}
+
+      {:error, _} ->
+        # Try infohash - construct magnet link
+        case get_required_field(row, "infohash") do
+          {:ok, hash} when byte_size(hash) >= 32 ->
+            encoded_title = URI.encode(title)
+            {:ok, "magnet:?xt=urn:btih:#{hash}&dn=#{encoded_title}"}
+
+          _ ->
+            {:error, :no_download_or_infohash}
         end
     end
   end
@@ -1339,4 +1622,35 @@ defmodule Mydia.Indexers.CardigannResultParser do
   end
 
   defp detect_response_type(_), do: :html
+
+  # Encoding conversion - handles non-UTF-8 responses from some indexers
+  defp maybe_convert_encoding(body, encoding) when is_binary(body) and is_binary(encoding) do
+    normalized = encoding |> String.upcase() |> String.replace("-", "")
+
+    if normalized in ["UTF8", ""] do
+      body
+    else
+      convert_from_latin1(body, normalized)
+    end
+  end
+
+  defp maybe_convert_encoding(body, _encoding), do: body
+
+  # Convert ISO-8859-1/Windows-1252 to UTF-8 (covers most non-UTF-8 indexers)
+  defp convert_from_latin1(body, encoding)
+       when encoding in ["ISO88591", "LATIN1", "WINDOWS1252", "CP1252"] do
+    body
+    |> :binary.bin_to_list()
+    |> Enum.map(fn byte -> <<byte::utf8>> end)
+    |> IO.iodata_to_binary()
+  rescue
+    _ ->
+      Logger.warning("Failed to convert encoding #{encoding}, using raw body")
+      body
+  end
+
+  defp convert_from_latin1(body, encoding) do
+    Logger.debug("Unknown encoding #{encoding}, using raw body")
+    body
+  end
 end

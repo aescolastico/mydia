@@ -53,6 +53,7 @@ defmodule Mydia.Indexers.CardigannFilters do
     regexp dateparse timeparse timeago reltime fuzzytime
     tolower toupper urlencode htmldecode querystring
     validfilename diacritics jsonjoinarray strdump hexdump
+    andmatch
   )
 
   @doc """
@@ -225,6 +226,11 @@ defmodule Mydia.Indexers.CardigannFilters do
     end
   end
 
+  # andmatch - pass-through at filter level, actual matching done at row level
+  defp apply_filter("andmatch", _args, value) do
+    {:ok, value}
+  end
+
   # Debug filters - log and pass through
 
   defp apply_filter("strdump", _args, value) do
@@ -331,62 +337,74 @@ defmodule Mydia.Indexers.CardigannFilters do
     end
   end
 
-  # Go time format layout → strftime conversion
+  # Go time format layout → strftime conversion using regex tokenizer.
   # Go reference time: Mon Jan 2 15:04:05 MST 2006
-  defp go_layout_to_strftime(layout) do
-    layout
-    # Timezone patterns (must come before numeric replacements)
-    |> String.replace("Z07:00", "%:z")
-    |> String.replace("Z0700", "%z")
-    |> String.replace("-07:00", "%:z")
-    |> String.replace("-0700", "%z")
-    |> String.replace("-07", "%z")
-    |> String.replace("MST", "%Z")
-    # Year (4-digit before 2-digit)
-    |> String.replace("2006", "%Y")
-    |> String.replace("06", "%y")
-    # Month name (full before abbreviated)
-    |> String.replace("January", "%B")
-    |> String.replace("Jan", "%b")
-    # Month numeric (zero-padded before non-padded)
-    |> String.replace("01", "%m")
-    # Day of week (full before abbreviated)
-    |> String.replace("Monday", "%A")
-    |> String.replace("Mon", "%a")
-    # Day numeric (zero-padded before non-padded)
-    |> String.replace("02", "%d")
-    |> String.replace("_2", "%e")
-    # Hour 24h
-    |> String.replace("15", "%H")
-    # Hour 12h (zero-padded before non-padded)
-    |> String.replace("03", "%I")
-    |> String.replace("3", "%-I")
+  #
+  # The tokenizer matches all Go reference tokens greedily (longest first),
+  # then maps each token to its strftime equivalent. This avoids the ordering
+  # conflicts that sequential String.replace calls cause with ambiguous values
+  # like bare "1" (month), "2" (day), "3" (12h hour).
+  @go_token_map %{
+    # Timezone patterns
+    "Z07:00" => "%:z",
+    "Z0700" => "%z",
+    "-07:00" => "%:z",
+    "-0700" => "%z",
+    "-07" => "%z",
+    "MST" => "%Z",
+    # Year
+    "2006" => "%Y",
+    "06" => "%y",
+    # Month name
+    "January" => "%B",
+    "Jan" => "%b",
+    # Month numeric
+    "01" => "%m",
+    "1" => "%-m",
+    # Day of week
+    "Monday" => "%A",
+    "Mon" => "%a",
+    # Day numeric
+    "02" => "%d",
+    "_2" => "%e",
+    "2" => "%-d",
+    # Hour
+    "15" => "%H",
+    "03" => "%I",
+    "3" => "%-I",
     # AM/PM
-    |> String.replace("PM", "%p")
-    |> String.replace("pm", "%P")
-    # Non-padded month
-    |> replace_bare_month()
-    # Minute (zero-padded before non-padded)
-    |> String.replace("04", "%M")
-    |> String.replace("4", "%-M")
-    # Second (zero-padded before non-padded)
-    |> String.replace("05", "%S")
-    |> String.replace("5", "%-S")
+    "PM" => "%p",
+    "pm" => "%P",
+    # Minute
+    "04" => "%M",
+    "4" => "%-M",
+    # Second
+    "05" => "%S",
+    "5" => "%-S",
     # Fractional seconds
-    |> String.replace(".000000000", "%N")
-    |> String.replace(".000000", "%f")
-    |> String.replace(".000", "%L")
-    |> String.replace(".0", "%1N")
-    # Non-padded day
-    |> replace_bare_day()
-  end
+    ".000000000" => "%N",
+    ".000000" => "%f",
+    ".000" => "%L",
+    ".0" => "%1N"
+  }
 
-  defp replace_bare_month(format) do
-    Regex.replace(~r/(?<!%)(?<!\d)1(?!\d)(?!N)/, format, "%-m")
-  end
+  # Build regex that matches all Go tokens, longest first to ensure greedy matching
+  @go_token_regex (
+                    tokens =
+                      @go_token_map
+                      |> Map.keys()
+                      |> Enum.sort_by(&byte_size/1, :desc)
+                      |> Enum.map(&Regex.escape/1)
+                      |> Enum.join("|")
 
-  defp replace_bare_day(format) do
-    Regex.replace(~r/(?<!%)(?<!\d)2(?!\d)/, format, "%-d")
+                    {:ok, regex} = Regex.compile(tokens)
+                    regex
+                  )
+
+  defp go_layout_to_strftime(layout) do
+    Regex.replace(@go_token_regex, layout, fn match ->
+      Map.get(@go_token_map, match, match)
+    end)
   end
 
   # timeago - parse relative time strings
@@ -637,13 +655,21 @@ defmodule Mydia.Indexers.CardigannFilters do
   # Go regex conversion helpers
 
   defp convert_go_regex_to_pcre(pattern) when is_binary(pattern) do
-    Regex.replace(~r/\\p\{Is(\w+)\}/, pattern, "\\p{\\1}")
+    pattern
+    # \p{IsX} → \p{X} (Go Unicode property names)
+    |> then(&Regex.replace(~r/\\p\{Is(\w+)\}/, &1, "\\p{\\1}"))
+    # (?P<name> → (?<name> (Go named capture groups)
+    |> String.replace("(?P<", "(?<")
   end
 
   defp convert_go_regex_to_pcre(pattern), do: pattern
 
   defp convert_go_backrefs_to_elixir(replacement) when is_binary(replacement) do
-    Regex.replace(~r/\$(\d)/, replacement, "\\\\\\1")
+    replacement
+    # ${N} → \N (braced backreferences)
+    |> then(&Regex.replace(~r/\$\{(\d+)\}/, &1, "\\\\\\1"))
+    # $N → \N (standard backreferences)
+    |> then(&Regex.replace(~r/\$(\d)/, &1, "\\\\\\1"))
   end
 
   defp convert_go_backrefs_to_elixir(replacement), do: replacement

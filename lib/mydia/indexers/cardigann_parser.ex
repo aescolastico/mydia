@@ -217,10 +217,28 @@ defmodule Mydia.Indexers.CardigannParser do
 
   defp extract_rows_selector(search) do
     case Map.get(search, "rows") do
-      nil -> {:error, :missing_rows_selector}
-      rows -> {:ok, normalize_selector(rows)}
+      nil ->
+        {:error, :missing_rows_selector}
+
+      rows ->
+        normalized = normalize_selector(rows)
+
+        # Extract after and count from the rows map if present
+        normalized =
+          if is_map(rows) do
+            normalized
+            |> maybe_put(:after, Map.get(rows, "after"))
+            |> maybe_put(:count, Map.get(rows, "count"))
+          else
+            normalized
+          end
+
+        {:ok, normalized}
     end
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp extract_field_selectors(search) do
     case Map.get(search, "fields") do

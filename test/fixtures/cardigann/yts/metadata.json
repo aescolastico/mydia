@@ -1,0 +1,8 @@
+{
+  "captured_at": "2026-02-28T00:11:18.914542Z",
+  "indexer_id": "yts",
+  "query": "avengers",
+  "response_size": 101213,
+  "response_type": "json",
+  "search_url": "https://yts.bz/api/v2/list_movies.json?limit=50&order_by=desc&query_term=avengers&sort_by=date_added"
+}

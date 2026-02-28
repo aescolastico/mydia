@@ -310,11 +310,14 @@ defmodule Mydia.Indexers.CardigannTemplate do
     collection = eval_expression(range_expr, ctx)
     {body, after_else, rest2} = collect_until_end(rest)
 
+    # Store root context for $ access inside range blocks
+    root = Map.get(ctx, :root, ctx)
+
     output =
       case collection do
         list when is_list(list) and list != [] ->
           Enum.map(list, fn item ->
-            item_ctx = Map.put(ctx, :dot, item)
+            item_ctx = ctx |> Map.put(:dot, item) |> Map.put(:root, root)
             {result, _} = eval_tokens(body, item_ctx, url_encode?, [])
             result
           end)
@@ -340,9 +343,12 @@ defmodule Mydia.Indexers.CardigannTemplate do
     value = eval_expression(with_expr, ctx)
     {body, else_body, rest2} = collect_until_end(rest)
 
+    # Store root context for $ access inside with blocks
+    root = Map.get(ctx, :root, ctx)
+
     output =
       if truthy?(value) do
-        with_ctx = Map.put(ctx, :dot, value)
+        with_ctx = ctx |> Map.put(:dot, value) |> Map.put(:root, root)
         {result, _} = eval_tokens(body, with_ctx, url_encode?, [])
         result
       else
@@ -607,6 +613,21 @@ defmodule Mydia.Indexers.CardigannTemplate do
         value
       end
 
+    # If still not found and we have a root context (inside range/with),
+    # try resolving from root ($ variable support)
+    value =
+      if is_nil(value) do
+        case Map.get(ctx, :root) do
+          root when is_map(root) and root != ctx ->
+            resolve_field([key], Map.delete(root, :root))
+
+          _ ->
+            nil
+        end
+      else
+        value
+      end
+
     Logger.debug("Resolved field .#{key} => #{inspect(value)}")
     value
   end
@@ -788,6 +809,20 @@ defmodule Mydia.Indexers.CardigannTemplate do
   end
 
   defp call_function("join", [value, _], _ctx), do: to_string(value || "")
+
+  # slice - substring extraction: slice(str, start, end)
+  defp call_function("slice", [str, start, stop], _ctx) when is_binary(str) do
+    s = if is_binary(start), do: String.to_integer(start), else: start
+    e = if is_binary(stop), do: String.to_integer(stop), else: stop
+    String.slice(str, s..(e - 1)//1)
+  end
+
+  defp call_function("slice", [str, start], _ctx) when is_binary(str) do
+    s = if is_binary(start), do: String.to_integer(start), else: start
+    String.slice(str, s..-1//1)
+  end
+
+  defp call_function("slice", _, _ctx), do: ""
 
   defp call_function(name, args, _ctx) do
     Logger.warning("Unknown function: #{name}/#{length(args)}")

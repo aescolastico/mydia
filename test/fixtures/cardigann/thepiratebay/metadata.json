@@ -1,0 +1,8 @@
+{
+  "indexer_id": "thepiratebay",
+  "query": "ubuntu",
+  "search_url": "https://apibay.org/q.php?q=ubuntu&cat=",
+  "response_type": "json",
+  "response_size": 27798,
+  "captured_at": "2026-02-27T19:11:00Z"
+}

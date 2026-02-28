@@ -63,7 +63,7 @@ defmodule Mydia.Indexers.CardigannCompatTest do
       assert "validate" in result.filters_used
       assert "andmatch" in result.filters_used
       assert "validate" in result.missing_filters
-      assert "andmatch" in result.missing_filters
+      refute "andmatch" in result.missing_filters
       refute "trim" in result.missing_filters
     end
 
