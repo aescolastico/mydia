@@ -94,13 +94,52 @@ defmodule Mydia.Indexers.CardigannTemplate do
     |> ascii_string([?0..?9], min: 1)
     |> reduce(:build_integer)
 
-  # Simple value: field, string, integer, or identifier
+  # Simple value: field, string, integer, parenthesized expression, or identifier
   simple_value =
     choice([
       string_lit |> unwrap_and_tag(:string),
       integer_lit,
+      parsec(:paren_expr),
       field_path
     ])
+
+  # Function call inside parentheses (args stop at closing paren)
+  paren_function_call =
+    ascii_string([?a..?z, ?A..?Z, ?_], min: 1)
+    |> lookahead(ws)
+    |> concat(parsec(:paren_func_args))
+    |> tag(:call)
+
+  # Parenthesized expression: (expr) - strips parens, evaluates inner expression
+  defcombinatorp(
+    :paren_expr,
+    ignore(string("("))
+    |> ignore(optional_ws)
+    |> concat(parsec(:paren_inner_expr))
+    |> ignore(optional_ws)
+    |> ignore(string(")"))
+  )
+
+  # Content inside parentheses: function call or simple value
+  defcombinatorp(
+    :paren_inner_expr,
+    choice([
+      paren_function_call,
+      simple_value
+    ])
+  )
+
+  # Function arguments inside parentheses (stop at closing paren)
+  defcombinatorp(
+    :paren_func_args,
+    ignore(ws)
+    |> concat(simple_value)
+    |> repeat(
+      lookahead_not(string(")"))
+      |> ignore(ws)
+      |> concat(simple_value)
+    )
+  )
 
   # Function arguments (space-separated values)
   defcombinatorp(

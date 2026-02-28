@@ -687,4 +687,126 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
       assert {:ok, "2024"} = CardigannTemplate.render("{{ .Query.Year }}", context)
     end
   end
+
+  describe "render/2 - parenthesized sub-expressions" do
+    test "simple parenthesized field with or" do
+      context = %{a: nil, b: "second"}
+
+      assert {:ok, "second"} =
+               CardigannTemplate.render("{{ or (.a) (.b) }}", context, url_encode: false)
+    end
+
+    test "parenthesized field evaluates same as bare field" do
+      context = %{keywords: "test"}
+
+      assert {:ok, "test"} =
+               CardigannTemplate.render("{{ (.Keywords) }}", context, url_encode: false)
+    end
+
+    test "nested function call in parens" do
+      context = %{keywords: "ubuntu", config: %{"disablesort" => "false"}}
+
+      assert {:ok, "search"} =
+               CardigannTemplate.render(
+                 "{{ if and (.Keywords) (eq .Config.disablesort \"false\") }}search{{ else }}latest{{ end }}",
+                 context
+               )
+    end
+
+    test "nested function call in parens with falsy condition" do
+      context = %{keywords: "", config: %{"disablesort" => "false"}}
+
+      assert {:ok, "latest"} =
+               CardigannTemplate.render(
+                 "{{ if and (.Keywords) (eq .Config.disablesort \"false\") }}search{{ else }}latest{{ end }}",
+                 context
+               )
+    end
+
+    test "deep nesting with eq and ne" do
+      context = %{a: "1", b: "2"}
+
+      assert {:ok, "yes"} =
+               CardigannTemplate.render(
+                 "{{ if and (eq .a \"1\") (ne .b \"1\") }}yes{{ else }}no{{ end }}",
+                 context
+               )
+    end
+
+    test "deep nesting returns false when condition fails" do
+      context = %{a: "1", b: "1"}
+
+      assert {:ok, "no"} =
+               CardigannTemplate.render(
+                 "{{ if and (eq .a \"1\") (ne .b \"1\") }}yes{{ else }}no{{ end }}",
+                 context
+               )
+    end
+
+    test "mixed bare and parenthesized args" do
+      context = %{keywords: "test", config: %{"x" => "1"}}
+
+      assert {:ok, "yes"} =
+               CardigannTemplate.render(
+                 "{{ if and .Keywords (eq .Config.x \"1\") }}yes{{ else }}no{{ end }}",
+                 context
+               )
+    end
+
+    test "double-nested parenthesized function calls" do
+      context = %{
+        result: %{"x" => "1", "y" => "NO", "a" => "NULL", "b" => "NULL"}
+      }
+
+      assert {:ok, "match"} =
+               CardigannTemplate.render(
+                 "{{ if and (and (eq .Result.x \"1\") (ne .Result.y \"YES\")) (and (eq .Result.a \"NULL\") (eq .Result.b \"NULL\")) }}match{{ else }}no{{ end }}",
+                 context
+               )
+    end
+
+    test "double-nested with failing inner condition" do
+      context = %{
+        result: %{"x" => "1", "y" => "YES", "a" => "NULL", "b" => "NULL"}
+      }
+
+      assert {:ok, "no"} =
+               CardigannTemplate.render(
+                 "{{ if and (and (eq .Result.x \"1\") (ne .Result.y \"YES\")) (and (eq .Result.a \"NULL\") (eq .Result.b \"NULL\")) }}match{{ else }}no{{ end }}",
+                 context
+               )
+    end
+
+    test "or with parenthesized Result fields" do
+      context = %{result: %{"title_phase1" => nil, "title_default" => "Fallback Title"}}
+
+      assert {:ok, "Fallback Title"} =
+               CardigannTemplate.render(
+                 "{{ or (.Result.title_phase1) (.Result.title_default) }}",
+                 context,
+                 url_encode: false
+               )
+    end
+
+    test "or with first parenthesized Result field truthy" do
+      context = %{result: %{"title_phase1" => "Primary Title", "title_default" => "Fallback"}}
+
+      assert {:ok, "Primary Title"} =
+               CardigannTemplate.render(
+                 "{{ or (.Result.title_phase1) (.Result.title_default) }}",
+                 context,
+                 url_encode: false
+               )
+    end
+
+    test "parenthesized expression in pipeline" do
+      context = %{result: %{"title" => "hello world"}}
+
+      assert {:ok, "hello-world"} =
+               CardigannTemplate.render(
+                 "{{ (.Result.title) | re_replace \" \" \"-\" }}",
+                 context
+               )
+    end
+  end
 end
