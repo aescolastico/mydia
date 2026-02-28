@@ -71,7 +71,7 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
       {:ok, %Req.Response{status: status}} ->
         {:error, Error.connection_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
       {:error, reason} ->
@@ -103,7 +103,7 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
         Logger.error("NZBHydra2 search failed with status #{status}: #{inspect(body)}")
         {:error, Error.search_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, Error.timeout("Request timeout")}
 
       {:error, reason} ->

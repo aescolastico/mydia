@@ -56,7 +56,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
     url = build_url(config, "/api/v1/system/status")
     headers = build_headers(config)
 
-    case Req.get(url, headers: headers, receive_timeout: 10_000) do
+    case Req.get(url, headers: headers, receive_timeout: 10_000, retry: false) do
       {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok,
          %{
@@ -71,7 +71,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       {:ok, %Req.Response{status: status}} ->
         {:error, Error.connection_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
       {:error, reason} ->
@@ -102,7 +102,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         Logger.warning("Prowlarr search failed (HTTP #{status}): #{message}")
         {:error, Error.search_failed(message)}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, Error.connection_failed("Request timeout")}
 
       {:error, reason} ->
@@ -525,10 +525,10 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       {:ok, %Req.Response{status: status}} ->
         {:error, Error.connection_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, Error.connection_failed("Request timeout")}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
       {:error, reason} ->

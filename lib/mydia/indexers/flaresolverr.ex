@@ -150,9 +150,6 @@ defmodule Mydia.Indexers.FlareSolverr do
         {:error, %Req.TransportError{reason: reason}} ->
           {:error, {:connection_error, reason}}
 
-        {:error, %Mint.TransportError{reason: reason}} ->
-          {:error, {:connection_error, reason}}
-
         {:error, reason} ->
           {:error, {:request_error, reason}}
       end
@@ -239,15 +236,7 @@ defmodule Mydia.Indexers.FlareSolverr do
         Logger.warning("FlareSolverr request timeout for #{url}")
         {:error, :timeout}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
-        Logger.warning("FlareSolverr request timeout for #{url}")
-        {:error, :timeout}
-
       {:error, %Req.TransportError{reason: reason}} ->
-        Logger.error("FlareSolverr connection error: #{inspect(reason)}")
-        {:error, {:connection_error, reason}}
-
-      {:error, %Mint.TransportError{reason: reason}} ->
         Logger.error("FlareSolverr connection error: #{inspect(reason)}")
         {:error, {:connection_error, reason}}
 

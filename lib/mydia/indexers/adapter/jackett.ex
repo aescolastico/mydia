@@ -59,7 +59,7 @@ defmodule Mydia.Indexers.Adapter.Jackett do
     query_string = URI.encode_query(params)
     full_url = "#{url}?#{query_string}"
 
-    case Req.get(full_url, receive_timeout: 10_000) do
+    case Req.get(full_url, receive_timeout: 10_000, retry: false) do
       {:ok, %Req.Response{status: 200, body: body}} ->
         parse_caps_response(body)
 
@@ -69,7 +69,7 @@ defmodule Mydia.Indexers.Adapter.Jackett do
       {:ok, %Req.Response{status: status}} ->
         {:error, Error.connection_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
       {:error, reason} ->
@@ -98,7 +98,7 @@ defmodule Mydia.Indexers.Adapter.Jackett do
         Logger.error("Jackett search failed with status #{status}: #{inspect(body)}")
         {:error, Error.search_failed("HTTP #{status}")}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, Error.connection_failed("Request timeout")}
 
       {:error, reason} ->

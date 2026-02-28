@@ -206,10 +206,10 @@ defmodule Mydia.Indexers.CardigannHealthCheck do
       {:ok, %Req.Response{status: status}} ->
         {:error, "HTTP #{status}"}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timeout"}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, "Connection failed: #{inspect(reason)}"}
 
       {:error, reason} ->

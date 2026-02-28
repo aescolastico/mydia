@@ -469,10 +469,10 @@ defmodule Mydia.Indexers.CardigannSearchEngine do
 
         {:ok, response}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, Error.connection_failed("Request timeout")}
 
-      {:error, %Mint.TransportError{reason: reason}} ->
+      {:error, %Req.TransportError{reason: reason}} ->
         {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
       {:error, reason} ->

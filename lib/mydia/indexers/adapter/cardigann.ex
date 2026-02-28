@@ -423,7 +423,7 @@ defmodule Mydia.Indexers.Adapter.Cardigann do
             Logger.warning("Indexer returned HTTP #{status}, but may still be functional")
             :ok
 
-          {:error, %Mint.TransportError{reason: reason}} ->
+          {:error, %Req.TransportError{reason: reason}} ->
             {:error, Error.connection_failed("Connection failed: #{inspect(reason)}")}
 
           {:error, reason} ->
