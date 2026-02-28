@@ -102,6 +102,9 @@ docs/.venv/
 # Compiled Rust NIFs (built by Rustler during compilation)
 /priv/native/
 
+# Cookie jars (from HTTP clients)
+cookie.jar
+
 # Playwright MCP
 .playwright-mcp/
 
