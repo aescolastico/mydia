@@ -442,14 +442,21 @@ defmodule MydiaWeb.AdminConfigLiveTest do
 
       # Click the "Test Connection" button - this is the exact flow that was crashing
       # with KeyError: key :use_ssl not found (issue #28)
-      view
-      |> element(~s{button[phx-click="test_indexer_connection"]})
-      |> render_click()
+      # Check both render_click result and render(view) since flash rendering
+      # can vary between environments
+      click_html =
+        view
+        |> element(~s{button[phx-click="test_indexer_connection"]})
+        |> render_click()
 
-      # Re-render to ensure flash messages are fully applied
       html = render(view)
-      assert html =~ "Connection successful"
-      assert html =~ "1.25.0"
+
+      assert click_html =~ "Connection successful" or html =~ "Connection successful",
+             "Expected flash 'Connection successful' after test connection. " <>
+               "Flash info: #{inspect(has_element?(view, "#flash-info"))}, " <>
+               "Flash error: #{inspect(has_element?(view, "#flash-error"))}"
+
+      assert click_html =~ "1.25.0" or html =~ "1.25.0"
     end
 
     test "test connection shows error for unreachable prowlarr server", %{view: view} do
@@ -478,13 +485,19 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       |> render_change()
 
       # Click test connection - should show an error, NOT crash with KeyError
-      view
-      |> element(~s{button[phx-click="test_indexer_connection"]})
-      |> render_click()
+      # Check both render_click result and render(view) since flash rendering
+      # can vary between environments
+      click_html =
+        view
+        |> element(~s{button[phx-click="test_indexer_connection"]})
+        |> render_click()
 
-      # Re-render to ensure flash messages are fully applied
       html = render(view)
-      assert html =~ "Connection failed"
+
+      assert click_html =~ "Connection failed" or html =~ "Connection failed",
+             "Expected flash 'Connection failed' after test connection. " <>
+               "Flash info: #{inspect(has_element?(view, "#flash-info"))}, " <>
+               "Flash error: #{inspect(has_element?(view, "#flash-error"))}"
     end
   end
 

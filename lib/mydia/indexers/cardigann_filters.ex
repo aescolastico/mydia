@@ -697,9 +697,7 @@ defmodule Mydia.Indexers.CardigannFilters do
 
     case result do
       list when is_list(list) ->
-        list
-        |> Enum.map(&to_string/1)
-        |> Enum.join(separator)
+        Enum.map_join(list, separator, &to_string/1)
 
       nil ->
         ""

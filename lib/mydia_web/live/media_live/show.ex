@@ -2056,9 +2056,9 @@ defmodule MydiaWeb.MediaLive.Show do
     parts = parts ++ ["refreshed metadata for #{refreshed} file(s)"]
 
     parts =
-      if not Enum.empty?(scan_result.errors),
-        do: parts ++ ["#{length(scan_result.errors)} error(s)"],
-        else: parts
+      if Enum.empty?(scan_result.errors),
+        do: parts,
+        else: parts ++ ["#{length(scan_result.errors)} error(s)"]
 
     "#{prefix} complete! #{Enum.join(parts, ", ")}"
   end

@@ -1434,7 +1434,14 @@ defmodule MydiaWeb.AdminConfigLive.Index do
     }
 
     # Test the connection (Req already handles timeouts via receive_timeout)
-    case Mydia.Indexers.test_connection(test_config) do
+    result =
+      try do
+        Mydia.Indexers.test_connection(test_config)
+      rescue
+        e -> {:error, Exception.message(e)}
+      end
+
+    case result do
       {:ok, info} ->
         version = Map.get(info, :version, "unknown")
 
@@ -1453,6 +1460,7 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
         error_msg =
           case error do
+            msg when is_binary(msg) -> msg
             %{message: msg} -> msg
             _ -> MydiaLogger.extract_error_message(error)
           end

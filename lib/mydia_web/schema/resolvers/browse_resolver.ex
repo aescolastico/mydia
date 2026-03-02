@@ -317,10 +317,7 @@ defmodule MydiaWeb.Schema.Resolvers.BrowseResolver do
         season_number = parent.season_number
         media_item_id = parent.media_item_id
 
-        with {:ok, season} <-
-               get_season(nil, %{show_id: media_item_id, season_number: season_number}, nil) do
-          {:ok, season}
-        end
+        get_season(nil, %{show_id: media_item_id, season_number: season_number}, nil)
 
       :season ->
         # Season → TvShow

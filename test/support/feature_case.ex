@@ -354,9 +354,7 @@ defmodule MydiaWeb.FeatureCase do
   """
   def push_liveview_event(session, event, params) do
     param_attrs =
-      params
-      |> Enum.map(fn {k, v} -> "el.setAttribute('phx-value-#{k}', '#{v}');" end)
-      |> Enum.join("\n")
+      Enum.map_join(params, "\n", fn {k, v} -> "el.setAttribute('phx-value-#{k}', '#{v}');" end)
 
     Wallaby.Browser.execute_script(
       session,

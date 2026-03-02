@@ -1464,9 +1464,7 @@ defmodule Mydia.Media do
   # This is used when creating new episodes during metadata refresh.
   defp should_monitor_new_episode?(media_item, season_number, air_date) do
     # If the media_item itself isn't monitored, don't monitor episodes
-    if not media_item.monitored do
-      false
-    else
+    if media_item.monitored do
       preset = media_item.monitoring_preset || :all
       today = Date.utc_today()
 
@@ -1502,6 +1500,8 @@ defmodule Mydia.Media do
           # This handles the case where a new season is being added
           season_number >= latest_season && season_number > 0
       end
+    else
+      false
     end
   end
 
