@@ -206,9 +206,7 @@ defmodule MydiaWeb.ProfileLive.Index do
 
   @impl true
   def handle_info(:trakt_poll, socket) do
-    unless socket.assigns.trakt_polling do
-      {:noreply, socket}
-    else
+    if socket.assigns.trakt_polling do
       device_code = socket.assigns.trakt_device_code
       interval = socket.assigns.trakt_poll_interval
 
@@ -285,6 +283,8 @@ defmodule MydiaWeb.ProfileLive.Index do
            |> assign(:trakt_polling, false)
            |> assign(:trakt_error, "An error occurred. Please try again.")}
       end
+    else
+      {:noreply, socket}
     end
   end
 

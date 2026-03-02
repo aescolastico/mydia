@@ -22,9 +22,7 @@ defmodule MydiaWeb.Schema.Resolvers.AuthResolver do
     # Check if local auth is enabled
     config = Config.get()
 
-    if not config.auth.local_enabled do
-      {:error, "Local authentication is disabled"}
-    else
+    if config.auth.local_enabled do
       # Try to find user by username or email
       user =
         case Accounts.get_user_by_username(input.username) do
@@ -62,6 +60,8 @@ defmodule MydiaWeb.Schema.Resolvers.AuthResolver do
             {:error, "Invalid username or password"}
           end
       end
+    else
+      {:error, "Local authentication is disabled"}
     end
   end
 end

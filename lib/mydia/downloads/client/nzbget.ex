@@ -93,10 +93,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for NZBGet")}
-    else
+    if config[:username] && config[:password] do
       do_add_nzb(config, torrent, opts)
+    else
+      {:error, Error.invalid_config("Username and password are required for NZBGet")}
     end
   end
 
@@ -229,10 +229,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   @impl true
   def remove_torrent(config, client_id, opts \\ []) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for NZBGet")}
-    else
+    if config[:username] && config[:password] do
       do_remove(config, client_id, opts)
+    else
+      {:error, Error.invalid_config("Username and password are required for NZBGet")}
     end
   end
 

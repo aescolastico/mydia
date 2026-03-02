@@ -1413,62 +1413,58 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
   @impl true
   def handle_event("test_indexer_connection", _params, socket) do
-    # Extract form params from the current changeset
-    changeset = socket.assigns.indexer_form.source
+    # Wrap the entire handler in try/rescue to prevent LiveView crashes
+    # that would cause the flash message to be lost on reconnect
+    try do
+      changeset = socket.assigns.indexer_form.source
+      params = Ecto.Changeset.apply_changes(changeset)
 
-    # Get the changeset data (which includes user input)
-    params = Ecto.Changeset.apply_changes(changeset)
+      type =
+        case params.type do
+          type when is_atom(type) -> type
+          type when is_binary(type) -> String.to_existing_atom(type)
+        end
 
-    # Convert string type to atom if needed
-    type =
-      case params.type do
-        type when is_atom(type) -> type
-        type when is_binary(type) -> String.to_existing_atom(type)
+      test_config = %{
+        type: type,
+        base_url: params.base_url,
+        api_key: params.api_key
+      }
+
+      case Mydia.Indexers.test_connection(test_config) do
+        {:ok, info} ->
+          version = Map.get(info, :version, "unknown")
+
+          {:noreply,
+           socket
+           |> assign(:testing_indexer_connection, false)
+           |> put_flash(:info, "Connection successful! Version: #{version}")}
+
+        {:error, error} ->
+          error_msg =
+            case error do
+              msg when is_binary(msg) -> msg
+              %{message: msg} -> msg
+              _ -> MydiaLogger.extract_error_message(error)
+            end
+
+          {:noreply,
+           socket
+           |> assign(:testing_indexer_connection, false)
+           |> put_flash(:error, "Connection failed: #{error_msg}")}
       end
-
-    # Build config map for test_connection
-    test_config = %{
-      type: type,
-      base_url: params.base_url,
-      api_key: params.api_key
-    }
-
-    # Test the connection (Req already handles timeouts via receive_timeout)
-    result =
-      try do
-        Mydia.Indexers.test_connection(test_config)
-      rescue
-        e -> {:error, Exception.message(e)}
-      end
-
-    case result do
-      {:ok, info} ->
-        version = Map.get(info, :version, "unknown")
-
+    rescue
+      e ->
         {:noreply,
          socket
          |> assign(:testing_indexer_connection, false)
-         |> put_flash(:info, "Connection successful! Version: #{version}")}
-
-      {:error, error} ->
-        MydiaLogger.log_warning(:liveview, "Indexer connection test failed",
-          operation: :test_indexer_connection,
-          error: error,
-          indexer_type: type,
-          user_id: socket.assigns.current_user.id
-        )
-
-        error_msg =
-          case error do
-            msg when is_binary(msg) -> msg
-            %{message: msg} -> msg
-            _ -> MydiaLogger.extract_error_message(error)
-          end
-
+         |> put_flash(:error, "Connection failed: #{Exception.message(e)}")}
+    catch
+      kind, reason ->
         {:noreply,
          socket
          |> assign(:testing_indexer_connection, false)
-         |> put_flash(:error, "Connection failed: #{error_msg}")}
+         |> put_flash(:error, "Connection failed: #{inspect(kind)} - #{inspect(reason)}")}
     end
   end
 
