@@ -27,7 +27,8 @@ defmodule Mydia.Jobs.LibraryScanner do
     MetadataEnricher,
     MusicScanner,
     BookScanner,
-    AdultScanner
+    AdultScanner,
+    SampleDetector
   }
 
   alias Mydia.Library.FileParser.V2, as: FileParser
@@ -484,9 +485,22 @@ defmodule Mydia.Jobs.LibraryScanner do
     # Detect changes
     changes = Library.Scanner.detect_changes(scan_result, existing_files, library_path)
 
+    # Filter out extras, samples, and trailers from new files
+    {regular_new_files, extras_filtered} =
+      Enum.split_with(changes.new_files, fn file_info ->
+        SampleDetector.skip_detection?(file_info.path) or
+          not SampleDetector.excluded?(SampleDetector.detect(file_info.path))
+      end)
+
+    if extras_filtered != [] do
+      Logger.info("Filtered #{length(extras_filtered)} sample/trailer/extra files from scan",
+        library_path_id: library_path.id
+      )
+    end
+
     # Process files in batches to avoid long-running transactions
     batch_size = 100
-    total_new_files = length(changes.new_files)
+    total_new_files = length(regular_new_files)
     total_modified = length(changes.modified_files)
     total_deleted = length(changes.deleted_files)
 
@@ -499,7 +513,7 @@ defmodule Mydia.Jobs.LibraryScanner do
 
     # Process new files in batches
     new_media_files =
-      changes.new_files
+      regular_new_files
       |> Enum.chunk_every(batch_size)
       |> Enum.with_index()
       |> Enum.flat_map(fn {batch, batch_index} ->
@@ -750,10 +764,18 @@ defmodule Mydia.Jobs.LibraryScanner do
     }
 
     # 1. Re-enrich completely orphaned files (no media_item_id and no episode_id)
+    # Skip extras/samples/trailers — they should remain orphaned
     completely_orphaned =
       existing_files
       |> Enum.filter(fn file ->
         is_nil(file.media_item_id) and is_nil(file.episode_id)
+      end)
+      |> Enum.reject(fn file ->
+        file = Mydia.Repo.preload(file, :library_path)
+        abs_path = Mydia.Library.MediaFile.absolute_path(file)
+
+        not SampleDetector.skip_detection?(abs_path) and
+          SampleDetector.excluded?(SampleDetector.detect(abs_path))
       end)
 
     cleanup_stats =

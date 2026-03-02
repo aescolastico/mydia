@@ -24,7 +24,7 @@ defmodule Mydia.Jobs.MediaImport do
   require Logger
   alias Mydia.{Downloads, Library, Media, Settings}
   alias Mydia.Downloads.Client
-  alias Mydia.Library.{FileAnalyzer, FileNamer, FileOrganizer}
+  alias Mydia.Library.{FileAnalyzer, FileNamer, FileOrganizer, SampleDetector}
   alias Mydia.Library.FileParser.V2, as: FileParser
   alias Mydia.Indexers.QualityParser
   alias Mydia.MediaServer.Notifier, as: MediaServerNotifier
@@ -348,6 +348,9 @@ defmodule Mydia.Jobs.MediaImport do
     # Determine which files to import based on library type
     files_to_import = filter_files_for_library_type(files, library_path.type)
 
+    # Filter out extras, samples, and trailers
+    files_to_import = filter_extras_and_samples(files_to_import)
+
     if files_to_import == [] do
       Logger.warning("No importable files found in download",
         download_id: download.id,
@@ -522,6 +525,27 @@ defmodule Mydia.Jobs.MediaImport do
   defp filter_files_for_library_type(files, _unknown) do
     # For unknown library types, import all files (fallback)
     files
+  end
+
+  defp filter_extras_and_samples(files) do
+    Enum.reject(files, fn file ->
+      if SampleDetector.skip_detection?(file.path) do
+        false
+      else
+        detection = SampleDetector.detect(file.path)
+
+        if SampleDetector.excluded?(detection) do
+          Logger.info("Skipping extra/sample/trailer file during import",
+            path: file.path,
+            reason: SampleDetector.exclusion_reason(detection)
+          )
+
+          true
+        else
+          false
+        end
+      end
+    end)
   end
 
   defp import_file(file, download, library_path, args) do
