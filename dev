@@ -203,7 +203,189 @@ run_isolated() {
         -w /app \
         --entrypoint "" \
         "$app_image" \
-        sh -c "mix deps.get && $cmd"
+        sh -c "(mix deps.check --all > /dev/null 2>&1 || mix deps.get --quiet) && $cmd"
+}
+
+# Run a single precommit step with compact output
+# Usage: run_step <label> <command>
+# Returns 0 on success, 1 on failure (stores output for failure dump)
+run_step() {
+    local label="$1"
+    local cmd="$2"
+    local output
+    local exit_code
+
+    printf "  %-30s" "$label"
+    local start_time=$SECONDS
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    local elapsed=$(( SECONDS - start_time ))
+
+    if [ $exit_code -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} ${elapsed}s"
+    else
+        echo -e "${RED}✗${NC} ${elapsed}s"
+        FAILED_STEPS+=("$label")
+        FAILED_OUTPUTS+=("$output")
+    fi
+
+    return $exit_code
+}
+
+# Run a single precommit step for tests (extracts summary on success)
+# Usage: run_step_test <label> <command>
+run_step_test() {
+    local label="$1"
+    local cmd="$2"
+    local output
+    local exit_code
+
+    printf "  %-30s" "$label"
+    local start_time=$SECONDS
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    local elapsed=$(( SECONDS - start_time ))
+
+    if [ $exit_code -eq 0 ]; then
+        # Extract test summary line (e.g., "186 tests, 0 failures")
+        local summary
+        summary=$(echo "$output" | grep -oE '[0-9]+ tests?, [0-9]+ failures?' | tail -1)
+        if [ -n "$summary" ]; then
+            echo -e "${GREEN}✓${NC} $summary (${elapsed}s)"
+        else
+            echo -e "${GREEN}✓${NC} ${elapsed}s"
+        fi
+    else
+        echo -e "${RED}✗${NC} ${elapsed}s"
+        # Save full output to temp file for inspection
+        local full_output_file
+        full_output_file=$(mktemp /tmp/mydia-test-output-XXXXXX.log)
+        echo "$output" > "$full_output_file"
+        # Extract only failure blocks and summary, stripping noise
+        local filtered
+        filtered=$(echo "$output" | sed 's/\x1b\[[0-9;]*m//g' | sed -n '/^  [0-9]\+) /,/^$/p; /^Finished in/p; /^[0-9]\+ tests\?/p')
+        FAILED_STEPS+=("$label")
+        FAILED_OUTPUTS+=("$(printf '%s\n\nFull output: %s' "$filtered" "$full_output_file")")
+    fi
+
+    return $exit_code
+}
+
+# Run precommit checks with an ephemeral PostgreSQL container for parallel tests
+run_precommit() {
+    local app_image
+    app_image=$(get_app_image)
+
+    local network_name="mydia-precommit-$$"
+    local pg_container="mydia-precommit-pg-$$"
+
+    # Cleanup function - always runs on exit
+    cleanup_precommit() {
+        docker rm -f "$pg_container" &>/dev/null || true
+        docker network rm "$network_name" &>/dev/null || true
+    }
+    trap cleanup_precommit EXIT
+
+    # Create temporary Docker network
+    docker network create "$network_name" &>/dev/null
+
+    # Start ephemeral PostgreSQL container
+    docker run -d --rm \
+        --name "$pg_container" \
+        --network "$network_name" \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=postgres \
+        -e POSTGRES_DB=mydia_test \
+        postgres:16-alpine \
+        &>/dev/null
+
+    # Wait for PostgreSQL to be ready
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        if docker exec "$pg_container" pg_isready -U postgres &>/dev/null; then
+            break
+        fi
+        retries=$((retries - 1))
+        sleep 0.3
+    done
+
+    if [ $retries -eq 0 ]; then
+        echo -e "${RED}Error: PostgreSQL failed to start${NC}"
+        return 1
+    fi
+
+    echo "Precommit"
+
+    # Track failures
+    FAILED_STEPS=()
+    FAILED_OUTPUTS=()
+    local any_failed=0
+
+    # Helper to run mix commands inside the container
+    # Uses separate build volume from run_isolated to avoid compile-time config conflicts
+    # (run_isolated compiles for SQLite, precommit compiles for PostgreSQL)
+    run_mix() {
+        docker run --rm \
+            --network "$network_name" \
+            -e MIX_ENV=test \
+            -e DATABASE_TYPE=postgres \
+            -e DATABASE_HOST="$pg_container" \
+            -e DATABASE_PORT=5432 \
+            -e DATABASE_USER=postgres \
+            -e DATABASE_PASSWORD=postgres \
+            -e DATABASE_NAME=mydia_test \
+            -e LOCAL_UID="$LOCAL_UID" \
+            -e LOCAL_GID="$LOCAL_GID" \
+            -e SECRET_KEY_BASE="test_secret_key_base_at_least_64_bytes_long_for_isolated_container" \
+            -e MIX_HOME=/app/.mix \
+            -e HEX_HOME=/app/.hex \
+            -v "$(pwd):/app" \
+            -v mydia_precommit_build:/app/_build \
+            -v mydia_isolated_deps:/app/deps \
+            -v mydia_isolated_mix:/app/.mix \
+            -v mydia_isolated_hex:/app/.hex \
+            -w /app \
+            --entrypoint "" \
+            "$app_image" \
+            sh -c "$1"
+    }
+
+    # Step 1: Dependencies
+    run_step "Dependencies" "run_mix 'mix deps.check --all > /dev/null 2>&1 || mix deps.get --quiet'" || any_failed=1
+
+    # Step 2: Compile (warnings-as-errors enforced by mix.exs)
+    run_step "Compile" "run_mix 'mix compile'" || any_failed=1
+
+    # Step 3: Unused deps
+    run_step "Unused deps" "run_mix 'mix deps.unlock --unused'" || any_failed=1
+
+    # Step 4: Format check
+    run_step "Format" "run_mix 'mix format --check-formatted'" || any_failed=1
+
+    # Step 5: Database setup
+    run_step "Database" "run_mix 'mix ecto.create --quiet && mix ecto.migrate --quiet'" || any_failed=1
+
+    # Step 6: Tests
+    run_step_test "Tests" "run_mix 'mix test --color'" || any_failed=1
+
+    echo ""
+
+    # Print failure details
+    if [ ${#FAILED_OUTPUTS[@]} -gt 0 ]; then
+        for i in "${!FAILED_STEPS[@]}"; do
+            echo -e "${RED}── ${FAILED_STEPS[$i]} ──${NC}"
+            echo "${FAILED_OUTPUTS[$i]}"
+            echo ""
+        done
+    fi
+
+    if [ $any_failed -ne 0 ]; then
+        echo -e "${RED}✗ Precommit failed${NC}"
+        return 1
+    else
+        echo -e "${GREEN}✓ Precommit passed${NC}"
+        return 0
+    fi
 }
 
 # Parse command
@@ -238,10 +420,16 @@ case "$COMMAND" in
         # Run precommit/test in a fully isolated container (no shared volumes)
         if [[ "$1" == "precommit" ]]; then
             echo -e "${GREEN}Running precommit in isolated container...${NC}"
-            run_isolated "mix precommit"
+            run_precommit
         elif [[ "$1" == "test" ]]; then
             echo -e "${GREEN}Running tests in isolated container...${NC}"
-            run_isolated "mix ecto.create --quiet && mix ecto.migrate --quiet && mix test ${*:2}"
+            FAILED_STEPS=()
+            FAILED_OUTPUTS=()
+            run_step_test "Tests" "run_isolated 'mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color ${*:2}'"
+            if [ ${#FAILED_OUTPUTS[@]} -gt 0 ]; then
+                echo ""
+                echo "${FAILED_OUTPUTS[0]}"
+            fi
         else
             run_in_container mix "$@"
         fi
@@ -250,7 +438,13 @@ case "$COMMAND" in
     # Common development shortcuts
     test)
         echo -e "${GREEN}Running tests in isolated container...${NC}"
-        run_isolated "mix ecto.create --quiet && mix ecto.migrate --quiet && mix test $*"
+        FAILED_STEPS=()
+        FAILED_OUTPUTS=()
+        run_step_test "Tests" "run_isolated 'mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color $*'"
+        if [ ${#FAILED_OUTPUTS[@]} -gt 0 ]; then
+            echo ""
+            echo "${FAILED_OUTPUTS[0]}"
+        fi
         ;;
 
     feature-test)

@@ -157,7 +157,7 @@ defmodule Mydia.MixProject do
         "esbuild mydia --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile", "deps.unlock --unused", "format --check-formatted", "test"]
     ]
   end
 end
