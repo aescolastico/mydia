@@ -17,9 +17,23 @@ defmodule Mydia.Downloads.TorrentHash do
       {:ok, hash} = TorrentHash.extract({:url, "https://example.com/file.torrent"})
   """
 
+  require Logger
+
   alias Mydia.Downloads.Client.Error
 
   @type torrent_input :: {:magnet, String.t()} | {:file, binary()} | {:url, String.t()}
+
+  # Common public trackers for DHT bootstrapping
+  @public_trackers [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.dler.org:6969/announce",
+    "udp://tracker.qu.ax:6969/announce",
+    "udp://open.demonoid.ch:6969/announce"
+  ]
 
   @doc """
   Extracts the info hash from a torrent input.
@@ -79,6 +93,37 @@ defmodule Mydia.Downloads.TorrentHash do
   def extract_from_magnet(magnet_link) when is_binary(magnet_link) do
     extract_hash_from_magnet(magnet_link)
   end
+
+  @doc """
+  Constructs a magnet URI from a raw info hash and title.
+
+  Validates the hash format (40-char SHA1 hex or 64-char SHA256 hex) and appends
+  common public DHT trackers for bootstrapping.
+
+  Returns the magnet URI string, or `nil` if the hash is invalid/missing.
+  """
+  @spec build_magnet(String.t() | nil, String.t() | nil) :: String.t() | nil
+  def build_magnet(nil, _title), do: nil
+  def build_magnet("", _title), do: nil
+
+  def build_magnet(info_hash, title) when is_binary(info_hash) do
+    hash = info_hash |> String.trim() |> String.downcase()
+
+    if Regex.match?(~r/^[a-f0-9]{40}$/, hash) or Regex.match?(~r/^[a-f0-9]{64}$/, hash) do
+      encoded_title = URI.encode(title || "Unknown")
+
+      tracker_params =
+        @public_trackers
+        |> Enum.map_join(&("&tr=" <> URI.encode(&1)))
+
+      "magnet:?xt=urn:btih:#{hash}&dn=#{encoded_title}#{tracker_params}"
+    else
+      Logger.warning("Invalid info hash format: #{inspect(info_hash)}")
+      nil
+    end
+  end
+
+  def build_magnet(_, _), do: nil
 
   ## Private Functions
 

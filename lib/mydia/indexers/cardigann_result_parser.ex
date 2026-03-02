@@ -1380,22 +1380,28 @@ defmodule Mydia.Indexers.CardigannResultParser do
     end
   end
 
-  # Gets download URL from 'download' field, or constructs magnet link from 'infohash'
+  # Gets download URL from 'infohash' (preferred) or 'download' field.
+  # Infohash is preferred because some indexers (e.g. YTS) return HTML
+  # instead of a .torrent file at the download URL.
   defp get_download_or_magnet(row, title) do
-    case get_required_field(row, "download") do
-      {:ok, url} ->
-        {:ok, url}
+    alias Mydia.Downloads.TorrentHash
 
-      {:error, _} ->
-        # Try infohash - construct magnet link
-        case get_required_field(row, "infohash") do
-          {:ok, hash} when byte_size(hash) >= 32 ->
-            encoded_title = URI.encode(title)
-            {:ok, "magnet:?xt=urn:btih:#{hash}&dn=#{encoded_title}"}
-
-          _ ->
-            {:error, :no_download_or_infohash}
+    case get_required_field(row, "infohash") do
+      {:ok, hash} when byte_size(hash) >= 32 ->
+        case TorrentHash.build_magnet(hash, title) do
+          nil -> try_download_field(row)
+          magnet -> {:ok, magnet}
         end
+
+      _ ->
+        try_download_field(row)
+    end
+  end
+
+  defp try_download_field(row) do
+    case get_required_field(row, "download") do
+      {:ok, url} -> {:ok, url}
+      {:error, _} -> {:error, :no_download_or_infohash}
     end
   end
 

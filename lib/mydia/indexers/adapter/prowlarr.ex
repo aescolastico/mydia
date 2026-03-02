@@ -51,6 +51,8 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
 
   require Logger
 
+  alias Mydia.Downloads.TorrentHash
+
   @impl true
   def test_connection(config) do
     url = build_url(config, "/api/v1/system/status")
@@ -274,7 +276,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       # 3. downloadUrl/link (goes through Prowlarr which can fail on torrent validation)
       download_url =
         item["magnetUrl"] ||
-          build_magnet_from_info_hash(item["infoHash"], title) ||
+          TorrentHash.build_magnet(item["infoHash"], title) ||
           item["downloadUrl"] ||
           item["link"]
 
@@ -443,48 +445,6 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
   end
 
   defp normalize_imdb_id(_), do: nil
-
-  # Build a magnet link from an info hash
-  # This bypasses Prowlarr's torrent file download which can fail on validation
-  defp build_magnet_from_info_hash(nil, _title), do: nil
-  defp build_magnet_from_info_hash("", _title), do: nil
-
-  defp build_magnet_from_info_hash(info_hash, title) when is_binary(info_hash) do
-    # Validate info hash format (should be 40 hex chars for SHA1 or 64 for SHA256)
-    hash = String.downcase(String.trim(info_hash))
-
-    if String.match?(hash, ~r/^[a-f0-9]{40}$/) or String.match?(hash, ~r/^[a-f0-9]{64}$/) do
-      encoded_title = URI.encode(title || "Unknown")
-
-      # Common public trackers for DHT bootstrapping
-      # List from https://github.com/ngosang/trackerslist (updated daily)
-      trackers = [
-        "udp://tracker.opentrackr.org:1337/announce",
-        "udp://open.demonii.com:1337/announce",
-        "udp://open.stealth.si:80/announce",
-        "udp://tracker.torrent.eu.org:451/announce",
-        "udp://exodus.desync.com:6969/announce",
-        "udp://tracker.dler.org:6969/announce",
-        "udp://tracker.qu.ax:6969/announce",
-        "udp://open.demonoid.ch:6969/announce"
-      ]
-
-      tracker_params =
-        trackers
-        |> Enum.map(&("&tr=" <> URI.encode(&1)))
-        |> Enum.join()
-
-      magnet = "magnet:?xt=urn:btih:#{hash}&dn=#{encoded_title}#{tracker_params}"
-
-      Logger.info("Constructed magnet link from infoHash: #{hash}")
-      magnet
-    else
-      Logger.warning("Invalid info hash format: #{inspect(info_hash)}")
-      nil
-    end
-  end
-
-  defp build_magnet_from_info_hash(_, _), do: nil
 
   @doc """
   Lists all indexers configured in Prowlarr.
