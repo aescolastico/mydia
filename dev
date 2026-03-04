@@ -276,15 +276,19 @@ run_precommit() {
     local app_image
     app_image=$(get_app_image)
 
+    # Clean up any stale precommit containers/networks from previous failed runs
+    docker ps -a --filter "name=mydia-precommit-pg-" --format "{{.ID}}" | xargs -r docker rm -f &>/dev/null || true
+    docker network ls --filter "name=mydia-precommit-" --format "{{.ID}}" | xargs -r docker network rm &>/dev/null || true
+
     local network_name="mydia-precommit-$$"
     local pg_container="mydia-precommit-pg-$$"
 
-    # Cleanup function - always runs on exit
+    # Cleanup function - runs on exit, interrupt, and termination
     cleanup_precommit() {
         docker rm -f "$pg_container" &>/dev/null || true
         docker network rm "$network_name" &>/dev/null || true
     }
-    trap cleanup_precommit EXIT
+    trap cleanup_precommit EXIT INT TERM
 
     # Create temporary Docker network
     docker network create "$network_name" &>/dev/null
