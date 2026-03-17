@@ -383,6 +383,13 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
+  def handle_event("refresh", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:page, 0)
+     |> load_downloads()}
+  end
+
   @impl true
   def handle_info({:download_updated, _download_id}, socket) do
     # Reload downloads when we receive an update
@@ -445,25 +452,6 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   defp is_selected?(assigns, id) do
     MapSet.member?(assigns.selected_ids, id)
-  end
-
-  defp get_poster_url(download) do
-    # Check if media_item is loaded (not Ecto.Association.NotLoaded)
-    media_item = download.media_item
-
-    cond do
-      is_struct(media_item, Mydia.Media.MediaItem) ->
-        case media_item.metadata do
-          %{"poster_path" => path} when is_binary(path) ->
-            ImageUrl.poster_url(path, "w200")
-
-          _ ->
-            "/images/no-poster.svg"
-        end
-
-      true ->
-        "/images/no-poster.svg"
-    end
   end
 
   defp format_speed(nil), do: "—"
