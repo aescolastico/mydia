@@ -49,9 +49,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           build-args: |
             DATABASE_TYPE=${{ matrix.db }}
             BUILD_COMMIT=${{ github.sha }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.tag }}
+          cache-from: type=gha,scope=docker-${{ matrix.db }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.db }}
