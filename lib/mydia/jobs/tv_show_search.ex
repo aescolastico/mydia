@@ -1041,7 +1041,8 @@ defmodule Mydia.Jobs.TVShowSearch do
       min_seeders: args["min_seeders"] || get_min_seeders(),
       size_range: args["size_range"],
       search_query: build_episode_query(episode),
-      media_type: :episode
+      media_type: :episode,
+      expected_title: episode.media_item.title
     ]
 
     # Add quality profile for unified scoring via SearchScorer
@@ -1072,7 +1073,8 @@ defmodule Mydia.Jobs.TVShowSearch do
       min_seeders: args["min_seeders"] || get_min_seeders(),
       size_range: args["size_range"],
       search_query: build_season_query(media_item, season_number),
-      media_type: :episode
+      media_type: :episode,
+      expected_title: media_item.title
     ]
 
     # Load quality profile from media_item for unified scoring via SearchScorer
