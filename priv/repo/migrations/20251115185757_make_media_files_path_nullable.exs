@@ -22,44 +22,42 @@ defmodule Mydia.Repo.Migrations.MakeMediaFilesPathNullable do
       execute "ALTER TABLE media_files ALTER COLUMN path DROP NOT NULL"
     else
       # SQLite: recreate the table with nullable path
-      # First, rename the existing table
-      rename table(:media_files), to: table(:media_files_old)
-
-      # Create new table with nullable path
-      create table(:media_files, primary_key: false) do
-        add :id, :binary_id, primary_key: true
-        add :media_item_id, references(:media_items, type: :binary_id, on_delete: :delete_all)
-        add :episode_id, references(:episodes, type: :binary_id, on_delete: :delete_all)
-        # Now nullable
-        add :path, :string
-        add :size, :bigint
-        add :quality_profile_id, references(:quality_profiles, type: :binary_id)
-        add :resolution, :string
-        add :codec, :string
-        add :hdr_format, :string
-        add :audio_codec, :string
-        add :bitrate, :integer
-        add :verified_at, :utc_datetime
-        add :metadata, :text
-        add :relative_path, :string
-        add :library_path_id, references(:library_paths, type: :binary_id, on_delete: :delete_all)
-
-        timestamps(type: :utc_datetime)
-      end
-
-      # Copy data from old table
+      # Strategy: create new table with temp name, copy data, drop original, rename.
+      # This preserves FK references in other tables (subtitles, transcode_jobs, etc.)
       execute """
-      INSERT INTO media_files (id, media_item_id, episode_id, path, size, quality_profile_id,
+      CREATE TABLE "media_files_new" (
+        "id" TEXT PRIMARY KEY,
+        "media_item_id" TEXT CONSTRAINT "media_files_media_item_id_fkey" REFERENCES "media_items"("id") ON DELETE CASCADE,
+        "episode_id" TEXT CONSTRAINT "media_files_episode_id_fkey" REFERENCES "episodes"("id") ON DELETE CASCADE,
+        "path" TEXT,
+        "size" INTEGER,
+        "quality_profile_id" TEXT CONSTRAINT "media_files_quality_profile_id_fkey" REFERENCES "quality_profiles"("id"),
+        "resolution" TEXT,
+        "codec" TEXT,
+        "hdr_format" TEXT,
+        "audio_codec" TEXT,
+        "bitrate" INTEGER,
+        "verified_at" TEXT,
+        "metadata" TEXT,
+        "relative_path" TEXT,
+        "library_path_id" TEXT CONSTRAINT "media_files_library_path_id_fkey" REFERENCES "library_paths"("id") ON DELETE CASCADE,
+        "inserted_at" TEXT NOT NULL,
+        "updated_at" TEXT NOT NULL
+      )
+      """
+
+      execute """
+      INSERT INTO media_files_new (id, media_item_id, episode_id, path, size, quality_profile_id,
                                resolution, codec, hdr_format, audio_codec, bitrate, verified_at,
                                metadata, relative_path, library_path_id, inserted_at, updated_at)
       SELECT id, media_item_id, episode_id, path, size, quality_profile_id,
              resolution, codec, hdr_format, audio_codec, bitrate, verified_at,
              metadata, relative_path, library_path_id, inserted_at, updated_at
-      FROM media_files_old
+      FROM media_files
       """
 
-      # Drop old table
-      drop table(:media_files_old)
+      drop table(:media_files)
+      rename table(:media_files_new), to: table(:media_files)
 
       # Recreate indexes
       create index(:media_files, [:media_item_id])
@@ -74,40 +72,41 @@ defmodule Mydia.Repo.Migrations.MakeMediaFilesPathNullable do
       execute "ALTER TABLE media_files ALTER COLUMN path SET NOT NULL"
       create unique_index(:media_files, [:path])
     else
-      # SQLite: recreate with NOT NULL constraint
-      rename table(:media_files), to: table(:media_files_old)
-
-      create table(:media_files, primary_key: false) do
-        add :id, :binary_id, primary_key: true
-        add :media_item_id, references(:media_items, type: :binary_id, on_delete: :delete_all)
-        add :episode_id, references(:episodes, type: :binary_id, on_delete: :delete_all)
-        add :path, :string, null: false
-        add :size, :bigint
-        add :quality_profile_id, references(:quality_profiles, type: :binary_id)
-        add :resolution, :string
-        add :codec, :string
-        add :hdr_format, :string
-        add :audio_codec, :string
-        add :bitrate, :integer
-        add :verified_at, :utc_datetime
-        add :metadata, :text
-        add :relative_path, :string
-        add :library_path_id, references(:library_paths, type: :binary_id, on_delete: :delete_all)
-
-        timestamps(type: :utc_datetime)
-      end
+      # SQLite: recreate with NOT NULL constraint (same create-new strategy)
+      execute """
+      CREATE TABLE "media_files_new" (
+        "id" TEXT PRIMARY KEY,
+        "media_item_id" TEXT CONSTRAINT "media_files_media_item_id_fkey" REFERENCES "media_items"("id") ON DELETE CASCADE,
+        "episode_id" TEXT CONSTRAINT "media_files_episode_id_fkey" REFERENCES "episodes"("id") ON DELETE CASCADE,
+        "path" TEXT NOT NULL,
+        "size" INTEGER,
+        "quality_profile_id" TEXT CONSTRAINT "media_files_quality_profile_id_fkey" REFERENCES "quality_profiles"("id"),
+        "resolution" TEXT,
+        "codec" TEXT,
+        "hdr_format" TEXT,
+        "audio_codec" TEXT,
+        "bitrate" INTEGER,
+        "verified_at" TEXT,
+        "metadata" TEXT,
+        "relative_path" TEXT,
+        "library_path_id" TEXT CONSTRAINT "media_files_library_path_id_fkey" REFERENCES "library_paths"("id") ON DELETE CASCADE,
+        "inserted_at" TEXT NOT NULL,
+        "updated_at" TEXT NOT NULL
+      )
+      """
 
       execute """
-      INSERT INTO media_files (id, media_item_id, episode_id, path, size, quality_profile_id,
+      INSERT INTO media_files_new (id, media_item_id, episode_id, path, size, quality_profile_id,
                                resolution, codec, hdr_format, audio_codec, bitrate, verified_at,
                                metadata, relative_path, library_path_id, inserted_at, updated_at)
       SELECT id, media_item_id, episode_id, path, size, quality_profile_id,
              resolution, codec, hdr_format, audio_codec, bitrate, verified_at,
              metadata, relative_path, library_path_id, inserted_at, updated_at
-      FROM media_files_old
+      FROM media_files
       """
 
-      drop table(:media_files_old)
+      drop table(:media_files)
+      rename table(:media_files_new), to: table(:media_files)
 
       create unique_index(:media_files, [:path])
       create index(:media_files, [:media_item_id])

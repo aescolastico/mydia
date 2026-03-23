@@ -379,7 +379,7 @@ defmodule Mydia.Repo.Migrations.Helpers do
     primary_key_opt = Keyword.get(opts, :primary_key, false)
     timestamps_opt = Keyword.get(opts, :timestamps, type: :utc_datetime)
 
-    old_table = :"#{table_name}_old"
+    new_table = :"#{table_name}_new"
 
     # Build list of column names for copying data
     column_names = Enum.map(columns, &elem(&1, 0))
@@ -394,11 +394,12 @@ defmodule Mydia.Repo.Migrations.Helpers do
 
     columns_str = Enum.map_join(column_names, ", ", &to_string/1)
 
-    # Step 1: Rename existing table
-    rename table(table_name), to: table(old_table)
+    # SQLite table recreation strategy: create NEW → copy → drop OLD → rename NEW.
+    # We must NOT rename the original table because SQLite auto-updates FK references
+    # in other tables to follow the rename, breaking them when the old table is dropped.
 
-    # Step 2: Create new table with updated schema
-    create table(table_name, primary_key: primary_key_opt) do
+    # Step 1: Create new table with updated schema (using a temp name)
+    create table(new_table, primary_key: primary_key_opt) do
       for {col_name, col_type, col_opts} <- columns do
         col_opts = col_opts || []
 
@@ -416,11 +417,15 @@ defmodule Mydia.Repo.Migrations.Helpers do
       end
     end
 
-    # Step 3: Copy data from old table
-    execute "INSERT INTO #{table_name} (#{columns_str}) SELECT #{columns_str} FROM #{old_table}"
+    # Step 2: Copy data from original table
+    execute "INSERT INTO #{new_table} (#{columns_str}) SELECT #{columns_str} FROM #{table_name}"
 
-    # Step 4: Drop old table
-    drop table(old_table)
+    # Step 3: Drop original table
+    drop table(table_name)
+
+    # Step 4: Rename new table to the original name
+    # FK references in other tables still point to the original name and remain valid
+    rename table(new_table), to: table(table_name)
 
     # Step 5: Recreate indexes
     for index_spec <- indexes do
