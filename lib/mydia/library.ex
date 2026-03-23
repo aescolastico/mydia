@@ -562,15 +562,17 @@ defmodule Mydia.Library do
   def rescan_series(media_item_id) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
+    alias Mydia.Settings
 
     # Get media item and verify it's a TV show
     media_item = Media.get_media_item!(media_item_id)
+    library_paths = Settings.list_library_paths()
 
     if media_item.type != "tv_show" do
       {:error, :not_a_tv_show}
     else
       # Find base directory from existing media files
-      case find_series_base_directory(media_item_id) do
+      case find_series_base_directory(media_item_id, library_paths) do
         {:ok, base_directory} ->
           Logger.info("Re-scanning TV series",
             media_item_id: media_item_id,
@@ -622,7 +624,7 @@ defmodule Mydia.Library do
 
               # Create MediaFile records for new files
               {created_count, create_errors} =
-                create_media_files_for_series(new_files, media_item_id)
+                create_media_files_for_series(new_files, media_item_id, library_paths)
 
               # Refresh episodes from TMDB to ensure we have all episode metadata
               case Media.refresh_episodes_for_tv_show(media_item, season_monitoring: "all") do
@@ -711,15 +713,17 @@ defmodule Mydia.Library do
   def rescan_season(media_item_id, season_number) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
+    alias Mydia.Settings
 
     # Get media item and verify it's a TV show
     media_item = Media.get_media_item!(media_item_id)
+    library_paths = Settings.list_library_paths()
 
     if media_item.type != "tv_show" do
       {:error, :not_a_tv_show}
     else
       # Find base directory from existing media files
-      case find_series_base_directory(media_item_id) do
+      case find_series_base_directory(media_item_id, library_paths) do
         {:ok, base_directory} ->
           Logger.info("Re-scanning TV series season",
             media_item_id: media_item_id,
@@ -799,7 +803,7 @@ defmodule Mydia.Library do
 
               # Create MediaFile records for new files
               {created_count, create_errors} =
-                create_media_files_for_series(new_files, media_item_id)
+                create_media_files_for_series(new_files, media_item_id, library_paths)
 
               # Refresh episodes from TMDB for this season
               case Media.refresh_episodes_for_tv_show(media_item, season_monitoring: "all") do
@@ -914,15 +918,17 @@ defmodule Mydia.Library do
   def rescan_movie(media_item_id) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
+    alias Mydia.Settings
 
     # Get media item and verify it's a movie
     media_item = Media.get_media_item!(media_item_id)
+    library_paths = Settings.list_library_paths()
 
     if media_item.type != "movie" do
       {:error, :not_a_movie}
     else
       # Find base directory from existing media files
-      case find_movie_base_directory(media_item_id) do
+      case find_movie_base_directory(media_item_id, library_paths) do
         {:ok, base_directory} ->
           Logger.info("Re-scanning movie",
             media_item_id: media_item_id,
@@ -974,7 +980,7 @@ defmodule Mydia.Library do
 
               # Create MediaFile records for new files
               {created_count, create_errors} =
-                create_media_files_for_movie(new_files, media_item_id)
+                create_media_files_for_movie(new_files, media_item_id, library_paths)
 
               Logger.info("Movie re-scan complete",
                 media_item_id: media_item_id,
@@ -1028,7 +1034,27 @@ defmodule Mydia.Library do
   end
 
   # Finds the base directory for a TV series by looking at existing media file paths
-  defp find_series_base_directory(media_item_id) do
+  # Safety check: never allow scanning from a library path root.
+  # Scanning the entire library would import every item as one media item.
+  defp guard_not_library_root(dir, media_item_id, library_paths) do
+    library_path_roots =
+      library_paths
+      |> Enum.map(& &1.path)
+      |> MapSet.new()
+
+    if MapSet.member?(library_path_roots, dir) do
+      Logger.error("Detected directory is a library root — refusing to scan",
+        media_item_id: media_item_id,
+        directory: dir
+      )
+
+      {:error, :directory_is_library_root}
+    else
+      {:ok, dir}
+    end
+  end
+
+  defp find_series_base_directory(media_item_id, library_paths) do
     media_files = get_media_files_for_item(media_item_id, preload: [:episode, :library_path])
 
     case media_files do
@@ -1040,49 +1066,56 @@ defmodule Mydia.Library do
         {:error, :no_media_files}
 
       files ->
-        # Get the most common directory (in case files are in different locations)
-        base_dir =
+        # Extract the series folder name from each file's relative_path.
+        # relative_path is like "SeriesName/Season 01/file.mkv" or "SeriesName/file.mkv"
+        # The first path component is always the series folder.
+        series_dirs =
           files
           |> Enum.map(fn file ->
-            case MediaFile.absolute_path(file) do
-              nil -> nil
-              path -> Path.dirname(path)
+            case {file.relative_path, file.library_path} do
+              {nil, _} ->
+                nil
+
+              {_, nil} ->
+                nil
+
+              {relative_path, library_path} ->
+                parts = Path.split(relative_path)
+
+                # Guard: relative_path must have at least 2 components (folder/file).
+                # A single component means the file is directly in the library root
+                # with no series folder, which shouldn't happen for TV shows.
+                if length(parts) >= 2 do
+                  series_folder = List.first(parts)
+                  Path.join(library_path.path, series_folder)
+                end
             end
           end)
           |> Enum.reject(&is_nil/1)
-          |> Enum.frequencies()
-          |> Enum.max_by(fn {_dir, count} -> count end, fn -> {nil, 0} end)
-          |> elem(0)
 
-        case base_dir do
-          nil ->
+        case series_dirs do
+          [] ->
             Logger.error("Could not determine series base directory - no valid paths",
               media_item_id: media_item_id
             )
 
             {:error, :no_valid_paths}
 
-          dir ->
-            # Go up one level to get the series directory (files are usually in season subdirs)
-            series_dir = Path.dirname(dir)
+          dirs ->
+            # Use the most common series directory
+            series_dir =
+              dirs
+              |> Enum.frequencies()
+              |> Enum.max_by(fn {_dir, count} -> count end)
+              |> elem(0)
 
-            Logger.debug("Detected series base directory",
-              media_item_id: media_item_id,
-              directory: series_dir
-            )
-
-            {:ok, series_dir}
+            guard_not_library_root(series_dir, media_item_id, library_paths)
         end
     end
   end
 
   # Creates MediaFile records for a list of scanned files
-  defp create_media_files_for_series(file_infos, media_item_id) do
-    alias Mydia.Settings
-
-    # Get all library paths to match files
-    library_paths = Settings.list_library_paths()
-
+  defp create_media_files_for_series(file_infos, media_item_id, library_paths) do
     results =
       Enum.map(file_infos, fn file_info ->
         # Find matching library_path and calculate relative_path
@@ -1122,7 +1155,7 @@ defmodule Mydia.Library do
   end
 
   # Finds the base directory for a movie by looking at existing media file paths
-  defp find_movie_base_directory(media_item_id) do
+  defp find_movie_base_directory(media_item_id, library_paths) do
     media_files = get_media_files_for_item(media_item_id, preload: [:library_path])
 
     case media_files do
@@ -1157,23 +1190,13 @@ defmodule Mydia.Library do
             {:error, :no_valid_paths}
 
           dir ->
-            Logger.debug("Detected movie base directory",
-              media_item_id: media_item_id,
-              directory: dir
-            )
-
-            {:ok, dir}
+            guard_not_library_root(dir, media_item_id, library_paths)
         end
     end
   end
 
   # Creates MediaFile records for a list of scanned movie files
-  defp create_media_files_for_movie(file_infos, media_item_id) do
-    alias Mydia.Settings
-
-    # Get all library paths to match files
-    library_paths = Settings.list_library_paths()
-
+  defp create_media_files_for_movie(file_infos, media_item_id, library_paths) do
     results =
       Enum.map(file_infos, fn file_info ->
         # Find matching library_path and calculate relative_path
@@ -1423,10 +1446,14 @@ defmodule Mydia.Library do
   # Calculates the relative path and library_path_id for an absolute file path
   # Returns {library_path_id, relative_path}
   defp calculate_relative_path(absolute_path, library_paths) do
-    # Find the library_path that this file belongs to (longest matching prefix)
+    # Find the library_path that this file belongs to (longest matching prefix).
+    # Normalize with trailing slash to prevent false matches like /media/tv matching /media/tv_extras.
     matching_path =
       library_paths
-      |> Enum.filter(fn lp -> String.starts_with?(absolute_path, lp.path) end)
+      |> Enum.filter(fn lp ->
+        normalized = String.trim_trailing(lp.path, "/") <> "/"
+        String.starts_with?(absolute_path, normalized)
+      end)
       |> Enum.max_by(fn lp -> String.length(lp.path) end, fn -> nil end)
 
     case matching_path do

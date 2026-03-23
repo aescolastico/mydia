@@ -1028,7 +1028,6 @@ defmodule Mydia.Media do
     - `media_item` - The TV show media item (must be type "tv_show")
     - `opts` - Options for episode creation
       - `:season_monitoring` - Which seasons to fetch ("all", "first", "latest", "none")
-      - `:force` - If true, will delete and recreate all episodes (default: false)
 
   ## Returns
     - `{:ok, count}` - Number of episodes created
@@ -1048,7 +1047,6 @@ defmodule Mydia.Media do
     alias Mydia.Metadata
 
     season_monitoring = Keyword.get(opts, :season_monitoring, "all")
-    force = Keyword.get(opts, :force, false)
     config = Metadata.default_relay_config()
 
     # Get provider ID - prefer tvdb_id for TV shows, fall back to tmdb_id
@@ -1097,7 +1095,7 @@ defmodule Mydia.Media do
       {:error, :missing_provider_id}
     else
       # Check if we should skip season refresh based on threshold
-      if should_skip_season_refresh?(media_item, force) do
+      if should_skip_season_refresh?(media_item) do
         Logger.info(
           "Skipping season refresh for #{media_item.title} - recently refreshed at #{media_item.seasons_refreshed_at}"
         )
@@ -1118,13 +1116,6 @@ defmodule Mydia.Media do
                provider: provider_source
              ) do
           {:ok, metadata} ->
-            # Delete existing episodes if force option is enabled
-            if force do
-              Episode
-              |> where([e], e.media_item_id == ^media_item.id)
-              |> Repo.delete_all()
-            end
-
             # Get seasons from metadata struct
             seasons = metadata.seasons || []
 
@@ -1169,7 +1160,7 @@ defmodule Mydia.Media do
                 else
                   Logger.info("Processing episodes for season #{season.season_number}")
 
-                  case create_episodes_for_season(media_item, season, config, force) do
+                  case create_episodes_for_season(media_item, season, config) do
                     {:ok, created} ->
                       Logger.info(
                         "Processed #{created} episodes for season #{season.season_number}"
@@ -1335,15 +1326,12 @@ defmodule Mydia.Media do
   ## Options
     - `:monitor_fn` - Function `(season_number, air_date) -> boolean` to determine
       if a new episode should be monitored. Defaults to monitoring all non-special episodes.
-    - `:force` - If true, skips existing episode lookup (for use after delete_all). Default: false.
-
   ## Returns
     - `{:ok, count}` - Number of episodes processed (created + updated)
   """
   def upsert_episodes_from_season(media_item, season_data, opts \\ []) do
     default_monitor = fn season_num, _air_date -> season_num > 0 end
     monitor_fn = Keyword.get(opts, :monitor_fn, default_monitor)
-    force = Keyword.get(opts, :force, false)
 
     episodes = season_data.episodes || []
 
@@ -1356,12 +1344,7 @@ defmodule Mydia.Media do
         if is_nil(season_num) or is_nil(episode_num) do
           acc
         else
-          existing =
-            if force do
-              nil
-            else
-              get_episode_by_number(media_item.id, season_num, episode_num)
-            end
+          existing = get_episode_by_number(media_item.id, season_num, episode_num)
 
           air_date = parse_air_date(episode.air_date)
 
@@ -1399,7 +1382,7 @@ defmodule Mydia.Media do
 
   ## Private Functions
 
-  defp create_episodes_for_season(media_item, season, config, force) do
+  defp create_episodes_for_season(media_item, season, config) do
     alias Mydia.Metadata
 
     # Get provider ID - prefer tvdb_id for TV shows
@@ -1438,7 +1421,6 @@ defmodule Mydia.Media do
          ) do
       {:ok, season_data} ->
         upsert_episodes_from_season(media_item, season_data,
-          force: force,
           monitor_fn: fn season_num, air_date ->
             should_monitor_new_episode?(media_item, season_num, air_date)
           end
@@ -2028,11 +2010,9 @@ defmodule Mydia.Media do
   defp year_matches?(_result_year, _media_year), do: false
 
   # Determines if we should skip refreshing season data based on the last refresh time
-  defp should_skip_season_refresh?(_media_item, true), do: false
+  defp should_skip_season_refresh?(%MediaItem{seasons_refreshed_at: nil}), do: false
 
-  defp should_skip_season_refresh?(%MediaItem{seasons_refreshed_at: nil}, _force), do: false
-
-  defp should_skip_season_refresh?(%MediaItem{} = media_item, _force) do
+  defp should_skip_season_refresh?(%MediaItem{} = media_item) do
     config = Mydia.Config.get()
 
     # Determine if show is completed/ended

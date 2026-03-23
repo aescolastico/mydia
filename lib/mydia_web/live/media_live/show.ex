@@ -298,7 +298,7 @@ defmodule MydiaWeb.MediaLive.Show do
     case {media_item.type, metadata_result} do
       {"tv_show", {:ok, updated_item}} ->
         # Also refresh episodes for TV shows
-        case Media.refresh_episodes_for_tv_show(updated_item, force: true) do
+        case Media.refresh_episodes_for_tv_show(updated_item) do
           {:ok, count} ->
             {:noreply,
              socket
