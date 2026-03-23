@@ -407,20 +407,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
     |> String.trim()
   end
 
+  # NFD decomposition strips accents universally: é → e, ñ → n, ç → c, etc.
+  # German transliterations (ä→ae, ß→ss) are applied first since NFD would just strip the umlaut.
   defp normalize_unicode(str) do
     str
     |> String.replace("ä", "ae")
     |> String.replace("ö", "oe")
     |> String.replace("ü", "ue")
     |> String.replace("ß", "ss")
-    |> String.replace(~r/[àáâãäå]/u, "a")
-    |> String.replace(~r/[èéêë]/u, "e")
-    |> String.replace(~r/[ìíîï]/u, "i")
-    |> String.replace(~r/[òóôõö]/u, "o")
-    |> String.replace(~r/[ùúûü]/u, "u")
-    |> String.replace(~r/[ýÿ]/u, "y")
-    |> String.replace(~r/[ñ]/u, "n")
-    |> String.replace(~r/[ç]/u, "c")
+    |> then(&:unicode.characters_to_nfd_binary/1)
+    |> String.replace(~r/\p{Mn}/u, "")
   end
 
   ## Private Functions - Title Match Filtering
