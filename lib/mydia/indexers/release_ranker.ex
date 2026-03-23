@@ -367,40 +367,60 @@ defmodule Mydia.Indexers.ReleaseRanker do
   defp reject_title_mismatches(results, nil), do: results
 
   defp reject_title_mismatches(results, expected_title) do
-    normalized_expected = normalize_for_comparison(expected_title)
-
     Enum.filter(results, fn result ->
-      case TorrentParser.parse(result.title) do
-        {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
-          normalized_parsed = normalize_for_comparison(parsed_title)
-          distance = String.jaro_distance(normalized_expected, normalized_parsed)
-
-          if distance >= @title_match_threshold do
-            true
-          else
-            Logger.info(
-              "[ReleaseRanker] Filtered out (title mismatch): " <>
-                "parsed='#{parsed_title}' expected='#{expected_title}' " <>
-                "distance=#{Float.round(distance, 2)}: #{result.title}"
-            )
-
-            false
-          end
-
-        _error_or_no_title ->
-          # Fail open: unparseable releases pass through
-          true
+      if title_mismatch?(result, expected_title) do
+        log_title_mismatch(result, expected_title)
+        false
+      else
+        true
       end
     end)
+  end
+
+  defp log_title_mismatch(result, expected_title) do
+    case TorrentParser.parse(result.title) do
+      {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
+        distance =
+          String.jaro_distance(
+            normalize_for_comparison(expected_title),
+            normalize_for_comparison(parsed_title)
+          )
+
+        Logger.info(
+          "[ReleaseRanker] Filtered out (title mismatch): " <>
+            "parsed='#{parsed_title}' expected='#{expected_title}' " <>
+            "distance=#{Float.round(distance, 2)}: #{result.title}"
+        )
+
+      _ ->
+        :ok
+    end
   end
 
   defp normalize_for_comparison(title) do
     title
     |> String.downcase()
+    |> normalize_unicode()
     |> String.replace(~r/[^\w\s]/u, "")
     |> String.replace(~r/\b(the|a|an)\b/, "")
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
+  end
+
+  defp normalize_unicode(str) do
+    str
+    |> String.replace("ä", "ae")
+    |> String.replace("ö", "oe")
+    |> String.replace("ü", "ue")
+    |> String.replace("ß", "ss")
+    |> String.replace(~r/[àáâãäå]/u, "a")
+    |> String.replace(~r/[èéêë]/u, "e")
+    |> String.replace(~r/[ìíîï]/u, "i")
+    |> String.replace(~r/[òóôõö]/u, "o")
+    |> String.replace(~r/[ùúûü]/u, "u")
+    |> String.replace(~r/[ýÿ]/u, "y")
+    |> String.replace(~r/[ñ]/u, "n")
+    |> String.replace(~r/[ç]/u, "c")
   end
 
   ## Private Functions - Title Match Filtering
