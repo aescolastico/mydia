@@ -6,6 +6,8 @@ defmodule MydiaWeb.MediaLive.Index do
   alias Mydia.Settings
   alias Mydia.Collections
 
+  require Logger
+
   @items_per_page 50
   @items_per_scroll 25
 
@@ -87,7 +89,6 @@ defmodule MydiaWeb.MediaLive.Index do
   end
 
   def handle_event("search", params, socket) do
-    require Logger
     Logger.debug("Search params: #{inspect(params)}")
 
     query = params["search"] || params["value"] || ""
@@ -101,7 +102,6 @@ defmodule MydiaWeb.MediaLive.Index do
   end
 
   def handle_event("filter", params, socket) do
-    require Logger
     Logger.debug("Filter params: #{inspect(params)}")
 
     monitored =
@@ -352,7 +352,6 @@ defmodule MydiaWeb.MediaLive.Index do
   def handle_event("toggle_delete_files", %{"delete_files" => value}, socket) do
     delete_files = value == "true"
 
-    require Logger
     Logger.info("toggle_delete_files", value: value, delete_files: delete_files)
 
     {:noreply, assign(socket, :delete_files, delete_files)}
@@ -594,13 +593,12 @@ defmodule MydiaWeb.MediaLive.Index do
 
   def handle_info(msg, socket) do
     # Catch-all for unhandled PubSub messages to prevent crashes
-    require Logger
+
     Logger.warning("Unhandled message in MediaLive.Index: #{inspect(msg)}")
     {:noreply, socket}
   end
 
   defp load_media_items(socket, opts) do
-    require Logger
     reset? = Keyword.get(opts, :reset, false)
     page = if reset?, do: 0, else: socket.assigns.page
     offset = if page == 0, do: 0, else: @items_per_page + (page - 1) * @items_per_scroll
@@ -677,7 +675,6 @@ defmodule MydiaWeb.MediaLive.Index do
   defp apply_search_filter(items, ""), do: items
 
   defp apply_search_filter(items, query) do
-    require Logger
     query_lower = String.downcase(query)
 
     filtered =
@@ -729,7 +726,6 @@ defmodule MydiaWeb.MediaLive.Index do
   end
 
   defp apply_sorting(items, sort_by) do
-    require Logger
     Logger.debug("Applying sort: #{inspect(sort_by)} to #{length(items)} items")
 
     case sort_by do

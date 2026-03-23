@@ -8,6 +8,7 @@ defmodule Mydia.ImportLists do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
 
   alias Mydia.ImportLists.{ImportList, ImportListItem}
@@ -666,8 +667,4 @@ defmodule Mydia.ImportLists do
   defp maybe_filter_status_with_library(query, status) do
     where(query, [i], i.status == ^status)
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 end

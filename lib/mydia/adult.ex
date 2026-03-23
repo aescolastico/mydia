@@ -4,6 +4,7 @@ defmodule Mydia.Adult do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Adult.{Studio, Scene, AdultFile}
 
@@ -257,7 +258,4 @@ defmodule Mydia.Adult do
 
   defp filter_by_monitored(query, nil), do: query
   defp filter_by_monitored(query, monitored), do: where(query, [q], q.monitored == ^monitored)
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 end

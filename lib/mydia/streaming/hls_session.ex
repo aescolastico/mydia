@@ -496,7 +496,7 @@ defmodule Mydia.Streaming.HlsSession do
 
   defp generate_session_id do
     # Generate UUID-based session ID
-    UUID.uuid4()
+    Ecto.UUID.generate()
   end
 
   defp update_activity(state) do

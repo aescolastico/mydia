@@ -4,6 +4,7 @@ defmodule Mydia.Library do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator}
   alias Mydia.Library.FileParser.V2, as: FileParser
@@ -239,8 +240,6 @@ defmodule Mydia.Library do
             |> maybe_put_if_not_empty(:metadata, metadata)
 
           {:error, reason} ->
-            require Logger
-
             Logger.warning("Failed to extract technical metadata",
               path: absolute_path,
               reason: inspect(reason)
@@ -1713,10 +1712,6 @@ defmodule Mydia.Library do
 
     {:ok, success_count}
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   ## Import Sessions
 

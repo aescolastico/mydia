@@ -5,6 +5,8 @@ defmodule Mydia.Application do
 
   use Application
 
+  require Logger
+
   # Check if running in CLI mode (quiet startup)
   defp cli_mode?, do: System.get_env("MYDIA_CLI_MODE") == "true"
 
@@ -181,8 +183,6 @@ defmodule Mydia.Application do
         []
 
       issuers when is_list(issuers) ->
-        require Logger
-
         # Filter out issuers whose workers are already running
         issuers_to_start =
           Enum.reject(issuers, fn child_opts ->

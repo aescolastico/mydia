@@ -99,7 +99,7 @@ defmodule Mydia.Streaming.DirectPlaySession do
     Mydia.Downloads.broadcast_job_update(job.id)
 
     # Generate a session ID (mostly for compatibility with list_active_sessions)
-    session_id = UUID.uuid4()
+    session_id = Ecto.UUID.generate()
 
     state = %State{
       session_id: session_id,

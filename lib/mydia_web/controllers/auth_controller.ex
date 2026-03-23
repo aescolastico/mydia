@@ -14,6 +14,8 @@ defmodule MydiaWeb.AuthController do
   alias Mydia.Accounts
   alias Mydia.Auth.Guardian
 
+  require Logger
+
   @doc """
   Initiates OIDC login by redirecting to the identity provider.
 
@@ -22,7 +24,6 @@ defmodule MydiaWeb.AuthController do
   Otherwise, Ueberauth has already halted the connection and redirected.
   """
   def request(conn, params) do
-    require Logger
     Logger.debug("OIDC request called with params: #{inspect(params)}")
     Logger.debug("Connection halted? #{conn.halted}")
     Logger.debug("Response sent? #{conn.state}")
@@ -62,7 +63,6 @@ defmodule MydiaWeb.AuthController do
   Creates or updates the user, signs a JWT token, and redirects to the app.
   """
   def callback(%{assigns: %{ueberauth_failure: fails}} = conn, _params) do
-    require Logger
     Logger.error("OIDC callback failure: #{inspect(fails)}")
 
     conn
@@ -71,8 +71,6 @@ defmodule MydiaWeb.AuthController do
   end
 
   def callback(%{assigns: %{ueberauth_auth: auth}} = conn, _params) do
-    require Logger
-
     case process_oidc_auth(auth) do
       {:ok, user} ->
         # Update last login timestamp

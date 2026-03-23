@@ -4,6 +4,8 @@ defmodule Mydia.Accounts do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
+  require Logger
   alias Mydia.Repo
   alias Mydia.Accounts.{User, ApiKey, UserPreference}
 
@@ -100,8 +102,6 @@ defmodule Mydia.Accounts do
   This ensures that production deployments with OIDC-only auth have an initial admin.
   """
   def upsert_user_from_oidc(oidc_sub, oidc_issuer, attrs) do
-    require Logger
-
     case get_user_by_oidc(oidc_sub, oidc_issuer) do
       nil ->
         # New user - check if we need to auto-promote to admin
@@ -390,10 +390,6 @@ defmodule Mydia.Accounts do
         query
     end)
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   defp not_expired?(%ApiKey{expires_at: nil}), do: true
 

@@ -4,6 +4,7 @@ defmodule Mydia.Books do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Books.{Author, Book, BookFile}
 
@@ -359,7 +360,4 @@ defmodule Mydia.Books do
 
   defp filter_by_format(query, nil), do: query
   defp filter_by_format(query, format), do: where(query, [q], q.format == ^format)
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 end

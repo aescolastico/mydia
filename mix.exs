@@ -94,7 +94,6 @@ defmodule Mydia.MixProject do
       {:websockex, "~> 0.4.3"},
 
       # Utilities
-      {:elixir_uuid, "~> 1.2"},
       {:timex, "~> 3.7"},
       {:yaml_elixir, "~> 2.9"},
       {:ymlr, "~> 5.1"},

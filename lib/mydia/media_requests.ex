@@ -4,6 +4,7 @@ defmodule Mydia.MediaRequests do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   require Logger
 
   alias Mydia.Repo
@@ -158,13 +159,6 @@ defmodule Mydia.MediaRequests do
       _other, query ->
         query
     end)
-  end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-
-  defp maybe_preload(query, preloads) when is_list(preloads) do
-    from(q in query, preload: ^preloads)
   end
 
   defp check_duplicate_media(changeset) do

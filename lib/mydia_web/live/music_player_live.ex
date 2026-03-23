@@ -1,6 +1,7 @@
 defmodule MydiaWeb.MusicPlayerLive do
   use MydiaWeb, :live_view
 
+  @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Mydia.PubSub, "music_player")
@@ -13,6 +14,7 @@ defmodule MydiaWeb.MusicPlayerLive do
      |> assign(:visible, false)}
   end
 
+  @impl true
   def render(assigns) do
     ~H"""
     <div
@@ -77,6 +79,7 @@ defmodule MydiaWeb.MusicPlayerLive do
     """
   end
 
+  @impl true
   def handle_info({:play_tracks, tracks, start_index}, socket) do
     {:noreply,
      socket
@@ -84,6 +87,7 @@ defmodule MydiaWeb.MusicPlayerLive do
      |> push_event("music:play", %{tracks: tracks, start_index: start_index})}
   end
 
+  @impl true
   def handle_event("music:track_changed", %{"track" => track}, socket) do
     {:noreply, assign(socket, :current_track, track)}
   end

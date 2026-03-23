@@ -45,6 +45,7 @@ defmodule Mydia.Collections.SmartRules do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Media.MediaItem
   alias Mydia.Repo
   alias Mydia.DB
@@ -645,10 +646,6 @@ defmodule Mydia.Collections.SmartRules do
       _ -> query
     end
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   # Returns a dynamic expression for extracting a JSON value, adapter-aware
   defp json_extract_dynamic(field_atom, path) do

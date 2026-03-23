@@ -372,18 +372,7 @@ let
       beamDeps = [];
     };
 
-    elixir_uuid = buildMix rec {
-      name = "elixir_uuid";
-      version = "1.2.1";
 
-      src = fetchHex {
-        pkg = "elixir_uuid";
-        version = "${version}";
-        sha256 = "f7eba2ea6c3555cea09706492716b0d87397b88946e6380898c2889d68585752";
-      };
-
-      beamDeps = [];
-    };
 
     eqrcode = buildMix rec {
       name = "eqrcode";

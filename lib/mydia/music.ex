@@ -4,6 +4,7 @@ defmodule Mydia.Music do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Music.{Artist, Album, Track, MusicFile, Playlist, PlaylistTrack}
 
@@ -320,9 +321,6 @@ defmodule Mydia.Music do
 
   defp filter_by_album_type(query, nil), do: query
   defp filter_by_album_type(query, album_type), do: where(query, [q], q.album_type == ^album_type)
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   ## Playlists
 

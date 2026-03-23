@@ -4,6 +4,7 @@ defmodule Mydia.Downloads do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Downloads.Download
   alias Mydia.Downloads.Client
@@ -602,10 +603,6 @@ defmodule Mydia.Downloads do
         query
     end)
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   @doc """
   Broadcasts a download update to all subscribed LiveViews.

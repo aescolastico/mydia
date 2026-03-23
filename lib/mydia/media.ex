@@ -4,6 +4,7 @@ defmodule Mydia.Media do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   require Logger
   alias Mydia.Repo
   alias Mydia.Media.{MediaItem, Episode, CategoryClassifier}
@@ -1619,10 +1620,6 @@ defmodule Mydia.Media do
         query
     end)
   end
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   # Helper function to check if a download is active
   # Downloads are active if they haven't completed and haven't failed

@@ -531,7 +531,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
 
   @impl true
   def handle_event("update_default_quality_profile", params, socket) do
-    require Logger
     Logger.debug("update_default_quality_profile params: #{inspect(params)}")
 
     profile_id = params["profile_id"]
@@ -3035,7 +3034,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
   end
 
   defp validate_config_setting(attrs) do
-    require Logger
     Logger.debug("validate_config_setting called with attrs: #{inspect(attrs)}")
 
     # Include category in types so it gets included in apply_changes result
@@ -3113,8 +3111,6 @@ defmodule MydiaWeb.AdminConfigLive.Index do
     }
 
     # Debug logging
-    require Logger
-
     Logger.debug("Upserting config setting: key=#{inspect(key)}, attrs=#{inspect(string_attrs)}")
 
     case Settings.get_config_setting_by_key(key) do

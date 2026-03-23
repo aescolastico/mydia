@@ -487,7 +487,6 @@ defmodule MydiaWeb.MediaLive.Show do
   def handle_event("toggle_delete_files", %{"delete_files" => value}, socket) do
     delete_files = value == "true"
 
-    require Logger
     Logger.info("toggle_delete_files", value: value, delete_files: delete_files)
 
     {:noreply, assign(socket, :delete_files, delete_files)}
@@ -497,8 +496,6 @@ defmodule MydiaWeb.MediaLive.Show do
     with :ok <- Authorization.authorize_delete_media(socket) do
       media_item = socket.assigns.media_item
       delete_files = socket.assigns.delete_files
-
-      require Logger
 
       Logger.info("LiveView delete_media event",
         media_item_id: media_item.id,

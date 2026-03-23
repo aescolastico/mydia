@@ -40,6 +40,8 @@ defmodule Mydia.Settings do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
+  require Logger
   alias Mydia.Repo
 
   alias Mydia.Settings.{
@@ -148,8 +150,6 @@ defmodule Mydia.Settings do
     - `:ok` - Re-evaluation task spawned successfully
   """
   def trigger_profile_reevaluation(profile_id) do
-    require Logger
-
     Logger.info("Triggering background re-evaluation for quality profile",
       profile_id: profile_id
     )
@@ -1356,8 +1356,6 @@ defmodule Mydia.Settings do
 
             # Log the path change if successful
             if match?({:ok, _}, result) do
-              require Logger
-
               Logger.info(
                 "Library path updated: #{library_path.path} -> #{new_path}",
                 library_path_id: library_path.id,
@@ -1400,7 +1398,6 @@ defmodule Mydia.Settings do
   """
   def validate_new_library_path(%LibraryPath{} = library_path, new_path) do
     alias Mydia.Library.MediaFile
-    require Logger
 
     # Get sample of media files (up to 10)
     sample_files =
@@ -1905,10 +1902,6 @@ defmodule Mydia.Settings do
   end
 
   ## Private Functions
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   # Applies optional filters to quality profile queries
   defp apply_quality_profile_filters(query, opts) do

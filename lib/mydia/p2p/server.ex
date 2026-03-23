@@ -43,6 +43,7 @@ defmodule Mydia.P2p.Server do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
   end
 
+  @impl true
   def init(_) do
     # Default to our own relay; override via IROH_RELAY_URL env var
     relay_url = System.get_env("IROH_RELAY_URL", "https://cae1-1.relay.mydia.dev")
@@ -135,6 +136,7 @@ defmodule Mydia.P2p.Server do
 
   # GenServer callbacks
 
+  @impl true
   def handle_call({:dial, endpoint_addr_json}, _from, state) do
     result = P2p.dial(state.resource, endpoint_addr_json)
     {:reply, result, state}
@@ -202,6 +204,7 @@ defmodule Mydia.P2p.Server do
 
   # Handle events from Rust NIF
 
+  @impl true
   def handle_info({:ok, "peer_connected", peer_id, connection_type}, state) do
     Logger.info("P2P Event: Peer Connected #{peer_id} (#{connection_type})")
     state = %{state | connected_peers: Map.put(state.connected_peers, peer_id, connection_type)}

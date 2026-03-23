@@ -18,6 +18,7 @@ defmodule Mydia.Collections do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Collections.{Collection, CollectionItem, SmartRules}
   alias Mydia.Media.MediaItem
@@ -589,10 +590,6 @@ defmodule Mydia.Collections do
 
   defp apply_offset(query, nil), do: query
   defp apply_offset(query, offset) when is_integer(offset), do: offset(query, ^offset)
-
-  defp maybe_preload(query, nil), do: query
-  defp maybe_preload(query, []), do: query
-  defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
   defp maybe_preload_items(items, nil), do: items
   defp maybe_preload_items(items, []), do: items

@@ -6,6 +6,8 @@ defmodule MydiaWeb.ImportMediaLive.Index do
   alias MydiaWeb.Live.Authorization
   alias MydiaWeb.ImportMediaLive.Components
 
+  require Logger
+
   @impl true
   def mount(_params, _session, socket) do
     {:ok, initialize_fresh_session(socket)}
@@ -2132,8 +2134,6 @@ defmodule MydiaWeb.ImportMediaLive.Index do
 
     case matching_path do
       nil ->
-        require Logger
-
         Logger.warning("No matching library path found for file during import",
           path: absolute_path
         )
