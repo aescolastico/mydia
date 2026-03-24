@@ -1542,6 +1542,50 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
              "Unparseable releases should pass through (fail-open)"
     end
 
+    test "skips filter when expected_title is empty string" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "Empty expected_title should bypass title mismatch filtering"
+    end
+
+    test "skips filter when expected_title is whitespace-only" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "   ",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "Whitespace-only expected_title should bypass title mismatch filtering"
+    end
+
     test "skips filter when expected_title is not provided" do
       results = [
         build_result(%{

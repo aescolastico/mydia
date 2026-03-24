@@ -39,6 +39,10 @@ defmodule Mydia.Indexers.ReleaseRanker do
   - `:search_query` - Original search query to score title relevance
   - `:quality_profile` - QualityProfile struct for scoring (recommended)
   - `:media_type` - Either `:movie` or `:episode` (default: `nil`, TV filtering only applied when `:movie`)
+  - `:expected_title` - Expected show/movie title for pre-ranking title validation. When provided,
+    each result is parsed with `TorrentParser` and rejected if the parsed title has a Jaro distance
+    below 0.7 from the expected title. Unparseable releases pass through (fail-open).
+    Ignored when `nil` or empty/whitespace-only. (default: `nil`)
   """
 
   require Logger
@@ -365,32 +369,47 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # returns results where the search term appears as an episode title rather than
   # the show title (e.g., "Claws S01E04 Fallout" when searching for "Fallout").
   defp reject_title_mismatches(results, nil), do: results
+  defp reject_title_mismatches(results, ""), do: results
 
-  defp reject_title_mismatches(results, expected_title) do
-    Enum.filter(results, fn result ->
-      if title_mismatch?(result, expected_title) do
-        log_title_mismatch(result, expected_title)
-        false
-      else
-        true
-      end
-    end)
+  defp reject_title_mismatches(results, expected_title) when is_binary(expected_title) do
+    trimmed = String.trim(expected_title)
+
+    if trimmed == "" do
+      results
+    else
+      normalized_expected = normalize_for_comparison(trimmed)
+
+      Enum.filter(results, fn result ->
+        case parse_and_compare(result, normalized_expected) do
+          {:mismatch, parsed_title, distance} ->
+            Logger.info(
+              "[ReleaseRanker] Filtered out (title mismatch): " <>
+                "parsed='#{parsed_title}' expected='#{trimmed}' " <>
+                "distance=#{Float.round(distance, 2)}: #{result.title}"
+            )
+
+            false
+
+          _ ->
+            true
+        end
+      end)
+    end
   end
 
-  defp log_title_mismatch(result, expected_title) do
+  # Parse a result's title and compare against the pre-normalized expected title.
+  # Returns {:mismatch, parsed_title, distance} if below threshold, :ok otherwise.
+  defp parse_and_compare(result, normalized_expected) do
     case TorrentParser.parse(result.title) do
       {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
         distance =
-          String.jaro_distance(
-            normalize_for_comparison(expected_title),
-            normalize_for_comparison(parsed_title)
-          )
+          String.jaro_distance(normalized_expected, normalize_for_comparison(parsed_title))
 
-        Logger.info(
-          "[ReleaseRanker] Filtered out (title mismatch): " <>
-            "parsed='#{parsed_title}' expected='#{expected_title}' " <>
-            "distance=#{Float.round(distance, 2)}: #{result.title}"
-        )
+        if distance < @title_match_threshold do
+          {:mismatch, parsed_title, distance}
+        else
+          :ok
+        end
 
       _ ->
         :ok
@@ -592,7 +611,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
       blocked_tag = find_blocked_tag(result, blocked_tags) ->
         "blocked_tag: #{blocked_tag}"
 
-      expected_title != nil and title_mismatch?(result, expected_title) ->
+      expected_title_mismatch?(result, expected_title) ->
         "title_mismatch"
 
       true ->
@@ -600,19 +619,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
     end
   end
 
-  defp title_mismatch?(result, expected_title) do
-    case TorrentParser.parse(result.title) do
-      {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
-        distance =
-          String.jaro_distance(
-            normalize_for_comparison(expected_title),
-            normalize_for_comparison(parsed_title)
-          )
+  defp expected_title_mismatch?(_result, nil), do: false
+  defp expected_title_mismatch?(_result, ""), do: false
 
-        distance < @title_match_threshold
+  defp expected_title_mismatch?(result, expected_title) when is_binary(expected_title) do
+    trimmed = String.trim(expected_title)
 
-      _ ->
-        false
+    if trimmed == "" do
+      false
+    else
+      match?({:mismatch, _, _}, parse_and_compare(result, normalize_for_comparison(trimmed)))
     end
   end
 
