@@ -420,6 +420,17 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       bypass = Bypass.open()
       Mydia.IndexerMock.mock_prowlarr_status(bypass, version: "1.25.0")
 
+      base_url = "http://127.0.0.1:#{bypass.port}"
+
+      # Verify the adapter-level test_connection works before testing through LiveView.
+      # This isolates HTTP/Bypass issues from LiveView form handling issues.
+      assert {:ok, %{version: "1.25.0"}} =
+               Mydia.Indexers.test_connection(%{
+                 type: :prowlarr,
+                 base_url: base_url,
+                 api_key: "test-api-key"
+               })
+
       # Open the new indexer modal
       view
       |> element(~s{button[phx-click="new_indexer"]})
@@ -432,7 +443,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         indexer_config: %{
           name: "Test Prowlarr",
           type: "prowlarr",
-          base_url: "http://127.0.0.1:#{bypass.port}",
+          base_url: base_url,
           api_key: "test-api-key",
           enabled: "true",
           priority: "1"
@@ -447,14 +458,20 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> element(~s{button[phx-click="test_indexer_connection"]})
         |> render_click()
 
-      assert html =~ "Connection successful" or html =~ "Connection failed",
-             "Expected a flash message after test connection but got none. " <>
-               "This may indicate the event handler crashed silently. " <>
-               "HTML snippet: #{String.slice(html, 0..500)}"
+      # Extract the actual error message if present for CI diagnostics
+      if html =~ "Connection failed" do
+        error_snippet =
+          case Regex.run(~r/Connection failed[^<"]*/, html) do
+            [match] -> match
+            _ -> "Could not extract error message"
+          end
+
+        flunk("Expected 'Connection successful' but got: #{error_snippet}")
+      end
 
       assert html =~ "Connection successful",
-             "Expected 'Connection successful' but got a failure flash instead. " <>
-               "HTML snippet: #{String.slice(html, 0..500)}"
+             "Expected a flash message with 'Connection successful' but found neither " <>
+               "'Connection successful' nor 'Connection failed' in the response"
     end
 
     test "test connection shows error for invalid prowlarr server", %{view: view} do
