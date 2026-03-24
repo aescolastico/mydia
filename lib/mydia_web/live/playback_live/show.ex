@@ -149,7 +149,7 @@ defmodule MydiaWeb.PlaybackLive.Show do
     # Try to get duration from the first available media file
     Enum.find_value(media_files, fn media_file ->
       case media_file.metadata do
-        %{"duration" => duration} when is_number(duration) and duration > 0 ->
+        %{duration: duration} when is_number(duration) and duration > 0 ->
           duration
 
         _ ->

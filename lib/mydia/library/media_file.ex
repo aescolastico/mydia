@@ -18,7 +18,7 @@ defmodule Mydia.Library.MediaFile do
           audio_codec: String.t() | nil,
           bitrate: integer() | nil,
           verified_at: DateTime.t() | nil,
-          metadata: map() | nil,
+          metadata: Mydia.Library.Structs.FileMetadata.t(),
           cover_blob: String.t() | nil,
           sprite_blob: String.t() | nil,
           vtt_blob: String.t() | nil,
@@ -45,7 +45,7 @@ defmodule Mydia.Library.MediaFile do
     field :audio_codec, :string
     field :bitrate, :integer
     field :verified_at, :utc_datetime
-    field :metadata, Mydia.Settings.JsonMapType
+    field :metadata, Mydia.Library.FileMetadataType
 
     # Generated media content references (MD5 checksums as storage keys)
     field :cover_blob, :string

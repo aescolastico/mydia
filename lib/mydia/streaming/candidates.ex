@@ -9,6 +9,7 @@ defmodule Mydia.Streaming.Candidates do
   import Ecto.Query, warn: false
 
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
   alias Mydia.Streaming.{CodecString, Compatibility}
 
   @doc """
@@ -116,18 +117,18 @@ defmodule Mydia.Streaming.Candidates do
   Builds metadata response for a media file.
   """
   def build_metadata_response(media_file) do
-    metadata = media_file.metadata || %{}
+    metadata = media_file.metadata || FileMetadata.empty()
 
     %{
-      duration: metadata["duration"],
-      width: metadata["width"],
-      height: metadata["height"],
+      duration: metadata.duration,
+      width: metadata.width,
+      height: metadata.height,
       bitrate: media_file.bitrate,
       resolution: media_file.resolution,
       hdr_format: media_file.hdr_format,
       original_codec: media_file.codec,
       original_audio_codec: media_file.audio_codec,
-      container: metadata["container"]
+      container: metadata.container
     }
   end
 
@@ -146,9 +147,10 @@ defmodule Mydia.Streaming.Candidates do
   defp maybe_extract_codec_info(%MediaFile{codec: nil} = media_file, absolute_path) do
     case Mydia.Library.FileAnalyzer.analyze(absolute_path) do
       {:ok, analysis} ->
+        metadata = media_file.metadata || FileMetadata.empty()
+
         updated_metadata =
-          (media_file.metadata || %{})
-          |> Map.put("container", analysis.container)
+          %{metadata | container: analysis.container}
           |> maybe_put_duration(analysis.duration)
 
         updated = %{
@@ -176,13 +178,13 @@ defmodule Mydia.Streaming.Candidates do
   end
 
   defp maybe_extract_codec_info(media_file, absolute_path) do
-    case get_in(media_file.metadata || %{}, ["duration"]) do
+    metadata = media_file.metadata || FileMetadata.empty()
+
+    case metadata.duration do
       nil ->
         case Mydia.Library.ThumbnailGenerator.get_duration(absolute_path) do
           {:ok, duration} ->
-            updated_metadata =
-              (media_file.metadata || %{})
-              |> Map.put("duration", duration)
+            updated_metadata = %{metadata | duration: duration}
 
             spawn(fn ->
               Mydia.Library.update_media_file_scan(media_file, %{metadata: updated_metadata})
@@ -199,6 +201,8 @@ defmodule Mydia.Streaming.Candidates do
     end
   end
 
-  defp maybe_put_duration(metadata, nil), do: metadata
-  defp maybe_put_duration(metadata, duration), do: Map.put(metadata, "duration", duration)
+  defp maybe_put_duration(%FileMetadata{} = metadata, nil), do: metadata
+
+  defp maybe_put_duration(%FileMetadata{} = metadata, duration),
+    do: %{metadata | duration: duration}
 end

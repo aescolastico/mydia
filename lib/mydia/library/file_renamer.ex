@@ -318,8 +318,8 @@ defmodule Mydia.Library.FileRenamer do
     # Try to determine source from codec or metadata
     cond do
       # Check metadata for source
-      file.metadata && Map.get(file.metadata, "source") ->
-        Map.get(file.metadata, "source")
+      file.metadata && file.metadata.source ->
+        file.metadata.source
 
       # Infer from codec
       file.codec && String.contains?(String.downcase(file.codec), "bluray") ->

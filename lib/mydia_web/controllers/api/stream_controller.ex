@@ -168,7 +168,7 @@ defmodule MydiaWeb.Api.StreamController do
   defp stream_media_file(conn, media_file) do
     Logger.info(
       "Streaming media_file id=#{media_file.id}, codec=#{inspect(media_file.codec)}, " <>
-        "audio_codec=#{inspect(media_file.audio_codec)}, container=#{inspect(media_file.metadata["container"])}"
+        "audio_codec=#{inspect(media_file.audio_codec)}, container=#{inspect(media_file.metadata && media_file.metadata.container)}"
     )
 
     # Resolve absolute path from relative path and library_path
@@ -306,7 +306,9 @@ defmodule MydiaWeb.Api.StreamController do
                       # Return the HLS URL as JSON for web clients
                       # Include duration so player can show correct total time
                       # (HLS live playlists don't include total duration)
-                      duration = get_in(media_file.metadata || %{}, ["duration"])
+                      duration =
+                        (media_file.metadata || %Mydia.Library.Structs.FileMetadata{}).duration
+
                       json(conn, %{hls_url: master_playlist_path, duration: duration})
                     else
                       # Redirect to master playlist (native clients)
@@ -479,7 +481,7 @@ defmodule MydiaWeb.Api.StreamController do
 
   # Get duration for remuxing - try metadata first, then probe fresh
   defp get_duration_for_remux(media_file, file_path) do
-    case get_in(media_file.metadata || %{}, ["duration"]) do
+    case (media_file.metadata || %Mydia.Library.Structs.FileMetadata{}).duration do
       duration when is_number(duration) and duration > 0 ->
         duration
 

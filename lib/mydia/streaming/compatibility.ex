@@ -174,10 +174,10 @@ defmodule Mydia.Streaming.Compatibility do
   def get_container_format(%MediaFile{metadata: metadata} = media_file) do
     # First try to get from metadata
     case metadata do
-      %{"container" => container} when is_binary(container) ->
+      %{container: container} when is_binary(container) ->
         container
 
-      %{"format_name" => format_name} when is_binary(format_name) ->
+      %{format_name: format_name} when is_binary(format_name) ->
         # FFprobe may return comma-separated formats like "mov,mp4,m4a"
         # Take the first one
         format_name
