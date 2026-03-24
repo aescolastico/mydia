@@ -401,6 +401,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
     title
     |> String.downcase()
     |> normalize_unicode()
+    |> String.replace("_", " ")
     |> String.replace(~r/[^\w\s]/u, "")
     |> String.replace(~r/\b(the|a|an)\b/, "")
     |> String.replace(~r/\s+/, " ")
