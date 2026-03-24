@@ -79,7 +79,10 @@ config :mydia, Oban,
 config :mydia,
   start_health_monitors: false,
   database_auto_repair: false,
-  sql_sandbox: true
+  sql_sandbox: true,
+  # Use a long refresh interval for LiveView admin page to prevent
+  # timer-triggered re-renders from clearing flash messages during tests
+  admin_refresh_interval: :timer.minutes(10)
 
 # Guardian JWT configuration for tests
 config :mydia, Mydia.Auth.Guardian,

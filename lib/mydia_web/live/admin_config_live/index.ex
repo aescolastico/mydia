@@ -34,8 +34,9 @@ defmodule MydiaWeb.AdminConfigLive.Index do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      # Refresh system data every 5 seconds for real-time updates
-      :timer.send_interval(5000, self(), :refresh_system_data)
+      # Refresh system data periodically for real-time updates
+      refresh_interval = Application.get_env(:mydia, :admin_refresh_interval, 5000)
+      :timer.send_interval(refresh_interval, self(), :refresh_system_data)
       # Subscribe to library scanner topic for job updates
       Phoenix.PubSub.subscribe(Mydia.PubSub, "library_scanner")
       # Subscribe to remote access claim events (for auto-closing pairing modal)
