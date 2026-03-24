@@ -442,17 +442,19 @@ defmodule MydiaWeb.AdminConfigLiveTest do
 
       # Click the "Test Connection" button - this is the exact flow that was crashing
       # with KeyError: key :use_ssl not found (issue #28)
-      click_html =
+      html =
         view
         |> element(~s{button[phx-click="test_indexer_connection"]})
         |> render_click()
 
-      html = render(view)
-      combined = click_html <> html
+      assert html =~ "Connection successful" or html =~ "Connection failed",
+             "Expected a flash message after test connection but got none. " <>
+               "This may indicate the event handler crashed silently. " <>
+               "HTML snippet: #{String.slice(html, 0..500)}"
 
-      assert combined =~ "Connection successful",
-             "Expected flash 'Connection successful' after test connection. " <>
-               "Click HTML snippet: #{String.slice(click_html, 0..500)}"
+      assert html =~ "Connection successful",
+             "Expected 'Connection successful' but got a failure flash instead. " <>
+               "HTML snippet: #{String.slice(html, 0..500)}"
     end
 
     test "test connection shows error for invalid prowlarr server", %{view: view} do
@@ -485,17 +487,14 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       |> render_change()
 
       # Click test connection - should show an error, NOT crash with KeyError
-      click_html =
+      html =
         view
         |> element(~s{button[phx-click="test_indexer_connection"]})
         |> render_click()
 
-      html = render(view)
-      combined = click_html <> html
-
-      assert combined =~ "Connection failed",
+      assert html =~ "Connection failed",
              "Expected flash 'Connection failed' after test connection. " <>
-               "Click HTML snippet: #{String.slice(click_html, 0..500)}"
+               "HTML snippet: #{String.slice(html, 0..500)}"
     end
   end
 

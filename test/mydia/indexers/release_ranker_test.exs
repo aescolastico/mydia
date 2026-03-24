@@ -1447,4 +1447,217 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert String.contains?(best.result.title, "BestMatch")
     end
   end
+
+  describe "title mismatch filtering" do
+    @gb 1024 * 1024 * 1024
+
+    test "rejects results where parsed title doesn't match expected title" do
+      # Real-world bug: searching for "Fallout S01E04" returned
+      # "Claws S01E04 Fallout 1080p..." because "Fallout" is the episode title,
+      # not the show title. TorrentParser extracts "Claws" as the show title.
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Fallout",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert ranked == [],
+             "Result with parsed title 'Claws' should be rejected when expecting 'Fallout'"
+    end
+
+    test "accepts results where parsed title matches expected title" do
+      results = [
+        build_result(%{
+          title: "Fallout.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264-GROUP",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Fallout.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Fallout",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+    end
+
+    test "accepts results with close title match" do
+      results = [
+        build_result(%{
+          title: "Dr.Who.S14E01.720p.WEB-DL.x264-GROUP",
+          size: round(2.0 * @gb),
+          seeders: 100,
+          quality: QualityParser.parse("Dr.Who.S14E01.720p.WEB-DL.x264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Doctor Who",
+          media_type: :episode,
+          search_query: "Doctor Who S14E01",
+          min_seeders: 0
+        )
+
+      # "dr who" vs "doctor who" should be close enough to pass
+      assert length(ranked) == 1
+    end
+
+    test "passes through unparseable release names (fail-open)" do
+      # This release name won't parse as TV or movie via TorrentParser,
+      # so the title mismatch filter should let it through.
+      # Note: we omit search_query to avoid reject_zero_title_match catching it.
+      results = [
+        build_result(%{
+          title: "abc123def456",
+          size: round(1.0 * @gb),
+          seeders: 10,
+          quality: nil
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Fallout",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "Unparseable releases should pass through (fail-open)"
+    end
+
+    test "skips filter when expected_title is empty string" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "Empty expected_title should bypass title mismatch filtering"
+    end
+
+    test "skips filter when expected_title is whitespace-only" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "   ",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1,
+             "Whitespace-only expected_title should bypass title mismatch filtering"
+    end
+
+    test "skips filter when expected_title is not provided" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      # Without expected_title, the filter is skipped
+      assert length(ranked) == 1,
+             "Without expected_title, no title mismatch filtering should occur"
+    end
+
+    test "rejects movie title mismatches" do
+      # Searching for "Inception" but indexer returns "Interstellar" (unrelated movie)
+      results = [
+        build_result(%{
+          title: "Interstellar.2014.1080p.BluRay.x264-GROUP",
+          size: round(8.0 * @gb),
+          seeders: 100,
+          quality: QualityParser.parse("Interstellar.2014.1080p.BluRay.x264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Inception",
+          media_type: :movie,
+          search_query: "Inception 2010",
+          min_seeders: 0
+        )
+
+      assert ranked == [],
+             "Movie with different parsed title should be rejected"
+    end
+
+    test "filters correct result among mixed results" do
+      results = [
+        build_result(%{
+          title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
+          size: round(3.0 * @gb),
+          seeders: 200,
+          quality: QualityParser.parse("Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264")
+        }),
+        build_result(%{
+          title: "Fallout.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb",
+          size: round(3.0 * @gb),
+          seeders: 50,
+          quality: QualityParser.parse("Fallout.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          expected_title: "Fallout",
+          media_type: :episode,
+          search_query: "Fallout S01E04",
+          min_seeders: 0
+        )
+
+      # Only the correct Fallout result should remain, even though Claws had more seeders
+      assert length(ranked) == 1
+      assert String.contains?(List.first(ranked).result.title, "Fallout.S01E04")
+    end
+  end
 end

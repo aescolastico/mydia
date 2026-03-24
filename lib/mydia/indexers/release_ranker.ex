@@ -39,10 +39,15 @@ defmodule Mydia.Indexers.ReleaseRanker do
   - `:search_query` - Original search query to score title relevance
   - `:quality_profile` - QualityProfile struct for scoring (recommended)
   - `:media_type` - Either `:movie` or `:episode` (default: `nil`, TV filtering only applied when `:movie`)
+  - `:expected_title` - Expected show/movie title for pre-ranking title validation. When provided,
+    each result is parsed with `TorrentParser` and rejected if the parsed title has a Jaro distance
+    below 0.7 from the expected title. Unparseable releases pass through (fail-open).
+    Ignored when `nil` or empty/whitespace-only. (default: `nil`)
   """
 
   require Logger
 
+  alias Mydia.Downloads.TorrentParser
   alias Mydia.Indexers.{SearchResult, SearchScorer}
   alias Mydia.Indexers.Structs.{RankedResult, ScoreBreakdown}
   alias Mydia.Settings.QualityProfile
@@ -59,10 +64,12 @@ defmodule Mydia.Indexers.ReleaseRanker do
           blocked_tags: [String.t()],
           search_query: String.t() | nil,
           quality_profile: QualityProfile.t() | nil,
-          media_type: :movie | :episode | nil
+          media_type: :movie | :episode | nil,
+          expected_title: String.t() | nil
         ]
 
   @default_min_seeders 0
+  @title_match_threshold 0.7
 
   @doc """
   Selects the best result from a list based on ranking criteria.
@@ -112,11 +119,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
     search_query = Keyword.get(opts, :search_query)
 
     media_type = Keyword.get(opts, :media_type)
+    expected_title = Keyword.get(opts, :expected_title)
 
     ranked =
       results
       |> filter_acceptable(opts)
       |> reject_tv_releases_for_movies(media_type)
+      |> reject_title_mismatches(expected_title)
       |> Enum.map(fn result ->
         breakdown = calculate_score_breakdown(result, opts)
         RankedResult.new(%{result: result, score: breakdown.total, breakdown: breakdown})
@@ -352,6 +361,84 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   defp reject_tv_releases_for_movies(results, _media_type), do: results
 
+  ## Private Functions - Title Mismatch Filtering
+
+  # When an expected_title is provided, parse each result's release name to extract
+  # the actual show/movie title, then reject results where the parsed title doesn't
+  # match the expected title. This prevents downloading wrong shows when an indexer
+  # returns results where the search term appears as an episode title rather than
+  # the show title (e.g., "Claws S01E04 Fallout" when searching for "Fallout").
+  defp reject_title_mismatches(results, nil), do: results
+  defp reject_title_mismatches(results, ""), do: results
+
+  defp reject_title_mismatches(results, expected_title) when is_binary(expected_title) do
+    trimmed = String.trim(expected_title)
+
+    if trimmed == "" do
+      results
+    else
+      normalized_expected = normalize_for_comparison(trimmed)
+
+      Enum.filter(results, fn result ->
+        case parse_and_compare(result, normalized_expected) do
+          {:mismatch, parsed_title, distance} ->
+            Logger.info(
+              "[ReleaseRanker] Filtered out (title mismatch): " <>
+                "parsed='#{parsed_title}' expected='#{trimmed}' " <>
+                "distance=#{Float.round(distance, 2)}: #{result.title}"
+            )
+
+            false
+
+          _ ->
+            true
+        end
+      end)
+    end
+  end
+
+  # Parse a result's title and compare against the pre-normalized expected title.
+  # Returns {:mismatch, parsed_title, distance} if below threshold, :ok otherwise.
+  defp parse_and_compare(result, normalized_expected) do
+    case TorrentParser.parse(result.title) do
+      {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
+        distance =
+          String.jaro_distance(normalized_expected, normalize_for_comparison(parsed_title))
+
+        if distance < @title_match_threshold do
+          {:mismatch, parsed_title, distance}
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp normalize_for_comparison(title) do
+    title
+    |> String.downcase()
+    |> normalize_unicode()
+    |> String.replace("_", " ")
+    |> String.replace(~r/[^\w\s]/u, "")
+    |> String.replace(~r/\b(the|a|an)\b/, "")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  # NFD decomposition strips accents universally: é → e, ñ → n, ç → c, etc.
+  # German transliterations (ä→ae, ß→ss) are applied first since NFD would just strip the umlaut.
+  defp normalize_unicode(str) do
+    str
+    |> String.replace("ä", "ae")
+    |> String.replace("ö", "oe")
+    |> String.replace("ü", "ue")
+    |> String.replace("ß", "ss")
+    |> then(&:unicode.characters_to_nfd_binary/1)
+    |> String.replace(~r/\p{Mn}/u, "")
+  end
+
   ## Private Functions - Title Match Filtering
 
   # When a search_query is provided, reject results where the title doesn't match
@@ -445,6 +532,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
     min_ratio = Keyword.get(opts, :min_ratio)
     size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
+    expected_title = Keyword.get(opts, :expected_title)
 
     results
     |> Enum.map(fn result ->
@@ -459,7 +547,15 @@ defmodule Mydia.Indexers.ReleaseRanker do
       }
 
       # Check rejection reasons in order
-      rejection = get_rejection_reason(result, min_seeders, min_ratio, size_range, blocked_tags)
+      rejection =
+        get_rejection_reason(
+          result,
+          min_seeders,
+          min_ratio,
+          size_range,
+          blocked_tags,
+          expected_title
+        )
 
       case rejection do
         nil ->
@@ -490,7 +586,14 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   # Returns rejection reason string or nil if acceptable
-  defp get_rejection_reason(result, min_seeders, min_ratio, size_range, blocked_tags) do
+  defp get_rejection_reason(
+         result,
+         min_seeders,
+         min_ratio,
+         size_range,
+         blocked_tags,
+         expected_title
+       ) do
     cond do
       not meets_seeder_minimum?(result, min_seeders) ->
         "low_seeders: #{result.seeders} < #{min_seeders}"
@@ -508,8 +611,24 @@ defmodule Mydia.Indexers.ReleaseRanker do
       blocked_tag = find_blocked_tag(result, blocked_tags) ->
         "blocked_tag: #{blocked_tag}"
 
+      expected_title_mismatch?(result, expected_title) ->
+        "title_mismatch"
+
       true ->
         nil
+    end
+  end
+
+  defp expected_title_mismatch?(_result, nil), do: false
+  defp expected_title_mismatch?(_result, ""), do: false
+
+  defp expected_title_mismatch?(result, expected_title) when is_binary(expected_title) do
+    trimmed = String.trim(expected_title)
+
+    if trimmed == "" do
+      false
+    else
+      match?({:mismatch, _, _}, parse_and_compare(result, normalize_for_comparison(trimmed)))
     end
   end
 

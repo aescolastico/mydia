@@ -460,7 +460,8 @@ defmodule Mydia.Jobs.MovieSearch do
       min_seeders: Map.get(args, "min_seeders", get_min_seeders()),
       size_range: Map.get(args, "size_range"),
       search_query: build_search_query(movie),
-      media_type: :movie
+      media_type: :movie,
+      expected_title: movie.title
     ]
 
     # Add quality profile for unified scoring via SearchScorer
