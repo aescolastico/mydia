@@ -59,13 +59,94 @@ defmodule Mydia.Jobs.TVShowSearch do
   alias Mydia.Library.MediaFile
   alias Phoenix.PubSub
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [
+      :mode,
+      :episode_id,
+      :media_item_id,
+      :season_number,
+      :min_seeders,
+      :size_range,
+      :blocked_tags,
+      :preferred_tags
+    ]
+
+    @type t :: %__MODULE__{
+            mode: String.t() | nil,
+            episode_id: String.t() | nil,
+            media_item_id: String.t() | nil,
+            season_number: integer() | nil,
+            min_seeders: integer() | nil,
+            size_range: term() | nil,
+            blocked_tags: [String.t()] | nil,
+            preferred_tags: [String.t()] | nil
+          }
+
+    def parse(%{"mode" => "specific", "episode_id" => episode_id} = raw) do
+      %__MODULE__{
+        mode: "specific",
+        episode_id: episode_id,
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+
+    def parse(
+          %{
+            "mode" => "season",
+            "media_item_id" => media_item_id,
+            "season_number" => season_number
+          } = raw
+        ) do
+      %__MODULE__{
+        mode: "season",
+        media_item_id: media_item_id,
+        season_number: season_number,
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+
+    def parse(%{"mode" => "show", "media_item_id" => media_item_id} = raw) do
+      %__MODULE__{
+        mode: "show",
+        media_item_id: media_item_id,
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+
+    def parse(%{"mode" => "all_monitored"} = raw) do
+      %__MODULE__{
+        mode: "all_monitored",
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+
+    def parse(%{"mode" => mode}) do
+      %__MODULE__{mode: mode}
+    end
+  end
+
   # Get min_seeders from config (defaults to 0 for Usenet compatibility)
   defp get_min_seeders do
     Application.get_env(:mydia, :auto_search, [])[:min_seeders] || 0
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "specific", "episode_id" => episode_id} = args}) do
+  def perform(%Oban.Job{args: %{"mode" => "specific", "episode_id" => _} = raw_args}) do
+    args = Args.parse(raw_args)
+    episode_id = args.episode_id
     start_time = System.monotonic_time(:millisecond)
     Logger.info("Starting search for specific episode", episode_id: episode_id)
 
@@ -110,15 +191,10 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args:
-          %{
-            "mode" => "season",
-            "media_item_id" => media_item_id,
-            "season_number" => season_number
-          } =
-            args
-      }) do
+  def perform(%Oban.Job{args: %{"mode" => "season"} = raw_args}) do
+    args = Args.parse(raw_args)
+    media_item_id = args.media_item_id
+    season_number = args.season_number
     start_time = System.monotonic_time(:millisecond)
 
     Logger.info("Starting search for full season",
@@ -186,7 +262,9 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "show", "media_item_id" => media_item_id} = args}) do
+  def perform(%Oban.Job{args: %{"mode" => "show"} = raw_args}) do
+    args = Args.parse(raw_args)
+    media_item_id = args.media_item_id
     start_time = System.monotonic_time(:millisecond)
     Logger.info("Starting search for all episodes of show", media_item_id: media_item_id)
 
@@ -275,7 +353,8 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "all_monitored"} = args}) do
+  def perform(%Oban.Job{args: %{"mode" => "all_monitored"} = raw_args}) do
+    args = Args.parse(raw_args)
     start_time = System.monotonic_time(:millisecond)
     max_searches = get_max_searches_per_run()
 
@@ -351,8 +430,9 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => mode}}) do
-    Logger.error("Unsupported mode", mode: mode)
+  def perform(%Oban.Job{args: %{"mode" => _} = raw_args}) do
+    args = Args.parse(raw_args)
+    Logger.error("Unsupported mode", mode: args.mode)
     {:error, :unsupported_mode}
   end
 
@@ -1032,14 +1112,13 @@ defmodule Mydia.Jobs.TVShowSearch do
 
   ## Private Functions - Quality & Ranking
 
-  defp build_ranking_options(episode, args) do
+  defp build_ranking_options(episode, %Args{} = args) do
     # Start with base options - TV shows typically have smaller file sizes than movies
-    # Oban job args use string keys (JSON storage)
     # Include search_query for title relevance scoring and media_type for unified scoring
     # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
     base_opts = [
-      min_seeders: args["min_seeders"] || get_min_seeders(),
-      size_range: args["size_range"],
+      min_seeders: args.min_seeders || get_min_seeders(),
+      size_range: args.size_range,
       search_query: build_episode_query(episode),
       media_type: :episode
     ]
@@ -1058,19 +1137,18 @@ defmodule Mydia.Jobs.TVShowSearch do
 
     # Add any custom blocked/preferred tags from args
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, args["blocked_tags"])
-    |> maybe_add_option(:preferred_tags, args["preferred_tags"])
+    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 
-  defp build_ranking_options_for_season(media_item, season_number, _episodes, args) do
+  defp build_ranking_options_for_season(media_item, season_number, _episodes, %Args{} = args) do
     # Season packs are typically much larger than individual episodes
     # A full season in HD can be 10-50GB depending on episode count and quality
-    # Oban job args use string keys (JSON storage)
     # Include search_query for title relevance scoring and media_type for unified scoring
     # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
     base_opts = [
-      min_seeders: args["min_seeders"] || get_min_seeders(),
-      size_range: args["size_range"],
+      min_seeders: args.min_seeders || get_min_seeders(),
+      size_range: args.size_range,
       search_query: build_season_query(media_item, season_number),
       media_type: :episode
     ]
@@ -1100,8 +1178,8 @@ defmodule Mydia.Jobs.TVShowSearch do
 
     # Add any custom blocked/preferred tags from args
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, args["blocked_tags"])
-    |> maybe_add_option(:preferred_tags, args["preferred_tags"])
+    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 
   defp load_quality_profile(%Episode{media_item: media_item}) do
