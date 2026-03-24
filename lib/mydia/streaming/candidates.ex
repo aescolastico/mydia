@@ -78,7 +78,7 @@ defmodule Mydia.Streaming.Candidates do
   """
   def build_streaming_candidates(media_file) do
     compatibility = Compatibility.check_compatibility(media_file)
-    metadata = media_file.metadata || %{}
+    metadata = media_file.metadata || FileMetadata.empty()
 
     video_codec_str = CodecString.video_codec_string(media_file.codec, metadata)
     audio_codec_str = CodecString.audio_codec_string(media_file.audio_codec, metadata)

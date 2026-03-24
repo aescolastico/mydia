@@ -2,6 +2,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
   use ExUnit.Case, async: true
 
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
   alias Mydia.Streaming.Compatibility
 
   describe "check_compatibility/1" do
@@ -9,7 +10,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         relative_path: "video.mp4",
         library_path: %Mydia.Settings.LibraryPath{path: "/path/to"}
       }
@@ -21,7 +22,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "vp9",
         audio_codec: "opus",
-        metadata: %{"container" => "webm"},
+        metadata: %FileMetadata{container: "webm"},
         path: "/path/to/video.webm"
       }
 
@@ -32,7 +33,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "av1",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -43,7 +44,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "H264",
         audio_codec: "AAC",
-        metadata: %{"container" => "MP4"},
+        metadata: %FileMetadata{container: "MP4"},
         path: "/path/to/video.mp4"
       }
 
@@ -54,7 +55,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "avc1",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -65,7 +66,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "hevc",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -76,7 +77,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h265",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -87,7 +88,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -98,7 +99,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "avi"},
+        metadata: %FileMetadata{container: "avi"},
         path: "/path/to/video.avi"
       }
 
@@ -109,7 +110,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mov"},
+        metadata: %FileMetadata{container: "mov"},
         path: "/path/to/video.mov"
       }
 
@@ -120,7 +121,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "ts"},
+        metadata: %FileMetadata{container: "ts"},
         path: "/path/to/video.ts"
       }
 
@@ -131,7 +132,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "flv"},
+        metadata: %FileMetadata{container: "flv"},
         path: "/path/to/video.flv"
       }
 
@@ -142,7 +143,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "hevc",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -153,7 +154,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "dts",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -164,7 +165,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "ac3",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -175,7 +176,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "dts",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -186,7 +187,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: nil,
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -198,7 +199,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: nil,
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -209,7 +210,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{},
+        metadata: %FileMetadata{},
         relative_path: "video",
         library_path: %Mydia.Settings.LibraryPath{path: "/path/to"}
       }
@@ -221,7 +222,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{},
+        metadata: %FileMetadata{},
         relative_path: "video.mp4",
         library_path: %Mydia.Settings.LibraryPath{path: "/path/to"}
       }
@@ -233,7 +234,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"format_name" => "mov,mp4,m4a,3gp,3g2,mj2"},
+        metadata: %FileMetadata{format_name: "mov,mp4,m4a,3gp,3g2,mj2"},
         path: "/path/to/video.mov"
       }
 
@@ -245,7 +246,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"format_name" => "mp4"},
+        metadata: %FileMetadata{format_name: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -258,7 +259,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -269,7 +270,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "hevc",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -280,7 +281,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "ac3",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -291,7 +292,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: nil,
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -302,7 +303,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "hevc",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -316,7 +317,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -327,7 +328,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "avi"},
+        metadata: %FileMetadata{container: "avi"},
         path: "/path/to/video.avi"
       }
 
@@ -340,7 +341,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 
@@ -351,7 +352,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "h264",
         audio_codec: "aac",
-        metadata: %{"container" => "mp4"},
+        metadata: %FileMetadata{container: "mp4"},
         path: "/path/to/video.mp4"
       }
 
@@ -362,7 +363,7 @@ defmodule Mydia.Streaming.CompatibilityTest do
       media_file = %MediaFile{
         codec: "hevc",
         audio_codec: "dts",
-        metadata: %{"container" => "mkv"},
+        metadata: %FileMetadata{container: "mkv"},
         path: "/path/to/video.mkv"
       }
 

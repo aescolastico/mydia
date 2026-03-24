@@ -3,6 +3,7 @@ defmodule MydiaWeb.Api.StreamController do
 
   alias Mydia.Library
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
 
   alias Mydia.Streaming.{
     Candidates,
@@ -307,7 +308,7 @@ defmodule MydiaWeb.Api.StreamController do
                       # Include duration so player can show correct total time
                       # (HLS live playlists don't include total duration)
                       duration =
-                        (media_file.metadata || %Mydia.Library.Structs.FileMetadata{}).duration
+                        (media_file.metadata || FileMetadata.empty()).duration
 
                       json(conn, %{hls_url: master_playlist_path, duration: duration})
                     else
@@ -481,7 +482,7 @@ defmodule MydiaWeb.Api.StreamController do
 
   # Get duration for remuxing - try metadata first, then probe fresh
   defp get_duration_for_remux(media_file, file_path) do
-    case (media_file.metadata || %Mydia.Library.Structs.FileMetadata{}).duration do
+    case (media_file.metadata || FileMetadata.empty()).duration do
       duration when is_number(duration) and duration > 0 ->
         duration
 

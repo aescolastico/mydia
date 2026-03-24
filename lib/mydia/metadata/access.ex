@@ -12,8 +12,12 @@ defmodule Mydia.Metadata.Access do
   def get(nil, _field), do: nil
   def get(metadata, field) when is_struct(metadata), do: Map.get(metadata, field)
 
-  def get(metadata, field) when is_map(metadata),
-    do: Map.get(metadata, field) || Map.get(metadata, to_string(field))
+  def get(metadata, field) when is_map(metadata) do
+    case Map.fetch(metadata, field) do
+      {:ok, value} -> value
+      :error -> Map.get(metadata, to_string(field))
+    end
+  end
 
   def get(_, _), do: nil
 end

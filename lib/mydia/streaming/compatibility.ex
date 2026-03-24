@@ -27,15 +27,15 @@ defmodule Mydia.Streaming.Compatibility do
 
   ## Examples
 
-      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %{"container" => "mp4"}}
+      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mp4"}}
       iex> check_compatibility(media_file)
       :direct_play
 
-      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %{"container" => "mkv"}}
+      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mkv"}}
       iex> check_compatibility(media_file)
       :needs_remux
 
-      iex> media_file = %MediaFile{codec: "hevc", audio_codec: "aac", metadata: %{"container" => "mkv"}}
+      iex> media_file = %MediaFile{codec: "hevc", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mkv"}}
       iex> check_compatibility(media_file)
       :needs_transcoding
   """

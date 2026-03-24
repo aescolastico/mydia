@@ -43,6 +43,7 @@ defmodule Mydia.Settings.QualityProfileEngine do
   alias Mydia.Repo
   alias Mydia.Settings.QualityProfile
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
   alias Phoenix.PubSub
 
   @pubsub Mydia.PubSub
@@ -363,7 +364,7 @@ defmodule Mydia.Settings.QualityProfileEngine do
   # Assigns a quality profile to a media file with evaluation results
   defp assign_profile_to_file(file, profile, evaluation) do
     # Store evaluation metadata
-    current_metadata = file.metadata || %Mydia.Library.Structs.FileMetadata{}
+    current_metadata = file.metadata || FileMetadata.empty()
 
     metadata = %{
       current_metadata
