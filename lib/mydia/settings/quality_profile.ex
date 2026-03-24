@@ -11,6 +11,25 @@ defmodule Mydia.Settings.QualityProfile do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          upgrades_allowed: boolean(),
+          upgrade_until_quality: String.t() | nil,
+          qualities: [String.t()] | nil,
+          description: String.t() | nil,
+          is_system: boolean(),
+          version: integer(),
+          source_url: String.t() | nil,
+          last_synced_at: DateTime.t() | nil,
+          quality_standards: map() | nil,
+          metadata_preferences: map() | nil,
+          customizations: map() | nil,
+          media_files: [Mydia.Library.MediaFile.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   # Allowed values for quality standards validation
   @valid_video_codecs [
     "h264",

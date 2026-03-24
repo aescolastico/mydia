@@ -8,6 +8,34 @@ defmodule Mydia.Library.MediaFile do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          path: String.t() | nil,
+          size: integer() | nil,
+          resolution: String.t() | nil,
+          codec: String.t() | nil,
+          hdr_format: String.t() | nil,
+          audio_codec: String.t() | nil,
+          bitrate: integer() | nil,
+          verified_at: DateTime.t() | nil,
+          metadata: map() | nil,
+          cover_blob: String.t() | nil,
+          sprite_blob: String.t() | nil,
+          vtt_blob: String.t() | nil,
+          preview_blob: String.t() | nil,
+          phash: String.t() | nil,
+          generated_at: DateTime.t() | nil,
+          trashed_at: DateTime.t() | nil,
+          relative_path: String.t() | nil,
+          library_path: Mydia.Settings.LibraryPath.t() | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          episode: Mydia.Media.Episode.t() | nil | Ecto.Association.NotLoaded.t(),
+          quality_profile:
+            Mydia.Settings.QualityProfile.t() | nil | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "media_files" do
     field :path, :string
     field :size, :integer

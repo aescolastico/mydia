@@ -14,6 +14,19 @@ defmodule Mydia.RemoteAccess.PairingClaim do
   @code_length 8
   @expiry_minutes 5
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          code: String.t() | nil,
+          expires_at: DateTime.t() | nil,
+          used_at: DateTime.t() | nil,
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          user_id: binary() | nil,
+          device: Mydia.RemoteAccess.RemoteDevice.t() | nil | Ecto.Association.NotLoaded.t(),
+          device_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "pairing_claims" do
     field :code, :string
     field :expires_at, :utc_datetime

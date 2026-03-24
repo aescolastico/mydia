@@ -8,6 +8,20 @@ defmodule Mydia.Books.BookFile do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          path: String.t() | nil,
+          relative_path: String.t() | nil,
+          size: integer() | nil,
+          format: String.t() | nil,
+          book: Mydia.Books.Book.t() | Ecto.Association.NotLoaded.t(),
+          book_id: binary() | nil,
+          library_path: Mydia.Settings.LibraryPath.t() | Ecto.Association.NotLoaded.t(),
+          library_path_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @book_formats ~w(epub pdf mobi azw azw3 cbr cbz txt djvu fb2 lit pdb rtf doc docx)
 
   schema "book_files" do

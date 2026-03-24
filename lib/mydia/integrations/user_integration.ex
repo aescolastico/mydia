@@ -8,6 +8,23 @@ defmodule Mydia.Integrations.UserIntegration do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          provider: String.t() | nil,
+          access_token: String.t() | nil,
+          refresh_token: String.t() | nil,
+          token_expires_at: DateTime.t() | nil,
+          external_user_id: String.t() | nil,
+          external_username: String.t() | nil,
+          scopes: String.t() | nil,
+          enabled: boolean(),
+          last_synced_at: DateTime.t() | nil,
+          settings: map(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "user_integrations" do
     field :provider, :string
     field :access_token, :string

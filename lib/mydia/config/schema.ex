@@ -8,6 +8,23 @@ defmodule Mydia.Config.Schema do
   import Ecto.Changeset
 
   @primary_key false
+
+  @type t :: %__MODULE__{
+          server: __MODULE__.Server.t() | nil,
+          database: __MODULE__.Database.t() | nil,
+          auth: __MODULE__.Auth.t() | nil,
+          media: __MODULE__.Media.t() | nil,
+          downloads: __MODULE__.Downloads.t() | nil,
+          logging: __MODULE__.Logging.t() | nil,
+          oban: __MODULE__.Oban.t() | nil,
+          hooks: __MODULE__.Hooks.t() | nil,
+          flaresolverr: __MODULE__.FlareSolverr.t() | nil,
+          download_clients: [__MODULE__.DownloadClient.t()],
+          indexers: [__MODULE__.Indexer.t()],
+          media_servers: [__MODULE__.MediaServer.t()],
+          library_paths: [__MODULE__.LibraryPath.t()]
+        }
+
   embedded_schema do
     embeds_one :server, Server, on_replace: :update, primary_key: false do
       field :port, :integer, default: 4000

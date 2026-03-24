@@ -8,6 +8,30 @@ defmodule Mydia.Books.Book do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          title: String.t() | nil,
+          isbn: String.t() | nil,
+          isbn13: String.t() | nil,
+          openlibrary_id: String.t() | nil,
+          goodreads_id: String.t() | nil,
+          publish_date: Date.t() | nil,
+          publisher: String.t() | nil,
+          pages: integer() | nil,
+          language: String.t() | nil,
+          description: String.t() | nil,
+          cover_url: String.t() | nil,
+          genres: [String.t()],
+          series_name: String.t() | nil,
+          series_position: float() | nil,
+          monitored: boolean(),
+          author: Mydia.Books.Author.t() | Ecto.Association.NotLoaded.t(),
+          author_id: binary() | nil,
+          book_files: [Mydia.Books.BookFile.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "books" do
     field :title, :string
     field :isbn, :string

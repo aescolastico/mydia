@@ -8,6 +8,28 @@ defmodule Mydia.Media.MediaRequest do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          media_type: String.t() | nil,
+          title: String.t() | nil,
+          original_title: String.t() | nil,
+          year: integer() | nil,
+          tmdb_id: integer() | nil,
+          tvdb_id: integer() | nil,
+          imdb_id: String.t() | nil,
+          status: String.t(),
+          requester_notes: String.t() | nil,
+          admin_notes: String.t() | nil,
+          rejection_reason: String.t() | nil,
+          approved_at: DateTime.t() | nil,
+          rejected_at: DateTime.t() | nil,
+          requester: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          approved_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | nil | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @status_values ~w(pending approved rejected)
   @media_types ~w(movie tv_show)
 

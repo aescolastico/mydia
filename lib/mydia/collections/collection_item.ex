@@ -12,6 +12,14 @@ defmodule Mydia.Collections.CollectionItem do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          position: integer(),
+          collection: Mydia.Collections.Collection.t() | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t()
+        }
+
   schema "collection_items" do
     field :position, :integer, default: 0
 

@@ -9,6 +9,21 @@ defmodule Mydia.RemoteAccess.RemoteDevice do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          device_name: String.t() | nil,
+          platform: String.t() | nil,
+          device_static_public_key: binary() | nil,
+          token_hash: String.t() | nil,
+          token: String.t() | nil,
+          last_seen_at: DateTime.t() | nil,
+          revoked_at: DateTime.t() | nil,
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          user_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "remote_devices" do
     field :device_name, :string
     field :platform, :string

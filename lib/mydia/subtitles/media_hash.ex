@@ -9,6 +9,14 @@ defmodule Mydia.Subtitles.MediaHash do
 
   @primary_key false
 
+  @type t :: %__MODULE__{
+          media_file_id: binary(),
+          opensubtitles_hash: String.t() | nil,
+          file_size: integer() | nil,
+          calculated_at: DateTime.t() | nil,
+          media_file: Mydia.Library.MediaFile.t() | Ecto.Association.NotLoaded.t()
+        }
+
   schema "media_hashes" do
     field :media_file_id, :binary_id, primary_key: true
     field :opensubtitles_hash, :string

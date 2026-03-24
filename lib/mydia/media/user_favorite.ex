@@ -17,6 +17,14 @@ defmodule Mydia.Media.UserFavorite do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "user_favorites" do
     belongs_to :user, Mydia.Accounts.User
     belongs_to :media_item, Mydia.Media.MediaItem

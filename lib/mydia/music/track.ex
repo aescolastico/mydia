@@ -8,6 +8,22 @@ defmodule Mydia.Music.Track do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          title: String.t() | nil,
+          track_number: integer() | nil,
+          disc_number: integer(),
+          duration: integer() | nil,
+          musicbrainz_id: String.t() | nil,
+          album: Mydia.Music.Album.t() | Ecto.Association.NotLoaded.t(),
+          album_id: binary() | nil,
+          artist: Mydia.Music.Artist.t() | Ecto.Association.NotLoaded.t(),
+          artist_id: binary() | nil,
+          music_files: [Mydia.Music.MusicFile.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "tracks" do
     field :title, :string
     field :track_number, :integer

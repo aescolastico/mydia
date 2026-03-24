@@ -8,6 +8,20 @@ defmodule Mydia.Settings.MediaServerConfig do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          type: atom() | nil,
+          enabled: boolean(),
+          url: String.t() | nil,
+          token: String.t() | nil,
+          connection_settings: map() | nil,
+          updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          updated_by_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @server_types [:plex, :jellyfin]
 
   schema "media_server_configs" do

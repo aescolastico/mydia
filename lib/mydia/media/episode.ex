@@ -8,6 +8,21 @@ defmodule Mydia.Media.Episode do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          season_number: integer() | nil,
+          episode_number: integer() | nil,
+          title: String.t() | nil,
+          air_date: Date.t() | nil,
+          metadata: map() | nil,
+          monitored: boolean(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          media_files: [Mydia.Library.MediaFile.t()] | Ecto.Association.NotLoaded.t(),
+          downloads: [Mydia.Downloads.Download.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "episodes" do
     field :season_number, :integer
     field :episode_number, :integer

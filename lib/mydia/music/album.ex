@@ -8,6 +8,26 @@ defmodule Mydia.Music.Album do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          title: String.t() | nil,
+          release_date: Date.t() | nil,
+          album_type: String.t(),
+          musicbrainz_id: String.t() | nil,
+          cover_url: String.t() | nil,
+          cover_blob: String.t() | nil,
+          cover_source: String.t() | nil,
+          genres: [String.t()],
+          total_tracks: integer() | nil,
+          total_duration: integer() | nil,
+          monitored: boolean(),
+          artist: Mydia.Music.Artist.t() | Ecto.Association.NotLoaded.t(),
+          artist_id: binary() | nil,
+          tracks: [Mydia.Music.Track.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @album_types ~w(album single ep compilation)
 
   schema "albums" do

@@ -51,6 +51,18 @@ defmodule Mydia.Settings.ConfigSetting do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          key: String.t() | nil,
+          value: String.t() | nil,
+          category: atom() | nil,
+          description: String.t() | nil,
+          updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          updated_by_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @categories [
     :server,
     :auth,

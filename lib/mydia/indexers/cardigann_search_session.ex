@@ -11,6 +11,17 @@ defmodule Mydia.Indexers.CardigannSearchSession do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          cookies: list() | nil,
+          expires_at: DateTime.t() | nil,
+          cardigann_definition:
+            Mydia.Indexers.CardigannDefinition.t() | Ecto.Association.NotLoaded.t(),
+          cardigann_definition_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "cardigann_search_sessions" do
     field :cookies, Mydia.Settings.JsonListType
     field :expires_at, :utc_datetime

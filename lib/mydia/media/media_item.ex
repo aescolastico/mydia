@@ -8,6 +8,31 @@ defmodule Mydia.Media.MediaItem do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          type: String.t() | nil,
+          title: String.t() | nil,
+          original_title: String.t() | nil,
+          year: integer() | nil,
+          tmdb_id: integer() | nil,
+          tvdb_id: integer() | nil,
+          imdb_id: String.t() | nil,
+          metadata: Mydia.Metadata.Structs.MediaMetadata.t() | nil,
+          monitored: boolean(),
+          monitoring_preset: atom(),
+          category: String.t() | nil,
+          category_override: boolean(),
+          seasons_refreshed_at: DateTime.t() | nil,
+          quality_profile: Mydia.Settings.QualityProfile.t() | Ecto.Association.NotLoaded.t(),
+          episodes: [Mydia.Media.Episode.t()] | Ecto.Association.NotLoaded.t(),
+          media_files: [Mydia.Library.MediaFile.t()] | Ecto.Association.NotLoaded.t(),
+          downloads: [Mydia.Downloads.Download.t()] | Ecto.Association.NotLoaded.t(),
+          media_requests: [Mydia.Media.MediaRequest.t()] | Ecto.Association.NotLoaded.t(),
+          playback_progress: [Mydia.Playback.Progress.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @type_values ~w(movie tv_show)
 
   schema "media_items" do

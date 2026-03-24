@@ -8,6 +8,20 @@ defmodule Mydia.Playback.Progress do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          position_seconds: integer() | nil,
+          duration_seconds: integer() | nil,
+          completion_percentage: float() | nil,
+          watched: boolean(),
+          last_watched_at: DateTime.t() | nil,
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          episode: Mydia.Media.Episode.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "playback_progress" do
     field :position_seconds, :integer
     field :duration_seconds, :integer

@@ -8,6 +8,25 @@ defmodule Mydia.Adult.AdultFile do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          path: String.t() | nil,
+          relative_path: String.t() | nil,
+          size: integer() | nil,
+          resolution: String.t() | nil,
+          codec: String.t() | nil,
+          audio_codec: String.t() | nil,
+          bitrate: integer() | nil,
+          duration: integer() | nil,
+          hdr_format: String.t() | nil,
+          scene: Mydia.Adult.Scene.t() | Ecto.Association.NotLoaded.t(),
+          scene_id: binary() | nil,
+          library_path: Mydia.Settings.LibraryPath.t() | Ecto.Association.NotLoaded.t(),
+          library_path_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "adult_files" do
     field :path, :string
     field :relative_path, :string

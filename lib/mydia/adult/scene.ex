@@ -8,6 +8,23 @@ defmodule Mydia.Adult.Scene do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          title: String.t() | nil,
+          release_date: Date.t() | nil,
+          description: String.t() | nil,
+          performers: [String.t()],
+          tags: [String.t()],
+          cover_url: String.t() | nil,
+          duration: integer() | nil,
+          monitored: boolean(),
+          studio: Mydia.Adult.Studio.t() | Ecto.Association.NotLoaded.t(),
+          studio_id: binary() | nil,
+          adult_files: [Mydia.Adult.AdultFile.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "scenes" do
     field :title, :string
     field :release_date, :date

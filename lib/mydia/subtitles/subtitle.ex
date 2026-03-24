@@ -13,6 +13,23 @@ defmodule Mydia.Subtitles.Subtitle do
 
   @supported_formats ["srt", "ass", "vtt"]
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          language: String.t() | nil,
+          provider: String.t() | nil,
+          subtitle_hash: String.t() | nil,
+          file_path: String.t() | nil,
+          sync_offset: integer(),
+          format: String.t() | nil,
+          rating: float() | nil,
+          download_count: integer() | nil,
+          hearing_impaired: boolean(),
+          media_file: Mydia.Library.MediaFile.t() | Ecto.Association.NotLoaded.t(),
+          media_file_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "subtitles" do
     field :language, :string
     field :provider, :string

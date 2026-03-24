@@ -23,6 +23,19 @@ defmodule Mydia.Search.SearchBackoff do
 
   @primary_key {:id, :binary_id, autogenerate: true}
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          resource_type: String.t() | nil,
+          resource_id: binary() | nil,
+          season_number: integer() | nil,
+          failure_count: integer(),
+          last_failure_reason: String.t() | nil,
+          next_eligible_at: DateTime.t() | nil,
+          first_failed_at: DateTime.t() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "search_backoffs" do
     field :resource_type, :string
     field :resource_id, :binary_id

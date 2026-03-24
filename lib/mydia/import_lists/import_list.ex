@@ -27,6 +27,27 @@ defmodule Mydia.ImportLists.ImportList do
 
   @sync_interval_values [60, 360, 720, 1440]
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          type: String.t() | nil,
+          media_type: String.t() | nil,
+          enabled: boolean(),
+          sync_interval: integer(),
+          auto_add: boolean(),
+          monitored: boolean(),
+          config: map(),
+          last_synced_at: DateTime.t() | nil,
+          sync_error: String.t() | nil,
+          list_url: String.t() | nil,
+          quality_profile: Mydia.Settings.QualityProfile.t() | Ecto.Association.NotLoaded.t(),
+          library_path: Mydia.Settings.LibraryPath.t() | Ecto.Association.NotLoaded.t(),
+          target_collection: Mydia.Collections.Collection.t() | Ecto.Association.NotLoaded.t(),
+          items: [Mydia.ImportLists.ImportListItem.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "import_lists" do
     field :name, :string
     field :type, :string
