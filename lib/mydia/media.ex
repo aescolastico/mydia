@@ -9,6 +9,7 @@ defmodule Mydia.Media do
   alias Mydia.Repo
   alias Mydia.Media.{MediaItem, Episode, CategoryClassifier}
   alias Mydia.Media.Structs.CalendarEntry
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Events
 
   ## Media Items
@@ -224,8 +225,8 @@ defmodule Mydia.Media do
 
     changes =
       Enum.reduce(fields_to_compare, [], fn {field, label}, acc ->
-        old_val = get_metadata_field(old_metadata, field)
-        new_val = get_metadata_field(new_metadata, field)
+        old_val = MetadataAccess.get(old_metadata, field)
+        new_val = MetadataAccess.get(new_metadata, field)
 
         if values_differ?(old_val, new_val) do
           [{label, format_metadata_change(field, old_val, new_val)} | acc]
@@ -244,16 +245,6 @@ defmodule Mydia.Media do
       %{metadata_fields: Enum.reverse(changes)}
     end
   end
-
-  defp get_metadata_field(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_metadata_field(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_metadata_field(_, _), do: nil
 
   defp values_differ?(nil, nil), do: false
   defp values_differ?(nil, ""), do: false
@@ -294,8 +285,8 @@ defmodule Mydia.Media do
   defp present?(_), do: true
 
   defp maybe_add_count_change(changes, old_metadata, new_metadata, field, label) do
-    old_count = count_list(get_metadata_field(old_metadata, field))
-    new_count = count_list(get_metadata_field(new_metadata, field))
+    old_count = count_list(MetadataAccess.get(old_metadata, field))
+    new_count = count_list(MetadataAccess.get(new_metadata, field))
 
     if old_count != new_count do
       [{label, %{old: old_count, new: new_count}} | changes]

@@ -5,20 +5,21 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   alias Mydia.{Media, Library, Playback}
 
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
   # Movie and TVShow field resolvers
 
   def resolve_overview(parent, _args, _info) do
-    {:ok, get_metadata_field(parent, :overview)}
+    {:ok, MetadataAccess.get_field(parent, :overview)}
   end
 
   def resolve_runtime(parent, _args, _info) do
-    {:ok, get_metadata_field(parent, :runtime)}
+    {:ok, MetadataAccess.get_field(parent, :runtime)}
   end
 
   def resolve_genres(parent, _args, _info) do
-    {:ok, get_metadata_field(parent, :genres) || []}
+    {:ok, MetadataAccess.get_field(parent, :genres) || []}
   end
 
   def resolve_content_rating(_parent, _args, _info) do
@@ -27,11 +28,11 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   end
 
   def resolve_rating(parent, _args, _info) do
-    {:ok, get_metadata_field(parent, :vote_average)}
+    {:ok, MetadataAccess.get_field(parent, :vote_average)}
   end
 
   def resolve_status(parent, _args, _info) do
-    {:ok, get_metadata_field(parent, :status)}
+    {:ok, MetadataAccess.get_field(parent, :status)}
   end
 
   def resolve_category(%{category: category}, _args, _info) when is_binary(category) do
@@ -45,8 +46,8 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   def resolve_category(_parent, _args, _info), do: {:ok, nil}
 
   def resolve_artwork(%{metadata: metadata} = _parent, _args, _info) do
-    poster_path = get_in_metadata(metadata, :poster_path)
-    backdrop_path = get_in_metadata(metadata, :backdrop_path)
+    poster_path = MetadataAccess.get(metadata, :poster_path)
+    backdrop_path = MetadataAccess.get(metadata, :backdrop_path)
 
     artwork = %{
       poster_url: ImageUrl.poster_url(poster_path),
@@ -179,19 +180,19 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   # Episode-specific resolvers
 
   def resolve_episode_overview(%{metadata: metadata}, _args, _info) do
-    {:ok, get_in_metadata(metadata, :overview)}
+    {:ok, MetadataAccess.get(metadata, :overview)}
   end
 
   def resolve_episode_overview(_episode, _args, _info), do: {:ok, nil}
 
   def resolve_episode_runtime(%{metadata: metadata}, _args, _info) do
-    {:ok, get_in_metadata(metadata, :runtime)}
+    {:ok, MetadataAccess.get(metadata, :runtime)}
   end
 
   def resolve_episode_runtime(_episode, _args, _info), do: {:ok, nil}
 
   def resolve_episode_thumbnail(%{metadata: metadata}, _args, _info) do
-    still_path = get_in_metadata(metadata, :still_path)
+    still_path = MetadataAccess.get(metadata, :still_path)
     {:ok, ImageUrl.still_url(still_path)}
   end
 
@@ -234,26 +235,6 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   def resolve_parent_show(_episode, _args, _info), do: {:ok, nil}
 
   # Helper functions
-
-  defp get_metadata_field(%{metadata: nil}, _field), do: nil
-
-  defp get_metadata_field(%{metadata: metadata}, field) do
-    get_in_metadata(metadata, field)
-  end
-
-  defp get_metadata_field(_parent, _field), do: nil
-
-  defp get_in_metadata(nil, _field), do: nil
-
-  defp get_in_metadata(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_in_metadata(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_in_metadata(_metadata, _field), do: nil
 
   defp format_progress(progress) do
     %{
