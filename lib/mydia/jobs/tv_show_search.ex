@@ -143,6 +143,7 @@ defmodule Mydia.Jobs.TVShowSearch do
     Application.get_env(:mydia, :auto_search, [])[:min_seeders] || 0
   end
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"mode" => "specific", "episode_id" => _} = raw_args}) do
     args = Args.parse(raw_args)

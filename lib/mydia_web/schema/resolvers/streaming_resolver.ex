@@ -19,6 +19,8 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
   This allows P2P clients to determine the optimal streaming strategy
   before initiating playback.
   """
+  @spec streaming_candidates(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def streaming_candidates(_parent, %{content_type: content_type, id: id}, %{context: context}) do
     case context[:current_user] do
       nil ->
@@ -71,6 +73,8 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
 
   Returns the session ID and media duration for the client to use.
   """
+  @spec start_streaming_session(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   @relay_bitrate_cap 2000
 
   def start_streaming_session(_parent, args, %{context: context}) do
@@ -102,6 +106,8 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
 
   This stops the FFmpeg transcoder and cleans up server-side resources.
   """
+  @spec end_streaming_session(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def end_streaming_session(_parent, %{session_id: session_id}, %{context: context}) do
     case context[:current_user] do
       nil ->

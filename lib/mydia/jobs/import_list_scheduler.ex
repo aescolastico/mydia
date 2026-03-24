@@ -24,6 +24,7 @@ defmodule Mydia.Jobs.ImportListScheduler do
   alias Mydia.ImportLists
   alias Mydia.Jobs.ImportListSync
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
     Logger.info("[ImportListScheduler] Checking for import lists due for sync")

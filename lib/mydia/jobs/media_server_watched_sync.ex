@@ -38,6 +38,7 @@ defmodule Mydia.Jobs.MediaServerWatchedSync do
     end
   end
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"mode" => "all_enabled"} = raw_args}) do
     _args = Args.parse(raw_args)

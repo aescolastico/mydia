@@ -27,6 +27,7 @@ defmodule Mydia.Jobs.MediaReclassify do
   @pubsub Mydia.PubSub
   @topic "library_scanner"
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: raw_args}) do
     args = Args.parse(raw_args)

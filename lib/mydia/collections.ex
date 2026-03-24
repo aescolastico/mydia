@@ -35,6 +35,7 @@ defmodule Mydia.Collections do
     - `:include_shared` - Include shared collections from other users (default: true)
     - `:preload` - List of associations to preload
   """
+  @spec list_collections(User.t(), keyword()) :: [Collection.t()]
   def list_collections(%User{} = user, opts \\ []) do
     include_shared = Keyword.get(opts, :include_shared, true)
 
@@ -68,6 +69,7 @@ defmodule Mydia.Collections do
 
   Raises `Ecto.NoResultsError` if collection doesn't exist or isn't accessible.
   """
+  @spec get_collection!(User.t(), binary(), keyword()) :: Collection.t()
   def get_collection!(%User{} = user, id, opts \\ []) do
     Collection
     |> where([c], c.id == ^id)
@@ -80,6 +82,7 @@ defmodule Mydia.Collections do
   Gets a collection by ID, returning nil if not found.
   Only returns collections accessible to the user.
   """
+  @spec get_collection(User.t(), binary(), keyword()) :: Collection.t() | nil
   def get_collection(%User{} = user, id, opts \\ []) do
     Collection
     |> where([c], c.id == ^id)
@@ -94,6 +97,7 @@ defmodule Mydia.Collections do
   This is intended for internal system use only (e.g., import list auto-add).
   For user-facing code, use `get_collection/2` or `get_collection!/2` instead.
   """
+  @spec get_collection_by_id(binary(), keyword()) :: Collection.t() | nil
   def get_collection_by_id(id, opts \\ []) do
     Collection
     |> maybe_preload(opts[:preload])
@@ -114,6 +118,8 @@ defmodule Mydia.Collections do
       iex> create_collection(regular_user, %{name: "Test", visibility: "shared"})
       {:error, :unauthorized}
   """
+  @spec create_collection(User.t(), map()) ::
+          {:ok, Collection.t()} | {:error, Ecto.Changeset.t() | :unauthorized}
   def create_collection(%User{} = user, attrs) do
     visibility = Map.get(attrs, :visibility, Map.get(attrs, "visibility", "private"))
 
@@ -133,6 +139,9 @@ defmodule Mydia.Collections do
   Only the owner can update a collection. System collections cannot be updated.
   Regular users cannot change visibility to "shared".
   """
+  @spec update_collection(User.t(), Collection.t(), map()) ::
+          {:ok, Collection.t()}
+          | {:error, Ecto.Changeset.t() | :unauthorized | :system_collection}
   def update_collection(%User{} = user, %Collection{} = collection, attrs) do
     cond do
       collection.user_id != user.id ->
@@ -160,6 +169,9 @@ defmodule Mydia.Collections do
 
   Only the owner can delete. System collections cannot be deleted.
   """
+  @spec delete_collection(User.t(), Collection.t()) ::
+          {:ok, Collection.t()}
+          | {:error, Ecto.Changeset.t() | :unauthorized | :system_collection}
   def delete_collection(%User{} = user, %Collection{} = collection) do
     cond do
       collection.user_id != user.id ->
@@ -176,6 +188,7 @@ defmodule Mydia.Collections do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking collection changes.
   """
+  @spec change_collection(Collection.t(), map()) :: Ecto.Changeset.t()
   def change_collection(%Collection{} = collection, attrs \\ %{}) do
     Collection.changeset(collection, attrs)
   end
@@ -187,6 +200,7 @@ defmodule Mydia.Collections do
 
   Each user has exactly one Favorites collection which is a system collection.
   """
+  @spec get_or_create_favorites(User.t()) :: {:ok, Collection.t()} | {:error, Ecto.Changeset.t()}
   def get_or_create_favorites(%User{} = user) do
     case Repo.get_by(Collection, user_id: user.id, is_system: true, name: "Favorites") do
       nil ->
@@ -202,6 +216,7 @@ defmodule Mydia.Collections do
   @doc """
   Checks if a media item is in the user's Favorites collection.
   """
+  @spec is_favorite?(User.t(), MediaItem.t() | binary()) :: boolean()
   def is_favorite?(%User{} = user, %MediaItem{} = media_item) do
     is_favorite?(user, media_item.id)
   end
@@ -225,6 +240,7 @@ defmodule Mydia.Collections do
 
   Returns `{:ok, :added}` or `{:ok, :removed}`.
   """
+  @spec toggle_favorite(User.t(), binary()) :: {:ok, :added | :removed} | {:error, term()}
   def toggle_favorite(%User{} = user, media_item_id) do
     with {:ok, favorites} <- get_or_create_favorites(user) do
       case Repo.get_by(CollectionItem,
@@ -259,6 +275,7 @@ defmodule Mydia.Collections do
     - `:limit` - Maximum number of items to return
     - `:offset` - Number of items to skip
   """
+  @spec list_collection_items(Collection.t(), keyword()) :: [MediaItem.t()]
   def list_collection_items(collection, opts \\ [])
 
   def list_collection_items(%Collection{type: "manual"} = collection, opts) do
@@ -283,6 +300,7 @@ defmodule Mydia.Collections do
   @doc """
   Returns the number of items in a collection.
   """
+  @spec item_count(Collection.t()) :: non_neg_integer()
   def item_count(%Collection{type: "manual"} = collection) do
     Repo.aggregate(
       from(ci in CollectionItem, where: ci.collection_id == ^collection.id),
@@ -300,6 +318,7 @@ defmodule Mydia.Collections do
   Useful for displaying a poster collage on collection cards.
   Returns a list of TMDB poster paths (strings) from the first N items.
   """
+  @spec poster_paths(Collection.t(), non_neg_integer()) :: [binary()]
   def poster_paths(%Collection{} = collection, count \\ 4) do
     items = list_collection_items(collection, limit: count)
 
@@ -317,6 +336,7 @@ defmodule Mydia.Collections do
   Validates smart rules for a collection.
   Delegates to `SmartRules.validate/1`.
   """
+  @spec validate_smart_rules(binary() | map()) :: {:ok, map()} | {:error, [binary()]}
   def validate_smart_rules(rules) do
     SmartRules.validate(rules)
   end
@@ -325,6 +345,7 @@ defmodule Mydia.Collections do
   Previews items that would be included in a smart collection with the given rules.
   Useful for showing users what a smart collection will contain before saving.
   """
+  @spec preview_smart_rules(binary() | map(), non_neg_integer()) :: [MediaItem.t()]
   def preview_smart_rules(rules, limit \\ 10) do
     SmartRules.preview(rules, limit)
   end
@@ -335,6 +356,8 @@ defmodule Mydia.Collections do
   The item is added at the end of the collection (highest position + 1).
   Returns {:error, :smart_collection} if called on a smart collection.
   """
+  @spec add_item(Collection.t(), binary()) ::
+          {:ok, CollectionItem.t()} | {:error, Ecto.Changeset.t() | :smart_collection}
   def add_item(%Collection{type: "smart"}, _media_item_id) do
     {:error, :smart_collection}
   end
@@ -364,6 +387,8 @@ defmodule Mydia.Collections do
   Items are added at the end in the order provided.
   Returns {:ok, count} where count is the number of items added.
   """
+  @spec add_items(Collection.t(), [binary()]) ::
+          {:ok, non_neg_integer()} | {:error, :smart_collection}
   def add_items(%Collection{type: "smart"}, _media_item_ids) do
     {:error, :smart_collection}
   end
@@ -402,6 +427,9 @@ defmodule Mydia.Collections do
   @doc """
   Removes an item from a manual collection.
   """
+  @spec remove_item(Collection.t(), binary()) ::
+          {:ok, CollectionItem.t()}
+          | {:error, Ecto.Changeset.t() | :smart_collection | :not_found}
   def remove_item(%Collection{type: "smart"}, _media_item_id) do
     {:error, :smart_collection}
   end
@@ -425,6 +453,7 @@ defmodule Mydia.Collections do
   Takes a list of media_item_ids in the desired order.
   Updates the position of each item to match its index in the list.
   """
+  @spec reorder_items(Collection.t(), [binary()]) :: {:ok, :ok} | {:error, :smart_collection}
   def reorder_items(%Collection{type: "smart"}, _item_ids) do
     {:error, :smart_collection}
   end
@@ -460,6 +489,7 @@ defmodule Mydia.Collections do
   ## Options
     - `:limit` - Maximum number of items to return (default: 100)
   """
+  @spec get_playable_items(Collection.t(), keyword()) :: [map()]
   def get_playable_items(%Collection{} = collection, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
@@ -544,6 +574,7 @@ defmodule Mydia.Collections do
   Returns all collections that contain a specific media item.
   Only returns collections accessible to the user.
   """
+  @spec collections_for_item(User.t(), binary()) :: [Collection.t()]
   def collections_for_item(%User{} = user, media_item_id) do
     # Get IDs of manual collections containing this item
     manual_collection_ids =

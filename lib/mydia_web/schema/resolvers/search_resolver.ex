@@ -8,6 +8,7 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
   alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec search(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def search(_parent, %{query: query} = args, _info) when byte_size(query) > 0 do
     first = Map.get(args, :first, 20)
     types = Map.get(args, :types)

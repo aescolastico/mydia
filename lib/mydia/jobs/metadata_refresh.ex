@@ -53,6 +53,7 @@ defmodule Mydia.Jobs.MetadataRefresh do
   # Random delay range for scheduled refresh_all (0-30 minutes in ms)
   @max_startup_delay_ms 30 * 60 * 1000
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"media_item_id" => media_item_id} = raw_args}) do
     args = Args.parse(raw_args)

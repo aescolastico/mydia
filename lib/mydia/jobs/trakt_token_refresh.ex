@@ -8,6 +8,7 @@ defmodule Mydia.Jobs.TraktTokenRefresh do
 
   require Logger
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
     integrations = Integrations.list_integrations_needing_refresh(7)

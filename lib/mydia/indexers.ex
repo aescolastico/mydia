@@ -47,6 +47,7 @@ defmodule Mydia.Indexers do
     - `:nzbhydra2` - NZBHydra2 Usenet NZB aggregator
     - `:cardigann` - Native Cardigann definition support
   """
+  @spec register_adapters() :: :ok
   def register_adapters do
     Logger.info("Registering indexer adapters...")
 
@@ -74,6 +75,8 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.search(config, "Ubuntu")
       {:ok, [%SearchResult{}, ...]}
   """
+  @spec search(Settings.IndexerConfig.t() | map(), binary(), keyword()) ::
+          {:ok, [SearchResult.t()]} | {:error, Adapter.Error.t()}
   def search(config, query, opts \\ [])
 
   def search(%Settings.IndexerConfig{} = config, query, opts) do
@@ -170,6 +173,8 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.search_all("Ubuntu", indexer_ids: ["abc-123", "def-456"])
       {:ok, [%SearchResult{}, ...]}
   """
+  @spec search_all(binary(), keyword()) ::
+          {:ok, %{results: [SearchResult.t()], indexer_errors: [map()]}}
   def search_all(query, opts \\ []) do
     min_seeders = Keyword.get(opts, :min_seeders, 0)
     max_results = Keyword.get(opts, :max_results, 100)
@@ -264,6 +269,8 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.test_connection(config)
       {:ok, %{name: "Prowlarr", version: "1.0.0"}}
   """
+  @spec test_connection(Settings.IndexerConfig.t() | map()) ::
+          {:ok, map()} | {:error, Adapter.Error.t()}
   def test_connection(%Settings.IndexerConfig{} = config) do
     adapter_config = indexer_config_to_adapter_config(config)
     test_connection(adapter_config)
@@ -286,6 +293,8 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.get_capabilities(config)
       {:ok, %{searching: %{...}, categories: [...]}}
   """
+  @spec get_capabilities(Settings.IndexerConfig.t() | map()) ::
+          {:ok, map()} | {:error, Adapter.Error.t()}
   def get_capabilities(%Settings.IndexerConfig{} = config) do
     adapter_config = indexer_config_to_adapter_config(config)
     get_capabilities(adapter_config)
@@ -317,6 +326,8 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.list_prowlarr_indexers(config)
       {:ok, [%{id: 1, name: "TorrentLeech", enabled: true, protocol: "torrent"}, ...]}
   """
+  @spec list_prowlarr_indexers(Settings.IndexerConfig.t() | map()) ::
+          {:ok, [map()]} | {:error, binary()}
   def list_prowlarr_indexers(%Settings.IndexerConfig{type: :prowlarr} = config) do
     adapter_config = indexer_config_to_adapter_config(config)
     Adapter.Prowlarr.list_indexers(adapter_config)
@@ -563,6 +574,7 @@ defmodule Mydia.Indexers do
       iex> Mydia.Indexers.list_cardigann_definitions(type: "public", enabled: true)
       [%CardigannDefinition{}, ...]
   """
+  @spec list_cardigann_definitions(keyword()) :: [CardigannDefinition.t()]
   def list_cardigann_definitions(opts \\ []) do
     query = from(d in CardigannDefinition, order_by: [asc: d.name])
 
@@ -576,6 +588,7 @@ defmodule Mydia.Indexers do
 
   Raises `Ecto.NoResultsError` if the definition does not exist.
   """
+  @spec get_cardigann_definition!(binary()) :: CardigannDefinition.t()
   def get_cardigann_definition!(id) do
     Repo.get!(CardigannDefinition, id)
   end
@@ -585,6 +598,7 @@ defmodule Mydia.Indexers do
 
   Returns nil if the definition does not exist.
   """
+  @spec get_cardigann_definition_by_indexer_id(binary()) :: CardigannDefinition.t() | nil
   def get_cardigann_definition_by_indexer_id(indexer_id) do
     Repo.get_by(CardigannDefinition, indexer_id: indexer_id)
   end
@@ -594,6 +608,7 @@ defmodule Mydia.Indexers do
 
   Returns nil if the definition does not exist.
   """
+  @spec get_cardigann_definition_by_name(binary()) :: CardigannDefinition.t() | nil
   def get_cardigann_definition_by_name(name) do
     Repo.get_by(CardigannDefinition, name: name)
   end
@@ -604,6 +619,7 @@ defmodule Mydia.Indexers do
   Returns a list of cookie strings if the indexer has an active session,
   or an empty list if no session exists or authentication is not required.
   """
+  @spec get_cardigann_auth_cookies(binary()) :: [binary()]
   def get_cardigann_auth_cookies(indexer_name) do
     case get_cardigann_definition_by_name(indexer_name) do
       nil ->
@@ -626,6 +642,8 @@ defmodule Mydia.Indexers do
 
   Returns nil if indexer not found.
   """
+  @spec get_cardigann_download_config(binary()) ::
+          %{cookies: [binary()], flaresolverr_enabled: boolean()} | nil
   def get_cardigann_download_config(indexer_name) do
     case get_cardigann_definition_by_name(indexer_name) do
       nil ->
@@ -653,6 +671,8 @@ defmodule Mydia.Indexers do
       iex> enable_cardigann_definition(definition)
       {:ok, %CardigannDefinition{enabled: true}}
   """
+  @spec enable_cardigann_definition(CardigannDefinition.t()) ::
+          {:ok, CardigannDefinition.t()} | {:error, Ecto.Changeset.t()}
   def enable_cardigann_definition(%CardigannDefinition{} = definition) do
     definition
     |> CardigannDefinition.toggle_changeset(%{enabled: true})
@@ -667,6 +687,8 @@ defmodule Mydia.Indexers do
       iex> disable_cardigann_definition(definition)
       {:ok, %CardigannDefinition{enabled: false}}
   """
+  @spec disable_cardigann_definition(CardigannDefinition.t()) ::
+          {:ok, CardigannDefinition.t()} | {:error, Ecto.Changeset.t()}
   def disable_cardigann_definition(%CardigannDefinition{} = definition) do
     definition
     |> CardigannDefinition.toggle_changeset(%{enabled: false})
@@ -681,6 +703,8 @@ defmodule Mydia.Indexers do
       iex> configure_cardigann_definition(definition, %{username: "user", password: "pass"})
       {:ok, %CardigannDefinition{config: %{username: "user", ...}}}
   """
+  @spec configure_cardigann_definition(CardigannDefinition.t(), map()) ::
+          {:ok, CardigannDefinition.t()} | {:error, Ecto.Changeset.t()}
   def configure_cardigann_definition(%CardigannDefinition{} = definition, config) do
     definition
     |> CardigannDefinition.config_changeset(%{config: config})
@@ -697,6 +721,7 @@ defmodule Mydia.Indexers do
       iex> test_cardigann_definition(definition)
       {:ok, %{success: true, status: "healthy", ...}}
   """
+  @spec test_cardigann_definition(CardigannDefinition.t()) :: {:ok, map()} | {:error, term()}
   def test_cardigann_definition(%CardigannDefinition{} = definition) do
     alias Mydia.Indexers.CardigannHealthCheck
 
@@ -714,6 +739,7 @@ defmodule Mydia.Indexers do
       iex> test_cardigann_connection("abc-123")
       {:ok, %{success: true, status: "healthy", ...}}
   """
+  @spec test_cardigann_connection(binary()) :: {:ok, map()} | {:error, term()}
   def test_cardigann_connection(definition_id) when is_binary(definition_id) do
     alias Mydia.Indexers.CardigannHealthCheck
 
@@ -730,6 +756,11 @@ defmodule Mydia.Indexers do
       iex> count_cardigann_definitions()
       %{total: 100, enabled: 25, disabled: 75}
   """
+  @spec count_cardigann_definitions() :: %{
+          total: non_neg_integer(),
+          enabled: non_neg_integer(),
+          disabled: non_neg_integer()
+        }
   def count_cardigann_definitions do
     total = Repo.aggregate(CardigannDefinition, :count, :id)
     enabled = Repo.aggregate(from(d in CardigannDefinition, where: d.enabled), :count, :id)
@@ -751,6 +782,8 @@ defmodule Mydia.Indexers do
       iex> update_flaresolverr_settings(definition, %{flaresolverr_enabled: true})
       {:ok, %CardigannDefinition{flaresolverr_enabled: true}}
   """
+  @spec update_flaresolverr_settings(CardigannDefinition.t(), map()) ::
+          {:ok, CardigannDefinition.t()} | {:error, Ecto.Changeset.t()}
   def update_flaresolverr_settings(%CardigannDefinition{} = definition, attrs) do
     definition
     |> CardigannDefinition.flaresolverr_changeset(attrs)
@@ -767,6 +800,8 @@ defmodule Mydia.Indexers do
       iex> set_flaresolverr_required(definition, true)
       {:ok, %CardigannDefinition{flaresolverr_required: true}}
   """
+  @spec set_flaresolverr_required(CardigannDefinition.t(), boolean()) ::
+          {:ok, CardigannDefinition.t()} | {:error, Ecto.Changeset.t()}
   def set_flaresolverr_required(%CardigannDefinition{} = definition, required?)
       when is_boolean(required?) do
     update_flaresolverr_settings(definition, %{flaresolverr_required: required?})
@@ -780,6 +815,7 @@ defmodule Mydia.Indexers do
       iex> list_flaresolverr_enabled_definitions()
       [%CardigannDefinition{flaresolverr_enabled: true}, ...]
   """
+  @spec list_flaresolverr_enabled_definitions() :: [CardigannDefinition.t()]
   def list_flaresolverr_enabled_definitions do
     from(d in CardigannDefinition,
       where: d.flaresolverr_enabled == true,
@@ -796,6 +832,7 @@ defmodule Mydia.Indexers do
       iex> list_flaresolverr_required_definitions()
       [%CardigannDefinition{flaresolverr_required: true}, ...]
   """
+  @spec list_flaresolverr_required_definitions() :: [CardigannDefinition.t()]
   def list_flaresolverr_required_definitions do
     from(d in CardigannDefinition,
       where: d.flaresolverr_required == true,

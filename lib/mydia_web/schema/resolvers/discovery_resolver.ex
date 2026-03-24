@@ -8,6 +8,8 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
   alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec continue_watching(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def continue_watching(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 10)
     after_cursor = Map.get(args, :after)
@@ -34,6 +36,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec recently_added(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def recently_added(_parent, args, _info) do
     first = Map.get(args, :first, 20)
     after_cursor = Map.get(args, :after)
@@ -72,6 +75,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     {:ok, items}
   end
 
+  @spec up_next(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def up_next(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 10)
     after_cursor = Map.get(args, :after)
@@ -111,6 +115,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec favorites(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def favorites(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 50)
     after_cursor = Map.get(args, :after)
@@ -131,6 +136,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec unwatched(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def unwatched(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 50)
     after_cursor = Map.get(args, :after)

@@ -241,6 +241,7 @@ defmodule Mydia.Jobs.ThumbnailGeneration do
 
   ## Oban Worker Implementation
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"mode" => "single"} = raw_args}) do
     args = Args.parse(raw_args)

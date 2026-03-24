@@ -8,6 +8,8 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
   alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec list_collections(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def list_collections(_parent, args, %{context: %{current_user: user}}) do
     first = Map.get(args, :first, 50)
 
@@ -22,6 +24,7 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
 
   def list_collections(_parent, _args, _info), do: {:ok, []}
 
+  @spec collection(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def collection(_parent, %{id: id}, %{context: %{current_user: user}}) do
     collection = Collections.get_collection!(user, id)
     {:ok, build_collection(collection)}
@@ -31,6 +34,8 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
 
   def collection(_parent, _args, _info), do: {:error, "Not authenticated"}
 
+  @spec collection_items(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def collection_items(_parent, %{collection_id: id} = args, %{context: %{current_user: user}}) do
     first = Map.get(args, :first, 50)
     collection = Collections.get_collection!(user, id)

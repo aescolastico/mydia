@@ -16,6 +16,7 @@ defmodule Mydia.Jobs.ImportSessionCleanup do
   require Logger
   alias Mydia.Library
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
     Logger.info("Starting import session cleanup job")

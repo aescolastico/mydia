@@ -68,6 +68,7 @@ defmodule Mydia.Jobs.MediaImport do
   @snooze_interval_seconds 300
   @max_snooze_count 12
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"download_id" => _} = raw_args, attempt: attempt}) do
     args = Args.parse(raw_args)

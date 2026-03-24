@@ -10,31 +10,41 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   # Movie and TVShow field resolvers
 
+  @spec resolve_overview(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_overview(parent, _args, _info) do
     {:ok, MetadataAccess.get_field(parent, :overview)}
   end
 
+  @spec resolve_runtime(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_runtime(parent, _args, _info) do
     {:ok, MetadataAccess.get_field(parent, :runtime)}
   end
 
+  @spec resolve_genres(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_genres(parent, _args, _info) do
     {:ok, MetadataAccess.get_field(parent, :genres) || []}
   end
 
+  @spec resolve_content_rating(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_content_rating(_parent, _args, _info) do
     # Content rating isn't stored in our current metadata
     {:ok, nil}
   end
 
+  @spec resolve_rating(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_rating(parent, _args, _info) do
     {:ok, MetadataAccess.get_field(parent, :vote_average)}
   end
 
+  @spec resolve_status(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_status(parent, _args, _info) do
     {:ok, MetadataAccess.get_field(parent, :status)}
   end
 
+  @spec resolve_category(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_category(%{category: category}, _args, _info) when is_binary(category) do
     {:ok, String.to_existing_atom(category)}
   end
@@ -45,6 +55,7 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   def resolve_category(_parent, _args, _info), do: {:ok, nil}
 
+  @spec resolve_artwork(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_artwork(%{metadata: metadata} = _parent, _args, _info) do
     poster_path = MetadataAccess.get(metadata, :poster_path)
     backdrop_path = MetadataAccess.get(metadata, :backdrop_path)
@@ -62,11 +73,15 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   # Movie-specific resolvers
 
+  @spec resolve_movie_files(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_movie_files(%{id: media_item_id}, _args, _info) do
     files = Library.get_media_files_for_item(media_item_id)
     {:ok, files}
   end
 
+  @spec resolve_progress(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_progress(%{id: media_item_id}, _args, %{context: context}) do
     case context[:current_user] do
       nil ->
@@ -85,6 +100,7 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   # TV Show-specific resolvers
 
+  @spec resolve_seasons(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def resolve_seasons(%{id: media_item_id}, _args, _info) do
     # Get all episodes and group by season
     episodes = Media.list_episodes(media_item_id)
@@ -123,6 +139,8 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
     {:ok, seasons}
   end
 
+  @spec resolve_season_count(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_season_count(%{id: media_item_id}, _args, _info) do
     episodes = Media.list_episodes(media_item_id)
 
@@ -135,11 +153,15 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
     {:ok, season_count}
   end
 
+  @spec resolve_episode_count(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_count(%{id: media_item_id}, _args, _info) do
     episodes = Media.list_episodes(media_item_id)
     {:ok, length(episodes)}
   end
 
+  @spec resolve_next_episode(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_next_episode(%{id: media_item_id}, _args, %{context: context}) do
     case context[:current_user] do
       nil ->
@@ -159,6 +181,8 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
   end
 
   # Season resolver for episodes
+  @spec resolve_season_episodes(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_season_episodes(%{_episodes: episodes}, _args, _info) when is_list(episodes) do
     sorted = Enum.sort_by(episodes, & &1.episode_number)
     {:ok, sorted}
@@ -179,18 +203,24 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   # Episode-specific resolvers
 
+  @spec resolve_episode_overview(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_overview(%{metadata: metadata}, _args, _info) do
     {:ok, MetadataAccess.get(metadata, :overview)}
   end
 
   def resolve_episode_overview(_episode, _args, _info), do: {:ok, nil}
 
+  @spec resolve_episode_runtime(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_runtime(%{metadata: metadata}, _args, _info) do
     {:ok, MetadataAccess.get(metadata, :runtime)}
   end
 
   def resolve_episode_runtime(_episode, _args, _info), do: {:ok, nil}
 
+  @spec resolve_episode_thumbnail(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_thumbnail(%{metadata: metadata}, _args, _info) do
     still_path = MetadataAccess.get(metadata, :still_path)
     {:ok, ImageUrl.still_url(still_path)}
@@ -198,11 +228,15 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   def resolve_episode_thumbnail(_episode, _args, _info), do: {:ok, nil}
 
+  @spec resolve_episode_files(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_files(%{id: episode_id}, _args, _info) do
     files = Library.get_media_files_for_episode(episode_id)
     {:ok, files}
   end
 
+  @spec resolve_episode_progress(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_episode_progress(%{id: episode_id}, _args, %{context: context}) do
     case context[:current_user] do
       nil ->
@@ -219,11 +253,15 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
     end
   end
 
+  @spec resolve_has_file(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_has_file(%{id: episode_id}, _args, _info) do
     files = Library.get_media_files_for_episode(episode_id)
     {:ok, length(files) > 0}
   end
 
+  @spec resolve_parent_show(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_parent_show(%{media_item_id: media_item_id}, _args, _info)
       when not is_nil(media_item_id) do
     show = Media.get_media_item!(media_item_id)
@@ -248,6 +286,8 @@ defmodule MydiaWeb.Schema.Resolvers.MediaResolver do
 
   # Favorites resolver
 
+  @spec resolve_is_favorite(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def resolve_is_favorite(%{id: media_item_id}, _args, %{context: context}) do
     case context[:current_user] do
       nil ->
