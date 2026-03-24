@@ -43,6 +43,7 @@ defmodule Mydia.Settings.QualityProfileEngine do
   alias Mydia.Repo
   alias Mydia.Settings.QualityProfile
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
   alias Phoenix.PubSub
 
   @pubsub Mydia.PubSub
@@ -363,16 +364,18 @@ defmodule Mydia.Settings.QualityProfileEngine do
   # Assigns a quality profile to a media file with evaluation results
   defp assign_profile_to_file(file, profile, evaluation) do
     # Store evaluation metadata
-    metadata =
-      Map.merge(file.metadata || %{}, %{
-        "quality_evaluation" => %{
+    current_metadata = file.metadata || FileMetadata.empty()
+
+    metadata = %{
+      current_metadata
+      | quality_evaluation: %{
           "score" => evaluation.score,
           "breakdown" => stringify_keys(evaluation.breakdown),
           "violations" => evaluation.violations,
           "recommendations" => evaluation.recommendations,
           "evaluated_at" => DateTime.to_iso8601(evaluation.evaluated_at)
         }
-      })
+    }
 
     changeset =
       file

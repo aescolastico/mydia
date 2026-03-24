@@ -7,6 +7,7 @@ defmodule MydiaWeb.AdultLive.Show do
 
   alias Mydia.Library
   alias Mydia.Library.{MediaFile, ThumbnailGenerator}
+  alias Mydia.Library.Structs.FileMetadata
 
   require Logger
 
@@ -123,8 +124,7 @@ defmodule MydiaWeb.AdultLive.Show do
               # Update the database in the background for future requests
               spawn(fn ->
                 updated_metadata =
-                  (file.metadata || %{})
-                  |> Map.put("duration", duration)
+                  %{(file.metadata || FileMetadata.empty()) | duration: duration}
 
                 Library.update_media_file_scan(file, %{metadata: updated_metadata})
               end)

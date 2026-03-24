@@ -14,6 +14,7 @@ defmodule Mydia.Library do
   @doc """
   Returns the total storage used by all media files in bytes.
   """
+  @spec total_storage_bytes() :: non_neg_integer()
   def total_storage_bytes do
     MediaFile
     |> where([f], is_nil(f.trashed_at))
@@ -32,6 +33,7 @@ defmodule Mydia.Library do
     - `:library_path_type` - Filter by library path type (e.g., :adult, :music, :books)
     - `:preload` - List of associations to preload
   """
+  @spec list_media_files(keyword()) :: [MediaFile.t()]
   def list_media_files(opts \\ []) do
     MediaFile
     |> apply_media_file_filters(opts)
@@ -42,6 +44,7 @@ defmodule Mydia.Library do
   @doc """
   Returns a list of unique media item IDs that have files in the given library path.
   """
+  @spec list_media_ids_in_library_path(%{id: binary()}) :: [binary()]
   def list_media_ids_in_library_path(%{id: library_path_id}) do
     MediaFile
     |> where([mf], mf.library_path_id == ^library_path_id)
@@ -60,6 +63,7 @@ defmodule Mydia.Library do
 
   Raises `Ecto.NoResultsError` if the media file does not exist.
   """
+  @spec get_media_file!(binary(), keyword()) :: MediaFile.t()
   def get_media_file!(id, opts \\ []) do
     MediaFile
     |> maybe_preload(opts[:preload])
@@ -74,6 +78,7 @@ defmodule Mydia.Library do
 
   Returns the media file or nil if not found.
   """
+  @spec get_media_file(binary(), keyword()) :: MediaFile.t() | nil
   def get_media_file(id, opts \\ []) do
     MediaFile
     |> maybe_preload(opts[:preload])
@@ -91,6 +96,8 @@ defmodule Mydia.Library do
 
   Returns `{previous_file, next_file}` where either can be nil if at the boundary.
   """
+  @spec get_adjacent_media_files(binary(), keyword()) ::
+          {MediaFile.t() | nil, MediaFile.t() | nil}
   def get_adjacent_media_files(current_file_id, opts \\ []) do
     # Build base query with optional library type filter
     base_query =
@@ -135,6 +142,7 @@ defmodule Mydia.Library do
 
   Returns nil if no matching file is found.
   """
+  @spec get_media_file_by_path(String.t(), keyword()) :: MediaFile.t() | nil
   def get_media_file_by_path(absolute_path, opts \\ []) do
     alias Mydia.Settings
 
@@ -162,6 +170,7 @@ defmodule Mydia.Library do
   @doc """
   Gets a media file by its relative path and library_path_id.
   """
+  @spec get_media_file_by_relative_path(binary(), String.t(), keyword()) :: MediaFile.t() | nil
   def get_media_file_by_relative_path(library_path_id, relative_path, opts \\ []) do
     query =
       MediaFile
@@ -180,6 +189,7 @@ defmodule Mydia.Library do
   @doc """
   Creates a media file.
   """
+  @spec create_media_file(map()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def create_media_file(attrs \\ %{}) do
     %MediaFile{}
     |> MediaFile.changeset(attrs)
@@ -193,6 +203,7 @@ defmodule Mydia.Library do
   Automatically extracts technical metadata (codec, resolution, container) via FFprobe
   using the library_path_id and relative_path to compute the absolute path.
   """
+  @spec create_scanned_media_file(map()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def create_scanned_media_file(attrs \\ %{}) do
     # Extract technical metadata by computing absolute path from library_path + relative_path
     attrs = maybe_extract_technical_metadata(attrs)
@@ -261,6 +272,8 @@ defmodule Mydia.Library do
   @doc """
   Updates a media file.
   """
+  @spec update_media_file(MediaFile.t(), map()) ::
+          {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def update_media_file(%MediaFile{} = media_file, attrs) do
     media_file
     |> MediaFile.changeset(attrs)
@@ -273,6 +286,8 @@ defmodule Mydia.Library do
   Uses scan_changeset which allows orphaned files (files not yet matched to
   a media_item or episode) to be updated without validation errors.
   """
+  @spec update_media_file_scan(MediaFile.t(), map()) ::
+          {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def update_media_file_scan(%MediaFile{} = media_file, attrs) do
     media_file
     |> MediaFile.scan_changeset(attrs)
@@ -282,6 +297,7 @@ defmodule Mydia.Library do
   @doc """
   Marks a media file as verified.
   """
+  @spec verify_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def verify_media_file(%MediaFile{} = media_file) do
     media_file
     |> Ecto.Changeset.change(verified_at: DateTime.utc_now() |> DateTime.truncate(:second))
@@ -291,6 +307,7 @@ defmodule Mydia.Library do
   @doc """
   Deletes a media file.
   """
+  @spec delete_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def delete_media_file(%MediaFile{} = media_file) do
     Repo.delete(media_file)
   end
@@ -301,6 +318,7 @@ defmodule Mydia.Library do
   Trashed files are excluded from all queries by default and will be
   permanently deleted after the configured retention period (default 30 days).
   """
+  @spec trash_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def trash_media_file(%MediaFile{} = media_file) do
     media_file
     |> Ecto.Changeset.change(trashed_at: DateTime.utc_now() |> DateTime.truncate(:second))
@@ -310,6 +328,7 @@ defmodule Mydia.Library do
   @doc """
   Restores a trashed media file by clearing `trashed_at`.
   """
+  @spec restore_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def restore_media_file(%MediaFile{} = media_file) do
     media_file
     |> Ecto.Changeset.change(trashed_at: nil)
@@ -321,6 +340,7 @@ defmodule Mydia.Library do
 
   Returns `{:ok, count}` with the number of permanently deleted files.
   """
+  @spec purge_old_trashed_media_files(integer()) :: {:ok, non_neg_integer()}
   def purge_old_trashed_media_files(days \\ 30) do
     cutoff = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.add(-days, :day)
 
@@ -344,6 +364,7 @@ defmodule Mydia.Library do
 
   The library_path association must be preloaded.
   """
+  @spec delete_media_file_from_disk(MediaFile.t()) :: :ok | {:error, term()}
   def delete_media_file_from_disk(%MediaFile{} = media_file) do
     case MediaFile.absolute_path(media_file) do
       nil ->
@@ -382,6 +403,8 @@ defmodule Mydia.Library do
   Returns a tuple `{:ok, success_count, error_count}` with counts of
   successfully deleted and failed deletions.
   """
+  @spec delete_media_files_from_disk([MediaFile.t()]) ::
+          {:ok, non_neg_integer(), non_neg_integer()}
   def delete_media_files_from_disk(media_files) when is_list(media_files) do
     results =
       Enum.map(media_files, fn file ->
@@ -403,6 +426,7 @@ defmodule Mydia.Library do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking media file changes.
   """
+  @spec change_media_file(MediaFile.t(), map()) :: Ecto.Changeset.t()
   def change_media_file(%MediaFile{} = media_file, attrs \\ %{}) do
     MediaFile.changeset(media_file, attrs)
   end
@@ -410,6 +434,7 @@ defmodule Mydia.Library do
   @doc """
   Gets all media files for a media item.
   """
+  @spec get_media_files_for_item(binary(), keyword()) :: [MediaFile.t()]
   def get_media_files_for_item(media_item_id, opts \\ []) do
     list_media_files([media_item_id: media_item_id] ++ opts)
   end
@@ -417,6 +442,7 @@ defmodule Mydia.Library do
   @doc """
   Gets all media files for an episode.
   """
+  @spec get_media_files_for_episode(binary(), keyword()) :: [MediaFile.t()]
   def get_media_files_for_episode(episode_id, opts \\ []) do
     list_media_files([episode_id: episode_id] ++ opts)
   end
@@ -439,6 +465,7 @@ defmodule Mydia.Library do
       iex> match_files_to_episodes("some-uuid")
       {:ok, 8}
   """
+  @spec match_files_to_episodes(binary()) :: {:ok, non_neg_integer()}
   def match_files_to_episodes(media_item_id) do
     # Get all media files for this item that don't have an episode_id
     unmatched_files =
@@ -559,6 +586,7 @@ defmodule Mydia.Library do
       iex> rescan_series("media-item-uuid")
       {:ok, %{new_files: 3, matched: 3, errors: []}}
   """
+  @spec rescan_series(binary()) :: {:ok, map()} | {:error, term()}
   def rescan_series(media_item_id) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
@@ -710,6 +738,7 @@ defmodule Mydia.Library do
       iex> rescan_season("media-item-uuid", 1)
       {:ok, %{new_files: 2, matched: 2, errors: []}}
   """
+  @spec rescan_season(binary(), integer()) :: {:ok, map()} | {:error, term()}
   def rescan_season(media_item_id, season_number) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
@@ -915,6 +944,7 @@ defmodule Mydia.Library do
       iex> rescan_movie("media-item-uuid")
       {:ok, %{new_files: 1, errors: []}}
   """
+  @spec rescan_movie(binary()) :: {:ok, map()} | {:error, term()}
   def rescan_movie(media_item_id) do
     alias Mydia.Library.Scanner
     alias Mydia.Media
@@ -1244,6 +1274,7 @@ defmodule Mydia.Library do
   ## Options
     - `:preload` - List of associations to preload
   """
+  @spec list_orphaned_media_files(keyword()) :: [MediaFile.t()]
   def list_orphaned_media_files(opts \\ []) do
     MediaFile
     |> where([f], is_nil(f.media_item_id) and is_nil(f.episode_id))
@@ -1255,6 +1286,7 @@ defmodule Mydia.Library do
   @doc """
   Checks if a media file is orphaned (has no parent association).
   """
+  @spec orphaned_media_file?(MediaFile.t()) :: boolean()
   def orphaned_media_file?(%MediaFile{} = media_file) do
     is_nil(media_file.media_item_id) and is_nil(media_file.episode_id)
   end
@@ -1527,6 +1559,7 @@ defmodule Mydia.Library do
 
   Returns an Oban job that will perform the scan.
   """
+  @spec trigger_library_scan(binary()) :: {:ok, Oban.Job.t()} | {:error, Ecto.Changeset.t()}
   def trigger_library_scan(library_path_id) do
     %{library_path_id: library_path_id}
     |> Mydia.Jobs.LibraryScanner.new()
@@ -1538,6 +1571,7 @@ defmodule Mydia.Library do
 
   Returns an Oban job that will perform the scan.
   """
+  @spec trigger_full_library_scan() :: {:ok, Oban.Job.t()} | {:error, Ecto.Changeset.t()}
   def trigger_full_library_scan do
     %{}
     |> Mydia.Jobs.LibraryScanner.new()
@@ -1552,6 +1586,7 @@ defmodule Mydia.Library do
 
   Returns an Oban job that will perform the scan.
   """
+  @spec trigger_adult_library_scan() :: {:ok, Oban.Job.t()} | {:error, Ecto.Changeset.t()}
   def trigger_adult_library_scan do
     %{library_type: "adult"}
     |> Mydia.Jobs.LibraryScanner.new()
@@ -1566,6 +1601,8 @@ defmodule Mydia.Library do
 
   Returns an Oban job that will perform the refresh.
   """
+  @spec trigger_metadata_refresh(binary(), keyword()) ::
+          {:ok, Oban.Job.t()} | {:error, Ecto.Changeset.t()}
   def trigger_metadata_refresh(media_item_id, opts \\ []) do
     fetch_episodes = Keyword.get(opts, :fetch_episodes, true)
 
@@ -1579,6 +1616,7 @@ defmodule Mydia.Library do
 
   Returns an Oban job that will perform the refresh.
   """
+  @spec trigger_full_metadata_refresh() :: {:ok, Oban.Job.t()} | {:error, Ecto.Changeset.t()}
   def trigger_full_metadata_refresh do
     %{refresh_all: true}
     |> Mydia.Jobs.MetadataRefresh.new()
@@ -1594,6 +1632,7 @@ defmodule Mydia.Library do
 
   Returns {:ok, updated_media_file} or {:error, reason}.
   """
+  @spec refresh_file_metadata(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, term()}
   def refresh_file_metadata(%MediaFile{} = media_file) do
     case MediaFile.absolute_path(media_file) do
       nil ->
@@ -1691,6 +1730,7 @@ defmodule Mydia.Library do
 
   Returns {:ok, updated_media_file} or {:error, reason}.
   """
+  @spec refresh_file_metadata_by_id(binary()) :: {:ok, MediaFile.t()} | {:error, term()}
   def refresh_file_metadata_by_id(media_file_id) do
     media_file = get_media_file!(media_file_id, preload: [:library_path])
     refresh_file_metadata(media_file)
@@ -1702,6 +1742,7 @@ defmodule Mydia.Library do
   Returns true if any media_file has this client_id in its metadata, false otherwise.
   This is used to prevent re-processing torrents that are seeding after import.
   """
+  @spec torrent_already_imported?(String.t(), String.t()) :: boolean()
   def torrent_already_imported?(client_name, client_id) do
     query =
       from f in MediaFile,
@@ -1716,6 +1757,7 @@ defmodule Mydia.Library do
 
   This can be a long-running operation. Returns the count of successfully refreshed files.
   """
+  @spec refresh_all_file_metadata() :: {:ok, non_neg_integer()}
   def refresh_all_file_metadata do
     media_files = list_media_files(preload: [:library_path])
 
@@ -1747,6 +1789,7 @@ defmodule Mydia.Library do
   @doc """
   Creates a new import session for a user.
   """
+  @spec create_import_session(map()) :: {:ok, ImportSession.t()} | {:error, Ecto.Changeset.t()}
   def create_import_session(attrs \\ %{}) do
     attrs
     |> ImportSession.create_changeset()
@@ -1757,6 +1800,7 @@ defmodule Mydia.Library do
   Gets the active import session for a user.
   Returns nil if no active session exists.
   """
+  @spec get_active_import_session(binary()) :: ImportSession.t() | nil
   def get_active_import_session(user_id) do
     ImportSession
     |> where([s], s.user_id == ^user_id and s.status == :active)
@@ -1769,6 +1813,7 @@ defmodule Mydia.Library do
   Gets an import session by ID.
   Returns nil if not found.
   """
+  @spec get_import_session(binary()) :: ImportSession.t() | nil
   def get_import_session(id) do
     Repo.get(ImportSession, id)
   end
@@ -1777,6 +1822,7 @@ defmodule Mydia.Library do
   Gets an import session by ID.
   Raises Ecto.NoResultsError if not found.
   """
+  @spec get_import_session!(binary()) :: ImportSession.t()
   def get_import_session!(id) do
     Repo.get!(ImportSession, id)
   end
@@ -1784,6 +1830,8 @@ defmodule Mydia.Library do
   @doc """
   Updates an import session.
   """
+  @spec update_import_session(ImportSession.t(), map()) ::
+          {:ok, ImportSession.t()} | {:error, Ecto.Changeset.t()}
   def update_import_session(%ImportSession{} = session, attrs) do
     session
     |> ImportSession.changeset(attrs)
@@ -1793,6 +1841,8 @@ defmodule Mydia.Library do
   @doc """
   Marks an import session as completed.
   """
+  @spec complete_import_session(ImportSession.t()) ::
+          {:ok, ImportSession.t()} | {:error, Ecto.Changeset.t()}
   def complete_import_session(%ImportSession{} = session) do
     session
     |> ImportSession.complete_changeset()
@@ -1803,6 +1853,7 @@ defmodule Mydia.Library do
   Abandons all active import sessions for a user.
   This is called when starting a new import session.
   """
+  @spec abandon_active_import_sessions(binary()) :: {non_neg_integer(), nil | [term()]}
   def abandon_active_import_sessions(user_id) do
     from(s in ImportSession,
       where: s.user_id == ^user_id and s.status == :active
@@ -1816,6 +1867,7 @@ defmodule Mydia.Library do
   Deletes expired import sessions.
   Returns the count of deleted sessions.
   """
+  @spec delete_expired_import_sessions() :: {:ok, non_neg_integer()}
   def delete_expired_import_sessions do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
@@ -1832,6 +1884,7 @@ defmodule Mydia.Library do
   Deletes completed import sessions older than the given number of days.
   Returns the count of deleted sessions.
   """
+  @spec delete_old_completed_sessions(integer()) :: {:ok, non_neg_integer()}
   def delete_old_completed_sessions(days \\ 7) do
     cutoff = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.add(-days, :day)
 

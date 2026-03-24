@@ -8,6 +8,21 @@ defmodule Mydia.Music.Playlist do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          description: String.t() | nil,
+          cover_url: String.t() | nil,
+          public: boolean(),
+          track_count: integer(),
+          total_duration: integer(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          user_id: binary() | nil,
+          playlist_tracks: [Mydia.Music.PlaylistTrack.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "playlists" do
     field :name, :string
     field :description, :string

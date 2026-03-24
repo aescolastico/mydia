@@ -17,6 +17,7 @@ defmodule Mydia.Music do
     - `:preload` - List of associations to preload
     - `:search` - Search term for filtering by name
   """
+  @spec list_artists(keyword()) :: [Artist.t()]
   def list_artists(opts \\ []) do
     Artist
     |> apply_artist_filters(opts)
@@ -30,6 +31,7 @@ defmodule Mydia.Music do
 
   Raises `Ecto.NoResultsError` if the Artist does not exist.
   """
+  @spec get_artist!(binary(), keyword()) :: Artist.t()
   def get_artist!(id, opts \\ []) do
     Artist
     |> maybe_preload(opts[:preload])
@@ -39,6 +41,7 @@ defmodule Mydia.Music do
   @doc """
   Gets an artist by MusicBrainz ID.
   """
+  @spec get_artist_by_musicbrainz(binary()) :: Artist.t() | nil
   def get_artist_by_musicbrainz(musicbrainz_id) do
     Repo.get_by(Artist, musicbrainz_id: musicbrainz_id)
   end
@@ -46,6 +49,7 @@ defmodule Mydia.Music do
   @doc """
   Creates an artist.
   """
+  @spec create_artist(map()) :: {:ok, Artist.t()} | {:error, Ecto.Changeset.t()}
   def create_artist(attrs \\ %{}) do
     %Artist{}
     |> Artist.changeset(attrs)
@@ -55,6 +59,7 @@ defmodule Mydia.Music do
   @doc """
   Updates an artist.
   """
+  @spec update_artist(Artist.t(), map()) :: {:ok, Artist.t()} | {:error, Ecto.Changeset.t()}
   def update_artist(%Artist{} = artist, attrs) do
     artist
     |> Artist.changeset(attrs)
@@ -64,6 +69,7 @@ defmodule Mydia.Music do
   @doc """
   Deletes an artist.
   """
+  @spec delete_artist(Artist.t()) :: {:ok, Artist.t()} | {:error, Ecto.Changeset.t()}
   def delete_artist(%Artist{} = artist) do
     Repo.delete(artist)
   end
@@ -71,6 +77,7 @@ defmodule Mydia.Music do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking artist changes.
   """
+  @spec change_artist(Artist.t(), map()) :: Ecto.Changeset.t()
   def change_artist(%Artist{} = artist, attrs \\ %{}) do
     Artist.changeset(artist, attrs)
   end
@@ -87,6 +94,7 @@ defmodule Mydia.Music do
     - `:monitored` - Filter by monitored status
     - `:album_type` - Filter by album type
   """
+  @spec list_albums(keyword()) :: [Album.t()]
   def list_albums(opts \\ []) do
     Album
     |> apply_album_filters(opts)
@@ -98,6 +106,7 @@ defmodule Mydia.Music do
   @doc """
   Returns the count of albums.
   """
+  @spec count_albums(keyword()) :: non_neg_integer()
   def count_albums(opts \\ []) do
     Album
     |> apply_album_filters(opts)
@@ -109,6 +118,7 @@ defmodule Mydia.Music do
 
   Raises `Ecto.NoResultsError` if the Album does not exist.
   """
+  @spec get_album!(binary(), keyword()) :: Album.t()
   def get_album!(id, opts \\ []) do
     Album
     |> maybe_preload(opts[:preload])
@@ -118,6 +128,7 @@ defmodule Mydia.Music do
   @doc """
   Gets an album by MusicBrainz ID.
   """
+  @spec get_album_by_musicbrainz(binary()) :: Album.t() | nil
   def get_album_by_musicbrainz(musicbrainz_id) do
     Repo.get_by(Album, musicbrainz_id: musicbrainz_id)
   end
@@ -125,6 +136,7 @@ defmodule Mydia.Music do
   @doc """
   Creates an album.
   """
+  @spec create_album(map()) :: {:ok, Album.t()} | {:error, Ecto.Changeset.t()}
   def create_album(attrs \\ %{}) do
     %Album{}
     |> Album.changeset(attrs)
@@ -134,6 +146,7 @@ defmodule Mydia.Music do
   @doc """
   Updates an album.
   """
+  @spec update_album(Album.t(), map()) :: {:ok, Album.t()} | {:error, Ecto.Changeset.t()}
   def update_album(%Album{} = album, attrs) do
     album
     |> Album.changeset(attrs)
@@ -143,6 +156,7 @@ defmodule Mydia.Music do
   @doc """
   Deletes an album.
   """
+  @spec delete_album(Album.t()) :: {:ok, Album.t()} | {:error, Ecto.Changeset.t()}
   def delete_album(%Album{} = album) do
     Repo.delete(album)
   end
@@ -150,6 +164,7 @@ defmodule Mydia.Music do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking album changes.
   """
+  @spec change_album(Album.t(), map()) :: Ecto.Changeset.t()
   def change_album(%Album{} = album, attrs \\ %{}) do
     Album.changeset(album, attrs)
   end
@@ -164,6 +179,7 @@ defmodule Mydia.Music do
     - `:album_id` - Filter by album ID
     - `:artist_id` - Filter by artist ID
   """
+  @spec list_tracks(keyword()) :: [Track.t()]
   def list_tracks(opts \\ []) do
     Track
     |> apply_track_filters(opts)
@@ -177,6 +193,7 @@ defmodule Mydia.Music do
 
   Raises `Ecto.NoResultsError` if the Track does not exist.
   """
+  @spec get_track!(binary(), keyword()) :: Track.t()
   def get_track!(id, opts \\ []) do
     Track
     |> maybe_preload(opts[:preload])
@@ -186,6 +203,7 @@ defmodule Mydia.Music do
   @doc """
   Creates a track.
   """
+  @spec create_track(map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def create_track(attrs \\ %{}) do
     %Track{}
     |> Track.changeset(attrs)
@@ -195,6 +213,7 @@ defmodule Mydia.Music do
   @doc """
   Updates a track.
   """
+  @spec update_track(Track.t(), map()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def update_track(%Track{} = track, attrs) do
     track
     |> Track.changeset(attrs)
@@ -204,6 +223,7 @@ defmodule Mydia.Music do
   @doc """
   Deletes a track.
   """
+  @spec delete_track(Track.t()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
   def delete_track(%Track{} = track) do
     Repo.delete(track)
   end
@@ -218,6 +238,7 @@ defmodule Mydia.Music do
     - `:track_id` - Filter by track ID
     - `:library_path_id` - Filter by library path ID
   """
+  @spec list_music_files(keyword()) :: [MusicFile.t()]
   def list_music_files(opts \\ []) do
     MusicFile
     |> apply_music_file_filters(opts)
@@ -230,6 +251,7 @@ defmodule Mydia.Music do
 
   Raises `Ecto.NoResultsError` if the MusicFile does not exist.
   """
+  @spec get_music_file!(binary(), keyword()) :: MusicFile.t()
   def get_music_file!(id, opts \\ []) do
     MusicFile
     |> maybe_preload(opts[:preload])
@@ -239,6 +261,7 @@ defmodule Mydia.Music do
   @doc """
   Gets a music file by path.
   """
+  @spec get_music_file_by_path(binary()) :: MusicFile.t() | nil
   def get_music_file_by_path(path) do
     Repo.get_by(MusicFile, path: path)
   end
@@ -246,6 +269,7 @@ defmodule Mydia.Music do
   @doc """
   Creates a music file.
   """
+  @spec create_music_file(map()) :: {:ok, MusicFile.t()} | {:error, Ecto.Changeset.t()}
   def create_music_file(attrs \\ %{}) do
     %MusicFile{}
     |> MusicFile.changeset(attrs)
@@ -255,6 +279,8 @@ defmodule Mydia.Music do
   @doc """
   Updates a music file.
   """
+  @spec update_music_file(MusicFile.t(), map()) ::
+          {:ok, MusicFile.t()} | {:error, Ecto.Changeset.t()}
   def update_music_file(%MusicFile{} = music_file, attrs) do
     music_file
     |> MusicFile.changeset(attrs)
@@ -264,6 +290,7 @@ defmodule Mydia.Music do
   @doc """
   Deletes a music file.
   """
+  @spec delete_music_file(MusicFile.t()) :: {:ok, MusicFile.t()} | {:error, Ecto.Changeset.t()}
   def delete_music_file(%MusicFile{} = music_file) do
     Repo.delete(music_file)
   end
@@ -330,6 +357,7 @@ defmodule Mydia.Music do
   ## Options
     - `:preload` - List of associations to preload
   """
+  @spec list_user_playlists(binary(), keyword()) :: [Playlist.t()]
   def list_user_playlists(user_id, opts \\ []) do
     Playlist
     |> where([p], p.user_id == ^user_id)
@@ -346,6 +374,7 @@ defmodule Mydia.Music do
   ## Options
     - `:preload` - List of associations to preload
   """
+  @spec get_playlist!(binary(), keyword()) :: Playlist.t()
   def get_playlist!(id, opts \\ []) do
     Playlist
     |> maybe_preload(opts[:preload])
@@ -355,6 +384,7 @@ defmodule Mydia.Music do
   @doc """
   Gets a playlist with its tracks preloaded in order.
   """
+  @spec get_playlist_with_tracks!(binary()) :: Playlist.t()
   def get_playlist_with_tracks!(id) do
     playlist = Repo.get!(Playlist, id)
 
@@ -372,6 +402,7 @@ defmodule Mydia.Music do
   @doc """
   Creates a playlist for a user.
   """
+  @spec create_playlist(struct(), map()) :: {:ok, Playlist.t()} | {:error, Ecto.Changeset.t()}
   def create_playlist(user, attrs \\ %{}) do
     %Playlist{}
     |> Playlist.changeset(attrs)
@@ -382,6 +413,7 @@ defmodule Mydia.Music do
   @doc """
   Updates a playlist.
   """
+  @spec update_playlist(Playlist.t(), map()) :: {:ok, Playlist.t()} | {:error, Ecto.Changeset.t()}
   def update_playlist(%Playlist{} = playlist, attrs) do
     playlist
     |> Playlist.changeset(attrs)
@@ -391,6 +423,7 @@ defmodule Mydia.Music do
   @doc """
   Deletes a playlist.
   """
+  @spec delete_playlist(Playlist.t()) :: {:ok, Playlist.t()} | {:error, Ecto.Changeset.t()}
   def delete_playlist(%Playlist{} = playlist) do
     Repo.delete(playlist)
   end
@@ -398,6 +431,7 @@ defmodule Mydia.Music do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking playlist changes.
   """
+  @spec change_playlist(Playlist.t(), map()) :: Ecto.Changeset.t()
   def change_playlist(%Playlist{} = playlist, attrs \\ %{}) do
     Playlist.changeset(playlist, attrs)
   end
@@ -407,6 +441,8 @@ defmodule Mydia.Music do
   @doc """
   Adds a track to a playlist at the end.
   """
+  @spec add_track_to_playlist(Playlist.t(), Track.t()) ::
+          {:ok, PlaylistTrack.t()} | {:error, Ecto.Changeset.t()}
   def add_track_to_playlist(%Playlist{} = playlist, %Track{} = track) do
     # Get the next position
     max_position =
@@ -436,6 +472,7 @@ defmodule Mydia.Music do
   @doc """
   Adds multiple tracks to a playlist at the end.
   """
+  @spec add_tracks_to_playlist(Playlist.t(), [Track.t()]) :: {:ok, Playlist.t()}
   def add_tracks_to_playlist(%Playlist{} = playlist, tracks) when is_list(tracks) do
     max_position =
       from(pt in PlaylistTrack,
@@ -469,6 +506,8 @@ defmodule Mydia.Music do
   @doc """
   Removes a playlist track from a playlist.
   """
+  @spec remove_track_from_playlist(PlaylistTrack.t()) ::
+          {:ok, PlaylistTrack.t()} | {:error, Ecto.Changeset.t()}
   def remove_track_from_playlist(%PlaylistTrack{} = playlist_track) do
     playlist_id = playlist_track.playlist_id
 
@@ -495,6 +534,7 @@ defmodule Mydia.Music do
   @doc """
   Reorders tracks in a playlist. Takes a list of playlist_track IDs in the new order.
   """
+  @spec reorder_playlist_tracks(Playlist.t(), [binary()]) :: {:ok, Playlist.t()}
   def reorder_playlist_tracks(%Playlist{} = playlist, playlist_track_ids)
       when is_list(playlist_track_ids) do
     Repo.transaction(fn ->
@@ -514,6 +554,7 @@ defmodule Mydia.Music do
   @doc """
   Clears all tracks from a playlist.
   """
+  @spec clear_playlist(Playlist.t()) :: {:ok, Playlist.t()}
   def clear_playlist(%Playlist{} = playlist) do
     from(pt in PlaylistTrack, where: pt.playlist_id == ^playlist.id)
     |> Repo.delete_all()
@@ -525,6 +566,7 @@ defmodule Mydia.Music do
   @doc """
   Updates playlist track count and total duration statistics.
   """
+  @spec update_playlist_stats(Playlist.t()) :: {:ok, Playlist.t()} | {:error, Ecto.Changeset.t()}
   def update_playlist_stats(%Playlist{} = playlist) do
     stats =
       from(pt in PlaylistTrack,
@@ -545,6 +587,7 @@ defmodule Mydia.Music do
   @doc """
   Gets a playlist track by ID.
   """
+  @spec get_playlist_track!(binary()) :: PlaylistTrack.t()
   def get_playlist_track!(id) do
     Repo.get!(PlaylistTrack, id)
   end

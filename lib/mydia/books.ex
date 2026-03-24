@@ -17,6 +17,7 @@ defmodule Mydia.Books do
     - `:preload` - List of associations to preload
     - `:search` - Search term for filtering by name
   """
+  @spec list_authors(keyword()) :: [Author.t()]
   def list_authors(opts \\ []) do
     Author
     |> apply_author_filters(opts)
@@ -30,6 +31,7 @@ defmodule Mydia.Books do
 
   Raises `Ecto.NoResultsError` if the Author does not exist.
   """
+  @spec get_author!(binary(), keyword()) :: Author.t()
   def get_author!(id, opts \\ []) do
     Author
     |> maybe_preload(opts[:preload])
@@ -39,6 +41,7 @@ defmodule Mydia.Books do
   @doc """
   Gets an author by OpenLibrary ID.
   """
+  @spec get_author_by_openlibrary(binary()) :: Author.t() | nil
   def get_author_by_openlibrary(openlibrary_id) do
     Repo.get_by(Author, openlibrary_id: openlibrary_id)
   end
@@ -46,6 +49,7 @@ defmodule Mydia.Books do
   @doc """
   Gets an author by Goodreads ID.
   """
+  @spec get_author_by_goodreads(binary()) :: Author.t() | nil
   def get_author_by_goodreads(goodreads_id) do
     Repo.get_by(Author, goodreads_id: goodreads_id)
   end
@@ -53,6 +57,7 @@ defmodule Mydia.Books do
   @doc """
   Creates an author.
   """
+  @spec create_author(map()) :: {:ok, Author.t()} | {:error, Ecto.Changeset.t()}
   def create_author(attrs \\ %{}) do
     %Author{}
     |> Author.changeset(attrs)
@@ -62,6 +67,7 @@ defmodule Mydia.Books do
   @doc """
   Updates an author.
   """
+  @spec update_author(Author.t(), map()) :: {:ok, Author.t()} | {:error, Ecto.Changeset.t()}
   def update_author(%Author{} = author, attrs) do
     author
     |> Author.changeset(attrs)
@@ -71,6 +77,7 @@ defmodule Mydia.Books do
   @doc """
   Deletes an author.
   """
+  @spec delete_author(Author.t()) :: {:ok, Author.t()} | {:error, Ecto.Changeset.t()}
   def delete_author(%Author{} = author) do
     Repo.delete(author)
   end
@@ -78,6 +85,7 @@ defmodule Mydia.Books do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking author changes.
   """
+  @spec change_author(Author.t(), map()) :: Ecto.Changeset.t()
   def change_author(%Author{} = author, attrs \\ %{}) do
     Author.changeset(author, attrs)
   end
@@ -94,6 +102,7 @@ defmodule Mydia.Books do
     - `:monitored` - Filter by monitored status
     - `:series_name` - Filter by series name
   """
+  @spec list_books(keyword()) :: [Book.t()]
   def list_books(opts \\ []) do
     Book
     |> apply_book_filters(opts)
@@ -105,6 +114,7 @@ defmodule Mydia.Books do
   @doc """
   Returns the count of books.
   """
+  @spec count_books(keyword()) :: non_neg_integer()
   def count_books(opts \\ []) do
     Book
     |> apply_book_filters(opts)
@@ -116,6 +126,7 @@ defmodule Mydia.Books do
 
   Raises `Ecto.NoResultsError` if the Book does not exist.
   """
+  @spec get_book!(binary(), keyword()) :: Book.t()
   def get_book!(id, opts \\ []) do
     Book
     |> maybe_preload(opts[:preload])
@@ -125,6 +136,7 @@ defmodule Mydia.Books do
   @doc """
   Gets a book by ISBN.
   """
+  @spec get_book_by_isbn(binary()) :: Book.t() | nil
   def get_book_by_isbn(isbn) do
     Repo.get_by(Book, isbn: isbn)
   end
@@ -132,6 +144,7 @@ defmodule Mydia.Books do
   @doc """
   Gets a book by ISBN-13.
   """
+  @spec get_book_by_isbn13(binary()) :: Book.t() | nil
   def get_book_by_isbn13(isbn13) do
     Repo.get_by(Book, isbn13: isbn13)
   end
@@ -139,6 +152,7 @@ defmodule Mydia.Books do
   @doc """
   Gets a book by OpenLibrary ID.
   """
+  @spec get_book_by_openlibrary(binary()) :: Book.t() | nil
   def get_book_by_openlibrary(openlibrary_id) do
     Repo.get_by(Book, openlibrary_id: openlibrary_id)
   end
@@ -146,6 +160,7 @@ defmodule Mydia.Books do
   @doc """
   Creates a book.
   """
+  @spec create_book(map()) :: {:ok, Book.t()} | {:error, Ecto.Changeset.t()}
   def create_book(attrs \\ %{}) do
     %Book{}
     |> Book.changeset(attrs)
@@ -155,6 +170,7 @@ defmodule Mydia.Books do
   @doc """
   Updates a book.
   """
+  @spec update_book(Book.t(), map()) :: {:ok, Book.t()} | {:error, Ecto.Changeset.t()}
   def update_book(%Book{} = book, attrs) do
     book
     |> Book.changeset(attrs)
@@ -164,6 +180,7 @@ defmodule Mydia.Books do
   @doc """
   Deletes a book.
   """
+  @spec delete_book(Book.t()) :: {:ok, Book.t()} | {:error, Ecto.Changeset.t()}
   def delete_book(%Book{} = book) do
     Repo.delete(book)
   end
@@ -171,6 +188,7 @@ defmodule Mydia.Books do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking book changes.
   """
+  @spec change_book(Book.t(), map()) :: Ecto.Changeset.t()
   def change_book(%Book{} = book, attrs \\ %{}) do
     Book.changeset(book, attrs)
   end
@@ -178,6 +196,7 @@ defmodule Mydia.Books do
   @doc """
   Returns books grouped by series.
   """
+  @spec list_books_by_series(keyword()) :: %{binary() => [Book.t()]}
   def list_books_by_series(opts \\ []) do
     Book
     |> apply_book_filters(opts)
@@ -191,6 +210,7 @@ defmodule Mydia.Books do
   @doc """
   Refreshes book metadata from Open Library.
   """
+  @spec refresh_metadata(Book.t()) :: {:ok, Book.t()} | {:error, term()}
   def refresh_metadata(%Book{} = book) do
     # 1. Determine query (ISBN or OLID)
     query =
@@ -262,6 +282,7 @@ defmodule Mydia.Books do
     - `:library_path_id` - Filter by library path ID
     - `:format` - Filter by file format
   """
+  @spec list_book_files(keyword()) :: [BookFile.t()]
   def list_book_files(opts \\ []) do
     BookFile
     |> apply_book_file_filters(opts)
@@ -274,6 +295,7 @@ defmodule Mydia.Books do
 
   Raises `Ecto.NoResultsError` if the BookFile does not exist.
   """
+  @spec get_book_file!(binary(), keyword()) :: BookFile.t()
   def get_book_file!(id, opts \\ []) do
     BookFile
     |> maybe_preload(opts[:preload])
@@ -283,6 +305,7 @@ defmodule Mydia.Books do
   @doc """
   Gets a book file by path.
   """
+  @spec get_book_file_by_path(binary()) :: BookFile.t() | nil
   def get_book_file_by_path(path) do
     Repo.get_by(BookFile, path: path)
   end
@@ -290,6 +313,7 @@ defmodule Mydia.Books do
   @doc """
   Creates a book file.
   """
+  @spec create_book_file(map()) :: {:ok, BookFile.t()} | {:error, Ecto.Changeset.t()}
   def create_book_file(attrs \\ %{}) do
     %BookFile{}
     |> BookFile.changeset(attrs)
@@ -299,6 +323,8 @@ defmodule Mydia.Books do
   @doc """
   Updates a book file.
   """
+  @spec update_book_file(BookFile.t(), map()) ::
+          {:ok, BookFile.t()} | {:error, Ecto.Changeset.t()}
   def update_book_file(%BookFile{} = book_file, attrs) do
     book_file
     |> BookFile.changeset(attrs)
@@ -308,6 +334,7 @@ defmodule Mydia.Books do
   @doc """
   Deletes a book file.
   """
+  @spec delete_book_file(BookFile.t()) :: {:ok, BookFile.t()} | {:error, Ecto.Changeset.t()}
   def delete_book_file(%BookFile{} = book_file) do
     Repo.delete(book_file)
   end

@@ -27,10 +27,24 @@ defmodule Mydia.Jobs.DefinitionSync do
   alias Mydia.Indexers.DefinitionSync
   alias Mydia.Indexers.CardigannFeatureFlags
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:limit]
+
+    @type t :: %__MODULE__{limit: integer() | nil}
+
+    def parse(raw) do
+      %__MODULE__{limit: Map.get(raw, "limit")}
+    end
+  end
+
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+
     if CardigannFeatureFlags.enabled?() do
-      opts = parse_args(args)
+      opts = if args.limit, do: [limit: args.limit], else: []
 
       Logger.info("[DefinitionSyncJob] Starting scheduled sync", opts: opts)
 
@@ -83,15 +97,5 @@ defmodule Mydia.Jobs.DefinitionSync do
       end
 
     Oban.insert(job)
-  end
-
-  defp parse_args(args) do
-    limit = Map.get(args, "limit")
-
-    if limit do
-      [limit: limit]
-    else
-      []
-    end
   end
 end

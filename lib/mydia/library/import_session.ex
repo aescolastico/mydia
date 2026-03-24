@@ -15,6 +15,22 @@ defmodule Mydia.Library.ImportSession do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          step: atom(),
+          status: atom(),
+          scan_path: String.t() | nil,
+          session_data: map() | nil,
+          scan_stats: map() | nil,
+          import_progress: map() | nil,
+          import_results: map() | nil,
+          completed_at: DateTime.t() | nil,
+          expires_at: DateTime.t() | nil,
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @valid_steps ~w(select_path review importing complete)a
   @valid_statuses ~w(active completed expired abandoned)a
 

@@ -8,6 +8,19 @@ defmodule Mydia.Adult.Studio do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          sort_name: String.t() | nil,
+          description: String.t() | nil,
+          image_url: String.t() | nil,
+          website: String.t() | nil,
+          founded_year: integer() | nil,
+          scenes: [Mydia.Adult.Scene.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "studios" do
     field :name, :string
     field :sort_name, :string

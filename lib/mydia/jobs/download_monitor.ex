@@ -27,6 +27,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
   alias Mydia.Downloads.UntrackedMatcher
   alias Mydia.Events
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
     start_time = System.monotonic_time(:millisecond)

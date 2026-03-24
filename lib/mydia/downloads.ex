@@ -26,6 +26,7 @@ defmodule Mydia.Downloads do
   This should be called during application startup to ensure all client
   adapters are available for use.
   """
+  @spec register_clients() :: :ok
   def register_clients do
     Logger.info("Registering download client adapters...")
 
@@ -58,6 +59,8 @@ defmodule Mydia.Downloads do
       iex> Mydia.Downloads.test_connection(config)
       {:ok, %ClientInfo{...}}
   """
+  @spec test_connection(Settings.DownloadClientConfig.t() | map()) ::
+          {:ok, Mydia.Downloads.Structs.ClientInfo.t()} | {:error, term()}
   def test_connection(%Settings.DownloadClientConfig{} = config) do
     adapter_config = config_to_map(config)
     test_connection(adapter_config)
@@ -80,6 +83,7 @@ defmodule Mydia.Downloads do
     - `:episode_id` - Filter by episode
     - `:preload` - List of associations to preload
   """
+  @spec list_downloads(keyword()) :: [Download.t()]
   def list_downloads(opts \\ []) do
     Download
     |> apply_download_filters(opts)
@@ -101,6 +105,7 @@ defmodule Mydia.Downloads do
     - `:media_item_id` - Filter by media item
     - `:episode_id` - Filter by episode
   """
+  @spec list_downloads_with_status(keyword()) :: [EnrichedDownload.t()]
   def list_downloads_with_status(opts \\ []) do
     # Get all download records from database
     # Preload episode.media_item to get parent show info for episode downloads
@@ -132,6 +137,7 @@ defmodule Mydia.Downloads do
 
   Raises `Ecto.NoResultsError` if the download does not exist.
   """
+  @spec get_download!(binary(), keyword()) :: Download.t()
   def get_download!(id, opts \\ []) do
     Download
     |> maybe_preload(opts[:preload])
@@ -141,6 +147,7 @@ defmodule Mydia.Downloads do
   @doc """
   Creates a download.
   """
+  @spec create_download(map()) :: {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def create_download(attrs \\ %{}) do
     result =
       %Download{}
@@ -160,6 +167,7 @@ defmodule Mydia.Downloads do
   @doc """
   Updates a download.
   """
+  @spec update_download(Download.t(), map()) :: {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def update_download(%Download{} = download, attrs) do
     result =
       download
@@ -179,6 +187,8 @@ defmodule Mydia.Downloads do
   @doc """
   Marks a download as completed by storing the completion time.
   """
+  @spec mark_download_completed(Download.t()) ::
+          {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def mark_download_completed(%Download{} = download) do
     download
     |> Download.changeset(%{completed_at: DateTime.utc_now()})
@@ -188,6 +198,8 @@ defmodule Mydia.Downloads do
   @doc """
   Records an error message for a download.
   """
+  @spec mark_download_failed(Download.t(), String.t()) ::
+          {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def mark_download_failed(%Download{} = download, error_message) do
     download
     |> Download.changeset(%{error_message: error_message})
@@ -205,6 +217,7 @@ defmodule Mydia.Downloads do
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
     - Other client-specific options
   """
+  @spec cancel_download(Download.t(), keyword()) :: {:ok, Download.t()} | {:error, term()}
   def cancel_download(%Download{} = download, opts \\ []) do
     with {:ok, client_config} <- find_client_config(download.download_client),
          {:ok, adapter} <- get_adapter_for_client(client_config),
@@ -236,6 +249,7 @@ defmodule Mydia.Downloads do
     - `:actor_type` - The type of actor (:user, :system, :job) - defaults to :user
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
   """
+  @spec pause_download(Download.t(), keyword()) :: {:ok, Download.t()} | {:error, term()}
   def pause_download(%Download{} = download, opts \\ []) do
     with {:ok, client_config} <- find_client_config(download.download_client),
          {:ok, adapter} <- get_adapter_for_client(client_config),
@@ -266,6 +280,7 @@ defmodule Mydia.Downloads do
     - `:actor_type` - The type of actor (:user, :system, :job) - defaults to :user
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
   """
+  @spec resume_download(Download.t(), keyword()) :: {:ok, Download.t()} | {:error, term()}
   def resume_download(%Download{} = download, opts \\ []) do
     with {:ok, client_config} <- find_client_config(download.download_client),
          {:ok, adapter} <- get_adapter_for_client(client_config),
@@ -296,6 +311,8 @@ defmodule Mydia.Downloads do
     - `:actor_type` - The type of actor (:user, :system, :job) - defaults to :user
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
   """
+  @spec clear_completed(Download.t(), keyword()) ::
+          {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def clear_completed(%Download{} = download, opts \\ []) do
     # Try to remove from client first (ignore errors as may already be removed)
     case find_client_config(download.download_client) do
@@ -353,6 +370,7 @@ defmodule Mydia.Downloads do
 
   Returns the count of successfully cleared downloads.
   """
+  @spec clear_all_completed(keyword()) :: {:ok, non_neg_integer()}
   def clear_all_completed(opts \\ []) do
     # Get all imported downloads
     imported_downloads =
@@ -375,6 +393,7 @@ defmodule Mydia.Downloads do
   @doc """
   Deletes a download.
   """
+  @spec delete_download(Download.t()) :: {:ok, Download.t()} | {:error, Ecto.Changeset.t()}
   def delete_download(%Download{} = download) do
     result = Repo.delete(download)
 
@@ -391,6 +410,7 @@ defmodule Mydia.Downloads do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking download changes.
   """
+  @spec change_download(Download.t(), map()) :: Ecto.Changeset.t()
   def change_download(%Download{} = download, attrs \\ %{}) do
     Download.changeset(download, attrs)
   end
@@ -401,6 +421,7 @@ defmodule Mydia.Downloads do
   This is now a convenience wrapper around list_downloads_with_status
   with filter: :active.
   """
+  @spec list_active_downloads(keyword()) :: [EnrichedDownload.t()]
   def list_active_downloads(opts \\ []) do
     list_downloads_with_status(Keyword.put(opts, :filter, :active))
   end
@@ -410,6 +431,7 @@ defmodule Mydia.Downloads do
 
   Returns the number of downloads currently in progress across all clients.
   """
+  @spec count_active_downloads() :: non_neg_integer()
   def count_active_downloads do
     list_active_downloads()
     |> length()
@@ -438,6 +460,7 @@ defmodule Mydia.Downloads do
       iex> list_stuck_downloads(threshold_minutes: 30)
       [%Download{...}]
   """
+  @spec list_stuck_downloads(keyword()) :: [Download.t()]
   def list_stuck_downloads(opts \\ []) do
     threshold_minutes = Keyword.get(opts, :threshold_minutes, 60)
     threshold_time = DateTime.add(DateTime.utc_now(), -threshold_minutes, :minute)
@@ -475,6 +498,7 @@ defmodule Mydia.Downloads do
       iex> initiate_download(result, client_name: "qbittorrent-main")
       {:ok, %Download{}}
   """
+  @spec initiate_download(SearchResult.t(), keyword()) :: {:ok, Download.t()} | {:error, term()}
   def initiate_download(%SearchResult{} = search_result, opts \\ []) do
     # Use protocol from search result
     download_type = search_result.download_protocol
@@ -607,6 +631,7 @@ defmodule Mydia.Downloads do
   @doc """
   Broadcasts a download update to all subscribed LiveViews.
   """
+  @spec broadcast_download_update(binary()) :: :ok | {:error, term()}
   def broadcast_download_update(download_id) do
     PubSub.broadcast(Mydia.PubSub, "downloads", {:download_updated, download_id})
   end
@@ -1732,6 +1757,8 @@ defmodule Mydia.Downloads do
       iex> get_or_create_job(media_file_id, "1080p")
       {:ok, %TranscodeJob{status: "pending"}}
   """
+  @spec get_or_create_job(binary(), String.t()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def get_or_create_job(media_file_id, resolution) do
     # Explicitly filter for download type jobs
     case Repo.get_by(TranscodeJob,
@@ -1768,6 +1795,7 @@ defmodule Mydia.Downloads do
       iex> get_cached_transcode(media_file_id, "480p")
       nil
   """
+  @spec get_cached_transcode(binary(), String.t()) :: TranscodeJob.t() | nil
   def get_cached_transcode(media_file_id, resolution) do
     TranscodeJob
     |> where([j], j.media_file_id == ^media_file_id)
@@ -1787,6 +1815,8 @@ defmodule Mydia.Downloads do
       iex> update_job_progress(job, 0.5)
       {:ok, %TranscodeJob{progress: 0.5, status: "transcoding"}}
   """
+  @spec update_job_progress(TranscodeJob.t(), float()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def update_job_progress(%TranscodeJob{} = job, progress) do
     attrs = %{
       progress: progress,
@@ -1822,6 +1852,8 @@ defmodule Mydia.Downloads do
       iex> complete_job(job, "/path/to/output.mp4", 1024000)
       {:ok, %TranscodeJob{status: "ready", completed_at: ~U[...]}}
   """
+  @spec complete_job(TranscodeJob.t(), String.t(), non_neg_integer()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def complete_job(%TranscodeJob{} = job, output_path, file_size) do
     case job
          |> TranscodeJob.changeset(%{
@@ -1852,6 +1884,8 @@ defmodule Mydia.Downloads do
       iex> fail_job(job, "FFmpeg error: invalid codec")
       {:ok, %TranscodeJob{status: "failed", error: "FFmpeg error: invalid codec"}}
   """
+  @spec fail_job(TranscodeJob.t(), String.t()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def fail_job(%TranscodeJob{} = job, error_message) do
     case job
          |> TranscodeJob.changeset(%{
@@ -1878,6 +1912,8 @@ defmodule Mydia.Downloads do
       iex> touch_last_accessed(job)
       {:ok, %TranscodeJob{last_accessed_at: ~U[...]}}
   """
+  @spec touch_last_accessed(TranscodeJob.t()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def touch_last_accessed(%TranscodeJob{} = job) do
     job
     |> TranscodeJob.changeset(%{last_accessed_at: DateTime.utc_now()})
@@ -1887,6 +1923,7 @@ defmodule Mydia.Downloads do
   @doc """
   Broadcasts a transcode job update to all subscribed LiveViews.
   """
+  @spec broadcast_job_update(binary()) :: :ok | {:error, term()}
   def broadcast_job_update(job_id) do
     PubSub.broadcast(Mydia.PubSub, "transcodes", {:job_updated, job_id})
   end
@@ -1896,6 +1933,7 @@ defmodule Mydia.Downloads do
 
   Returns all download-type transcode jobs regardless of status.
   """
+  @spec list_transcode_jobs_for_media_file(binary()) :: [TranscodeJob.t()]
   def list_transcode_jobs_for_media_file(media_file_id) do
     TranscodeJob
     |> where([j], j.media_file_id == ^media_file_id)
@@ -1912,6 +1950,7 @@ defmodule Mydia.Downloads do
     - `:status` - List of status strings to filter by (e.g. ["pending", "transcoding"])
     - `:limit` - Maximum number of results to return
   """
+  @spec list_transcode_jobs(keyword()) :: [TranscodeJob.t()]
   def list_transcode_jobs(opts \\ []) do
     TranscodeJob
     |> maybe_filter_status(opts[:status])
@@ -1932,6 +1971,7 @@ defmodule Mydia.Downloads do
   @doc """
   Cancels a transcode job.
   """
+  @spec cancel_transcode_job(TranscodeJob.t()) :: {:ok, TranscodeJob.t()}
   def cancel_transcode_job(%TranscodeJob{} = job) do
     alias Mydia.Downloads.JobManager
     alias Mydia.Streaming.HlsSessionSupervisor
@@ -1982,6 +2022,7 @@ defmodule Mydia.Downloads do
   @doc """
   Deletes all completed (ready) and failed transcode jobs and their files.
   """
+  @spec delete_all_completed_jobs() :: :ok
   def delete_all_completed_jobs do
     jobs =
       TranscodeJob
@@ -1995,6 +2036,7 @@ defmodule Mydia.Downloads do
   Deletes all streaming jobs.
   Should be called on startup to clean up zombie records.
   """
+  @spec delete_all_streaming_jobs() :: {non_neg_integer(), nil | [term()]}
   def delete_all_streaming_jobs do
     Repo.delete_all(from j in TranscodeJob, where: j.type in ["stream", "direct"])
   end

@@ -26,13 +26,25 @@ defmodule Mydia.Jobs.CardigannHealthCheck do
   alias Mydia.Indexers.CardigannHealthCheck
   alias Mydia.Indexers.CardigannFeatureFlags
 
-  @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    if CardigannFeatureFlags.enabled?() do
-      definition_id = Map.get(args, "definition_id")
+  defmodule Args do
+    @moduledoc false
+    defstruct [:definition_id]
 
-      if definition_id do
-        perform_single_health_check(definition_id)
+    @type t :: %__MODULE__{definition_id: String.t() | nil}
+
+    def parse(raw) do
+      %__MODULE__{definition_id: Map.get(raw, "definition_id")}
+    end
+  end
+
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+
+    if CardigannFeatureFlags.enabled?() do
+      if args.definition_id do
+        perform_single_health_check(args.definition_id)
       else
         perform_all_health_checks()
       end

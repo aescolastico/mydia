@@ -24,6 +24,7 @@ defmodule Mydia.Jobs.TvdbIdBackfill do
   # Delay between batches to avoid rate limiting (ms)
   @batch_delay_ms 2_000
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
     Logger.info("[TvdbIdBackfill] Starting TVDB ID backfill for existing TV shows")

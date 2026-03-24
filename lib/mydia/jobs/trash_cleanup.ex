@@ -22,6 +22,7 @@ defmodule Mydia.Jobs.TrashCleanup do
 
   @default_retention_days 30
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
     retention_days = Application.get_env(:mydia, :trash_retention_days, @default_retention_days)

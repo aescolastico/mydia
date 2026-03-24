@@ -14,6 +14,33 @@ defmodule Mydia.Indexers.CardigannDefinition do
   @indexer_types ["public", "private", "semi-private"]
   @health_statuses ["healthy", "degraded", "unhealthy", "unknown"]
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          indexer_id: String.t() | nil,
+          name: String.t() | nil,
+          description: String.t() | nil,
+          language: String.t() | nil,
+          type: String.t() | nil,
+          encoding: String.t() | nil,
+          links: map() | nil,
+          capabilities: map() | nil,
+          definition: String.t() | nil,
+          schema_version: String.t() | nil,
+          enabled: boolean(),
+          config: map() | nil,
+          last_synced_at: DateTime.t() | nil,
+          health_status: String.t(),
+          last_health_check_at: DateTime.t() | nil,
+          last_successful_query_at: DateTime.t() | nil,
+          consecutive_failures: integer(),
+          flaresolverr_required: boolean(),
+          flaresolverr_enabled: boolean(),
+          search_sessions:
+            [Mydia.Indexers.CardigannSearchSession.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "cardigann_definitions" do
     field :indexer_id, :string
     field :name, :string

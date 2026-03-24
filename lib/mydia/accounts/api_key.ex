@@ -8,6 +8,20 @@ defmodule Mydia.Accounts.ApiKey do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          key_hash: String.t() | nil,
+          key_prefix: String.t() | nil,
+          permissions: [String.t()] | nil,
+          key: String.t() | nil,
+          last_used_at: DateTime.t() | nil,
+          expires_at: DateTime.t() | nil,
+          revoked_at: DateTime.t() | nil,
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t()
+        }
+
   schema "api_keys" do
     field :name, :string
     field :key_hash, :string

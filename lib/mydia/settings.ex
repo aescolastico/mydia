@@ -64,6 +64,7 @@ defmodule Mydia.Settings do
     - `:version` - Filter by version number
     - `:source_url` - Filter by source URL (exact match)
   """
+  @spec list_quality_profiles(keyword()) :: [QualityProfile.t()]
   def list_quality_profiles(opts \\ []) do
     QualityProfile
     |> apply_quality_profile_filters(opts)
@@ -80,6 +81,7 @@ defmodule Mydia.Settings do
 
   Raises `Ecto.NoResultsError` if the quality profile does not exist.
   """
+  @spec get_quality_profile!(binary(), keyword()) :: QualityProfile.t()
   def get_quality_profile!(id, opts \\ []) do
     QualityProfile
     |> maybe_preload(opts[:preload])
@@ -89,6 +91,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets a quality profile by name.
   """
+  @spec get_quality_profile_by_name(String.t(), keyword()) :: QualityProfile.t() | nil
   def get_quality_profile_by_name(name, opts \\ []) do
     QualityProfile
     |> where([q], q.name == ^name)
@@ -99,6 +102,7 @@ defmodule Mydia.Settings do
   @doc """
   Creates a quality profile.
   """
+  @spec create_quality_profile(map()) :: {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
   def create_quality_profile(attrs \\ %{}) do
     %QualityProfile{}
     |> QualityProfile.changeset(attrs)
@@ -114,6 +118,8 @@ defmodule Mydia.Settings do
   ## Options
     - `:skip_reevaluation` - Skip automatic re-evaluation (default: false)
   """
+  @spec update_quality_profile(QualityProfile.t(), map(), keyword()) ::
+          {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
   def update_quality_profile(%QualityProfile{} = quality_profile, attrs, opts \\ []) do
     skip_reevaluation = Keyword.get(opts, :skip_reevaluation, false)
 
@@ -149,6 +155,7 @@ defmodule Mydia.Settings do
   ## Returns
     - `:ok` - Re-evaluation task spawned successfully
   """
+  @spec trigger_profile_reevaluation(binary()) :: :ok
   def trigger_profile_reevaluation(profile_id) do
     Logger.info("Triggering background re-evaluation for quality profile",
       profile_id: profile_id
@@ -183,6 +190,8 @@ defmodule Mydia.Settings do
 
   Returns `{:error, :profile_in_use}` if the profile is assigned to any media items.
   """
+  @spec delete_quality_profile(QualityProfile.t()) ::
+          {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()} | {:error, :profile_in_use}
   def delete_quality_profile(%QualityProfile{} = quality_profile) do
     # Check if profile is assigned to any media items
     if profile_in_use?(quality_profile.id) do
@@ -195,6 +204,7 @@ defmodule Mydia.Settings do
   @doc """
   Checks if a quality profile is assigned to any media items.
   """
+  @spec profile_in_use?(binary()) :: boolean()
   def profile_in_use?(profile_id) do
     alias Mydia.Media.MediaItem
 
@@ -206,6 +216,7 @@ defmodule Mydia.Settings do
   @doc """
   Returns the count of media items using a quality profile.
   """
+  @spec count_media_items_for_profile(binary()) :: non_neg_integer()
   def count_media_items_for_profile(profile_id) do
     alias Mydia.Media.MediaItem
 
@@ -220,6 +231,8 @@ defmodule Mydia.Settings do
   This sets `quality_profile_id` to nil on all media items using this profile,
   then deletes the profile.
   """
+  @spec force_delete_quality_profile(QualityProfile.t()) ::
+          {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
   def force_delete_quality_profile(%QualityProfile{} = quality_profile) do
     alias Mydia.Media.MediaItem
 
@@ -240,6 +253,7 @@ defmodule Mydia.Settings do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking quality profile changes.
   """
+  @spec change_quality_profile(QualityProfile.t(), map()) :: Ecto.Changeset.t()
   def change_quality_profile(%QualityProfile{} = quality_profile, attrs \\ %{}) do
     QualityProfile.changeset(quality_profile, attrs)
   end
@@ -265,6 +279,8 @@ defmodule Mydia.Settings do
       iex> ensure_default_quality_profiles()
       {:ok, 0}  # All profiles already exist
   """
+  @spec ensure_default_quality_profiles() ::
+          {:ok, non_neg_integer()} | {:error, :database_unavailable}
   def ensure_default_quality_profiles do
     try do
       # Get existing profile names to avoid duplicates
@@ -316,6 +332,8 @@ defmodule Mydia.Settings do
       iex> clone_quality_profile(profile)
       {:ok, %QualityProfile{name: "HD-1080p (Copy)"}}
   """
+  @spec clone_quality_profile(QualityProfile.t(), String.t() | nil) ::
+          {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
   def clone_quality_profile(%QualityProfile{} = profile, new_name \\ nil) do
     name = new_name || "#{profile.name} (Copy)"
 
@@ -351,6 +369,7 @@ defmodule Mydia.Settings do
         ...
       }
   """
+  @spec get_default_metadata_preferences() :: map()
   def get_default_metadata_preferences do
     DefaultMetadataPreferences.default()
   end
@@ -367,6 +386,7 @@ defmodule Mydia.Settings do
         ...
       }
   """
+  @spec get_metadata_preferences_with_defaults(map()) :: map()
   def get_metadata_preferences_with_defaults(custom_prefs) when is_map(custom_prefs) do
     DefaultMetadataPreferences.with_defaults(custom_prefs)
   end
@@ -385,6 +405,7 @@ defmodule Mydia.Settings do
       iex> validate_metadata_preferences_providers(%{provider_priority: ["invalid"]})
       {:error, ["invalid"]}
   """
+  @spec validate_metadata_preferences_providers(map()) :: {:ok, map()} | {:error, [String.t()]}
   def validate_metadata_preferences_providers(prefs) when is_map(prefs) do
     DefaultMetadataPreferences.validate_providers(prefs)
   end
@@ -408,6 +429,7 @@ defmodule Mydia.Settings do
       iex> get_field_provider(prefs, "overview")
       "metadata_relay"
   """
+  @spec get_field_provider(map(), String.t()) :: String.t() | nil
   def get_field_provider(prefs, field) when is_map(prefs) and is_binary(field) do
     # Check for field-specific override
     case Map.get(prefs, :field_providers, %{}) do
@@ -448,6 +470,11 @@ defmodule Mydia.Settings do
         removed: %{}
       }
   """
+  @spec compare_quality_profile_versions(QualityProfile.t(), QualityProfile.t()) :: %{
+          changed: map(),
+          added: map(),
+          removed: map()
+        }
   def compare_quality_profile_versions(%QualityProfile{} = profile1, %QualityProfile{} = profile2) do
     # Fields to compare (excluding id, timestamps, and associations)
     fields = [
@@ -530,6 +557,7 @@ defmodule Mydia.Settings do
       iex> export_profile(profile, format: :yaml)
       {:ok, "schema_version: 1\\nname: HD-1080p\\n..."}
   """
+  @spec export_profile(QualityProfile.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def export_profile(%QualityProfile{} = profile, opts \\ []) do
     format = Keyword.get(opts, :format, :json)
     pretty = Keyword.get(opts, :pretty, true)
@@ -589,6 +617,8 @@ defmodule Mydia.Settings do
       iex> import_profile(content, dry_run: true)
       {:ok, %{action: :create, profile: %QualityProfile{}, conflicts: []}}
   """
+  @spec import_profile(String.t(), keyword()) ::
+          {:ok, QualityProfile.t() | map()} | {:error, String.t()}
   def import_profile(source, opts \\ []) do
     dry_run = Keyword.get(opts, :dry_run, false)
 
@@ -819,6 +849,7 @@ defmodule Mydia.Settings do
   Note: This function is intentionally database-only (no runtime config merge)
   as it's used by the config loader to build the configuration hierarchy.
   """
+  @spec list_config_settings(keyword()) :: [ConfigSetting.t()]
   def list_config_settings(opts \\ []) do
     ConfigSetting
     |> maybe_preload(opts[:preload])
@@ -829,6 +860,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets a configuration setting from the database by key.
   """
+  @spec get_config_setting_by_key(String.t()) :: ConfigSetting.t() | nil
   def get_config_setting_by_key(key) do
     Repo.get_by(ConfigSetting, key: key)
   end
@@ -836,6 +868,7 @@ defmodule Mydia.Settings do
   @doc """
   Creates a configuration setting in the database.
   """
+  @spec create_config_setting(map()) :: {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
   def create_config_setting(attrs) do
     %ConfigSetting{}
     |> ConfigSetting.changeset(attrs)
@@ -845,6 +878,8 @@ defmodule Mydia.Settings do
   @doc """
   Updates a configuration setting in the database.
   """
+  @spec update_config_setting(ConfigSetting.t(), map()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
   def update_config_setting(%ConfigSetting{} = config_setting, attrs) do
     config_setting
     |> ConfigSetting.changeset(attrs)
@@ -854,6 +889,8 @@ defmodule Mydia.Settings do
   @doc """
   Deletes a configuration setting from the database.
   """
+  @spec delete_config_setting(ConfigSetting.t()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
   def delete_config_setting(%ConfigSetting{} = config_setting) do
     Repo.delete(config_setting)
   end
@@ -867,6 +904,7 @@ defmodule Mydia.Settings do
   (environment variables). Runtime config clients are returned as structs
   compatible with DownloadClientConfig but without database IDs.
   """
+  @spec list_download_client_configs(keyword()) :: [DownloadClientConfig.t()]
   def list_download_client_configs(opts \\ []) do
     # Get database configs
     db_configs =
@@ -889,6 +927,7 @@ defmodule Mydia.Settings do
   Raises `Ecto.NoResultsError` if a database ID is not found, or
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
+  @spec get_download_client_config!(binary() | integer(), keyword()) :: DownloadClientConfig.t()
   def get_download_client_config!(id, opts \\ [])
 
   def get_download_client_config!(id, opts) when is_binary(id) do
@@ -940,6 +979,8 @@ defmodule Mydia.Settings do
   @doc """
   Creates a download client configuration.
   """
+  @spec create_download_client_config(map()) ::
+          {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
   def create_download_client_config(attrs) do
     %DownloadClientConfig{}
     |> DownloadClientConfig.changeset(attrs)
@@ -949,6 +990,8 @@ defmodule Mydia.Settings do
   @doc """
   Updates a download client configuration.
   """
+  @spec update_download_client_config(DownloadClientConfig.t(), map()) ::
+          {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
   def update_download_client_config(%DownloadClientConfig{} = config, attrs) do
     config
     |> DownloadClientConfig.changeset(attrs)
@@ -958,6 +1001,8 @@ defmodule Mydia.Settings do
   @doc """
   Deletes a download client configuration.
   """
+  @spec delete_download_client_config(DownloadClientConfig.t()) ::
+          {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
   def delete_download_client_config(%DownloadClientConfig{} = config) do
     Repo.delete(config)
   end
@@ -971,6 +1016,7 @@ defmodule Mydia.Settings do
   (environment variables). Runtime config indexers are returned as structs
   compatible with IndexerConfig but without database IDs.
   """
+  @spec list_indexer_configs(keyword()) :: [IndexerConfig.t()]
   def list_indexer_configs(opts \\ []) do
     # Get database configs
     db_configs =
@@ -993,6 +1039,7 @@ defmodule Mydia.Settings do
   Raises `Ecto.NoResultsError` if a database ID is not found, or
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
+  @spec get_indexer_config!(binary() | integer(), keyword()) :: IndexerConfig.t()
   def get_indexer_config!(id, opts \\ [])
 
   def get_indexer_config!(id, opts) when is_binary(id) do
@@ -1043,6 +1090,7 @@ defmodule Mydia.Settings do
   @doc """
   Creates an indexer configuration.
   """
+  @spec create_indexer_config(map()) :: {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
   def create_indexer_config(attrs) do
     %IndexerConfig{}
     |> IndexerConfig.changeset(attrs)
@@ -1052,6 +1100,8 @@ defmodule Mydia.Settings do
   @doc """
   Updates an indexer configuration.
   """
+  @spec update_indexer_config(IndexerConfig.t(), map()) ::
+          {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
   def update_indexer_config(%IndexerConfig{} = config, attrs) do
     config
     |> IndexerConfig.changeset(attrs)
@@ -1061,6 +1111,8 @@ defmodule Mydia.Settings do
   @doc """
   Deletes an indexer configuration.
   """
+  @spec delete_indexer_config(IndexerConfig.t()) ::
+          {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
   def delete_indexer_config(%IndexerConfig{} = config) do
     Repo.delete(config)
   end
@@ -1092,6 +1144,7 @@ defmodule Mydia.Settings do
       iex> resolved == config
       true
   """
+  @spec resolve_env_inheritance(IndexerConfig.t()) :: IndexerConfig.t()
   def resolve_env_inheritance(%IndexerConfig{env_name: nil} = config), do: config
   def resolve_env_inheritance(%IndexerConfig{env_name: ""} = config), do: config
 
@@ -1123,6 +1176,9 @@ defmodule Mydia.Settings do
         %{env_name: "JACKETT", base_url: "http://jackett:9117", has_api_key: true}
       ]
   """
+  @spec list_available_env_indexers() :: [
+          %{env_name: String.t(), base_url: String.t(), has_api_key: boolean()}
+        ]
   def list_available_env_indexers do
     System.get_env()
     |> Enum.filter(fn {key, _value} -> String.ends_with?(key, "_BASE_URL") end)
@@ -1150,6 +1206,7 @@ defmodule Mydia.Settings do
   (environment variables). Runtime config servers are returned as structs
   compatible with MediaServerConfig but without database IDs.
   """
+  @spec list_media_server_configs(keyword()) :: [MediaServerConfig.t()]
   def list_media_server_configs(opts \\ []) do
     # Get database configs
     db_configs =
@@ -1172,6 +1229,7 @@ defmodule Mydia.Settings do
   Raises `Ecto.NoResultsError` if a database ID is not found, or
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
+  @spec get_media_server_config!(binary() | integer(), keyword()) :: MediaServerConfig.t()
   def get_media_server_config!(id, opts \\ [])
 
   def get_media_server_config!(id, opts) when is_binary(id) do
@@ -1222,6 +1280,8 @@ defmodule Mydia.Settings do
   @doc """
   Creates a media server configuration.
   """
+  @spec create_media_server_config(map()) ::
+          {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
   def create_media_server_config(attrs) do
     %MediaServerConfig{}
     |> MediaServerConfig.changeset(attrs)
@@ -1231,6 +1291,8 @@ defmodule Mydia.Settings do
   @doc """
   Updates a media server configuration.
   """
+  @spec update_media_server_config(MediaServerConfig.t(), map()) ::
+          {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
   def update_media_server_config(%MediaServerConfig{} = config, attrs) do
     config
     |> MediaServerConfig.changeset(attrs)
@@ -1240,6 +1302,8 @@ defmodule Mydia.Settings do
   @doc """
   Deletes a media server configuration.
   """
+  @spec delete_media_server_config(MediaServerConfig.t()) ::
+          {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
   def delete_media_server_config(%MediaServerConfig{} = config) do
     Repo.delete(config)
   end
@@ -1247,6 +1311,7 @@ defmodule Mydia.Settings do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking media server config changes.
   """
+  @spec change_media_server_config(MediaServerConfig.t(), map()) :: Ecto.Changeset.t()
   def change_media_server_config(%MediaServerConfig{} = config, attrs \\ %{}) do
     MediaServerConfig.changeset(config, attrs)
   end
@@ -1260,6 +1325,7 @@ defmodule Mydia.Settings do
   (environment variables). Runtime config paths are returned as structs
   compatible with LibraryPath but without database IDs.
   """
+  @spec list_library_paths(keyword()) :: [LibraryPath.t()]
   def list_library_paths(opts \\ []) do
     # Get database library paths (exclude disabled paths)
     db_paths =
@@ -1283,6 +1349,7 @@ defmodule Mydia.Settings do
   Raises `Ecto.NoResultsError` if a database ID is not found, or
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
+  @spec get_library_path!(binary() | integer(), keyword()) :: LibraryPath.t()
   def get_library_path!(id, opts \\ [])
 
   def get_library_path!(id, opts) when is_binary(id) do
@@ -1327,6 +1394,7 @@ defmodule Mydia.Settings do
   @doc """
   Creates a library path.
   """
+  @spec create_library_path(map()) :: {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
   def create_library_path(attrs) do
     %LibraryPath{}
     |> LibraryPath.changeset(attrs)
@@ -1339,6 +1407,8 @@ defmodule Mydia.Settings do
   If the path is being changed, validates that files are accessible at the new
   location before allowing the change.
   """
+  @spec update_library_path(LibraryPath.t(), map()) ::
+          {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
   def update_library_path(%LibraryPath{} = library_path, attrs) do
     changeset = LibraryPath.changeset(library_path, attrs)
 
@@ -1396,6 +1466,7 @@ defmodule Mydia.Settings do
       iex> validate_new_library_path(library_path, "/wrong/path")
       {:error, "Files not accessible at new location. Checked 5 files, 0 found."}
   """
+  @spec validate_new_library_path(LibraryPath.t(), String.t()) :: :ok | {:error, String.t()}
   def validate_new_library_path(%LibraryPath{} = library_path, new_path) do
     alias Mydia.Library.MediaFile
 
@@ -1457,6 +1528,8 @@ defmodule Mydia.Settings do
   @doc """
   Deletes a library path.
   """
+  @spec delete_library_path(LibraryPath.t()) ::
+          {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
   def delete_library_path(%LibraryPath{} = library_path) do
     Repo.delete(library_path)
   end
@@ -1472,6 +1545,7 @@ defmodule Mydia.Settings do
   Returns `{:ok, config_map}` where config_map is a nested map, or
   `{:ok, %{}}` if the database is unavailable.
   """
+  @spec load_database_config() :: {:ok, map()}
   def load_database_config do
     try do
       config_settings = list_config_settings()
@@ -1494,6 +1568,7 @@ defmodule Mydia.Settings do
 
   Returns the full configuration struct loaded at application startup.
   """
+  @spec get_runtime_config() :: Mydia.Config.Schema.t()
   def get_runtime_config do
     Application.get_env(:mydia, :runtime_config, Mydia.Config.Schema.defaults())
   end
@@ -1505,6 +1580,7 @@ defmodule Mydia.Settings do
   for compatibility with the rest of the application. These structs have stable
   runtime identifiers instead of database IDs (format: "runtime::download_client::name").
   """
+  @spec get_runtime_download_clients() :: [DownloadClientConfig.t()]
   def get_runtime_download_clients do
     runtime_config = get_runtime_config()
 
@@ -1548,6 +1624,7 @@ defmodule Mydia.Settings do
   for compatibility with the rest of the application. These structs have stable
   runtime identifiers instead of database IDs (format: "runtime::indexer::name").
   """
+  @spec get_runtime_indexers() :: [IndexerConfig.t()]
   def get_runtime_indexers do
     runtime_config = get_runtime_config()
 
@@ -1587,6 +1664,7 @@ defmodule Mydia.Settings do
   for compatibility with the rest of the application. These structs have stable
   runtime identifiers instead of database IDs (format: "runtime::media_server::name").
   """
+  @spec get_runtime_media_servers() :: [MediaServerConfig.t()]
   def get_runtime_media_servers do
     runtime_config = get_runtime_config()
 
@@ -1625,6 +1703,7 @@ defmodule Mydia.Settings do
   Supports both the new library_paths schema and legacy media.movies_path/tv_path
   configuration for backward compatibility.
   """
+  @spec get_runtime_library_paths() :: [LibraryPath.t()]
   def get_runtime_library_paths do
     runtime_config = get_runtime_config()
 
@@ -1741,6 +1820,7 @@ defmodule Mydia.Settings do
       iex> get_config([:auth, :oidc_enabled])
       false
   """
+  @spec get_config([atom()]) :: term()
   def get_config(path) when is_list(path) do
     config = get_runtime_config()
     get_in(config, path_to_access_keys(path))
@@ -1757,6 +1837,7 @@ defmodule Mydia.Settings do
       iex> get_config([:nonexistent, :key], "default")
       "default"
   """
+  @spec get_config([atom()], term()) :: term()
   def get_config(path, default) when is_list(path) do
     case get_config(path) do
       nil -> default
@@ -1767,6 +1848,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets server configuration.
   """
+  @spec get_server_config() :: Mydia.Config.Schema.Server.t() | nil
   def get_server_config do
     get_runtime_config().server
   end
@@ -1774,6 +1856,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets database configuration.
   """
+  @spec get_database_config() :: Mydia.Config.Schema.Database.t() | nil
   def get_database_config do
     get_runtime_config().database
   end
@@ -1781,6 +1864,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets authentication configuration.
   """
+  @spec get_auth_config() :: Mydia.Config.Schema.Auth.t() | nil
   def get_auth_config do
     get_runtime_config().auth
   end
@@ -1788,6 +1872,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets media configuration.
   """
+  @spec get_media_config() :: Mydia.Config.Schema.Media.t() | nil
   def get_media_config do
     get_runtime_config().media
   end
@@ -1795,6 +1880,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets downloads configuration.
   """
+  @spec get_downloads_config() :: Mydia.Config.Schema.Downloads.t() | nil
   def get_downloads_config do
     get_runtime_config().downloads
   end
@@ -1802,6 +1888,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets logging configuration.
   """
+  @spec get_logging_config() :: Mydia.Config.Schema.Logging.t() | nil
   def get_logging_config do
     get_runtime_config().logging
   end
@@ -1809,6 +1896,7 @@ defmodule Mydia.Settings do
   @doc """
   Gets Oban configuration.
   """
+  @spec get_oban_config() :: Mydia.Config.Schema.Oban.t() | nil
   def get_oban_config do
     get_runtime_config().oban
   end
@@ -1826,6 +1914,7 @@ defmodule Mydia.Settings do
       iex> get_default_quality_profile_id()
       nil
   """
+  @spec get_default_quality_profile_id() :: String.t() | nil
   def get_default_quality_profile_id do
     case get_config_setting_by_key("media.default_quality_profile_id") do
       %ConfigSetting{value: value} when is_binary(value) and value != "" ->
@@ -1850,6 +1939,7 @@ defmodule Mydia.Settings do
       iex> get_default_quality_profile()
       nil
   """
+  @spec get_default_quality_profile() :: QualityProfile.t() | nil
   def get_default_quality_profile do
     case get_default_quality_profile_id() do
       nil -> nil
@@ -1870,6 +1960,8 @@ defmodule Mydia.Settings do
       iex> set_default_quality_profile(nil)
       {:ok, %ConfigSetting{}}
   """
+  @spec set_default_quality_profile(String.t() | integer() | nil) ::
+          {:ok, ConfigSetting.t() | nil} | {:error, Ecto.Changeset.t()}
   def set_default_quality_profile(nil) do
     case get_config_setting_by_key("media.default_quality_profile_id") do
       nil ->
@@ -2032,6 +2124,7 @@ defmodule Mydia.Settings do
       iex> database_config?(client)
       false
   """
+  @spec runtime_config?(map()) :: boolean()
   def runtime_config?(%{id: id}) when is_binary(id) do
     String.starts_with?(id, "runtime::")
   end

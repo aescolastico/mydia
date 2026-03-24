@@ -5,8 +5,11 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
 
   alias Mydia.{Library, Media, Playback}
 
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec continue_watching(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def continue_watching(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 10)
     after_cursor = Map.get(args, :after)
@@ -33,6 +36,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec recently_added(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def recently_added(_parent, args, _info) do
     first = Map.get(args, :first, 20)
     after_cursor = Map.get(args, :after)
@@ -71,6 +75,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     {:ok, items}
   end
 
+  @spec up_next(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def up_next(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 10)
     after_cursor = Map.get(args, :after)
@@ -110,6 +115,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec favorites(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def favorites(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 50)
     after_cursor = Map.get(args, :after)
@@ -130,6 +136,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
     end
   end
 
+  @spec unwatched(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def unwatched(_parent, args, %{context: context}) do
     first = Map.get(args, :first, 50)
     after_cursor = Map.get(args, :after)
@@ -265,8 +272,8 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
   defp build_artwork(%{metadata: nil}), do: nil
 
   defp build_artwork(%{metadata: metadata}) do
-    poster_path = get_metadata_field(metadata, :poster_path)
-    backdrop_path = get_metadata_field(metadata, :backdrop_path)
+    poster_path = MetadataAccess.get(metadata, :poster_path)
+    backdrop_path = MetadataAccess.get(metadata, :backdrop_path)
 
     %{
       poster_url: ImageUrl.poster_url(poster_path),
@@ -278,7 +285,7 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
   defp build_artwork(_), do: nil
 
   defp build_episode_artwork(%{metadata: metadata}, show) when not is_nil(metadata) do
-    still_path = get_metadata_field(metadata, :still_path)
+    still_path = MetadataAccess.get(metadata, :still_path)
     show_artwork = build_artwork(show)
 
     # Always include show's poster/backdrop, plus episode thumbnail if available
@@ -290,18 +297,6 @@ defmodule MydiaWeb.Schema.Resolvers.DiscoveryResolver do
   end
 
   defp build_episode_artwork(_episode, show), do: build_artwork(show)
-
-  defp get_metadata_field(nil, _field), do: nil
-
-  defp get_metadata_field(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_metadata_field(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_metadata_field(_metadata, _field), do: nil
 
   defp format_progress(progress) do
     %{

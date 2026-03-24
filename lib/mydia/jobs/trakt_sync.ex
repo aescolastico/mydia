@@ -10,8 +10,26 @@ defmodule Mydia.Jobs.TraktSync do
 
   require Logger
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:user_id, :sync_type]
+
+    @type t :: %__MODULE__{
+            user_id: String.t() | nil,
+            sync_type: String.t() | nil
+          }
+
+    def parse(%{"user_id" => user_id, "sync_type" => sync_type}) do
+      %__MODULE__{user_id: user_id, sync_type: sync_type}
+    end
+  end
+
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"user_id" => user_id, "sync_type" => sync_type}}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    user_id = args.user_id
+    sync_type = args.sync_type
     Logger.info("Starting Trakt #{sync_type} sync for user #{user_id}")
 
     result =

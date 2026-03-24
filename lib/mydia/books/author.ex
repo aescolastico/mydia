@@ -8,6 +8,19 @@ defmodule Mydia.Books.Author do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          sort_name: String.t() | nil,
+          openlibrary_id: String.t() | nil,
+          goodreads_id: String.t() | nil,
+          biography: String.t() | nil,
+          image_url: String.t() | nil,
+          books: [Mydia.Books.Book.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "authors" do
     field :name, :string
     field :sort_name, :string

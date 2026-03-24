@@ -12,6 +12,19 @@ defmodule Mydia.RemoteAccess.Config do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          instance_id: String.t() | nil,
+          static_public_key: binary() | nil,
+          static_private_key_encrypted: binary() | nil,
+          enabled: boolean(),
+          direct_urls: [String.t()],
+          cert_fingerprint: String.t() | nil,
+          relay_token: String.t() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "remote_access_config" do
     field :instance_id, :string
     field :static_public_key, :binary

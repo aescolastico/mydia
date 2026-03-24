@@ -10,6 +10,29 @@ defmodule Mydia.Settings.LibraryPath do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          path: String.t() | nil,
+          type: atom() | nil,
+          monitored: boolean(),
+          scan_interval: integer(),
+          last_scan_at: DateTime.t() | nil,
+          last_scan_status: atom() | nil,
+          last_scan_error: String.t() | nil,
+          from_env: boolean(),
+          disabled: boolean(),
+          category_paths: map(),
+          auto_organize: boolean(),
+          auto_import: boolean(),
+          quality_profile:
+            Mydia.Settings.QualityProfile.t() | nil | Ecto.Association.NotLoaded.t(),
+          quality_profile_id: binary() | nil,
+          updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          updated_by_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @path_types [:movies, :series, :mixed, :music, :books, :adult]
   @scan_statuses [:success, :failed, :in_progress]
 

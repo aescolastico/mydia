@@ -8,6 +8,18 @@ defmodule Mydia.Music.PlaylistTrack do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          position: integer() | nil,
+          added_at: DateTime.t() | nil,
+          playlist: Mydia.Music.Playlist.t() | Ecto.Association.NotLoaded.t(),
+          playlist_id: binary() | nil,
+          track: Mydia.Music.Track.t() | Ecto.Association.NotLoaded.t(),
+          track_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "playlist_tracks" do
     field :position, :integer
     field :added_at, :utc_datetime

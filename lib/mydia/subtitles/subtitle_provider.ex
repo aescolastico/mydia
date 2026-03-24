@@ -57,6 +57,25 @@ defmodule Mydia.Subtitles.SubtitleProvider do
 
   @provider_types [:relay, :opensubtitles]
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          type: atom() | nil,
+          enabled: boolean(),
+          priority: integer(),
+          username: String.t() | nil,
+          password: String.t() | nil,
+          api_key: String.t() | nil,
+          quota_remaining: integer() | nil,
+          quota_total: integer() | nil,
+          quota_reset_at: DateTime.t() | nil,
+          vip_status: boolean(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          user_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "subtitle_providers" do
     field :name, :string
     field :type, Ecto.Enum, values: @provider_types

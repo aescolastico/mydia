@@ -8,6 +8,19 @@ defmodule Mydia.Music.Artist do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          sort_name: String.t() | nil,
+          musicbrainz_id: String.t() | nil,
+          biography: String.t() | nil,
+          image_url: String.t() | nil,
+          genres: [String.t()],
+          albums: [Mydia.Music.Album.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "artists" do
     field :name, :string
     field :sort_name, :string

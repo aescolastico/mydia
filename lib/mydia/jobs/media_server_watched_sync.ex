@@ -19,8 +19,30 @@ defmodule Mydia.Jobs.MediaServerWatchedSync do
 
   require Logger
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:mode, :config_id, :user_id]
+
+    @type t :: %__MODULE__{
+            mode: String.t() | nil,
+            config_id: String.t() | nil,
+            user_id: String.t() | nil
+          }
+
+    def parse(%{"mode" => "all_enabled"}) do
+      %__MODULE__{mode: "all_enabled"}
+    end
+
+    def parse(%{"config_id" => config_id, "user_id" => user_id}) do
+      %__MODULE__{config_id: config_id, user_id: user_id}
+    end
+  end
+
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "all_enabled"}}) do
+  def perform(%Oban.Job{args: %{"mode" => "all_enabled"} = raw_args}) do
+    _args = Args.parse(raw_args)
+
     servers =
       Settings.list_media_server_configs()
       |> Enum.filter(fn config ->
@@ -42,7 +64,10 @@ defmodule Mydia.Jobs.MediaServerWatchedSync do
     :ok
   end
 
-  def perform(%Oban.Job{args: %{"config_id" => config_id, "user_id" => user_id}}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    config_id = args.config_id
+    user_id = args.user_id
     config = Settings.get_media_server_config!(config_id)
 
     unless config.enabled && watched_sync_enabled?(config) do

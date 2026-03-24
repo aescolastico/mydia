@@ -10,6 +10,27 @@ defmodule Mydia.Accounts.User do
 
   @role_values ~w(admin user readonly guest)
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          username: String.t() | nil,
+          email: String.t() | nil,
+          password_hash: String.t() | nil,
+          password: String.t() | nil,
+          password_confirmation: String.t() | nil,
+          oidc_sub: String.t() | nil,
+          oidc_issuer: String.t() | nil,
+          role: String.t(),
+          display_name: String.t() | nil,
+          avatar_url: String.t() | nil,
+          last_login_at: DateTime.t() | nil,
+          preference: Mydia.Accounts.UserPreference.t() | nil | Ecto.Association.NotLoaded.t(),
+          api_keys: [Mydia.Accounts.ApiKey.t()] | Ecto.Association.NotLoaded.t(),
+          media_requests: [Mydia.Media.MediaRequest.t()] | Ecto.Association.NotLoaded.t(),
+          approved_requests: [Mydia.Media.MediaRequest.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "users" do
     field :username, :string
     field :email, :string

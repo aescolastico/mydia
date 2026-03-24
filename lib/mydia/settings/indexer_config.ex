@@ -8,6 +8,25 @@ defmodule Mydia.Settings.IndexerConfig do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          type: atom() | nil,
+          enabled: boolean(),
+          priority: integer(),
+          base_url: String.t() | nil,
+          api_key: String.t() | nil,
+          indexer_ids: [String.t()] | nil,
+          categories: [String.t()] | nil,
+          rate_limit: integer() | nil,
+          connection_settings: map() | nil,
+          env_name: String.t() | nil,
+          updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          updated_by_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @indexer_types [:prowlarr, :jackett, :nzbhydra2, :public]
 
   schema "indexer_configs" do

@@ -166,8 +166,9 @@ defmodule Mydia.Streaming.CodecString do
   defp h264_codec_string(codec, metadata) do
     # Try to use raw FFprobe values if available
     case metadata do
-      %{"video_profile_idc" => profile_idc, "video_level_idc" => level_idc} ->
-        constraint = Map.get(metadata, "video_constraint_set", 0)
+      %{video_profile_idc: profile_idc, video_level_idc: level_idc}
+      when not is_nil(profile_idc) and not is_nil(level_idc) ->
+        constraint = metadata.video_constraint_set || 0
         format_avc1(profile_idc, constraint, level_idc)
 
       _ ->
@@ -260,8 +261,9 @@ defmodule Mydia.Streaming.CodecString do
   defp hevc_codec_string(codec, metadata) do
     # Try to use raw FFprobe values if available
     case metadata do
-      %{"hevc_profile_idc" => profile_idc, "hevc_level_idc" => level_idc} ->
-        tier = Map.get(metadata, "hevc_tier_flag", 0)
+      %{hevc_profile_idc: profile_idc, hevc_level_idc: level_idc}
+      when not is_nil(profile_idc) and not is_nil(level_idc) ->
+        tier = metadata.hevc_tier_flag || 0
         format_hvc1(profile_idc, tier, level_idc)
 
       _ ->
@@ -345,9 +347,9 @@ defmodule Mydia.Streaming.CodecString do
   # (remaining fields often omitted for browser compatibility)
 
   defp vp9_codec_string(metadata) do
-    profile = Map.get(metadata, "vp9_profile", 0)
-    level = Map.get(metadata, "vp9_level", 31)
-    bit_depth = Map.get(metadata, "bit_depth", 8)
+    profile = metadata.vp9_profile || 0
+    level = metadata.vp9_level || 31
+    bit_depth = metadata.bit_depth || 8
 
     "vp09.#{pad2(profile)}.#{pad2(level)}.#{pad2(bit_depth)}"
   end
@@ -380,10 +382,10 @@ defmodule Mydia.Streaming.CodecString do
   # DD = bit depth (08, 10, 12)
 
   defp av1_codec_string(metadata) do
-    profile = Map.get(metadata, "av1_profile", 0)
-    level = Map.get(metadata, "av1_level", 9)
-    tier = if Map.get(metadata, "av1_tier", 0) == 1, do: "H", else: "M"
-    bit_depth = Map.get(metadata, "bit_depth", 8)
+    profile = metadata.av1_profile || 0
+    level = metadata.av1_level || 9
+    tier = if (metadata.av1_tier || 0) == 1, do: "H", else: "M"
+    bit_depth = metadata.bit_depth || 8
 
     "av01.#{profile}.#{pad2(level)}#{tier}.#{pad2(bit_depth)}"
   end

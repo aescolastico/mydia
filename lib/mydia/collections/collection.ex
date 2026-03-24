@@ -25,6 +25,24 @@ defmodule Mydia.Collections.Collection do
   @visibility_values ~w(private shared)
   @sort_order_values ~w(position title year added_date rating)
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          description: String.t() | nil,
+          type: String.t(),
+          poster_path: String.t() | nil,
+          sort_order: String.t(),
+          smart_rules: String.t() | nil,
+          visibility: String.t(),
+          is_system: boolean(),
+          position: integer(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          collection_items:
+            [Mydia.Collections.CollectionItem.t()] | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "collections" do
     field :name, :string
     field :description, :string

@@ -8,6 +8,24 @@ defmodule Mydia.Music.MusicFile do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          path: String.t() | nil,
+          relative_path: String.t() | nil,
+          size: integer() | nil,
+          bitrate: integer() | nil,
+          sample_rate: integer() | nil,
+          codec: String.t() | nil,
+          channels: integer() | nil,
+          duration: integer() | nil,
+          track: Mydia.Music.Track.t() | Ecto.Association.NotLoaded.t(),
+          track_id: binary() | nil,
+          library_path: Mydia.Settings.LibraryPath.t() | Ecto.Association.NotLoaded.t(),
+          library_path_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "music_files" do
     field :path, :string
     field :relative_path, :string

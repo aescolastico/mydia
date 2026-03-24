@@ -8,6 +8,24 @@ defmodule Mydia.Downloads.TranscodeJob do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          type: String.t(),
+          resolution: String.t() | nil,
+          status: String.t() | nil,
+          progress: float() | nil,
+          output_path: String.t() | nil,
+          file_size: integer() | nil,
+          error: String.t() | nil,
+          started_at: DateTime.t() | nil,
+          completed_at: DateTime.t() | nil,
+          last_accessed_at: DateTime.t() | nil,
+          media_file: Mydia.Library.MediaFile.t() | Ecto.Association.NotLoaded.t(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "transcode_jobs" do
     field :type, :string, default: "download"
     field :resolution, :string

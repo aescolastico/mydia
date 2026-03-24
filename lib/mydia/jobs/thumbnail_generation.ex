@@ -177,45 +177,102 @@ defmodule Mydia.Jobs.ThumbnailGeneration do
     {:ok, count}
   end
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [
+      :mode,
+      :media_file_id,
+      :media_file_ids,
+      :library_path_id,
+      :library_type,
+      include_sprites: false,
+      include_previews: false,
+      regenerate: false
+    ]
+
+    @type t :: %__MODULE__{
+            mode: String.t() | nil,
+            media_file_id: String.t() | nil,
+            media_file_ids: [String.t()] | nil,
+            library_path_id: String.t() | nil,
+            library_type: String.t() | nil,
+            include_sprites: boolean(),
+            include_previews: boolean(),
+            regenerate: boolean()
+          }
+
+    def parse(%{"mode" => "single", "media_file_id" => id} = raw) do
+      %__MODULE__{
+        mode: "single",
+        media_file_id: id,
+        include_sprites: Map.get(raw, "include_sprites", false),
+        include_previews: Map.get(raw, "include_previews", false)
+      }
+    end
+
+    def parse(%{"mode" => "batch", "media_file_ids" => ids} = raw) do
+      %__MODULE__{
+        mode: "batch",
+        media_file_ids: ids,
+        include_sprites: Map.get(raw, "include_sprites", false),
+        include_previews: Map.get(raw, "include_previews", false)
+      }
+    end
+
+    def parse(%{"mode" => "library", "library_path_id" => id} = raw) do
+      %__MODULE__{
+        mode: "library",
+        library_path_id: id,
+        include_sprites: Map.get(raw, "include_sprites", false),
+        include_previews: Map.get(raw, "include_previews", false),
+        regenerate: Map.get(raw, "regenerate", false)
+      }
+    end
+
+    def parse(%{"mode" => "missing"} = raw) do
+      %__MODULE__{
+        mode: "missing",
+        library_type: Map.get(raw, "library_type"),
+        include_sprites: Map.get(raw, "include_sprites", false),
+        include_previews: Map.get(raw, "include_previews", false)
+      }
+    end
+  end
+
   ## Oban Worker Implementation
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "single", "media_file_id" => id} = args}) do
-    opts = extract_generation_opts(args)
+  def perform(%Oban.Job{args: %{"mode" => "single"} = raw_args}) do
+    args = Args.parse(raw_args)
+    opts = %{include_sprites: args.include_sprites, include_previews: args.include_previews}
 
-    case process_single_file(id, opts) do
+    case process_single_file(args.media_file_id, opts) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  def perform(%Oban.Job{args: %{"mode" => "batch", "media_file_ids" => ids} = args}) do
-    opts = extract_generation_opts(args)
-    process_batch(ids, opts)
+  def perform(%Oban.Job{args: %{"mode" => "batch"} = raw_args}) do
+    args = Args.parse(raw_args)
+    opts = %{include_sprites: args.include_sprites, include_previews: args.include_previews}
+    process_batch(args.media_file_ids, opts)
   end
 
-  def perform(%Oban.Job{args: %{"mode" => "library", "library_path_id" => id} = args}) do
-    opts = extract_generation_opts(args)
-    regenerate = Map.get(args, "regenerate", false)
+  def perform(%Oban.Job{args: %{"mode" => "library"} = raw_args}) do
+    args = Args.parse(raw_args)
+    opts = %{include_sprites: args.include_sprites, include_previews: args.include_previews}
 
-    process_library(id, opts, regenerate)
+    process_library(args.library_path_id, opts, args.regenerate)
     :ok
   end
 
-  def perform(%Oban.Job{args: %{"mode" => "missing"} = args}) do
-    opts = extract_generation_opts(args)
-    library_type = Map.get(args, "library_type")
+  def perform(%Oban.Job{args: %{"mode" => "missing"} = raw_args}) do
+    args = Args.parse(raw_args)
+    opts = %{include_sprites: args.include_sprites, include_previews: args.include_previews}
 
-    process_missing(opts, library_type)
+    process_missing(opts, args.library_type)
     :ok
-  end
-
-  # Extract generation options from job args
-  defp extract_generation_opts(args) do
-    %{
-      include_sprites: Map.get(args, "include_sprites", false),
-      include_previews: Map.get(args, "include_previews", false)
-    }
   end
 
   @impl Oban.Worker

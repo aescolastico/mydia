@@ -23,6 +23,14 @@ defmodule Mydia.Accounts.UserPreference do
   @valid_themes ~w(system light dark)
   @valid_languages ~w(en es fr de it pt ja zh ko ru)
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          preferences: map(),
+          user: Mydia.Accounts.User.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "user_preferences" do
     field :preferences, :map, default: %{}
 

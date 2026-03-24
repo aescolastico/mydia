@@ -8,6 +8,29 @@ defmodule Mydia.Settings.DownloadClientConfig do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          name: String.t() | nil,
+          type: atom() | nil,
+          enabled: boolean(),
+          priority: integer(),
+          host: String.t() | nil,
+          port: integer() | nil,
+          use_ssl: boolean(),
+          url_base: String.t() | nil,
+          username: String.t() | nil,
+          password: String.t() | nil,
+          api_key: String.t() | nil,
+          category: String.t() | nil,
+          download_directory: String.t() | nil,
+          connection_settings: map() | nil,
+          remove_completed: boolean(),
+          updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
+          updated_by_id: binary() | nil,
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   @client_types [:qbittorrent, :transmission, :rtorrent, :blackhole, :http, :sabnzbd, :nzbget]
 
   schema "download_client_configs" do

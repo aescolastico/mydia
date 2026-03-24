@@ -5,8 +5,10 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
 
   alias Mydia.Media
 
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec search(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def search(_parent, %{query: query} = args, _info) when byte_size(query) > 0 do
     first = Map.get(args, :first, 20)
     types = Map.get(args, :types)
@@ -60,8 +62,8 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
   defp build_artwork(%{metadata: nil}), do: nil
 
   defp build_artwork(%{metadata: metadata}) do
-    poster_path = get_metadata_field(metadata, :poster_path)
-    backdrop_path = get_metadata_field(metadata, :backdrop_path)
+    poster_path = MetadataAccess.get(metadata, :poster_path)
+    backdrop_path = MetadataAccess.get(metadata, :backdrop_path)
 
     %{
       poster_url: ImageUrl.poster_url(poster_path),
@@ -71,16 +73,4 @@ defmodule MydiaWeb.Schema.Resolvers.SearchResolver do
   end
 
   defp build_artwork(_), do: nil
-
-  defp get_metadata_field(nil, _field), do: nil
-
-  defp get_metadata_field(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_metadata_field(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_metadata_field(_metadata, _field), do: nil
 end

@@ -9,6 +9,7 @@ defmodule Mydia.Media do
   alias Mydia.Repo
   alias Mydia.Media.{MediaItem, Episode, CategoryClassifier}
   alias Mydia.Media.Structs.CalendarEntry
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Events
 
   ## Media Items
@@ -27,6 +28,7 @@ defmodule Mydia.Media do
     - `:order_by` - Field to order by (:title, :year, or :inserted_at)
     - `:preload` - List of associations to preload
   """
+  @spec list_media_items(keyword()) :: [MediaItem.t()]
   def list_media_items(opts \\ []) do
     MediaItem
     |> apply_media_item_filters(opts)
@@ -42,6 +44,7 @@ defmodule Mydia.Media do
 
   Raises `Ecto.NoResultsError` if the media item does not exist.
   """
+  @spec get_media_item!(binary(), keyword()) :: MediaItem.t()
   def get_media_item!(id, opts \\ []) do
     MediaItem
     |> maybe_preload(opts[:preload])
@@ -51,6 +54,7 @@ defmodule Mydia.Media do
   @doc """
   Gets a single media item by TMDB ID.
   """
+  @spec get_media_item_by_tmdb(integer(), keyword()) :: MediaItem.t() | nil
   def get_media_item_by_tmdb(tmdb_id, opts \\ []) do
     MediaItem
     |> where([m], m.tmdb_id == ^tmdb_id)
@@ -61,6 +65,7 @@ defmodule Mydia.Media do
   @doc """
   Gets a single media item by TVDB ID.
   """
+  @spec get_media_item_by_tvdb(integer(), keyword()) :: MediaItem.t() | nil
   def get_media_item_by_tvdb(tvdb_id, opts \\ []) do
     MediaItem
     |> where([m], m.tvdb_id == ^tvdb_id)
@@ -74,6 +79,7 @@ defmodule Mydia.Media do
   Accepts a map with atom keys: `%{imdb: id, tvdb: id, tmdb: id}`.
   Returns nil if no match is found.
   """
+  @spec find_by_external_ids(map()) :: MediaItem.t() | nil
   def find_by_external_ids(ids) when is_map(ids) do
     imdb = Map.get(ids, :imdb)
     tvdb = Map.get(ids, :tvdb)
@@ -92,6 +98,7 @@ defmodule Mydia.Media do
 
   Returns nil if no match is found or if season/episode are not integers.
   """
+  @spec find_episode(binary(), integer(), integer()) :: Episode.t() | nil
   def find_episode(show_id, season_number, episode_number)
       when is_integer(season_number) and is_integer(episode_number) do
     Episode
@@ -117,6 +124,7 @@ defmodule Mydia.Media do
     - `:season_monitoring` - For TV shows, which seasons to fetch ("all", "first", "latest", "none") - defaults to "all"
     - `:skip_episode_refresh` - Skip automatic episode fetching (for tests or special cases) - defaults to false
   """
+  @spec create_media_item(map(), keyword()) :: {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def create_media_item(attrs \\ %{}, opts \\ []) do
     with {:ok, media_item} <-
            %MediaItem{}
@@ -163,6 +171,8 @@ defmodule Mydia.Media do
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
     - `:reason` - Description of what was updated (e.g., "Metadata refreshed") - defaults to "Updated"
   """
+  @spec update_media_item(MediaItem.t(), map(), keyword()) ::
+          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def update_media_item(%MediaItem{} = media_item, attrs, opts \\ []) do
     changeset = MediaItem.changeset(media_item, attrs)
 
@@ -224,8 +234,8 @@ defmodule Mydia.Media do
 
     changes =
       Enum.reduce(fields_to_compare, [], fn {field, label}, acc ->
-        old_val = get_metadata_field(old_metadata, field)
-        new_val = get_metadata_field(new_metadata, field)
+        old_val = MetadataAccess.get(old_metadata, field)
+        new_val = MetadataAccess.get(new_metadata, field)
 
         if values_differ?(old_val, new_val) do
           [{label, format_metadata_change(field, old_val, new_val)} | acc]
@@ -244,16 +254,6 @@ defmodule Mydia.Media do
       %{metadata_fields: Enum.reverse(changes)}
     end
   end
-
-  defp get_metadata_field(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_metadata_field(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_metadata_field(_, _), do: nil
 
   defp values_differ?(nil, nil), do: false
   defp values_differ?(nil, ""), do: false
@@ -294,8 +294,8 @@ defmodule Mydia.Media do
   defp present?(_), do: true
 
   defp maybe_add_count_change(changes, old_metadata, new_metadata, field, label) do
-    old_count = count_list(get_metadata_field(old_metadata, field))
-    new_count = count_list(get_metadata_field(new_metadata, field))
+    old_count = count_list(MetadataAccess.get(old_metadata, field))
+    new_count = count_list(MetadataAccess.get(new_metadata, field))
 
     if old_count != new_count do
       [{label, %{old: old_count, new: new_count}} | changes]
@@ -320,6 +320,8 @@ defmodule Mydia.Media do
   before removing the database records. When false (default), only removes database
   records and preserves files on disk.
   """
+  @spec delete_media_item(MediaItem.t(), keyword()) ::
+          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def delete_media_item(%MediaItem{} = media_item, opts \\ []) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
@@ -378,6 +380,7 @@ defmodule Mydia.Media do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking media item changes.
   """
+  @spec change_media_item(MediaItem.t(), map()) :: Ecto.Changeset.t()
   def change_media_item(%MediaItem{} = media_item, attrs \\ %{}) do
     MediaItem.changeset(media_item, attrs)
   end
@@ -385,6 +388,7 @@ defmodule Mydia.Media do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking category changes on a media item.
   """
+  @spec change_media_item_category(MediaItem.t(), map()) :: Ecto.Changeset.t()
   def change_media_item_category(%MediaItem{} = media_item, attrs \\ %{}) do
     media_item
     |> Ecto.Changeset.cast(attrs, [:category, :category_override])
@@ -409,6 +413,8 @@ defmodule Mydia.Media do
     - `:actor_type` - The type of actor (:user, :system, :job) - defaults to :system
     - `:actor_id` - The ID of the actor (user_id, job name, etc.)
   """
+  @spec update_media_items_monitored([binary()], boolean(), keyword()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
   def update_media_items_monitored(ids, monitored, opts \\ []) when is_list(ids) do
     Repo.transaction(fn ->
       # Fetch media items before update to track events
@@ -441,6 +447,7 @@ defmodule Mydia.Media do
   Only updates non-nil attributes. Returns `{:ok, count}` on success
   where count is the number of updated items.
   """
+  @spec update_media_items_batch([binary()], map()) :: {:ok, non_neg_integer()} | {:error, term()}
   def update_media_items_batch(ids, attrs) when is_list(ids) and is_map(attrs) do
     Repo.transaction(fn ->
       # Build the update list, only including non-nil values
@@ -475,6 +482,7 @@ defmodule Mydia.Media do
   before removing the database records. When false (default), only removes database
   records and preserves files on disk.
   """
+  @spec delete_media_items([binary()], keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
   def delete_media_items(ids, opts \\ []) when is_list(ids) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
@@ -515,6 +523,7 @@ defmodule Mydia.Media do
   @doc """
   Returns the count of movies in the library.
   """
+  @spec count_movies() :: non_neg_integer()
   def count_movies do
     MediaItem
     |> where([m], m.type == "movie")
@@ -524,6 +533,7 @@ defmodule Mydia.Media do
   @doc """
   Returns the count of TV shows in the library.
   """
+  @spec count_tv_shows() :: non_neg_integer()
   def count_tv_shows do
     MediaItem
     |> where([m], m.type == "tv_show")
@@ -536,6 +546,7 @@ defmodule Mydia.Media do
   This counts media items that have files in library paths of the specified type.
   Includes both direct media files (for movies) and episode media files (for TV shows).
   """
+  @spec count_by_library_path_type(atom()) :: non_neg_integer()
   def count_by_library_path_type(library_type) do
     MediaItem
     |> filter_by_library_path_type(library_type)
@@ -563,6 +574,7 @@ defmodule Mydia.Media do
         {:tvdb, 67890} => %{in_library: true, monitored: false, type: "tv_show", id: 2}
       }
   """
+  @spec get_library_status_map() :: map()
   def get_library_status_map do
     MediaItem
     |> where([m], not is_nil(m.tmdb_id) or not is_nil(m.tvdb_id))
@@ -588,6 +600,7 @@ defmodule Mydia.Media do
     - `:monitored` - Filter by monitored status (true/false)
     - `:preload` - List of associations to preload
   """
+  @spec list_episodes(binary(), keyword()) :: [Episode.t()]
   def list_episodes(media_item_id, opts \\ []) do
     Episode
     |> where([e], e.media_item_id == ^media_item_id)
@@ -605,6 +618,7 @@ defmodule Mydia.Media do
 
   Raises `Ecto.NoResultsError` if the episode does not exist.
   """
+  @spec get_episode!(binary(), keyword()) :: Episode.t()
   def get_episode!(id, opts \\ []) do
     Episode
     |> maybe_preload(opts[:preload])
@@ -614,6 +628,7 @@ defmodule Mydia.Media do
   @doc """
   Gets a single episode by media item ID, season, and episode number.
   """
+  @spec get_episode_by_number(binary(), integer(), integer(), keyword()) :: Episode.t() | nil
   def get_episode_by_number(media_item_id, season_number, episode_number, opts \\ []) do
     Episode
     |> where([e], e.media_item_id == ^media_item_id)
@@ -629,6 +644,7 @@ defmodule Mydia.Media do
   otherwise returns the first episode of the next season.
   Returns nil if there is no next episode.
   """
+  @spec get_next_episode(Episode.t(), keyword()) :: Episode.t() | nil
   def get_next_episode(%Episode{} = episode, opts \\ []) do
     # Try to get next episode in same season first
     next_in_season =
@@ -660,6 +676,7 @@ defmodule Mydia.Media do
   @doc """
   Creates an episode.
   """
+  @spec create_episode(map()) :: {:ok, Episode.t()} | {:error, Ecto.Changeset.t()}
   def create_episode(attrs \\ %{}) do
     %Episode{}
     |> Episode.changeset(attrs)
@@ -669,6 +686,7 @@ defmodule Mydia.Media do
   @doc """
   Updates an episode.
   """
+  @spec update_episode(Episode.t(), map()) :: {:ok, Episode.t()} | {:error, Ecto.Changeset.t()}
   def update_episode(%Episode{} = episode, attrs) do
     episode
     |> Episode.changeset(attrs)
@@ -689,6 +707,8 @@ defmodule Mydia.Media do
       iex> update_season_monitoring(media_item_id, 2, false)
       {:ok, 8}
   """
+  @spec update_season_monitoring(binary(), integer(), boolean()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
   def update_season_monitoring(media_item_id, season_number, monitored)
       when is_boolean(monitored) do
     Repo.transaction(fn ->
@@ -705,6 +725,7 @@ defmodule Mydia.Media do
   @doc """
   Returns the list of valid monitoring presets.
   """
+  @spec monitoring_presets() :: [atom()]
   def monitoring_presets, do: @monitoring_presets
 
   @doc """
@@ -865,6 +886,7 @@ defmodule Mydia.Media do
   @doc """
   Deletes an episode.
   """
+  @spec delete_episode(Episode.t()) :: {:ok, Episode.t()} | {:error, Ecto.Changeset.t()}
   def delete_episode(%Episode{} = episode) do
     Repo.delete(episode)
   end
@@ -872,6 +894,7 @@ defmodule Mydia.Media do
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking episode changes.
   """
+  @spec change_episode(Episode.t(), map()) :: Ecto.Changeset.t()
   def change_episode(%Episode{} = episode, attrs \\ %{}) do
     Episode.changeset(episode, attrs)
   end
@@ -900,6 +923,7 @@ defmodule Mydia.Media do
       iex> get_media_status(%MediaItem{type: "movie", monitored: true})
       {:downloaded, nil}
   """
+  @spec get_media_status(MediaItem.t()) :: {atom(), map() | nil}
   def get_media_status(%MediaItem{type: "movie", monitored: false} = media_item) do
     # For non-monitored movies, include file count information
     file_count = length(media_item.media_files)
@@ -982,6 +1006,7 @@ defmodule Mydia.Media do
     - `{:ok, media_item}` - Updated media item
     - `{:error, reason}` - Error reason
   """
+  @spec refresh_metadata(MediaItem.t()) :: {:ok, MediaItem.t()} | {:error, term()}
   def refresh_metadata(%MediaItem{} = media_item) do
     alias Mydia.Metadata
 
@@ -1041,6 +1066,8 @@ defmodule Mydia.Media do
       iex> refresh_episodes_for_tv_show(media_item, season_monitoring: "latest")
       {:ok, 12}
   """
+  @spec refresh_episodes_for_tv_show(MediaItem.t(), keyword()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
   def refresh_episodes_for_tv_show(media_item, opts \\ [])
 
   def refresh_episodes_for_tv_show(%MediaItem{type: "tv_show"} = media_item, opts) do
@@ -1208,6 +1235,7 @@ defmodule Mydia.Media do
     - `:preload` - List of associations to preload
     - `:monitored` - Filter by media item monitored status (default: true, nil for all)
   """
+  @spec list_episodes_by_air_date(Date.t(), Date.t(), keyword()) :: [CalendarEntry.t()]
   def list_episodes_by_air_date(start_date, end_date, opts \\ []) do
     monitored = Keyword.get(opts, :monitored, true)
 
@@ -1272,6 +1300,7 @@ defmodule Mydia.Media do
   ## Options
     - `:monitored` - Filter by monitored status (default: true, nil for all)
   """
+  @spec list_movies_by_release_date(Date.t(), Date.t(), keyword()) :: [CalendarEntry.t()]
   def list_movies_by_release_date(start_date, end_date, opts \\ []) do
     monitored = Keyword.get(opts, :monitored, true)
 
@@ -1329,6 +1358,8 @@ defmodule Mydia.Media do
   ## Returns
     - `{:ok, count}` - Number of episodes processed (created + updated)
   """
+  @spec upsert_episodes_from_season(MediaItem.t(), struct(), keyword()) ::
+          {:ok, non_neg_integer()}
   def upsert_episodes_from_season(media_item, season_data, opts \\ []) do
     default_monitor = fn season_num, _air_date -> season_num > 0 end
     monitor_fn = Keyword.get(opts, :monitor_fn, default_monitor)
@@ -1638,6 +1669,8 @@ defmodule Mydia.Media do
       iex> update_category(media_item, :anime_movie, override: true)
       {:ok, %MediaItem{category: "anime_movie", category_override: true}}
   """
+  @spec update_category(MediaItem.t(), atom() | String.t(), keyword()) ::
+          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def update_category(%MediaItem{} = media_item, category, opts \\ []) do
     media_item
     |> MediaItem.category_changeset(category, opts)
@@ -1652,6 +1685,8 @@ defmodule Mydia.Media do
       iex> clear_category_override(media_item)
       {:ok, %MediaItem{category_override: false}}
   """
+  @spec clear_category_override(MediaItem.t()) ::
+          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def clear_category_override(%MediaItem{} = media_item) do
     media_item
     |> MediaItem.clear_category_override_changeset()
@@ -1671,6 +1706,8 @@ defmodule Mydia.Media do
       iex> reclassify_media_item(media_item)
       {:ok, %MediaItem{}}
   """
+  @spec reclassify_media_item(MediaItem.t(), keyword()) ::
+          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
   def reclassify_media_item(%MediaItem{} = media_item, opts \\ []) do
     force = Keyword.get(opts, :force, false)
 
@@ -1692,6 +1729,7 @@ defmodule Mydia.Media do
 
   Returns `{:ok, count}` where count is the number of updated items.
   """
+  @spec reclassify_all_media_items() :: {:ok, non_neg_integer()}
   def reclassify_all_media_items do
     MediaItem
     |> where([m], m.category_override == false or is_nil(m.category_override))
@@ -1725,6 +1763,7 @@ defmodule Mydia.Media do
         details: [%{id: "...", old_category: "movie", new_category: "anime_movie", changed: true}, ...]
       }}
   """
+  @spec reclassify_media_items([binary()], keyword()) :: {:ok, map()}
   def reclassify_media_items(ids, opts \\ []) when is_list(ids) do
     force = Keyword.get(opts, :force, false)
 
@@ -1847,6 +1886,8 @@ defmodule Mydia.Media do
 
   Returns {:ok, provider_id, updated_media_item} or {:error, reason}
   """
+  @spec recover_provider_id_by_title(MediaItem.t(), atom()) ::
+          {:ok, integer(), MediaItem.t()} | {:error, term()}
   def recover_provider_id_by_title(%MediaItem{} = media_item, media_type) do
     alias Mydia.Metadata
     config = Metadata.default_relay_config()
@@ -2060,6 +2101,7 @@ defmodule Mydia.Media do
       false
 
   """
+  @spec is_favorite?(binary(), binary()) :: boolean()
   def is_favorite?(user_id, media_item_id) do
     user = Mydia.Accounts.get_user!(user_id)
     Mydia.Collections.is_favorite?(user, media_item_id)
@@ -2081,6 +2123,7 @@ defmodule Mydia.Media do
       {:ok, :removed}
 
   """
+  @spec toggle_favorite(binary(), binary()) :: {:ok, :added | :removed} | {:error, term()}
   def toggle_favorite(user_id, media_item_id) do
     user = Mydia.Accounts.get_user!(user_id)
     Mydia.Collections.toggle_favorite(user, media_item_id)
@@ -2104,6 +2147,7 @@ defmodule Mydia.Media do
       [%MediaItem{media_files: [...]}, ...]
 
   """
+  @spec list_user_favorites(binary(), keyword()) :: [MediaItem.t()]
   def list_user_favorites(user_id, opts \\ []) do
     user = Mydia.Accounts.get_user!(user_id)
 

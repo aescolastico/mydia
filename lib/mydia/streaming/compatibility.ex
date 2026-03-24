@@ -27,15 +27,15 @@ defmodule Mydia.Streaming.Compatibility do
 
   ## Examples
 
-      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %{"container" => "mp4"}}
+      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mp4"}}
       iex> check_compatibility(media_file)
       :direct_play
 
-      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %{"container" => "mkv"}}
+      iex> media_file = %MediaFile{codec: "h264", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mkv"}}
       iex> check_compatibility(media_file)
       :needs_remux
 
-      iex> media_file = %MediaFile{codec: "hevc", audio_codec: "aac", metadata: %{"container" => "mkv"}}
+      iex> media_file = %MediaFile{codec: "hevc", audio_codec: "aac", metadata: %Mydia.Library.Structs.FileMetadata{container: "mkv"}}
       iex> check_compatibility(media_file)
       :needs_transcoding
   """
@@ -174,10 +174,10 @@ defmodule Mydia.Streaming.Compatibility do
   def get_container_format(%MediaFile{metadata: metadata} = media_file) do
     # First try to get from metadata
     case metadata do
-      %{"container" => container} when is_binary(container) ->
+      %{container: container} when is_binary(container) ->
         container
 
-      %{"format_name" => format_name} when is_binary(format_name) ->
+      %{format_name: format_name} when is_binary(format_name) ->
         # FFprobe may return comma-separated formats like "mov,mp4,m4a"
         # Take the first one
         format_name

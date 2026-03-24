@@ -8,6 +8,28 @@ defmodule Mydia.Downloads.Download do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          indexer: String.t() | nil,
+          title: String.t() | nil,
+          download_url: String.t() | nil,
+          download_client: String.t() | nil,
+          download_client_id: String.t() | nil,
+          completed_at: DateTime.t() | nil,
+          error_message: String.t() | nil,
+          metadata: map() | nil,
+          imported_at: DateTime.t() | nil,
+          import_retry_count: integer(),
+          import_last_error: String.t() | nil,
+          import_next_retry_at: DateTime.t() | nil,
+          import_failed_at: DateTime.t() | nil,
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          episode: Mydia.Media.Episode.t() | nil | Ecto.Association.NotLoaded.t(),
+          library_path: Mydia.Settings.LibraryPath.t() | nil | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "downloads" do
     field :indexer, :string
     field :title, :string

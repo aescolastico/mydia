@@ -13,11 +13,25 @@ defmodule Mydia.Jobs.MediaReclassify do
   require Logger
   alias Mydia.{Media, Library, Settings}
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:library_path_id]
+
+    @type t :: %__MODULE__{library_path_id: String.t() | nil}
+
+    def parse(%{"library_path_id" => library_path_id}) do
+      %__MODULE__{library_path_id: library_path_id}
+    end
+  end
+
   @pubsub Mydia.PubSub
   @topic "library_scanner"
 
+  @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"library_path_id" => library_path_id}}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    library_path_id = args.library_path_id
     start_time = System.monotonic_time(:millisecond)
 
     Logger.info("Starting media reclassification job",

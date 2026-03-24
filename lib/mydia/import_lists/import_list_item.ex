@@ -13,6 +13,22 @@ defmodule Mydia.ImportLists.ImportListItem do
 
   @status_values ~w(pending added skipped failed)
 
+  @type t :: %__MODULE__{
+          id: binary(),
+          tmdb_id: integer() | nil,
+          title: String.t() | nil,
+          year: integer() | nil,
+          poster_path: String.t() | nil,
+          status: String.t(),
+          skip_reason: String.t() | nil,
+          discovered_at: DateTime.t() | nil,
+          in_library: boolean(),
+          import_list: Mydia.ImportLists.ImportList.t() | Ecto.Association.NotLoaded.t(),
+          media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
+          inserted_at: DateTime.t(),
+          updated_at: DateTime.t()
+        }
+
   schema "import_list_items" do
     field :tmdb_id, :integer
     field :title, :string

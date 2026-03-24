@@ -5,8 +5,11 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
 
   alias Mydia.Collections
 
+  alias Mydia.Metadata.Access, as: MetadataAccess
   alias Mydia.Metadata.ImageUrl
 
+  @spec list_collections(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def list_collections(_parent, args, %{context: %{current_user: user}}) do
     first = Map.get(args, :first, 50)
 
@@ -21,6 +24,7 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
 
   def list_collections(_parent, _args, _info), do: {:ok, []}
 
+  @spec collection(map(), map(), Absinthe.Resolution.t()) :: {:ok, term()} | {:error, term()}
   def collection(_parent, %{id: id}, %{context: %{current_user: user}}) do
     collection = Collections.get_collection!(user, id)
     {:ok, build_collection(collection)}
@@ -30,6 +34,8 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
 
   def collection(_parent, _args, _info), do: {:error, "Not authenticated"}
 
+  @spec collection_items(map(), map(), Absinthe.Resolution.t()) ::
+          {:ok, term()} | {:error, term()}
   def collection_items(_parent, %{collection_id: id} = args, %{context: %{current_user: user}}) do
     first = Map.get(args, :first, 50)
     collection = Collections.get_collection!(user, id)
@@ -77,8 +83,8 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
   defp build_artwork(%{metadata: nil}), do: nil
 
   defp build_artwork(%{metadata: metadata}) do
-    poster_path = get_metadata_field(metadata, :poster_path)
-    backdrop_path = get_metadata_field(metadata, :backdrop_path)
+    poster_path = MetadataAccess.get(metadata, :poster_path)
+    backdrop_path = MetadataAccess.get(metadata, :backdrop_path)
 
     %{
       poster_url: ImageUrl.poster_url(poster_path),
@@ -88,16 +94,4 @@ defmodule MydiaWeb.Schema.Resolvers.CollectionResolver do
   end
 
   defp build_artwork(_), do: nil
-
-  defp get_metadata_field(nil, _field), do: nil
-
-  defp get_metadata_field(metadata, field) when is_struct(metadata) do
-    Map.get(metadata, field)
-  end
-
-  defp get_metadata_field(metadata, field) when is_map(metadata) do
-    Map.get(metadata, field) || Map.get(metadata, to_string(field))
-  end
-
-  defp get_metadata_field(_metadata, _field), do: nil
 end
