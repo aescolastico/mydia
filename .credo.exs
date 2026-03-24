@@ -99,7 +99,10 @@
 
           ## Type Safety - catch unsafe map/struct access
           {Credo.Check.Warning.MapGetUnsafePass, []},
-          {Credo.Check.Warning.StructBracketAccess, []}
+          {Credo.Check.Warning.StructBracketAccess, []},
+
+          ## Type Safety - enforce @spec on public functions
+          {Credo.Check.Readability.Specs, [priority: :low, exit_status: 0]}
         ],
         disabled: [
           # Controversial and experimental checks (opt-in, replace `false` with `[]`)
@@ -113,7 +116,6 @@
           {Credo.Check.Readability.SeparateAliasRequire, []},
           {Credo.Check.Readability.SingleFunctionToBlockPipe, []},
           {Credo.Check.Readability.SinglePipe, []},
-          {Credo.Check.Readability.Specs, []},
           {Credo.Check.Readability.StrictModuleLayout, []},
           {Credo.Check.Readability.WithCustomTaggedTuple, []},
           {Credo.Check.Refactor.ABCSize, []},

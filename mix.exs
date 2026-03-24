@@ -16,7 +16,19 @@ defmodule Mydia.MixProject do
       # Enforce warnings as errors to maintain code quality
       warnings_as_errors: Mix.env() != :prod,
       # Disable coverage threshold for now - will improve coverage later
-      test_coverage: [summary: false]
+      test_coverage: [summary: false],
+      # Dialyzer configuration for strict type checking
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit],
+        flags: [
+          :error_handling,
+          :underspecs,
+          :unknown,
+          :extra_return,
+          :missing_return
+        ],
+        plt_local_path: ".dialyzer"
+      ]
     ]
   end
 
@@ -156,7 +168,16 @@ defmodule Mydia.MixProject do
         "esbuild mydia --minify",
         "phx.digest"
       ],
-      precommit: ["compile", "deps.unlock --unused", "format --check-formatted", "test"]
+      precommit: [
+        "compile",
+        "deps.unlock --unused",
+        "format --check-formatted",
+        "credo --strict",
+        # dialyzer temporarily excluded from precommit:
+        # dialyxir 1.4.6 crashes on OTP 28's :exact_compare warning type.
+        # Re-enable once dialyxir is updated: "dialyzer",
+        "test"
+      ]
     ]
   end
 end

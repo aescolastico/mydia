@@ -167,7 +167,7 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
   defp strategy_to_mode(:transcode), do: :transcode
   defp strategy_to_mode(_), do: :transcode
 
-  defp get_duration_from_metadata(%{metadata: %{"duration" => duration}})
+  defp get_duration_from_metadata(%{metadata: %{duration: duration}})
        when is_number(duration) do
     duration
   end
