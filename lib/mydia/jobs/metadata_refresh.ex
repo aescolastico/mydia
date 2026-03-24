@@ -19,13 +19,45 @@ defmodule Mydia.Jobs.MetadataRefresh do
   require Logger
   alias Mydia.{Media, Metadata}
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:media_item_id, refresh_all: false, fetch_episodes: true, skip_delay: false]
+
+    @type t :: %__MODULE__{
+            media_item_id: String.t() | nil,
+            refresh_all: boolean(),
+            fetch_episodes: boolean(),
+            skip_delay: boolean()
+          }
+
+    def parse(%{"media_item_id" => media_item_id} = raw) do
+      %__MODULE__{
+        media_item_id: media_item_id,
+        fetch_episodes: Map.get(raw, "fetch_episodes", true),
+        skip_delay: Map.get(raw, "skip_delay", false)
+      }
+    end
+
+    def parse(%{"refresh_all" => true} = raw) do
+      %__MODULE__{
+        refresh_all: true,
+        skip_delay: Map.get(raw, "skip_delay", false)
+      }
+    end
+
+    def parse(raw) when raw == %{} do
+      %__MODULE__{refresh_all: true, skip_delay: true}
+    end
+  end
+
   # Random delay range for scheduled refresh_all (0-30 minutes in ms)
   @max_startup_delay_ms 30 * 60 * 1000
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"media_item_id" => media_item_id} = args}) do
+  def perform(%Oban.Job{args: %{"media_item_id" => media_item_id} = raw_args}) do
+    args = Args.parse(raw_args)
     start_time = System.monotonic_time(:millisecond)
-    fetch_episodes = Map.get(args, "fetch_episodes", true)
+    fetch_episodes = args.fetch_episodes
     config = Metadata.default_relay_config()
 
     Logger.info("Starting metadata refresh", media_item_id: media_item_id)
@@ -67,10 +99,12 @@ defmodule Mydia.Jobs.MetadataRefresh do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"refresh_all" => true} = args}) do
+  def perform(%Oban.Job{args: %{"refresh_all" => true} = raw_args}) do
+    args = Args.parse(raw_args)
+
     # Add random delay for scheduled runs to spread load across instances
     # Skip delay for manual triggers (skip_delay: true)
-    unless Map.get(args, "skip_delay", false) do
+    unless args.skip_delay do
       delay_ms = :rand.uniform(@max_startup_delay_ms)
       delay_minutes = Float.round(delay_ms / 60_000, 1)
 
@@ -97,7 +131,7 @@ defmodule Mydia.Jobs.MetadataRefresh do
 
   # Fallback for manual trigger from UI (empty args) - skip delay for immediate execution
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) when args == %{} do
+  def perform(%Oban.Job{args: raw_args}) when raw_args == %{} do
     perform(%Oban.Job{args: %{"refresh_all" => true, "skip_delay" => true}})
   end
 

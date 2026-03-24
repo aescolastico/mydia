@@ -21,8 +21,21 @@ defmodule Mydia.Jobs.ImportListAutoAdd do
   alias Mydia.ImportLists
   alias Mydia.Media
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:import_list_id]
+
+    @type t :: %__MODULE__{import_list_id: String.t() | nil}
+
+    def parse(%{"import_list_id" => import_list_id}) do
+      %__MODULE__{import_list_id: import_list_id}
+    end
+  end
+
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"import_list_id" => import_list_id}}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    import_list_id = args.import_list_id
     Logger.info("[ImportListAutoAdd] Starting auto-add", import_list_id: import_list_id)
 
     with {:ok, import_list} <- get_import_list(import_list_id),

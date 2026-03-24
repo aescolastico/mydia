@@ -30,6 +30,35 @@ defmodule Mydia.Jobs.MediaImport do
   alias Mydia.MediaServer.Notifier, as: MediaServerNotifier
   alias Mydia.Settings.LibraryPath
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [
+      :download_id,
+      snooze_count: 0,
+      use_hardlinks: true,
+      move_files: false,
+      rename_files: false
+    ]
+
+    @type t :: %__MODULE__{
+            download_id: String.t() | nil,
+            snooze_count: integer(),
+            use_hardlinks: boolean(),
+            move_files: boolean(),
+            rename_files: boolean()
+          }
+
+    def parse(%{"download_id" => download_id} = raw) do
+      %__MODULE__{
+        download_id: download_id,
+        snooze_count: Map.get(raw, "snooze_count", 0),
+        use_hardlinks: Map.get(raw, "use_hardlinks", true) != false,
+        move_files: Map.get(raw, "move_files", false) == true,
+        rename_files: Map.get(raw, "rename_files", false) == true
+      }
+    end
+  end
+
   # Exponential backoff schedule in seconds
   # 1 min, 5 min, 15 min, 1 hour, 4 hours, 12 hours, 24 hours, then 24 hours indefinitely
   @backoff_schedule [60, 300, 900, 3600, 14_400, 43_200, 86_400]
@@ -40,7 +69,10 @@ defmodule Mydia.Jobs.MediaImport do
   @max_snooze_count 12
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"download_id" => download_id} = args, attempt: attempt}) do
+  def perform(%Oban.Job{args: %{"download_id" => _} = raw_args, attempt: attempt}) do
+    args = Args.parse(raw_args)
+    download_id = args.download_id
+
     Logger.info("Starting media import",
       download_id: download_id,
       attempt: attempt
@@ -51,7 +83,7 @@ defmodule Mydia.Jobs.MediaImport do
 
     if is_nil(download.completed_at) do
       # Download not yet completed - use snooze mechanism instead of returning ok
-      snooze_count = Map.get(args, "snooze_count", 0)
+      snooze_count = args.snooze_count
 
       if snooze_count >= @max_snooze_count do
         # Hit max snooze count - mark as failed so it appears in Issues tab
@@ -73,7 +105,7 @@ defmodule Mydia.Jobs.MediaImport do
 
         # Schedule a new job with incremented snooze count
         # We can't use {:snooze, seconds} because it doesn't update args
-        schedule_snooze_retry(download_id, snooze_count + 1, args)
+        schedule_snooze_retry(download_id, snooze_count + 1, raw_args)
         {:ok, :waiting_for_completion}
       end
     else
@@ -765,11 +797,11 @@ defmodule Mydia.Jobs.MediaImport do
     Path.join(dir, "#{base}.#{timestamp}#{ext}")
   end
 
-  defp copy_or_move_file(source, dest, args) do
+  defp copy_or_move_file(source, dest, %Args{} = args) do
     # Priority: hardlink > move > copy
     cond do
       # Try hardlink first if enabled and on same filesystem
-      args["use_hardlinks"] != false && same_filesystem?(source, dest) ->
+      args.use_hardlinks && same_filesystem?(source, dest) ->
         case File.ln(source, dest) do
           :ok ->
             Logger.debug("Created hardlink", from: source, to: dest)
@@ -787,7 +819,7 @@ defmodule Mydia.Jobs.MediaImport do
         end
 
       # Move file if requested
-      args["move_files"] == true ->
+      args.move_files ->
         case File.rename(source, dest) do
           :ok ->
             Logger.debug("Moved file", from: source, to: dest)
@@ -818,9 +850,9 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
-  defp generate_filename(download, episode, original_filename, args) do
+  defp generate_filename(download, episode, original_filename, %Args{} = args) do
     # Only rename if explicitly enabled (default: false for safety)
-    if args["rename_files"] == true do
+    if args.rename_files do
       # Parse quality information from download title or original filename
       quality_info =
         QualityParser.parse(download.title || original_filename)

@@ -39,13 +39,56 @@ defmodule Mydia.Jobs.MovieSearch do
   alias Mydia.Media.MediaItem
   alias Phoenix.PubSub
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [
+      :mode,
+      :media_item_id,
+      :min_seeders,
+      :size_range,
+      :blocked_tags,
+      :preferred_tags
+    ]
+
+    @type t :: %__MODULE__{
+            mode: String.t() | nil,
+            media_item_id: String.t() | nil,
+            min_seeders: integer() | nil,
+            size_range: term() | nil,
+            blocked_tags: [String.t()] | nil,
+            preferred_tags: [String.t()] | nil
+          }
+
+    def parse(%{"mode" => "all_monitored"} = raw) do
+      %__MODULE__{
+        mode: "all_monitored",
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+
+    def parse(%{"mode" => "specific", "media_item_id" => media_item_id} = raw) do
+      %__MODULE__{
+        mode: "specific",
+        media_item_id: media_item_id,
+        min_seeders: Map.get(raw, "min_seeders"),
+        size_range: Map.get(raw, "size_range"),
+        blocked_tags: Map.get(raw, "blocked_tags"),
+        preferred_tags: Map.get(raw, "preferred_tags")
+      }
+    end
+  end
+
   # Get min_seeders from config (defaults to 0 for Usenet compatibility)
   defp get_min_seeders do
     Application.get_env(:mydia, :auto_search, [])[:min_seeders] || 0
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "all_monitored"} = args}) do
+  def perform(%Oban.Job{args: %{"mode" => "all_monitored"} = raw_args}) do
+    args = Args.parse(raw_args)
     start_time = System.monotonic_time(:millisecond)
     Logger.info("Starting automatic search for all monitored movies")
 
@@ -86,7 +129,9 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"mode" => "specific", "media_item_id" => media_item_id} = args}) do
+  def perform(%Oban.Job{args: %{"mode" => "specific"} = raw_args}) do
+    args = Args.parse(raw_args)
+    media_item_id = args.media_item_id
     start_time = System.monotonic_time(:millisecond)
     Logger.info("Starting search for specific movie", media_item_id: media_item_id)
 
@@ -452,13 +497,13 @@ defmodule Mydia.Jobs.MovieSearch do
     end
   end
 
-  defp build_ranking_options(movie, args) do
+  defp build_ranking_options(movie, %Args{} = args) do
     # Start with base options
     # Include search_query for title relevance scoring and media_type for unified scoring
     # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
     base_opts = [
-      min_seeders: Map.get(args, "min_seeders", get_min_seeders()),
-      size_range: Map.get(args, "size_range"),
+      min_seeders: args.min_seeders || get_min_seeders(),
+      size_range: args.size_range,
       search_query: build_search_query(movie),
       media_type: :movie
     ]
@@ -477,8 +522,8 @@ defmodule Mydia.Jobs.MovieSearch do
 
     # Add any custom blocked/preferred tags from args
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, Map.get(args, "blocked_tags"))
-    |> maybe_add_option(:preferred_tags, Map.get(args, "preferred_tags"))
+    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 
   defp load_quality_profile(%MediaItem{quality_profile_id: nil}), do: nil

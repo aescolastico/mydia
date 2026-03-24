@@ -25,9 +25,28 @@ defmodule Mydia.Jobs.ImportListSync do
   alias Mydia.ImportLists.ImportList
   alias Mydia.ImportLists.Provider.{TMDB, CustomURL}
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:import_list_id, auto_add: false]
+
+    @type t :: %__MODULE__{
+            import_list_id: String.t() | nil,
+            auto_add: boolean() | nil
+          }
+
+    def parse(%{"import_list_id" => import_list_id} = raw) do
+      %__MODULE__{
+        import_list_id: import_list_id,
+        auto_add: Map.get(raw, "auto_add", false)
+      }
+    end
+  end
+
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"import_list_id" => import_list_id} = args}) do
-    auto_add = Map.get(args, "auto_add", false)
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    import_list_id = args.import_list_id
+    auto_add = args.auto_add
 
     Logger.info("[ImportListSync] Starting sync",
       import_list_id: import_list_id,

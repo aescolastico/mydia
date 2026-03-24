@@ -33,15 +33,34 @@ defmodule Mydia.Jobs.LibraryScanner do
 
   alias Mydia.Library.FileParser.V2, as: FileParser
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:library_path_id, :library_type, skip_delay: false]
+
+    @type t :: %__MODULE__{
+            library_path_id: String.t() | nil,
+            library_type: String.t() | nil,
+            skip_delay: boolean()
+          }
+
+    def parse(raw) do
+      %__MODULE__{
+        library_path_id: Map.get(raw, "library_path_id"),
+        library_type: Map.get(raw, "library_type"),
+        skip_delay: Map.get(raw, "skip_delay", false)
+      }
+    end
+  end
+
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    # Oban job args use string keys (JSON) - optional field with default
-    library_path_id = args["library_path_id"]
-    library_type = args["library_type"]
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    library_path_id = args.library_path_id
+    library_type = args.library_type
 
     # Add random delay for scheduled "scan all" runs to spread load across instances
     # Skip delay for manual triggers (skip_delay: true) or specific library scans
-    if is_nil(library_path_id) and is_nil(library_type) and not Map.get(args, "skip_delay", false) do
+    if is_nil(library_path_id) and is_nil(library_type) and not args.skip_delay do
       delay_ms = :rand.uniform(@max_startup_delay_ms)
       delay_minutes = Float.round(delay_ms / 60_000, 1)
 

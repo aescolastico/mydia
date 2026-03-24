@@ -5,8 +5,21 @@ defmodule Mydia.Jobs.FetchAlbumCover do
   alias Mydia.{Music, Metadata}
   alias Mydia.Library.{CoverExtractor, GeneratedMedia}
 
+  defmodule Args do
+    @moduledoc false
+    defstruct [:album_id]
+
+    @type t :: %__MODULE__{album_id: String.t() | nil}
+
+    def parse(%{"album_id" => album_id}) do
+      %__MODULE__{album_id: album_id}
+    end
+  end
+
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"album_id" => album_id}}) do
+  def perform(%Oban.Job{args: raw_args}) do
+    args = Args.parse(raw_args)
+    album_id = args.album_id
     album = Music.get_album!(album_id)
 
     # Priority 1: Cover Art Archive (if MBID exists)
