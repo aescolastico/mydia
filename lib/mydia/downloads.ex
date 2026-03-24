@@ -1884,6 +1884,8 @@ defmodule Mydia.Downloads do
       iex> fail_job(job, "FFmpeg error: invalid codec")
       {:ok, %TranscodeJob{status: "failed", error: "FFmpeg error: invalid codec"}}
   """
+  @spec fail_job(TranscodeJob.t(), String.t()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def fail_job(%TranscodeJob{} = job, error_message) do
     case job
          |> TranscodeJob.changeset(%{
@@ -1910,6 +1912,8 @@ defmodule Mydia.Downloads do
       iex> touch_last_accessed(job)
       {:ok, %TranscodeJob{last_accessed_at: ~U[...]}}
   """
+  @spec touch_last_accessed(TranscodeJob.t()) ::
+          {:ok, TranscodeJob.t()} | {:error, Ecto.Changeset.t()}
   def touch_last_accessed(%TranscodeJob{} = job) do
     job
     |> TranscodeJob.changeset(%{last_accessed_at: DateTime.utc_now()})
@@ -1919,6 +1923,7 @@ defmodule Mydia.Downloads do
   @doc """
   Broadcasts a transcode job update to all subscribed LiveViews.
   """
+  @spec broadcast_job_update(binary()) :: :ok | {:error, term()}
   def broadcast_job_update(job_id) do
     PubSub.broadcast(Mydia.PubSub, "transcodes", {:job_updated, job_id})
   end
@@ -1928,6 +1933,7 @@ defmodule Mydia.Downloads do
 
   Returns all download-type transcode jobs regardless of status.
   """
+  @spec list_transcode_jobs_for_media_file(binary()) :: [TranscodeJob.t()]
   def list_transcode_jobs_for_media_file(media_file_id) do
     TranscodeJob
     |> where([j], j.media_file_id == ^media_file_id)
@@ -1944,6 +1950,7 @@ defmodule Mydia.Downloads do
     - `:status` - List of status strings to filter by (e.g. ["pending", "transcoding"])
     - `:limit` - Maximum number of results to return
   """
+  @spec list_transcode_jobs(keyword()) :: [TranscodeJob.t()]
   def list_transcode_jobs(opts \\ []) do
     TranscodeJob
     |> maybe_filter_status(opts[:status])
@@ -1964,6 +1971,7 @@ defmodule Mydia.Downloads do
   @doc """
   Cancels a transcode job.
   """
+  @spec cancel_transcode_job(TranscodeJob.t()) :: {:ok, TranscodeJob.t()}
   def cancel_transcode_job(%TranscodeJob{} = job) do
     alias Mydia.Downloads.JobManager
     alias Mydia.Streaming.HlsSessionSupervisor
@@ -2014,6 +2022,7 @@ defmodule Mydia.Downloads do
   @doc """
   Deletes all completed (ready) and failed transcode jobs and their files.
   """
+  @spec delete_all_completed_jobs() :: :ok
   def delete_all_completed_jobs do
     jobs =
       TranscodeJob
@@ -2027,6 +2036,7 @@ defmodule Mydia.Downloads do
   Deletes all streaming jobs.
   Should be called on startup to clean up zombie records.
   """
+  @spec delete_all_streaming_jobs() :: {non_neg_integer(), nil | [term()]}
   def delete_all_streaming_jobs do
     Repo.delete_all(from j in TranscodeJob, where: j.type in ["stream", "direct"])
   end
