@@ -37,10 +37,13 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
     # Find downloads that have completed or failed
     # Note: "seeding" means download is complete and now seeding (100% progress)
+    # A torrent can also be paused at 100% progress (manually paused after completion)
     # We check db_completed_at to see if we've already marked it as completed in our database
     completed =
       Enum.filter(downloads, fn d ->
-        d.status in ["completed", "seeding"] and is_nil(d.db_completed_at)
+        is_nil(d.db_completed_at) and
+          (d.status in ["completed", "seeding"] or
+             (d.status == "paused" and d.progress == 100.0))
       end)
 
     failed = Enum.filter(downloads, &(&1.status == "failed" and is_nil(&1.error_message)))
