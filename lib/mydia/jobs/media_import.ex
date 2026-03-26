@@ -34,6 +34,7 @@ defmodule Mydia.Jobs.MediaImport do
     @moduledoc false
     defstruct [
       :download_id,
+      :target_files,
       snooze_count: 0,
       use_hardlinks: true,
       move_files: false,
@@ -42,6 +43,7 @@ defmodule Mydia.Jobs.MediaImport do
 
     @type t :: %__MODULE__{
             download_id: String.t() | nil,
+            target_files: [map()] | nil,
             snooze_count: integer(),
             use_hardlinks: boolean(),
             move_files: boolean(),
@@ -51,6 +53,7 @@ defmodule Mydia.Jobs.MediaImport do
     def parse(%{"download_id" => download_id} = raw) do
       %__MODULE__{
         download_id: download_id,
+        target_files: Map.get(raw, "target_files"),
         snooze_count: Map.get(raw, "snooze_count", 0),
         use_hardlinks: Map.get(raw, "use_hardlinks", true) != false,
         move_files: Map.get(raw, "move_files", false) == true,
@@ -140,6 +143,13 @@ defmodule Mydia.Jobs.MediaImport do
 
   ## Private Functions
 
+  defp import_download(download, %Args{target_files: target_files} = args)
+       when is_list(target_files) and target_files != [] do
+    # Re-import specific files (from resolved file mappings)
+    # target_files is a list of %{"path" => path, "episode_id" => id}
+    process_targeted_import(download, target_files, args)
+  end
+
   defp import_download(download, args) do
     # Get the download client details to locate files
     client_info = get_client_info(download)
@@ -180,44 +190,61 @@ defmodule Mydia.Jobs.MediaImport do
             file_count: length(imported_files)
           )
 
-          # Check if we should remove from client based on client config
-          client_info = get_client_info(download)
-          should_cleanup = client_info && client_info.remove_completed
+          # Reload download to check if it was flagged as having unresolved files
+          updated_download =
+            Downloads.get_download!(download.id, preload: [:media_item, :episode, :library_path])
 
-          if should_cleanup do
-            Logger.info("Removing download from client (remove_completed enabled)",
-              download_id: download.id,
-              client: download.download_client
-            )
+          has_unresolved = updated_download.match_status == "unresolved_files"
 
-            cleanup_download_client(download)
-          else
-            Logger.info("Keeping download in client for seeding (remove_completed disabled)",
-              download_id: download.id,
-              client: download.download_client
-            )
-          end
+          # Only mark as fully imported and cleanup if no unresolved files remain
+          unless has_unresolved do
+            # Check if we should remove from client based on client config
+            client_info = get_client_info(download)
+            should_cleanup = client_info && client_info.remove_completed
 
-          # Mark download as imported instead of deleting
-          # This allows the download to appear in the Completed tab
-          case Downloads.update_download(download, %{imported_at: DateTime.utc_now()}) do
-            {:ok, _updated} ->
-              Logger.info("Download marked as imported",
-                download_id: download.id
-              )
-
-            {:error, changeset} ->
-              Logger.warning("Failed to mark download as imported",
+            if should_cleanup do
+              Logger.info("Removing download from client (remove_completed enabled)",
                 download_id: download.id,
-                errors: inspect(changeset.errors)
+                client: download.download_client
               )
+
+              cleanup_download_client(download)
+            else
+              Logger.info("Keeping download in client for seeding (remove_completed disabled)",
+                download_id: download.id,
+                client: download.download_client
+              )
+            end
+
+            # Mark download as imported instead of deleting
+            # This allows the download to appear in the Completed tab
+            case Downloads.update_download(updated_download, %{imported_at: DateTime.utc_now()}) do
+              {:ok, _updated} ->
+                Logger.info("Download marked as imported",
+                  download_id: download.id
+                )
+
+              {:error, changeset} ->
+                Logger.warning("Failed to mark download as imported",
+                  download_id: download.id,
+                  errors: inspect(changeset.errors)
+                )
+            end
           end
 
           # Notify media servers (Plex, Jellyfin) to scan for new content
           # This is fire-and-forget (async) - errors won't affect import success
           MediaServerNotifier.notify_all()
 
-          {:ok, :imported}
+          if has_unresolved do
+            Logger.info("Partial import complete, unresolved files flagged",
+              download_id: download.id
+            )
+
+            {:ok, :partial_import}
+          else
+            {:ok, :imported}
+          end
 
         {:error, reason} ->
           Logger.error("Failed to import files",
@@ -230,6 +257,63 @@ defmodule Mydia.Jobs.MediaImport do
     else
       Logger.error("Could not determine library path for download", download_id: download.id)
       {:error, :no_library_path}
+    end
+  end
+
+  defp process_targeted_import(download, target_files, args) do
+    # Import specific files with pre-assigned episode IDs (from resolved file mappings)
+    library_path = determine_library_path(download)
+
+    if is_nil(library_path) do
+      Logger.error("Could not determine library path for targeted import",
+        download_id: download.id
+      )
+
+      {:error, :no_library_path}
+    else
+      results =
+        Enum.map(target_files, fn target ->
+          path = target["path"]
+          episode_id = target["episode_id"]
+
+          if File.exists?(path) do
+            episode = if episode_id, do: Media.get_episode!(episode_id), else: nil
+            file = %{path: path, name: Path.basename(path), size: File.stat!(path).size}
+
+            # Build destination path for this episode
+            dest_dir =
+              if episode && download.media_item do
+                base_dir = build_series_base_path(download.media_item, library_path)
+
+                Path.join(
+                  base_dir,
+                  "Season #{String.pad_leading("#{episode.season_number}", 2, "0")}"
+                )
+              else
+                build_destination_path(download, library_path)
+              end
+
+            import_file_to_destination(file, episode, dest_dir, download, library_path, args)
+          else
+            Logger.warning("Target file no longer exists", path: path, download_id: download.id)
+            {:error, :file_not_found}
+          end
+        end)
+
+      errors = Enum.filter(results, &match?({:error, _}, &1))
+
+      if errors == [] do
+        # All targeted files imported, mark download as fully imported
+        Downloads.update_download(download, %{
+          imported_at: DateTime.utc_now(),
+          match_status: nil
+        })
+
+        MediaServerNotifier.notify_all()
+        {:ok, :imported}
+      else
+        {:error, :partial_import}
+      end
     end
   end
 
@@ -398,15 +482,73 @@ defmodule Mydia.Jobs.MediaImport do
           import_file(file, download, library_path, args)
         end)
 
-      # Check if all succeeded
-      errors = Enum.filter(results, &match?({:error, _}, &1))
+      # Separate results into imported, unresolved, and errors
+      {imported, unresolved, errors} =
+        Enum.reduce(results, {[], [], []}, fn
+          {:ok, media_file}, {imp, unr, err} -> {[media_file | imp], unr, err}
+          {:unresolved, file_info}, {imp, unr, err} -> {imp, [file_info | unr], err}
+          {:error, _} = error, {imp, unr, err} -> {imp, unr, [error | err]}
+        end)
 
-      if errors == [] do
-        imported = Enum.map(results, fn {:ok, media_file} -> media_file end)
-        {:ok, imported}
-      else
-        {:error, :partial_import}
+      imported = Enum.reverse(imported)
+      unresolved = Enum.reverse(unresolved)
+
+      cond do
+        # All files imported successfully
+        unresolved == [] and errors == [] ->
+          {:ok, imported}
+
+        # Some files imported, some unresolved (partial import)
+        unresolved != [] and imported != [] ->
+          flag_unresolved_files(download, unresolved)
+          {:ok, imported}
+
+        # No files imported, all unresolved
+        unresolved != [] and imported == [] ->
+          flag_unresolved_files(download, unresolved)
+          {:error, :all_files_unresolved}
+
+        # Errors (but no unresolved)
+        true ->
+          {:error, :partial_import}
       end
+    end
+  end
+
+  defp flag_unresolved_files(download, unresolved_files) do
+    # Store unresolved file info in metadata and set match_status
+    current_metadata = download.metadata || %{}
+
+    unresolved_data =
+      Enum.map(unresolved_files, fn file_info ->
+        %{
+          "path" => file_info.path,
+          "name" => file_info.name,
+          "size" => file_info.size,
+          "parsed_season" => file_info.parsed_season,
+          "parsed_episode" => file_info.parsed_episode,
+          "assigned_episode_id" => nil
+        }
+      end)
+
+    updated_metadata = Map.put(current_metadata, "unresolved_files", unresolved_data)
+
+    case Downloads.update_download(download, %{
+           match_status: "unresolved_files",
+           metadata: updated_metadata
+         }) do
+      {:ok, _updated} ->
+        Logger.info("Flagged download with #{length(unresolved_files)} unresolved file(s)",
+          download_id: download.id
+        )
+
+        Downloads.broadcast_download_update(download.id)
+
+      {:error, changeset} ->
+        Logger.warning("Failed to flag unresolved files",
+          download_id: download.id,
+          errors: inspect(changeset.errors)
+        )
     end
   end
 
@@ -664,13 +806,15 @@ defmodule Mydia.Jobs.MediaImport do
               media_item: media_item.title
             )
 
-            # Build season folder path even without episode (category-aware)
-            base_dir = build_series_base_path(media_item, library_path)
-
-            dest_dir =
-              Path.join(base_dir, "Season #{String.pad_leading("#{season_pack_season}", 2, "0")}")
-
-            {nil, dest_dir}
+            # Return :unresolved instead of importing with nil episode
+            {:unresolved,
+             %{
+               path: file.path,
+               name: file.name,
+               size: file.size,
+               parsed_season: season_pack_season,
+               parsed_episode: episode_number
+             }}
           end
 
         # TV show with parsed episode info - look up the episode
@@ -723,6 +867,17 @@ defmodule Mydia.Jobs.MediaImport do
           {download.episode, dest_dir}
       end
 
+    # Handle unresolved files (season pack files where episode wasn't found)
+    case {episode, dest_dir} do
+      {:unresolved, file_info} ->
+        {:unresolved, file_info}
+
+      {episode, dest_dir} ->
+        import_file_to_destination(file, episode, dest_dir, download, library_path, args)
+    end
+  end
+
+  defp import_file_to_destination(file, episode, dest_dir, download, library_path, args) do
     # Ensure destination directory exists
     File.mkdir_p!(dest_dir)
 
