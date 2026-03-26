@@ -8,6 +8,6 @@ defmodule Mydia.Repo.Migrations.AddAutoRenameToLibraryPaths do
 
     # Set existing library paths to false to preserve current behavior.
     # Only new library paths will default to true.
-    execute "UPDATE library_paths SET auto_rename = 0", "SELECT 1"
+    execute "UPDATE library_paths SET auto_rename = false", "SELECT 1"
   end
 end
