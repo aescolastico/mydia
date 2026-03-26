@@ -1679,4 +1679,84 @@ defmodule Mydia.Library.FileParser.V2Test do
       assert result.episodes == [4]
     end
   end
+
+  describe "multi-byte UTF-8 filenames" do
+    test "Japanese anime fansub with kanji/katakana before SxxExx" do
+      result =
+        FileParser.parse(
+          "[H3LL] Frieren ~ Beyond Journey's End (葬送のフリーレン ) - S02E02 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.season == 2
+      assert result.episodes == [2]
+    end
+
+    test "Japanese anime fansub S02E03 variant" do
+      result =
+        FileParser.parse(
+          "[H3LL] Frieren ~ Beyond Journey's End (葬送のフリーレン ) - S02E03 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.season == 2
+      assert result.episodes == [3]
+    end
+
+    test "Japanese anime with season indicator in title" do
+      result =
+        FileParser.parse(
+          "[H3LL] Frieren (葬送のフリーレン 第2期) - Beyond Journey's End - S02E01 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.season == 2
+      assert result.episodes == [1]
+    end
+
+    test "Japanese anime with parenthesized title" do
+      result =
+        FileParser.parse("[Group] Show (日本語タイトル) - S01E05 [720p].mkv")
+
+      assert result.type == :tv_show
+      assert result.season == 1
+      assert result.episodes == [5]
+    end
+
+    test "Korean drama with hangul title" do
+      result = FileParser.parse("쇼이름 - S01E08 [1080p].mkv")
+
+      assert result.type == :tv_show
+      assert result.season == 1
+      assert result.episodes == [8]
+    end
+
+    test "accented characters in title" do
+      result = FileParser.parse("Ángel.De.La.Noche.S03E12.720p.mkv")
+
+      assert result.type == :tv_show
+      assert result.season == 3
+      assert result.episodes == [12]
+    end
+
+    test "parse_with_path with Japanese chars in folder and filename" do
+      result =
+        FileParser.parse_with_path(
+          "/media/Series/Frieren Beyond Journey's End/Season 02/[H3LL] Frieren ~ Beyond Journey's End (葬送のフリーレン ) - S02E04 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.season == 2
+      assert result.episodes == [4]
+    end
+
+    test "quality info extracted correctly with multi-byte chars before it" do
+      result =
+        FileParser.parse(
+          "[H3LL] Frieren ~ Beyond Journey's End (葬送のフリーレン ) - S02E02 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.quality.resolution == "1080p"
+    end
+  end
 end
