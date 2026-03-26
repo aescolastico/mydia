@@ -151,15 +151,28 @@ defmodule Mydia.Downloads.UntrackedMatcher do
     else
       {:error, :unable_to_parse} ->
         Logger.debug("Unable to parse torrent name: #{torrent.name}")
-        {:error, :parse_failed}
+        create_unmatched_download(torrent, nil)
 
       {:error, :no_match_found} ->
-        Logger.debug("No library match found for torrent: #{torrent.name}")
-        {:error, :no_match}
+        # Re-parse to get parsed_info for the unmatched record
+        case TorrentParser.parse(torrent.name) do
+          {:ok, parsed_info} ->
+            Logger.debug("No library match found for torrent: #{torrent.name}")
+            create_unmatched_download(torrent, parsed_info)
+
+          _ ->
+            create_unmatched_download(torrent, nil)
+        end
 
       {:error, :episode_not_found} ->
-        Logger.debug("Episode not found in library for torrent: #{torrent.name}")
-        {:error, :episode_not_found}
+        case TorrentParser.parse(torrent.name) do
+          {:ok, parsed_info} ->
+            Logger.debug("Episode not found in library for torrent: #{torrent.name}")
+            create_unmatched_download(torrent, parsed_info)
+
+          _ ->
+            create_unmatched_download(torrent, nil)
+        end
 
       {:error, reason} ->
         Logger.warning("Failed to process untracked torrent: #{inspect(reason)}",
@@ -193,6 +206,78 @@ defmodule Mydia.Downloads.UntrackedMatcher do
     }
 
     Downloads.create_download(attrs)
+  end
+
+  defp create_unmatched_download(torrent, parsed_info) do
+    # Compute match suggestions if we have parsed info
+    suggestions =
+      if parsed_info do
+        try do
+          TorrentMatcher.find_top_candidates(parsed_info, max_results: 3, monitored_only: false)
+        rescue
+          _ -> []
+        end
+      else
+        []
+      end
+
+    # Build parsed_info map for metadata storage
+    parsed_info_map =
+      if parsed_info do
+        %{
+          type: to_string(parsed_info.type),
+          title: parsed_info.title,
+          year: Map.get(parsed_info, :year),
+          season: Map.get(parsed_info, :season),
+          episode: Map.get(parsed_info, :episode),
+          quality: Map.get(parsed_info, :quality),
+          source: Map.get(parsed_info, :source),
+          codec: Map.get(parsed_info, :codec)
+        }
+      end
+
+    attrs = %{
+      indexer: "manual",
+      title: torrent.name,
+      download_url: nil,
+      download_client: torrent.client_name,
+      download_client_id: torrent.id,
+      match_status: "unmatched",
+      metadata: %{
+        size: torrent.size,
+        seeders: Map.get(torrent, :seeders),
+        leechers: Map.get(torrent, :leechers),
+        matched_from_client: true,
+        save_path: Map.get(torrent, :save_path),
+        parsed_info: parsed_info_map,
+        match_suggestions: suggestions
+      }
+    }
+
+    case Downloads.create_download(attrs) do
+      {:ok, download} ->
+        Logger.info("Created unmatched download record for torrent: #{torrent.name}",
+          torrent_id: torrent.id,
+          client: torrent.client_name,
+          suggestions_count: length(suggestions)
+        )
+
+        Downloads.broadcast_download_update(download.id)
+        {:ok, download}
+
+      {:error, %Ecto.Changeset{errors: errors}} = error ->
+        # Unique constraint violation means we already have this torrent tracked
+        if Keyword.has_key?(errors, :download_client) do
+          Logger.debug("Unmatched download already exists for torrent: #{torrent.name}")
+          {:error, :already_tracked}
+        else
+          Logger.warning("Failed to create unmatched download: #{inspect(errors)}",
+            torrent_name: torrent.name
+          )
+
+          error
+        end
+    end
   end
 
   ## Private Helpers

@@ -121,6 +121,49 @@ defmodule Mydia.Downloads.TorrentMatcher do
     end
   end
 
+  @doc """
+  Finds the top N candidate matches for parsed torrent info, sorted by confidence descending.
+
+  Unlike `find_match/2`, this does not filter by a confidence threshold — it returns
+  all candidates with confidence > 0, up to `max_results`. Used for generating
+  match suggestions for unmatched downloads.
+
+  ## Options
+    - `:max_results` - Maximum number of candidates to return (default: 3)
+    - `:monitored_only` - Only match against monitored items (default: false)
+  """
+  def find_top_candidates(torrent_info, opts \\ []) do
+    max_results = Keyword.get(opts, :max_results, 3)
+    monitored_only = Keyword.get(opts, :monitored_only, false)
+
+    items =
+      case torrent_info.type do
+        :movie -> list_movies(monitored_only)
+        type when type in [:tv, :tv_season] -> list_tv_shows(monitored_only)
+      end
+
+    calculate_fn =
+      case torrent_info.type do
+        :movie -> &calculate_movie_confidence(&1, torrent_info)
+        type when type in [:tv, :tv_season] -> &calculate_tv_show_confidence(&1, torrent_info)
+      end
+
+    items
+    |> Enum.map(fn item ->
+      confidence = calculate_fn.(item)
+
+      %{
+        media_item_id: item.id,
+        title: item.title,
+        confidence: Float.round(confidence, 3),
+        match_reason: "Title similarity: #{Float.round(confidence * 100, 1)}%"
+      }
+    end)
+    |> Enum.filter(fn %{confidence: c} -> c > 0.3 end)
+    |> Enum.sort_by(fn %{confidence: c} -> c end, :desc)
+    |> Enum.take(max_results)
+  end
+
   ## Private Functions - Movie Matching
 
   defp find_movie_match(torrent_info, monitored_only, threshold, require_id_match) do
