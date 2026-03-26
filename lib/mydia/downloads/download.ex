@@ -18,6 +18,7 @@ defmodule Mydia.Downloads.Download do
           completed_at: DateTime.t() | nil,
           error_message: String.t() | nil,
           metadata: map() | nil,
+          match_status: String.t() | nil,
           imported_at: DateTime.t() | nil,
           import_retry_count: integer(),
           import_last_error: String.t() | nil,
@@ -39,6 +40,7 @@ defmodule Mydia.Downloads.Download do
     field :completed_at, :utc_datetime
     field :error_message, :string
     field :metadata, Mydia.Settings.JsonMapType
+    field :match_status, :string
 
     # Import tracking fields
     field :imported_at, :utc_datetime
@@ -74,6 +76,7 @@ defmodule Mydia.Downloads.Download do
       :completed_at,
       :error_message,
       :metadata,
+      :match_status,
       :imported_at,
       :import_retry_count,
       :import_last_error,

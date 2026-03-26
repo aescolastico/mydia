@@ -24,6 +24,7 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     :download_client,
     :download_client_id,
     :metadata,
+    :match_status,
     :inserted_at,
     # Real-time status fields
     :status,
@@ -62,6 +63,7 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           download_client: String.t(),
           download_client_id: String.t(),
           metadata: map(),
+          match_status: String.t() | nil,
           inserted_at: DateTime.t(),
           # Real-time status fields
           status: String.t(),

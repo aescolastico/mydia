@@ -1100,6 +1100,7 @@ defmodule Mydia.Downloads do
         download_client: download.download_client,
         download_client_id: download.download_client_id,
         metadata: download.metadata,
+        match_status: download.match_status,
         inserted_at: download.inserted_at,
         # Real-time fields from client
         status: status_from_torrent_state(torrent_status.state),
@@ -1156,6 +1157,7 @@ defmodule Mydia.Downloads do
       download_client: download.download_client,
       download_client_id: download.download_client_id,
       metadata: download.metadata,
+      match_status: download.match_status,
       inserted_at: download.inserted_at,
       status: status,
       progress: if(download.completed_at, do: 100.0, else: 0.0),
