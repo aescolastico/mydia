@@ -1221,7 +1221,28 @@ defmodule Mydia.Downloads do
   defp apply_status_filters(downloads, :failed) do
     Enum.filter(downloads, fn d ->
       # Show downloads that failed in the client OR have import failures
-      d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)
+      # Exclude unmatched and unresolved_files which have their own sections
+      (d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)) and
+        d.match_status not in ["unmatched", "unresolved_files"]
+    end)
+  end
+
+  defp apply_status_filters(downloads, :unmatched) do
+    Enum.filter(downloads, fn d ->
+      d.match_status == "unmatched"
+    end)
+  end
+
+  defp apply_status_filters(downloads, :unresolved_files) do
+    Enum.filter(downloads, fn d ->
+      d.match_status == "unresolved_files"
+    end)
+  end
+
+  defp apply_status_filters(downloads, :other_issues) do
+    Enum.filter(downloads, fn d ->
+      (d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)) and
+        d.match_status not in ["unmatched", "unresolved_files"]
     end)
   end
 
@@ -2041,5 +2062,163 @@ defmodule Mydia.Downloads do
   @spec delete_all_streaming_jobs() :: {non_neg_integer(), nil | [term()]}
   def delete_all_streaming_jobs do
     Repo.delete_all(from j in TranscodeJob, where: j.type in ["stream", "direct"])
+  end
+
+  # --- Issues Tab Functions ---
+
+  @doc """
+  Manually matches an unmatched download to a media item, then triggers import.
+
+  Sets the media_item_id (and optionally episode_id), clears match_status,
+  and enqueues a MediaImport job.
+  """
+  def manually_match_download(%Download{} = download, media_item_id, episode_id \\ nil) do
+    save_path = get_in(download.metadata || %{}, ["save_path"])
+
+    attrs = %{
+      media_item_id: media_item_id,
+      episode_id: episode_id,
+      match_status: nil
+    }
+
+    case update_download(download, attrs) do
+      {:ok, updated} ->
+        # Enqueue import job
+        %{
+          "download_id" => updated.id,
+          "save_path" => save_path,
+          "cleanup_client" => true,
+          "use_hardlinks" => true,
+          "move_files" => false
+        }
+        |> Mydia.Jobs.MediaImport.new()
+        |> Oban.insert()
+
+        broadcast_download_update(updated.id)
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Refreshes match suggestions for an unmatched download by re-running TorrentMatcher.
+  """
+  def refresh_match_suggestions(%Download{} = download) do
+    alias Mydia.Downloads.{TorrentParser, TorrentMatcher}
+
+    parsed_info_map = get_in(download.metadata || %{}, ["parsed_info"])
+
+    suggestions =
+      if parsed_info_map do
+        # Reconstruct parsed_info from metadata for TorrentMatcher
+        parsed_info = %{
+          type: String.to_existing_atom(parsed_info_map["type"] || "movie"),
+          title: parsed_info_map["title"] || download.title,
+          year: parsed_info_map["year"],
+          season: parsed_info_map["season"],
+          episode: parsed_info_map["episode"],
+          quality: parsed_info_map["quality"],
+          source: parsed_info_map["source"],
+          codec: parsed_info_map["codec"]
+        }
+
+        try do
+          TorrentMatcher.find_top_candidates(parsed_info, max_results: 3, monitored_only: false)
+        rescue
+          _ -> []
+        end
+      else
+        # Try to parse the title fresh
+        case TorrentParser.parse(download.title) do
+          {:ok, parsed_info} ->
+            try do
+              TorrentMatcher.find_top_candidates(parsed_info,
+                max_results: 3,
+                monitored_only: false
+              )
+            rescue
+              _ -> []
+            end
+
+          _ ->
+            []
+        end
+      end
+
+    current_metadata = download.metadata || %{}
+    updated_metadata = Map.put(current_metadata, "match_suggestions", suggestions)
+
+    update_download(download, %{metadata: updated_metadata})
+  end
+
+  @doc """
+  Resolves file-to-episode mappings for an unresolved download and triggers re-import.
+
+  Accepts a list of `%{path: string, episode_id: binary_id}` mappings.
+  """
+  def resolve_file_mappings(%Download{} = download, mappings) when is_list(mappings) do
+    # Build target_files for the MediaImport job
+    target_files =
+      Enum.map(mappings, fn mapping ->
+        %{
+          "path" => mapping.path || mapping["path"],
+          "episode_id" => mapping.episode_id || mapping["episode_id"]
+        }
+      end)
+
+    # Clear unresolved files from metadata and reset match_status
+    current_metadata = download.metadata || %{}
+    updated_metadata = Map.delete(current_metadata, "unresolved_files")
+
+    case update_download(download, %{match_status: nil, metadata: updated_metadata}) do
+      {:ok, updated} ->
+        # Enqueue targeted import job
+        %{
+          "download_id" => updated.id,
+          "target_files" => target_files,
+          "use_hardlinks" => true,
+          "move_files" => false
+        }
+        |> Mydia.Jobs.MediaImport.new()
+        |> Oban.insert()
+
+        broadcast_download_update(updated.id)
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Dismisses (deletes) a download from the Issues tab.
+  """
+  def dismiss_download(%Download{} = download) do
+    delete_download(download)
+  end
+
+  @doc """
+  Bulk-dismisses all cancelled/missing downloads that don't have special match_status.
+  """
+  def dismiss_all_cancelled do
+    from(d in Download,
+      where: is_nil(d.match_status) and is_nil(d.imported_at) and is_nil(d.completed_at)
+    )
+    |> Repo.delete_all()
+  end
+
+  @doc """
+  Returns issue counts by section for the Issues tab header badges.
+  """
+  def count_issues_by_section do
+    downloads = list_downloads_with_status()
+
+    %{
+      unmatched: downloads |> apply_status_filters(:unmatched) |> length(),
+      unresolved: downloads |> apply_status_filters(:unresolved_files) |> length(),
+      other: downloads |> apply_status_filters(:other_issues) |> length()
+    }
   end
 end
