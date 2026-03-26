@@ -293,7 +293,7 @@ defmodule Mydia.Library.FileParser do
       |> Enum.reject(&(&1 == {-1, 0}))
       |> Enum.map(fn {start, length} ->
         text
-        |> String.slice(start, length)
+        |> :binary.part(start, length)
         |> String.to_integer()
       end)
 
@@ -319,7 +319,7 @@ defmodule Mydia.Library.FileParser do
     year = extract_year(text)
 
     text
-    |> String.slice(0, match_index)
+    |> :binary.part(0, match_index)
     |> remove_year_from_title(year)
     |> clean_title()
   end

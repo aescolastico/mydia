@@ -611,13 +611,23 @@ defmodule Mydia.Library.FileParser.V2 do
     {Map.delete(metadata, :_original_text), remaining}
   end
 
+  # Slice text using byte offsets from Regex.run(..., return: :index).
+  # Regex returns byte positions, but String.slice expects character positions.
+  # For multi-byte UTF-8 strings these diverge, so we use :binary.part which
+  # operates on bytes directly.
+  defp byte_slice(text, start, length), do: :binary.part(text, start, length)
+  defp byte_slice_before(text, byte_pos), do: :binary.part(text, 0, byte_pos)
+
+  defp byte_slice_after(text, byte_pos),
+    do: :binary.part(text, byte_pos, byte_size(text) - byte_pos)
+
   defp extract_pattern(%{regex: :tv_patterns}, metadata, text) do
     # Special case: TV patterns use a list of regexes
     case match_tv_patterns(text) do
       {:ok, tv_metadata, match_start, match_length} ->
         # Remove the matched TV pattern from text and everything after it until a quality marker
-        before = String.slice(text, 0, match_start)
-        after_match = String.slice(text, match_start + match_length, String.length(text))
+        before = byte_slice_before(text, match_start)
+        after_match = byte_slice_after(text, match_start + match_length)
 
         # Discard text between episode marker and first quality marker to remove episode titles
         after_match_cleaned = discard_until_quality_marker(after_match)
@@ -654,15 +664,15 @@ defmodule Mydia.Library.FileParser.V2 do
 
       [{start, length} | _captures] ->
         # Extract the matched portion
-        match = String.slice(text, start, length)
+        match = byte_slice(text, start, length)
 
         # Call the handler to extract value
         value = pattern.handler.(match, text, metadata)
 
         # Remove matched portion from text (replace with space to preserve word boundaries)
         new_text =
-          String.slice(text, 0, start) <>
-            " " <> String.slice(text, start + length, String.length(text))
+          byte_slice_before(text, start) <>
+            " " <> byte_slice_after(text, start + length)
 
         # Update metadata if value is not nil (noise patterns return nil)
         new_metadata =
@@ -721,7 +731,7 @@ defmodule Mydia.Library.FileParser.V2 do
       |> Enum.reject(&(&1 == {-1, 0}))
       |> Enum.map(fn {start, length} ->
         text
-        |> String.slice(start, length)
+        |> byte_slice(start, length)
         |> Integer.parse()
       end)
       |> Enum.map(fn
@@ -784,16 +794,16 @@ defmodule Mydia.Library.FileParser.V2 do
 
       {{year_start, year_length}, nil} ->
         # Year found but no quality marker - preserve only the year
-        String.slice(text, year_start, year_length)
+        byte_slice(text, year_start, year_length)
 
       {nil, position} ->
         # No year, but quality marker found - keep from quality marker onward
-        String.slice(text, position, String.length(text))
+        byte_slice_after(text, position)
 
       {{year_start, year_length}, position} ->
         # Both year and quality marker found - preserve year and everything from quality marker
-        year_text = String.slice(text, year_start, year_length)
-        quality_text = String.slice(text, position, String.length(text))
+        year_text = byte_slice(text, year_start, year_length)
+        quality_text = byte_slice_after(text, position)
         year_text <> " " <> quality_text
     end
   end

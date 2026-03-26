@@ -779,4 +779,17 @@ defmodule Mydia.Library.FileParserTest do
       assert result2.quality.audio == "AAC-LC"
     end
   end
+
+  describe "multi-byte UTF-8 filenames" do
+    test "Japanese anime fansub with kanji/katakana before SxxExx" do
+      result =
+        FileParser.parse(
+          "[H3LL] Frieren ~ Beyond Journey's End (葬送のフリーレン ) - S02E02 [1080p][x264 10bits][AAC][Multiple Subtitles].mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.season == 2
+      assert result.episodes == [2]
+    end
+  end
 end
