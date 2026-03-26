@@ -25,6 +25,7 @@ defmodule Mydia.Settings.LibraryPath do
           auto_organize: boolean(),
           auto_import: boolean(),
           write_nfo: boolean(),
+          auto_rename: boolean(),
           quality_profile:
             Mydia.Settings.QualityProfile.t() | nil | Ecto.Association.NotLoaded.t(),
           quality_profile_id: binary() | nil,
@@ -57,6 +58,8 @@ defmodule Mydia.Settings.LibraryPath do
     field :auto_import, :boolean, default: false
     # Enable/disable writing Jellyfin-compatible NFO metadata files alongside media files
     field :write_nfo, :boolean, default: false
+    # Enable/disable automatic file renaming on import (TRaSH Guides format)
+    field :auto_rename, :boolean, default: true
 
     belongs_to :quality_profile, Mydia.Settings.QualityProfile
     belongs_to :updated_by, Mydia.Accounts.User
@@ -84,7 +87,8 @@ defmodule Mydia.Settings.LibraryPath do
       :category_paths,
       :auto_organize,
       :auto_import,
-      :write_nfo
+      :write_nfo,
+      :auto_rename
     ])
     |> validate_required([:path, :type])
     |> validate_inclusion(:type, @path_types)

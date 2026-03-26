@@ -1,12 +1,16 @@
 defmodule Mydia.Library.FileRenamer do
   @moduledoc """
   Handles renaming media files to follow a consistent naming convention.
+
+  Delegates to `FileNamer` for TRaSH Guides-compatible filename generation,
+  building quality information from MediaFile database fields.
   """
 
   import Ecto.Query, warn: false
 
-  alias Mydia.Library.MediaFile
-  alias Mydia.Media.{MediaItem, Episode}
+  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.{FileNamer, MediaFile}
+  alias Mydia.Media.MediaItem
   alias Mydia.Repo
 
   require Logger
@@ -29,7 +33,6 @@ defmodule Mydia.Library.FileRenamer do
     # Get the file details - use absolute_path for filesystem operations
     current_path = MediaFile.absolute_path(file)
     directory = Path.dirname(current_path)
-    extension = Path.extname(current_path)
     current_filename = Path.basename(current_path)
 
     # Generate proposed filename based on media type
@@ -38,15 +41,28 @@ defmodule Mydia.Library.FileRenamer do
         # TV Show Episode (associated with episode)
         file.episode_id && file.episode ->
           media_item = file.episode.media_item
-          generate_episode_filename(file.episode, media_item, file, extension)
+          quality_info = build_quality_info(file)
 
-        # TV Show file not associated with episode (parse from filename)
-        file.media_item_id && file.media_item && file.media_item.type == "tv_show" ->
-          generate_filename_from_path(file, extension)
+          FileNamer.generate_episode_filename(
+            media_item,
+            file.episode,
+            quality_info,
+            current_filename
+          )
 
         # Movie
         file.media_item_id && file.media_item && file.media_item.type == "movie" ->
-          generate_movie_filename(file.media_item, file, extension)
+          quality_info = build_quality_info(file)
+
+          FileNamer.generate_movie_filename(
+            file.media_item,
+            quality_info,
+            current_filename
+          )
+
+        # TV Show file not associated with episode (parse from filename)
+        file.media_item_id && file.media_item && file.media_item.type == "tv_show" ->
+          generate_filename_from_path(file)
 
         # Fallback to current filename if we can't determine
         true ->
@@ -61,7 +77,7 @@ defmodule Mydia.Library.FileRenamer do
       current_filename: current_filename,
       proposed_filename: proposed_filename,
       directory: directory,
-      extension: extension,
+      extension: Path.extname(current_path),
       file_id: file.id
     }
   end
@@ -195,142 +211,76 @@ defmodule Mydia.Library.FileRenamer do
     {:ok, results}
   end
 
+  @doc """
+  Builds a `QualityInfo` struct from a MediaFile's database fields.
+
+  Uses resolution, codec, audio_codec, and hdr_format from the MediaFile,
+  plus source from the file's metadata. This is the authoritative quality
+  source for files already in the library (vs parsing from filename).
+  """
+  def build_quality_info(%MediaFile{} = file) do
+    source =
+      cond do
+        file.metadata && file.metadata.source -> file.metadata.source
+        true -> nil
+      end
+
+    QualityInfo.new(%{
+      resolution: file.resolution,
+      source: source,
+      codec: file.codec,
+      audio: file.audio_codec,
+      hdr: file.hdr_format != nil,
+      hdr_format: file.hdr_format,
+      proper: false,
+      repack: false
+    })
+  end
+
   ## Private Functions
 
-  defp generate_movie_filename(%MediaItem{} = media_item, %MediaFile{} = file, extension) do
-    # Format: {Title} ({Year}) [{Quality} {Source}].{ext}
-    # Example: The Matrix (1999) [1080p BluRay].mkv
-
-    title = sanitize_filename(media_item.title)
-    year = media_item.year || ""
-
-    # Build quality string
-    quality_parts = [
-      get_quality_for_file(file),
-      get_source_from_metadata(file)
-    ]
-
-    quality_str =
-      quality_parts
-      |> Enum.reject(&is_nil/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.join(" ")
-
-    # Build filename
-    filename_parts = [
-      "#{title} (#{year})",
-      if(quality_str != "", do: "[#{quality_str}]", else: nil)
-    ]
-
-    filename_parts
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(" ")
-    |> Kernel.<>(extension)
-  end
-
-  defp generate_episode_filename(
-         %Episode{} = episode,
-         %MediaItem{} = media_item,
-         %MediaFile{} = file,
-         extension
-       ) do
-    # Format: {Show Title} - S{Season}E{Episode} - {Episode Title} [{Quality}].{ext}
-    # Example: Breaking Bad - S01E01 - Pilot [720p].mkv
-
-    show_title = sanitize_filename(media_item.title)
-    season = String.pad_leading(to_string(episode.season_number), 2, "0")
-    episode_num = String.pad_leading(to_string(episode.episode_number), 2, "0")
-    episode_title = if episode.title, do: sanitize_filename(episode.title), else: "TBA"
-
-    # Get quality info - try to parse from filename if DB value seems wrong or missing
-    quality = get_quality_for_file(file)
-
-    # Build filename
-    "#{show_title} - S#{season}E#{episode_num} - #{episode_title} [#{quality}]#{extension}"
-  end
-
-  defp generate_filename_from_path(%MediaFile{} = file, extension) do
+  defp generate_filename_from_path(%MediaFile{} = file) do
     # For TV show files not associated with episodes, parse the filename
-    # to extract season/episode info
+    # to extract season/episode info and generate a TRaSH-style name
     absolute_path = MediaFile.absolute_path(file)
+    current_filename = Path.basename(absolute_path)
+    extension = Path.extname(absolute_path)
     basename = Path.basename(absolute_path, extension)
     media_item = file.media_item
 
     # Try to extract S##E## or similar pattern from filename
     case Regex.run(~r/[Ss](\d+)[Ee](\d+)/, basename) do
       [_, season_str, episode_str] ->
-        season = String.pad_leading(season_str, 2, "0")
-        episode_num = String.pad_leading(episode_str, 2, "0")
-
-        # Try to extract episode title (text between episode number and quality)
+        # Build a minimal episode-like map for FileNamer
         episode_title =
           case Regex.run(~r/[Ee]\d+[.\s]+([^.\d]+?)(?:\d{3,4}p|\.mkv|\.mp4)/i, basename) do
             [_, title] ->
               title
               |> String.replace([".", "_"], " ")
               |> String.trim()
-              |> sanitize_filename()
 
             _ ->
-              "Episode #{episode_num}"
+              "Episode #{String.pad_leading(episode_str, 2, "0")}"
           end
 
-        show_title = sanitize_filename(media_item.title)
-        quality = get_quality_for_file(file)
+        pseudo_episode = %{
+          season_number: String.to_integer(season_str),
+          episode_number: String.to_integer(episode_str),
+          title: episode_title
+        }
 
-        "#{show_title} - S#{season}E#{episode_num} - #{episode_title} [#{quality}]#{extension}"
+        quality_info = build_quality_info(file)
+
+        FileNamer.generate_episode_filename(
+          media_item,
+          pseudo_episode,
+          quality_info,
+          current_filename
+        )
 
       _ ->
         # Can't parse, keep original filename
-        Path.basename(absolute_path)
-    end
-  end
-
-  defp get_quality_for_file(%MediaFile{} = file) do
-    # Try to parse resolution from the current filename first
-    # This handles cases where DB has wrong/stale data
-    absolute_path = MediaFile.absolute_path(file)
-    basename = Path.basename(absolute_path)
-
-    parsed_resolution =
-      case Regex.run(~r/\b(\d{3,4}p)\b/i, basename) do
-        [_, res] -> String.downcase(res)
-        _ -> nil
-      end
-
-    # Prefer parsed resolution from filename, fallback to DB value
-    parsed_resolution || file.resolution || "Unknown"
-  end
-
-  defp sanitize_filename(name) when is_binary(name) do
-    name
-    # Remove or replace invalid filesystem characters
-    |> String.replace(~r/[<>:"|?*]/, "")
-    # Replace forward and back slashes with dashes
-    |> String.replace(~r/[\/\\]/, "-")
-    # Replace multiple spaces with single space
-    |> String.replace(~r/\s+/, " ")
-    # Trim whitespace
-    |> String.trim()
-  end
-
-  defp get_source_from_metadata(%MediaFile{} = file) do
-    # Try to determine source from codec or metadata
-    cond do
-      # Check metadata for source
-      file.metadata && file.metadata.source ->
-        file.metadata.source
-
-      # Infer from codec
-      file.codec && String.contains?(String.downcase(file.codec), "bluray") ->
-        "BluRay"
-
-      file.codec && String.contains?(String.downcase(file.codec), "web") ->
-        "WEB-DL"
-
-      # Default
-      true ->
-        "WEB-DL"
+        current_filename
     end
   end
 end

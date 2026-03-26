@@ -238,6 +238,30 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
                     />
                   </div>
                 <% end %>
+
+                <%!-- Auto Rename Toggle --%>
+                <div class="flex items-center justify-between bg-base-200 rounded-lg px-4 py-3">
+                  <div class="flex items-center gap-3">
+                    <.icon name="hero-pencil-square" class="w-4 h-4 text-base-content/60" />
+                    <div>
+                      <span class="text-sm font-medium">Auto Rename</span>
+                      <p class="text-xs text-base-content/50">Rename files on import</p>
+                    </div>
+                  </div>
+                  <input type="hidden" name={@library_path_form[:auto_rename].name} value="false" />
+                  <input
+                    type="checkbox"
+                    name={@library_path_form[:auto_rename].name}
+                    value="true"
+                    checked={
+                      Phoenix.HTML.Form.normalize_value(
+                        "checkbox",
+                        @library_path_form[:auto_rename].value
+                      )
+                    }
+                    class="toggle toggle-warning toggle-sm"
+                  />
+                </div>
               </div>
             </div>
 
