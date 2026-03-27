@@ -1100,6 +1100,7 @@ defmodule Mydia.Downloads do
         download_client: download.download_client,
         download_client_id: download.download_client_id,
         metadata: download.metadata,
+        match_status: download.match_status,
         inserted_at: download.inserted_at,
         # Real-time fields from client
         status: status_from_torrent_state(torrent_status.state),
@@ -1156,6 +1157,7 @@ defmodule Mydia.Downloads do
       download_client: download.download_client,
       download_client_id: download.download_client_id,
       metadata: download.metadata,
+      match_status: download.match_status,
       inserted_at: download.inserted_at,
       status: status,
       progress: if(download.completed_at, do: 100.0, else: 0.0),
@@ -1219,7 +1221,21 @@ defmodule Mydia.Downloads do
   defp apply_status_filters(downloads, :failed) do
     Enum.filter(downloads, fn d ->
       # Show downloads that failed in the client OR have import failures
-      d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)
+      # Exclude unmatched and unresolved_files which have their own sections
+      (d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)) and
+        d.match_status not in ["unmatched", "unresolved_files"]
+    end)
+  end
+
+  defp apply_status_filters(downloads, :unmatched) do
+    Enum.filter(downloads, fn d ->
+      d.match_status == "unmatched"
+    end)
+  end
+
+  defp apply_status_filters(downloads, :unresolved_files) do
+    Enum.filter(downloads, fn d ->
+      d.match_status == "unresolved_files"
     end)
   end
 
@@ -2039,5 +2055,124 @@ defmodule Mydia.Downloads do
   @spec delete_all_streaming_jobs() :: {non_neg_integer(), nil | [term()]}
   def delete_all_streaming_jobs do
     Repo.delete_all(from j in TranscodeJob, where: j.type in ["stream", "direct"])
+  end
+
+  # --- Issues Tab Functions ---
+
+  @doc """
+  Manually matches an unmatched download to a media item, then triggers import.
+
+  Sets the media_item_id (and optionally episode_id), clears match_status,
+  and enqueues a MediaImport job.
+  """
+  def manually_match_download(%Download{} = download, media_item_id, episode_id \\ nil) do
+    save_path = get_in(download.metadata || %{}, ["save_path"])
+
+    # Keep match_status until import succeeds (import job clears it)
+    attrs = %{
+      media_item_id: media_item_id,
+      episode_id: episode_id
+    }
+
+    case update_download(download, attrs) do
+      {:ok, updated} ->
+        %{
+          "download_id" => updated.id,
+          "save_path" => save_path,
+          "cleanup_client" => true,
+          "use_hardlinks" => true,
+          "move_files" => false
+        }
+        |> Mydia.Jobs.MediaImport.new()
+        |> Oban.insert()
+
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Refreshes match suggestions for an unmatched download by re-running TorrentMatcher.
+  """
+  def refresh_match_suggestions(%Download{} = download) do
+    alias Mydia.Downloads.{TorrentParser, TorrentMatcher}
+
+    suggestions =
+      case TorrentParser.parse(download.title) do
+        {:ok, parsed_info} ->
+          try do
+            TorrentMatcher.find_top_candidates(parsed_info,
+              max_results: 3,
+              monitored_only: false
+            )
+          rescue
+            e ->
+              Logger.warning("Failed to find match candidates: #{inspect(e)}",
+                download_id: download.id
+              )
+
+              []
+          end
+
+        _ ->
+          []
+      end
+
+    current_metadata = download.metadata || %{}
+    updated_metadata = Map.put(current_metadata, "match_suggestions", suggestions)
+
+    update_download(download, %{metadata: updated_metadata})
+  end
+
+  @doc """
+  Resolves file-to-episode mappings for an unresolved download and triggers re-import.
+
+  Accepts a list of `%{path: string, episode_id: binary_id}` mappings.
+  """
+  def resolve_file_mappings(%Download{} = download, mappings) when is_list(mappings) do
+    # Build target_files for the MediaImport job (mappings always use string keys)
+    target_files =
+      Enum.map(mappings, fn mapping ->
+        %{
+          "path" => mapping["path"],
+          "episode_id" => mapping["episode_id"]
+        }
+      end)
+
+    # Don't clear match_status or unresolved_files metadata here — the import job
+    # clears them on success. This preserves data for retry if import fails.
+    case %{
+           "download_id" => download.id,
+           "target_files" => target_files,
+           "use_hardlinks" => true,
+           "move_files" => false
+         }
+         |> Mydia.Jobs.MediaImport.new()
+         |> Oban.insert() do
+      {:ok, _job} -> {:ok, download}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  @doc """
+  Dismisses (deletes) a download from the Issues tab.
+  """
+  def dismiss_download(%Download{} = download) do
+    delete_download(download)
+  end
+
+  @doc """
+  Bulk-dismisses failed/errored downloads that don't have special match_status.
+  Only deletes downloads that have actually failed (error_message or import_failed_at set).
+  """
+  def dismiss_all_cancelled do
+    from(d in Download,
+      where:
+        is_nil(d.match_status) and is_nil(d.imported_at) and
+          (not is_nil(d.error_message) or not is_nil(d.import_failed_at))
+    )
+    |> Repo.delete_all()
   end
 end

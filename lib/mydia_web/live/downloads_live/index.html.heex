@@ -122,168 +122,519 @@
         </div>
       </div>
     <% end %>
-    <%!-- Downloads list --%>
-    <ul
-      id="downloads-list"
-      phx-update="stream"
-      phx-viewport-bottom="load_more"
-      class="list bg-base-100 rounded-box shadow-lg"
-    >
-      <li :for={{id, download} <- @streams.downloads} id={id} class="list-row py-2">
-        <%!-- Checkbox (only shown in selection mode) --%>
-        <div class={[
-          "transition-all",
-          (@selection_mode && "w-auto") || "w-0 opacity-0 overflow-hidden"
-        ]}>
-          <input
-            type="checkbox"
-            class="checkbox checkbox-primary checkbox-sm"
-            checked={is_selected?(assigns, download.id)}
-            phx-click="toggle_select"
-            phx-value-id={download.id}
-            disabled={not @selection_mode}
-          />
-        </div>
-        <%!-- Content --%>
-        <div class="list-col-grow">
-          <%!-- Line 1: Release/torrent name (primary) --%>
-          <div class="font-medium text-sm truncate">
-            <%= if media_type_badge(download) do %>
-              <% {icon, _label, _badge_class} = media_type_badge(download) %>
-              <span class="text-xs opacity-50 mr-1">{icon}</span>
-            <% end %>
-            {download.title}
+    <%!-- Downloads list (Queue/Completed tabs) --%>
+    <%= if @active_tab != :issues do %>
+      <ul
+        id="downloads-list"
+        phx-update="stream"
+        phx-viewport-bottom="load_more"
+        class="list bg-base-100 rounded-box shadow-lg"
+      >
+        <li :for={{id, download} <- @streams.downloads} id={id} class="list-row py-2">
+          <%!-- Checkbox (only shown in selection mode) --%>
+          <div class={[
+            "transition-all",
+            (@selection_mode && "w-auto") || "w-0 opacity-0 overflow-hidden"
+          ]}>
+            <input
+              type="checkbox"
+              class="checkbox checkbox-primary checkbox-sm"
+              checked={is_selected?(assigns, download.id)}
+              phx-click="toggle_select"
+              phx-value-id={download.id}
+              disabled={not @selection_mode}
+            />
           </div>
-          <%!-- Line 2: Show name + episode (secondary, only if different from torrent title) --%>
-          <%= if get_display_title(download) != download.title do %>
-            <div class="text-xs text-base-content/50 truncate">
-              {get_display_title(download)}
-              <%= if get_episode_details(download) do %>
-                <span>- {get_episode_details(download)}</span>
+          <%!-- Content --%>
+          <div class="list-col-grow">
+            <div class="font-medium text-sm truncate">
+              <%= if media_type_badge(download) do %>
+                <% {icon, _label, _badge_class} = media_type_badge(download) %>
+                <span class="text-xs opacity-50 mr-1">{icon}</span>
+              <% end %>
+              {download.title}
+            </div>
+            <%= if get_display_title(download) != download.title do %>
+              <div class="text-xs text-base-content/50 truncate">
+                {get_display_title(download)}
+                <%= if get_episode_details(download) do %>
+                  <span>- {get_episode_details(download)}</span>
+                <% end %>
+              </div>
+            <% end %>
+            <div class="text-xs opacity-60 flex flex-wrap items-center gap-1.5">
+              <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
+                {String.capitalize(download.status)}
+              </span>
+              <%= if download.indexer do %>
+                <span>{download.indexer}</span>
+              <% end %>
+              <%= if @active_tab == :queue do %>
+                <span>•</span>
+                <span>{format_progress(download.progress)}%</span>
+                <span>•</span>
+                <span>Speed: {format_speed(download.download_speed)}</span>
+                <span>•</span>
+                <span>{format_size(download.size)}</span>
+                <span>•</span>
+                <span>ETA: {format_eta(download.eta)}</span>
+                <%= if get_metadata_value(download, "seeders") do %>
+                  <span>•</span>
+                  <span>{get_metadata_value(download, "seeders")} seeds</span>
+                <% end %>
+              <% end %>
+              <%= if @active_tab == :completed do %>
+                <span>•</span>
+                <span>Ratio: {format_ratio(download.ratio)}</span>
+                <span>•</span>
+                <span>↑ {format_speed(download.upload_speed)}</span>
+                <span>•</span>
+                <span>Uploaded: {format_size(download.uploaded)}</span>
+                <span>•</span>
+                <span>{format_size(download.size)}</span>
+                <%= if download.imported_at do %>
+                  <span>•</span>
+                  <span>Imported: {format_relative_time(download.imported_at)}</span>
+                <% end %>
               <% end %>
             </div>
-          <% end %>
-          <%!-- Line 3: Status badge + tab-specific stats --%>
-          <div class="text-xs opacity-60 flex flex-wrap items-center gap-1.5">
-            <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
-              {String.capitalize(download.status)}
-            </span>
-            <%= if download.indexer do %>
-              <span>{download.indexer}</span>
-            <% end %>
             <%= if @active_tab == :queue do %>
-              <span>•</span>
-              <span>{format_progress(download.progress)}%</span>
-              <span>•</span>
-              <span>Speed: {format_speed(download.download_speed)}</span>
-              <span>•</span>
-              <span>{format_size(download.size)}</span>
-              <span>•</span>
-              <span>ETA: {format_eta(download.eta)}</span>
-              <%= if get_metadata_value(download, "seeders") do %>
-                <span>•</span>
-                <span>{get_metadata_value(download, "seeders")} seeds</span>
-              <% end %>
-            <% end %>
-            <%= if @active_tab == :completed do %>
-              <span>•</span>
-              <span>Ratio: {format_ratio(download.ratio)}</span>
-              <span>•</span>
-              <span>↑ {format_speed(download.upload_speed)}</span>
-              <span>•</span>
-              <span>Uploaded: {format_size(download.uploaded)}</span>
-              <span>•</span>
-              <span>{format_size(download.size)}</span>
-              <%= if download.imported_at do %>
-                <span>•</span>
-                <span>Imported: {format_relative_time(download.imported_at)}</span>
-              <% end %>
-            <% end %>
-            <%= if @active_tab == :issues do %>
-              <%= cond do %>
-                <% download.import_last_error -> %>
-                  <span class="text-error">
-                    ⚠ Import failed: {download.import_last_error}
-                  </span>
-                  <span>•</span>
-                  <span>Attempt #{download.import_retry_count}</span>
-                  <%= if download.import_next_retry_at do %>
-                    <span>•</span>
-                    <span>
-                      Next retry: {format_next_retry(download.import_next_retry_at)}
-                    </span>
-                  <% end %>
-                <% download.error_message -> %>
-                  <span class="text-error">⚠ Download failed: {download.error_message}</span>
-                <% true -> %>
-                  <span class="text-error">⚠ Unknown error</span>
-              <% end %>
+              <progress
+                class="progress progress-primary w-full h-1 mt-0.5"
+                value={format_progress(download.progress)}
+                max="100"
+              >
+              </progress>
             <% end %>
           </div>
-          <%!-- Line 4: Progress bar (Queue tab only) --%>
-          <%= if @active_tab == :queue do %>
-            <progress
-              class="progress progress-primary w-full h-1 mt-0.5"
-              value={format_progress(download.progress)}
-              max="100"
-            >
-            </progress>
-          <% end %>
-        </div>
-        <%!-- Action buttons --%>
-        <div>
-          <%= cond do %>
-            <% @active_tab == :queue -> %>
-              <div class="flex gap-1">
-                <%= if download.status == "paused" do %>
+          <%!-- Action buttons --%>
+          <div>
+            <%= cond do %>
+              <% @active_tab == :queue -> %>
+                <div class="flex gap-1">
+                  <%= if download.status == "paused" do %>
+                    <button
+                      type="button"
+                      class="btn btn-square btn-ghost btn-sm"
+                      phx-click="resume_download"
+                      phx-value-id={download.id}
+                      title="Resume download"
+                    >
+                      <.icon name="hero-play" class="size-4" />
+                    </button>
+                  <% else %>
+                    <button
+                      type="button"
+                      class="btn btn-square btn-ghost btn-sm"
+                      phx-click="pause_download"
+                      phx-value-id={download.id}
+                      title="Pause download"
+                    >
+                      <.icon name="hero-pause" class="size-4" />
+                    </button>
+                  <% end %>
                   <button
                     type="button"
                     class="btn btn-square btn-ghost btn-sm"
-                    phx-click="resume_download"
+                    phx-click="cancel_download"
                     phx-value-id={download.id}
-                    title="Resume download"
+                    data-confirm="Cancel this download?"
+                    title="Cancel download"
                   >
-                    <.icon name="hero-play" class="size-4" />
+                    <.icon name="hero-x-mark" class="size-4" />
                   </button>
-                <% else %>
+                </div>
+              <% @active_tab == :completed -> %>
+                <div class="flex gap-1">
                   <button
                     type="button"
                     class="btn btn-square btn-ghost btn-sm"
-                    phx-click="pause_download"
+                    phx-click="clear_single_completed"
                     phx-value-id={download.id}
-                    title="Pause download"
+                    data-confirm="Remove from client and clear from history?"
+                    title="Clear completed download"
                   >
-                    <.icon name="hero-pause" class="size-4" />
+                    <.icon name="hero-trash" class="size-4" />
                   </button>
+                </div>
+              <% true -> %>
+                <div></div>
+            <% end %>
+          </div>
+          <%!-- Expandable raw details --%>
+          <div class="list-col-wrap col-span-full">
+            <details class="group w-full">
+              <summary class="text-sm text-base-content/70 cursor-pointer hover:text-base-content flex items-center gap-1.5 py-1">
+                <.icon
+                  name="hero-chevron-right"
+                  class="w-3.5 h-3.5 transition-transform group-open:rotate-90"
+                /> Details
+              </summary>
+              <div class="flex flex-col gap-1.5 mt-1 text-sm text-base-content pb-1">
+                <%= if download.download_client do %>
+                  <div>
+                    <span class="text-base-content/60">Client</span>
+                    <p class="mt-0.5">{download.download_client}</p>
+                  </div>
                 <% end %>
+                <% protocol = format_protocol(get_metadata_value(download, "download_protocol")) %>
+                <%= if protocol do %>
+                  <div>
+                    <span class="text-base-content/60">Protocol</span>
+                    <p class="mt-0.5">
+                      <span class="badge badge-xs badge-outline">{protocol}</span>
+                    </p>
+                  </div>
+                <% end %>
+                <% quality = get_metadata_value(download, "quality") %>
+                <% quality_str = QualityInfo.format(quality) %>
+                <%= if quality_str && quality_str != "" do %>
+                  <div>
+                    <span class="text-base-content/60">Quality</span>
+                    <p class="mt-0.5">
+                      <span class="badge badge-xs badge-outline">{quality_str}</span>
+                    </p>
+                  </div>
+                <% end %>
+                <%= if download.save_path do %>
+                  <div>
+                    <span class="text-base-content/60">Save Path</span>
+                    <p class="font-mono text-base-content/80 break-all mt-0.5">
+                      {download.save_path}
+                    </p>
+                  </div>
+                <% end %>
+                <%= if download.download_client_id do %>
+                  <div>
+                    <span class="text-base-content/60">Client ID</span>
+                    <p class="font-mono text-base-content/80 break-all mt-0.5">
+                      {download.download_client_id}
+                    </p>
+                  </div>
+                <% end %>
+                <%= if download.inserted_at do %>
+                  <div>
+                    <span class="text-base-content/60">Added</span>
+                    <p class="mt-0.5">{format_relative_time(download.inserted_at)}</p>
+                  </div>
+                <% end %>
+              </div>
+            </details>
+          </div>
+        </li>
+      </ul>
+
+      <%!-- Loading indicator for infinite scroll --%>
+      <%= if @has_more do %>
+        <div class="flex justify-center py-4">
+          <span class="loading loading-spinner loading-md text-primary"></span>
+        </div>
+      <% end %>
+    <% end %>
+
+    <%!-- Issues tab - Three sectioned layout --%>
+    <%= if @active_tab == :issues do %>
+      <div class="flex flex-col gap-6">
+        <%!-- Section 1: Unmatched Downloads --%>
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              <.icon name="hero-question-mark-circle" class="w-5 h-5 text-warning" />
+              Needs Matching
+              <%= if @issues_counts.unmatched > 0 do %>
+                <span class="badge badge-warning badge-sm">{@issues_counts.unmatched}</span>
+              <% end %>
+            </h3>
+          </div>
+          <ul
+            id="unmatched-downloads"
+            phx-update="stream"
+            class="list bg-base-100 rounded-box shadow-lg"
+          >
+            <li class="hidden only:block p-6 text-center text-base-content/50">
+              No unmatched downloads
+            </li>
+            <li
+              :for={{id, download} <- @streams.unmatched_downloads}
+              id={id}
+              class="list-row py-3"
+            >
+              <div class="list-col-grow">
+                <%!-- Torrent name --%>
+                <div class="font-medium text-sm truncate">{download.title}</div>
+                <%!-- Parsed info --%>
+                <% parsed = get_metadata_value(download, "parsed_info") %>
+                <%= if parsed do %>
+                  <div class="text-xs text-base-content/50 flex flex-wrap gap-1.5 mt-0.5">
+                    <%= if parsed["title"] do %>
+                      <span>Parsed: {parsed["title"]}</span>
+                    <% end %>
+                    <%= if parsed["season"] do %>
+                      <span>
+                        S{String.pad_leading("#{parsed["season"]}", 2, "0")}
+                        <%= if parsed["episode"] do %>
+                          E{String.pad_leading("#{parsed["episode"]}", 2, "0")}
+                        <% end %>
+                      </span>
+                    <% end %>
+                    <%= if parsed["quality"] do %>
+                      <span class="badge badge-xs badge-outline">{parsed["quality"]}</span>
+                    <% end %>
+                  </div>
+                <% end %>
+                <%!-- Status --%>
+                <div class="text-xs opacity-60 flex items-center gap-1.5 mt-0.5">
+                  <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
+                    {String.capitalize(download.status)}
+                  </span>
+                  <span>{download.download_client}</span>
+                  <%= if download.status in ["downloading", "seeding"] do %>
+                    <span>•</span>
+                    <span>{format_progress(download.progress)}%</span>
+                  <% end %>
+                </div>
+                <%!-- Match suggestions --%>
+                <% suggestions = get_metadata_value(download, "match_suggestions") || [] %>
+                <%= if suggestions != [] do %>
+                  <div class="mt-2">
+                    <span class="text-xs text-base-content/60 mb-1 block">Suggestions:</span>
+                    <div class="flex flex-wrap gap-2">
+                      <%= for suggestion <- suggestions do %>
+                        <button
+                          type="button"
+                          class="btn btn-xs btn-outline btn-primary"
+                          phx-click="accept_suggestion"
+                          phx-value-download_id={download.id}
+                          phx-value-media_item_id={suggestion["media_item_id"]}
+                          title={suggestion["match_reason"]}
+                        >
+                          {suggestion["title"]}
+                          <span class="badge badge-xs ml-1">
+                            {Float.round((suggestion["confidence"] || 0) * 100, 0)}%
+                          </span>
+                        </button>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+                <%!-- Inline search --%>
+                <%= if @search_open_for == download.id do %>
+                  <MydiaWeb.Live.Components.LibrarySearchForm.library_search_form
+                    search_value={@library_search_value}
+                    search_results={@library_search_results}
+                    on_search="library_search"
+                    on_select="select_library_match"
+                    download_id={download.id}
+                  />
+                <% end %>
+              </div>
+              <%!-- Actions --%>
+              <div class="flex gap-1">
                 <button
                   type="button"
                   class="btn btn-square btn-ghost btn-sm"
-                  phx-click="cancel_download"
+                  phx-click="toggle_search"
                   phx-value-id={download.id}
-                  data-confirm="Cancel this download?"
-                  title="Cancel download"
+                  title="Search library to match"
+                >
+                  <.icon name="hero-magnifying-glass" class="size-4" />
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-square btn-ghost btn-sm"
+                  phx-click="refresh_suggestions"
+                  phx-value-id={download.id}
+                  title="Refresh suggestions"
+                >
+                  <.icon name="hero-arrow-path" class="size-4" />
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-square btn-ghost btn-sm"
+                  phx-click="dismiss_download"
+                  phx-value-id={download.id}
+                  data-confirm="Dismiss this download?"
+                  title="Dismiss"
                 >
                   <.icon name="hero-x-mark" class="size-4" />
                 </button>
               </div>
-            <% @active_tab == :completed -> %>
+            </li>
+          </ul>
+        </div>
+
+        <%!-- Section 2: Unresolved Files --%>
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              <.icon name="hero-document-magnifying-glass" class="w-5 h-5 text-info" />
+              Unresolved Files
+              <%= if @issues_counts.unresolved > 0 do %>
+                <span class="badge badge-info badge-sm">{@issues_counts.unresolved}</span>
+              <% end %>
+            </h3>
+          </div>
+          <ul
+            id="unresolved-downloads"
+            phx-update="stream"
+            class="list bg-base-100 rounded-box shadow-lg"
+          >
+            <li class="hidden only:block p-6 text-center text-base-content/50">
+              No unresolved files
+            </li>
+            <li
+              :for={{id, download} <- @streams.unresolved_downloads}
+              id={id}
+              class="list-row py-3"
+            >
+              <div class="list-col-grow">
+                <div class="font-medium text-sm truncate">
+                  {get_display_title(download)}
+                </div>
+                <div class="text-xs text-base-content/50">{download.title}</div>
+                <%!-- Unresolved files list with episode pickers --%>
+                <% unresolved_files = get_metadata_value(download, "unresolved_files") || [] %>
+                <%= if unresolved_files != [] do %>
+                  <form
+                    id={"resolve-files-form-#{download.id}"}
+                    phx-submit="resolve_files"
+                    class="mt-3 space-y-2"
+                  >
+                    <input type="hidden" name="download_id" value={download.id} />
+                    <%= for {file, idx} <- Enum.with_index(unresolved_files) do %>
+                      <div class="flex items-center gap-3 bg-base-200 rounded-lg px-3 py-2">
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm font-mono truncate">
+                            {file["name"] || Path.basename(file["path"])}
+                          </div>
+                          <div class="text-xs text-base-content/50">
+                            {format_size(file["size"] || 0)}
+                            <%= if file["parsed_season"] do %>
+                              <span>
+                                • S{String.pad_leading("#{file["parsed_season"]}", 2, "0")}
+                                <%= if file["parsed_episode"] do %>
+                                  E{String.pad_leading("#{file["parsed_episode"]}", 2, "0")}
+                                <% end %>
+                              </span>
+                            <% end %>
+                          </div>
+                        </div>
+                        <select
+                          name={"episode_#{idx}"}
+                          class="select select-bordered select-sm w-48"
+                        >
+                          <option value="">Select episode...</option>
+                          <%!-- Episodes will be populated based on the media item --%>
+                          <%= if download.media_item do %>
+                            <% episodes =
+                              get_episodes_for_media_item(
+                                @episodes_by_media_item,
+                                download.media_item
+                              ) %>
+                            <%= for episode <- episodes do %>
+                              <option value={episode.id}>
+                                S{String.pad_leading("#{episode.season_number}", 2, "0")}E{String.pad_leading(
+                                  "#{episode.episode_number}",
+                                  2,
+                                  "0"
+                                )}
+                                <%= if episode.title do %>
+                                  - {episode.title}
+                                <% end %>
+                              </option>
+                            <% end %>
+                          <% end %>
+                        </select>
+                      </div>
+                    <% end %>
+                    <div class="flex justify-end gap-2 mt-2">
+                      <button type="submit" class="btn btn-sm btn-primary">
+                        <.icon name="hero-arrow-down-tray" class="size-4" /> Import Files
+                      </button>
+                    </div>
+                  </form>
+                <% end %>
+              </div>
               <div class="flex gap-1">
                 <button
                   type="button"
                   class="btn btn-square btn-ghost btn-sm"
-                  phx-click="clear_single_completed"
+                  phx-click="dismiss_download"
                   phx-value-id={download.id}
-                  data-confirm="Remove from client and clear from history?"
-                  title="Clear completed download"
+                  data-confirm="Dismiss this download and its unresolved files?"
+                  title="Dismiss"
                 >
-                  <.icon name="hero-trash" class="size-4" />
+                  <.icon name="hero-x-mark" class="size-4" />
                 </button>
               </div>
-            <% @active_tab == :issues -> %>
+            </li>
+          </ul>
+        </div>
+
+        <%!-- Section 3: Other Issues --%>
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              <.icon name="hero-exclamation-triangle" class="w-5 h-5 text-error" /> Other Issues
+              <%= if @issues_counts.other > 0 do %>
+                <span class="badge badge-error badge-sm">{@issues_counts.other}</span>
+              <% end %>
+            </h3>
+            <%= if @issues_counts.other > 0 do %>
+              <button
+                type="button"
+                class="btn btn-xs btn-ghost"
+                phx-click="dismiss_all_cancelled"
+                data-confirm="Clear all cancelled/missing downloads?"
+              >
+                Clear All Cancelled
+              </button>
+            <% end %>
+          </div>
+          <ul id="other-issues" phx-update="stream" class="list bg-base-100 rounded-box shadow-lg">
+            <li class="hidden only:block p-6 text-center text-base-content/50">
+              No other issues
+            </li>
+            <li :for={{id, download} <- @streams.other_issues} id={id} class="list-row py-2">
+              <div class="list-col-grow">
+                <div class="font-medium text-sm truncate">
+                  <%= if media_type_badge(download) do %>
+                    <% {icon, _label, _badge_class} = media_type_badge(download) %>
+                    <span class="text-xs opacity-50 mr-1">{icon}</span>
+                  <% end %>
+                  {download.title}
+                </div>
+                <%= if get_display_title(download) != download.title do %>
+                  <div class="text-xs text-base-content/50 truncate">
+                    {get_display_title(download)}
+                  </div>
+                <% end %>
+                <div class="text-xs opacity-60 flex flex-wrap items-center gap-1.5">
+                  <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
+                    {String.capitalize(download.status)}
+                  </span>
+                  <%= cond do %>
+                    <% download.import_last_error -> %>
+                      <span class="text-error">
+                        Import failed: {download.import_last_error}
+                      </span>
+                      <span>•</span>
+                      <span>Attempt #{download.import_retry_count}</span>
+                      <%= if download.import_next_retry_at do %>
+                        <span>•</span>
+                        <span>
+                          Next retry: {format_next_retry(download.import_next_retry_at)}
+                        </span>
+                      <% end %>
+                    <% download.error_message -> %>
+                      <span class="text-error">Download failed: {download.error_message}</span>
+                    <% true -> %>
+                      <span class="text-error">Removed from client</span>
+                  <% end %>
+                </div>
+              </div>
               <div class="flex gap-1">
                 <%= if download.import_last_error do %>
-                  <%!-- Import failure - retry import --%>
                   <button
                     type="button"
                     class="btn btn-square btn-ghost btn-sm"
@@ -293,112 +644,21 @@
                   >
                     <.icon name="hero-arrow-path" class="size-4" />
                   </button>
-                <% else %>
-                  <%!-- Download failure - retry download --%>
-                  <button
-                    type="button"
-                    class="btn btn-square btn-ghost btn-sm"
-                    phx-click="retry_download"
-                    phx-value-id={download.id}
-                    title="Retry download"
-                  >
-                    <.icon name="hero-arrow-path" class="size-4" />
-                  </button>
                 <% end %>
                 <button
                   type="button"
                   class="btn btn-square btn-ghost btn-sm"
-                  phx-click="delete_download"
+                  phx-click="dismiss_download"
                   phx-value-id={download.id}
-                  data-confirm="Remove this download?"
-                  title="Dismiss and remove"
+                  data-confirm="Dismiss this issue?"
+                  title="Dismiss"
                 >
-                  <.icon name="hero-trash" class="size-4" />
+                  <.icon name="hero-x-mark" class="size-4" />
                 </button>
               </div>
-          <% end %>
+            </li>
+          </ul>
         </div>
-        <%!-- Expandable raw details --%>
-        <div class="list-col-wrap col-span-full">
-          <details class="group w-full">
-            <summary class="text-sm text-base-content/70 cursor-pointer hover:text-base-content flex items-center gap-1.5 py-1">
-              <.icon
-                name="hero-chevron-right"
-                class="w-3.5 h-3.5 transition-transform group-open:rotate-90"
-              /> Details
-            </summary>
-            <div class="flex flex-col gap-1.5 mt-1 text-sm text-base-content pb-1">
-              <%!-- Client --%>
-              <%= if download.download_client do %>
-                <div>
-                  <span class="text-base-content/60">Client</span>
-                  <p class="mt-0.5">{download.download_client}</p>
-                </div>
-              <% end %>
-              <%!-- Protocol --%>
-              <% protocol = format_protocol(get_metadata_value(download, "download_protocol")) %>
-              <%= if protocol do %>
-                <div>
-                  <span class="text-base-content/60">Protocol</span>
-                  <p class="mt-0.5">
-                    <span class="badge badge-xs badge-outline">{protocol}</span>
-                  </p>
-                </div>
-              <% end %>
-              <%!-- Quality --%>
-              <% quality = get_metadata_value(download, "quality") %>
-              <% quality_str = QualityInfo.format(quality) %>
-              <%= if quality_str && quality_str != "" do %>
-                <div>
-                  <span class="text-base-content/60">Quality</span>
-                  <p class="mt-0.5">
-                    <span class="badge badge-xs badge-outline">{quality_str}</span>
-                  </p>
-                </div>
-              <% end %>
-              <%!-- Save Path --%>
-              <%= if download.save_path do %>
-                <div>
-                  <span class="text-base-content/60">Save Path</span>
-                  <p class="font-mono text-base-content/80 break-all mt-0.5">
-                    {download.save_path}
-                  </p>
-                </div>
-              <% end %>
-              <%!-- Client ID --%>
-              <%= if download.download_client_id do %>
-                <div>
-                  <span class="text-base-content/60">Client ID</span>
-                  <p class="font-mono text-base-content/80 break-all mt-0.5">
-                    {download.download_client_id}
-                  </p>
-                </div>
-              <% end %>
-              <%!-- Leechers --%>
-              <% leechers = get_metadata_value(download, "leechers") %>
-              <%= if leechers do %>
-                <div>
-                  <span class="text-base-content/60">Leechers</span>
-                  <p class="mt-0.5">{leechers}</p>
-                </div>
-              <% end %>
-              <%!-- Added --%>
-              <%= if download.inserted_at do %>
-                <div>
-                  <span class="text-base-content/60">Added</span>
-                  <p class="mt-0.5">{format_relative_time(download.inserted_at)}</p>
-                </div>
-              <% end %>
-            </div>
-          </details>
-        </div>
-      </li>
-    </ul>
-
-    <%!-- Loading indicator for infinite scroll --%>
-    <%= if @has_more do %>
-      <div class="flex justify-center py-4">
-        <span class="loading loading-spinner loading-md text-primary"></span>
       </div>
     <% end %>
   </div>

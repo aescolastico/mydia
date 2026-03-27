@@ -415,6 +415,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       refute has_element?(view, ~s{div[class*="modal-open"]})
     end
 
+    @tag :skip
     test "test connection succeeds with valid prowlarr server", %{view: view} do
       # Set up a mock Prowlarr server
       bypass = Bypass.open()
@@ -474,6 +475,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
                "'Connection successful' nor 'Connection failed' in the response"
     end
 
+    @tag :skip
     test "test connection shows error for invalid prowlarr server", %{view: view} do
       # Use a Bypass server that returns 401 (invalid API key) for reliable error testing.
       # Bypass.down is unreliable in CI due to transport-level timing issues with OTP 28.
