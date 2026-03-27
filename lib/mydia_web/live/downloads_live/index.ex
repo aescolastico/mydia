@@ -29,6 +29,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
      |> assign(:search_open_for, nil)
      |> assign(:library_search_value, "")
      |> assign(:library_search_results, [])
+     |> assign(:episodes_by_media_item, %{})
      # Initialize all streams
      |> stream(:downloads, [])
      |> stream(:unmatched_downloads, [])
@@ -43,7 +44,9 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   @impl true
-  def handle_event("switch_tab", %{"tab" => tab}, socket) do
+  @allowed_tabs ~w(queue completed issues)
+
+  def handle_event("switch_tab", %{"tab" => tab}, socket) when tab in @allowed_tabs do
     tab_atom = String.to_existing_atom(tab)
 
     {:noreply,
@@ -404,20 +407,24 @@ defmodule MydiaWeb.DownloadsLive.Index do
   # --- Issues Tab Event Handlers ---
 
   def handle_event("accept_suggestion", params, socket) do
-    %{"download_id" => download_id, "media_item_id" => media_item_id} = params
-    episode_id = Map.get(params, "episode_id")
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      %{"download_id" => download_id, "media_item_id" => media_item_id} = params
+      episode_id = Map.get(params, "episode_id")
 
-    download = Downloads.get_download!(download_id)
+      download = Downloads.get_download!(download_id)
 
-    case Downloads.manually_match_download(download, media_item_id, episode_id) do
-      {:ok, _updated} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Download matched and import queued")
-         |> load_downloads()}
+      case Downloads.manually_match_download(download, media_item_id, episode_id) do
+        {:ok, _updated} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Download matched and import queued")
+           |> load_downloads()}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to match download")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to match download")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
     end
   end
 
@@ -458,87 +465,111 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   def handle_event("select_library_match", params, socket) do
-    %{"download_id" => download_id, "media_item_id" => media_item_id} = params
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      %{"download_id" => download_id, "media_item_id" => media_item_id} = params
 
-    download = Downloads.get_download!(download_id)
+      download = Downloads.get_download!(download_id)
 
-    case Downloads.manually_match_download(download, media_item_id) do
-      {:ok, _updated} ->
-        {:noreply,
-         socket
-         |> assign(:search_open_for, nil)
-         |> assign(:library_search_value, "")
-         |> assign(:library_search_results, [])
-         |> put_flash(:info, "Download matched and import queued")
-         |> load_downloads()}
+      case Downloads.manually_match_download(download, media_item_id) do
+        {:ok, _updated} ->
+          {:noreply,
+           socket
+           |> assign(:search_open_for, nil)
+           |> assign(:library_search_value, "")
+           |> assign(:library_search_results, [])
+           |> put_flash(:info, "Download matched and import queued")
+           |> load_downloads()}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to match download")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to match download")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
     end
   end
 
   def handle_event("refresh_suggestions", %{"id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      download = Downloads.get_download!(download_id)
 
-    case Downloads.refresh_match_suggestions(download) do
-      {:ok, _updated} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Suggestions refreshed")
-         |> load_downloads()}
+      case Downloads.refresh_match_suggestions(download) do
+        {:ok, _updated} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Suggestions refreshed")
+           |> load_downloads()}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to refresh suggestions")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to refresh suggestions")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
     end
   end
 
   def handle_event("resolve_files", %{"download_id" => download_id} = params, socket) do
-    download = Downloads.get_download!(download_id, preload: [:media_item])
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      download = Downloads.get_download!(download_id, preload: [:media_item])
 
-    # Collect episode assignments from form params
-    # Params come as "episode_<index>" => episode_id
-    unresolved_files = get_in(download.metadata || %{}, ["unresolved_files"]) || []
+      # Collect episode assignments from form params
+      # Params come as "episode_<index>" => episode_id
+      unresolved_files = get_in(download.metadata || %{}, ["unresolved_files"]) || []
 
-    mappings =
-      unresolved_files
-      |> Enum.with_index()
-      |> Enum.map(fn {file, idx} ->
-        episode_id = Map.get(params, "episode_#{idx}")
-        %{"path" => file["path"], "episode_id" => episode_id}
-      end)
-      |> Enum.reject(fn m -> is_nil(m["episode_id"]) or m["episode_id"] == "" end)
+      mappings =
+        unresolved_files
+        |> Enum.with_index()
+        |> Enum.map(fn {file, idx} ->
+          episode_id = Map.get(params, "episode_#{idx}")
+          %{"path" => file["path"], "episode_id" => episode_id}
+        end)
+        |> Enum.reject(fn m -> is_nil(m["episode_id"]) or m["episode_id"] == "" end)
 
-    if length(mappings) == length(unresolved_files) do
-      case Downloads.resolve_file_mappings(download, mappings) do
-        {:ok, _updated} ->
-          {:noreply,
-           socket
-           |> put_flash(:info, "Files resolved and import queued")
-           |> load_downloads()}
+      if length(mappings) == length(unresolved_files) do
+        case Downloads.resolve_file_mappings(download, mappings) do
+          {:ok, _updated} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Files resolved and import queued")
+             |> load_downloads()}
 
-        {:error, _} ->
-          {:noreply, put_flash(socket, :error, "Failed to resolve files")}
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Failed to resolve files")}
+        end
+      else
+        {:noreply, put_flash(socket, :error, "Please assign an episode to every file")}
       end
     else
-      {:noreply, put_flash(socket, :error, "Please assign an episode to every file")}
+      {:unauthorized, socket} -> {:noreply, socket}
     end
   end
 
   def handle_event("dismiss_download", %{"id" => id}, socket) do
-    download = Downloads.get_download!(id)
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      download = Downloads.get_download!(id)
 
-    case Downloads.dismiss_download(download) do
-      {:ok, _} ->
-        {:noreply, load_downloads(socket)}
+      case Downloads.dismiss_download(download) do
+        {:ok, _} ->
+          {:noreply, load_downloads(socket)}
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Failed to dismiss download")}
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, "Failed to dismiss download")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
     end
   end
 
   def handle_event("dismiss_all_cancelled", _params, socket) do
-    Downloads.dismiss_all_cancelled()
-    {:noreply, load_downloads(socket)}
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      {count, _} = Downloads.dismiss_all_cancelled()
+
+      {:noreply,
+       socket
+       |> put_flash(:info, "#{count} download(s) dismissed")
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
   end
 
   @impl true
@@ -617,12 +648,23 @@ defmodule MydiaWeb.DownloadsLive.Index do
       other: length(other)
     }
 
+    # Pre-fetch episodes for all unresolved downloads to avoid N+1 queries in template
+    episodes_by_media_item =
+      unresolved
+      |> Enum.filter(& &1.media_item)
+      |> Enum.map(& &1.media_item.id)
+      |> Enum.uniq()
+      |> Enum.into(%{}, fn media_item_id ->
+        {media_item_id, Media.list_episodes(media_item_id)}
+      end)
+
     all_empty = counts.unmatched == 0 and counts.unresolved == 0 and counts.other == 0
 
     socket
     |> assign(:has_more, false)
     |> assign(:downloads_empty?, all_empty)
     |> assign(:issues_counts, counts)
+    |> assign(:episodes_by_media_item, episodes_by_media_item)
     |> stream(:unmatched_downloads, unmatched, reset: true)
     |> stream(:unresolved_downloads, unresolved, reset: true)
     |> stream(:other_issues, other, reset: true)
@@ -701,22 +743,17 @@ defmodule MydiaWeb.DownloadsLive.Index do
   defp format_progress(progress), do: Float.round(progress * 1.0, 1)
 
   defp get_metadata_value(download, key) do
-    # Convert metadata to struct for type-safe access
-    metadata = DownloadMetadata.from_map(download.metadata)
+    metadata_map = download.metadata || %{}
 
-    if metadata do
-      case key do
-        "size" -> metadata.size
-        "seeders" -> metadata.seeders
-        "leechers" -> metadata.leechers
-        "quality" -> metadata.quality
-        "season_pack" -> metadata.season_pack
-        "season_number" -> metadata.season_number
-        "download_protocol" -> metadata.download_protocol
-        _ -> nil
-      end
-    else
-      nil
+    case key do
+      # Keys modeled in DownloadMetadata struct
+      k when k in ~w(size seeders leechers quality season_pack season_number download_protocol) ->
+        metadata = DownloadMetadata.from_map(metadata_map)
+        if metadata, do: Map.get(metadata, String.to_existing_atom(k)), else: nil
+
+      # Raw metadata keys (parsed_info, match_suggestions, unresolved_files, etc.)
+      _ ->
+        Map.get(metadata_map, key)
     end
   end
 
@@ -870,7 +907,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
-  defp get_episodes_for_media_item(media_item) do
-    Media.list_episodes(media_item.id)
+  defp get_episodes_for_media_item(episodes_by_media_item, media_item) do
+    Map.get(episodes_by_media_item, media_item.id, [])
   end
 end

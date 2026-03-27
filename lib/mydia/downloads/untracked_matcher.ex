@@ -136,43 +136,48 @@ defmodule Mydia.Downloads.UntrackedMatcher do
   defp process_untracked_torrent(torrent) do
     Logger.debug("Processing untracked torrent: #{torrent.name}")
 
-    with {:ok, parsed_info} <- TorrentParser.parse(torrent.name),
-         {:ok, match} <- TorrentMatcher.find_match(parsed_info, monitored_only: false),
-         {:ok, download} <- create_download_record(torrent, match, parsed_info) do
-      Logger.info(
-        "Successfully matched and tracked torrent: #{torrent.name} -> #{match.media_item.title}",
-        torrent_id: torrent.id,
-        client: torrent.client_name,
-        media_item_id: match.media_item.id,
-        confidence: match.confidence
-      )
+    # Parse once upfront to avoid re-parsing in error branches
+    parsed_result = TorrentParser.parse(torrent.name)
 
-      {:ok, download}
-    else
+    case parsed_result do
+      {:ok, parsed_info} ->
+        case TorrentMatcher.find_match(parsed_info, monitored_only: false) do
+          {:ok, match} ->
+            case create_download_record(torrent, match, parsed_info) do
+              {:ok, download} ->
+                Logger.info(
+                  "Successfully matched and tracked torrent: #{torrent.name} -> #{match.media_item.title}",
+                  torrent_id: torrent.id,
+                  client: torrent.client_name,
+                  media_item_id: match.media_item.id,
+                  confidence: match.confidence
+                )
+
+                {:ok, download}
+
+              {:error, reason} ->
+                Logger.warning("Failed to create download record: #{inspect(reason)}",
+                  torrent_name: torrent.name
+                )
+
+                {:error, reason}
+            end
+
+          {:error, reason} when reason in [:no_match_found, :episode_not_found] ->
+            Logger.debug("No library match for torrent (#{reason}): #{torrent.name}")
+            create_unmatched_download(torrent, parsed_info)
+
+          {:error, reason} ->
+            Logger.warning("Failed to match torrent: #{inspect(reason)}",
+              torrent_name: torrent.name
+            )
+
+            {:error, reason}
+        end
+
       {:error, :unable_to_parse} ->
         Logger.debug("Unable to parse torrent name: #{torrent.name}")
         create_unmatched_download(torrent, nil)
-
-      {:error, :no_match_found} ->
-        # Re-parse to get parsed_info for the unmatched record
-        case TorrentParser.parse(torrent.name) do
-          {:ok, parsed_info} ->
-            Logger.debug("No library match found for torrent: #{torrent.name}")
-            create_unmatched_download(torrent, parsed_info)
-
-          _ ->
-            create_unmatched_download(torrent, nil)
-        end
-
-      {:error, :episode_not_found} ->
-        case TorrentParser.parse(torrent.name) do
-          {:ok, parsed_info} ->
-            Logger.debug("Episode not found in library for torrent: #{torrent.name}")
-            create_unmatched_download(torrent, parsed_info)
-
-          _ ->
-            create_unmatched_download(torrent, nil)
-        end
 
       {:error, reason} ->
         Logger.warning("Failed to process untracked torrent: #{inspect(reason)}",
@@ -215,7 +220,9 @@ defmodule Mydia.Downloads.UntrackedMatcher do
         try do
           TorrentMatcher.find_top_candidates(parsed_info, max_results: 3, monitored_only: false)
         rescue
-          _ -> []
+          e ->
+            Logger.warning("Failed to find match candidates: #{inspect(e)}")
+            []
         end
       else
         []

@@ -19,17 +19,18 @@ defmodule MydiaWeb.Live.Components.LibrarySearchForm do
   def library_search_form(assigns) do
     ~H"""
     <div class="relative mt-2">
-      <input
-        type="text"
-        name="library_search"
-        value={@search_value}
-        class="input input-bordered input-sm w-full"
-        phx-change={@on_search}
-        phx-debounce="300"
-        autocomplete="off"
-        placeholder={@placeholder}
-        phx-value-download_id={@download_id}
-      />
+      <form id={"library-search-form-#{@download_id}"} phx-change={@on_search}>
+        <input type="hidden" name="download_id" value={@download_id} />
+        <input
+          type="text"
+          name="library_search"
+          value={@search_value}
+          class="input input-bordered input-sm w-full"
+          phx-debounce="300"
+          autocomplete="off"
+          placeholder={@placeholder}
+        />
+      </form>
       <%= if @search_results != [] do %>
         <div class="absolute z-10 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
           <%= for item <- @search_results do %>

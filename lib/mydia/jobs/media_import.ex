@@ -218,7 +218,10 @@ defmodule Mydia.Jobs.MediaImport do
 
             # Mark download as imported instead of deleting
             # This allows the download to appear in the Completed tab
-            case Downloads.update_download(updated_download, %{imported_at: DateTime.utc_now()}) do
+            case Downloads.update_download(updated_download, %{
+                   imported_at: DateTime.utc_now(),
+                   match_status: nil
+                 }) do
               {:ok, _updated} ->
                 Logger.info("Download marked as imported",
                   download_id: download.id
@@ -303,15 +306,24 @@ defmodule Mydia.Jobs.MediaImport do
       errors = Enum.filter(results, &match?({:error, _}, &1))
 
       if errors == [] do
-        # All targeted files imported, mark download as fully imported
+        # All targeted files imported — clear match_status and unresolved_files metadata
+        current_metadata = download.metadata || %{}
+        cleaned_metadata = Map.delete(current_metadata, "unresolved_files")
+
         Downloads.update_download(download, %{
           imported_at: DateTime.utc_now(),
-          match_status: nil
+          match_status: nil,
+          metadata: cleaned_metadata
         })
 
         MediaServerNotifier.notify_all()
         {:ok, :imported}
       else
+        Logger.warning("Partial targeted import failure",
+          download_id: download.id,
+          error_count: length(errors)
+        )
+
         {:error, :partial_import}
       end
     end

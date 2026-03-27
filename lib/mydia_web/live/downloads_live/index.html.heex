@@ -496,8 +496,8 @@
                 <% unresolved_files = get_metadata_value(download, "unresolved_files") || [] %>
                 <%= if unresolved_files != [] do %>
                   <form
+                    id={"resolve-files-form-#{download.id}"}
                     phx-submit="resolve_files"
-                    phx-value-download_id={download.id}
                     class="mt-3 space-y-2"
                   >
                     <input type="hidden" name="download_id" value={download.id} />
@@ -526,7 +526,11 @@
                           <option value="">Select episode...</option>
                           <%!-- Episodes will be populated based on the media item --%>
                           <%= if download.media_item do %>
-                            <% episodes = get_episodes_for_media_item(download.media_item) %>
+                            <% episodes =
+                              get_episodes_for_media_item(
+                                @episodes_by_media_item,
+                                download.media_item
+                              ) %>
                             <%= for episode <- episodes do %>
                               <option value={episode.id}>
                                 S{String.pad_leading("#{episode.season_number}", 2, "0")}E{String.pad_leading(
