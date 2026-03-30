@@ -204,6 +204,36 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
                     class="toggle toggle-secondary toggle-sm"
                   />
                 </div>
+
+                <%!-- Write NFO Toggle (only for movies/series/mixed) --%>
+                <%= if to_string(@library_path_form[:type].value) in ["movies", "series", "mixed"] do %>
+                  <div class="flex items-center justify-between bg-base-200 rounded-lg px-4 py-3">
+                    <div class="flex items-center gap-3">
+                      <.icon
+                        name="hero-document-text"
+                        class="w-4 h-4 text-base-content/60"
+                      />
+                      <div>
+                        <span class="text-sm font-medium">Write NFO Files</span>
+                        <p class="text-xs text-base-content/50">
+                          Jellyfin/Kodi metadata files
+                        </p>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      name={@library_path_form[:write_nfo].name}
+                      value="true"
+                      checked={
+                        Phoenix.HTML.Form.normalize_value(
+                          "checkbox",
+                          @library_path_form[:write_nfo].value
+                        )
+                      }
+                      class="toggle toggle-accent toggle-sm"
+                    />
+                  </div>
+                <% end %>
               </div>
             </div>
 
