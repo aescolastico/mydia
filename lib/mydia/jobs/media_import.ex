@@ -235,6 +235,11 @@ defmodule Mydia.Jobs.MediaImport do
             end
           end
 
+          # Write NFO metadata files if enabled for this library path
+          if download.media_item_id do
+            Mydia.Metadata.NfoWriter.maybe_write_nfos(download.media_item_id)
+          end
+
           # Notify media servers (Plex, Jellyfin) to scan for new content
           # This is fire-and-forget (async) - errors won't affect import success
           MediaServerNotifier.notify_all()

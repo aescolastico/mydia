@@ -379,6 +379,8 @@ defmodule Mydia.Library do
           case File.rm(absolute_path) do
             :ok ->
               Logger.info("Deleted media file from disk", path: absolute_path)
+              # Also remove the associated NFO file if it exists
+              Mydia.Metadata.NfoWriter.delete_nfo_for_file(absolute_path)
               :ok
 
             {:error, reason} ->

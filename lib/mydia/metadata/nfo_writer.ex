@@ -14,10 +14,72 @@ defmodule Mydia.Metadata.NfoWriter do
   require Logger
 
   alias Mydia.Library.MediaFile
+  alias Mydia.Media
   alias Mydia.Media.MediaItem
   alias Mydia.Metadata.Structs.MediaMetadata
   alias Mydia.Settings.LibraryPath
   alias Mydia.Library.PathParser
+
+  @doc """
+  Loads a media item with all needed preloads and writes NFO files for each
+  library path that has `write_nfo` enabled.
+
+  This is the main entry point for pipeline hooks. It handles:
+  - Loading the media item with metadata, episodes, and media files
+  - Finding which library paths have NFO export enabled
+  - Writing NFO files for each enabled library path
+
+  Always returns `:ok` - failures are logged as warnings.
+  """
+  @spec maybe_write_nfos(binary()) :: :ok
+  def maybe_write_nfos(media_item_id) do
+    media_item =
+      Media.get_media_item!(media_item_id,
+        preload: [:episodes, media_files: :library_path]
+      )
+
+    if is_nil(media_item.metadata) do
+      :ok
+    else
+      # Find unique library paths that have write_nfo enabled
+      library_paths =
+        media_item.media_files
+        |> Enum.filter(&(not is_nil(&1.library_path) and is_nil(&1.trashed_at)))
+        |> Enum.map(& &1.library_path)
+        |> Enum.uniq_by(& &1.id)
+        |> Enum.filter(& &1.write_nfo)
+
+      Enum.each(library_paths, fn library_path ->
+        write_for_media_item(media_item, library_path)
+      end)
+    end
+  rescue
+    e ->
+      Logger.warning("NFO export failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  @doc """
+  Deletes the NFO file associated with a media file, if it exists.
+  """
+  @spec delete_nfo_for_file(String.t()) :: :ok
+  def delete_nfo_for_file(absolute_path) when is_binary(absolute_path) do
+    nfo_path = Path.rootname(absolute_path) <> ".nfo"
+
+    if File.exists?(nfo_path) do
+      case File.rm(nfo_path) do
+        :ok ->
+          Logger.info("Deleted NFO file", path: nfo_path)
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Failed to delete NFO file #{nfo_path}: #{inspect(reason)}")
+          :ok
+      end
+    else
+      :ok
+    end
+  end
 
   @doc """
   Writes NFO files for a media item and all its associated files in a given library path.

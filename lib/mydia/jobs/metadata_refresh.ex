@@ -201,6 +201,9 @@ defmodule Mydia.Jobs.MetadataRefresh do
                 Media.refresh_episodes_for_tv_show(updated_item)
               end
 
+              # Regenerate NFO files if enabled for any library path
+              Mydia.Metadata.NfoWriter.maybe_write_nfos(updated_item.id)
+
               :ok
 
             {:error, changeset} ->
