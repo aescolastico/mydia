@@ -99,14 +99,7 @@ defmodule Mix.Tasks.Mydia.NfoExport do
   end
 
   defp get_library_paths(id, _export_all) do
-    case Settings.get_library_path!(id) do
-      nil ->
-        Mix.shell().error("Library path #{id} not found")
-        []
-
-      lp ->
-        [lp]
-    end
+    [Settings.get_library_path!(id)]
   rescue
     Ecto.NoResultsError ->
       Mix.shell().error("Library path #{id} not found")
@@ -124,53 +117,35 @@ defmodule Mix.Tasks.Mydia.NfoExport do
       |> distinct(true)
       |> Repo.all()
 
-    Enum.reduce(media_item_ids, %{written: 0, skipped: 0, errors: 0}, fn media_item_id, acc ->
-      media_item =
+    # Batch-load media items in chunks to avoid N+1 queries
+    media_item_ids
+    |> Enum.chunk_every(100)
+    |> Enum.reduce(%{written: 0, skipped: 0, errors: 0}, fn batch_ids, acc ->
+      media_items =
         MediaItem
-        |> Repo.get!(media_item_id)
+        |> where([m], m.id in ^batch_ids)
+        |> Repo.all()
         |> Repo.preload([:episodes, media_files: :library_path])
 
-      if is_nil(media_item.metadata) do
-        %{acc | skipped: acc.skipped + 1}
-      else
-        if dry_run do
-          count = count_nfo_files(media_item, library_path)
-          Mix.shell().info("  [dry-run] #{media_item.title} - #{count} NFO file(s)")
-          %{acc | written: acc.written + count}
-        else
-          case NfoWriter.write_for_media_item(media_item, library_path) do
-            :ok ->
-              count = count_nfo_files(media_item, library_path)
-              %{acc | written: acc.written + count}
-
-            {:error, _reason} ->
-              %{acc | errors: acc.errors + 1}
-          end
-        end
-      end
+      Enum.reduce(media_items, acc, fn media_item, inner_acc ->
+        process_media_item(media_item, library_path, dry_run, inner_acc)
+      end)
     end)
   end
 
-  defp count_nfo_files(media_item, library_path) do
-    active_files =
-      media_item.media_files
-      |> Enum.filter(fn mf ->
-        is_nil(mf.trashed_at) and mf.library_path_id == library_path.id and
-          not is_nil(mf.relative_path)
-      end)
+  defp process_media_item(media_item, library_path, dry_run, acc) do
+    if is_nil(media_item.metadata) do
+      %{acc | skipped: acc.skipped + 1}
+    else
+      count = NfoWriter.count_nfo_files(media_item, library_path)
 
-    case media_item.type do
-      "movie" ->
-        length(active_files)
-
-      "tv_show" ->
-        # 1 tvshow.nfo + N episode NFOs + M season NFOs
-        episode_count = length(active_files)
-        season_count = length(NfoWriter.detect_season_folders(active_files, library_path))
-        1 + episode_count + season_count
-
-      _ ->
-        0
+      if dry_run do
+        Mix.shell().info("  [dry-run] #{media_item.title} - #{count} NFO file(s)")
+        %{acc | written: acc.written + count}
+      else
+        NfoWriter.write_for_media_item(media_item, library_path)
+        %{acc | written: acc.written + count}
+      end
     end
   end
 end

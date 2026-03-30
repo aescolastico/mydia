@@ -1036,7 +1036,7 @@ defmodule Mydia.Media do
           case update_media_item(media_item, attrs, reason: "Metadata refreshed from provider") do
             {:ok, updated_item} = result ->
               # Regenerate NFO files if enabled for any library path
-              Mydia.Metadata.NfoWriter.maybe_write_nfos(updated_item.id)
+              Mydia.Metadata.NfoWriter.maybe_write_nfos(updated_item)
               result
 
             error ->

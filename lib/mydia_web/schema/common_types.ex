@@ -121,6 +121,9 @@ defmodule MydiaWeb.Schema.CommonTypes do
     field :last_scan_at, :datetime, description: "Last scan timestamp"
     field :auto_organize, non_null(:boolean), description: "Whether auto-organization is enabled"
     field :auto_import, non_null(:boolean), description: "Whether auto-import is enabled"
+
+    field :write_nfo, non_null(:boolean),
+      description: "Whether NFO files are written alongside media"
   end
 
   @desc "Result of toggling favorite status"

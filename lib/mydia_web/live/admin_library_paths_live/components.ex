@@ -108,6 +108,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
             </div>
             <label class="label cursor-pointer gap-2">
               <span class="label-text text-sm">Monitored</span>
+              <input type="hidden" name={@library_path_form[:monitored].name} value="false" />
               <input
                 type="checkbox"
                 name={@library_path_form[:monitored].name}
@@ -168,6 +169,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
                       <p class="text-xs text-base-content/50">Import new files automatically</p>
                     </div>
                   </div>
+                  <input type="hidden" name={@library_path_form[:auto_import].name} value="false" />
                   <input
                     type="checkbox"
                     name={@library_path_form[:auto_import].name}
@@ -191,6 +193,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
                       <p class="text-xs text-base-content/50">Sort into category folders</p>
                     </div>
                   </div>
+                  <input type="hidden" name={@library_path_form[:auto_organize].name} value="false" />
                   <input
                     type="checkbox"
                     name={@library_path_form[:auto_organize].name}
@@ -220,6 +223,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
                         </p>
                       </div>
                     </div>
+                    <input type="hidden" name={@library_path_form[:write_nfo].name} value="false" />
                     <input
                       type="checkbox"
                       name={@library_path_form[:write_nfo].name}

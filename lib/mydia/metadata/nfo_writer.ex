@@ -21,27 +21,41 @@ defmodule Mydia.Metadata.NfoWriter do
   alias Mydia.Library.PathParser
 
   @doc """
-  Loads a media item with all needed preloads and writes NFO files for each
-  library path that has `write_nfo` enabled.
+  Writes NFO files for a media item across all library paths with `write_nfo` enabled.
 
-  This is the main entry point for pipeline hooks. It handles:
-  - Loading the media item with metadata, episodes, and media files
-  - Finding which library paths have NFO export enabled
-  - Writing NFO files for each enabled library path
+  Accepts either a pre-loaded `%MediaItem{}` struct or a media item ID string.
+  When a struct is passed, it will be preloaded if needed (avoiding redundant DB loads
+  when callers already have the data). When an ID is passed, the full item is loaded.
 
   Always returns `:ok` - failures are logged as warnings.
   """
-  @spec maybe_write_nfos(binary()) :: :ok
-  def maybe_write_nfos(media_item_id) do
+  @spec maybe_write_nfos(MediaItem.t() | binary()) :: :ok
+  def maybe_write_nfos(%MediaItem{} = media_item) do
+    media_item = Mydia.Repo.preload(media_item, [:episodes, media_files: :library_path])
+    do_write_nfos(media_item)
+  rescue
+    e ->
+      Logger.warning("NFO export failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  def maybe_write_nfos(media_item_id) when is_binary(media_item_id) do
     media_item =
       Media.get_media_item!(media_item_id,
         preload: [:episodes, media_files: :library_path]
       )
 
+    do_write_nfos(media_item)
+  rescue
+    e ->
+      Logger.warning("NFO export failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  defp do_write_nfos(media_item) do
     if is_nil(media_item.metadata) do
       :ok
     else
-      # Find unique library paths that have write_nfo enabled
       library_paths =
         media_item.media_files
         |> Enum.filter(&(not is_nil(&1.library_path) and is_nil(&1.trashed_at)))
@@ -53,10 +67,6 @@ defmodule Mydia.Metadata.NfoWriter do
         write_for_media_item(media_item, library_path)
       end)
     end
-  rescue
-    e ->
-      Logger.warning("NFO export failed: #{Exception.message(e)}")
-      :ok
   end
 
   @doc """
@@ -107,10 +117,7 @@ defmodule Mydia.Metadata.NfoWriter do
     end
   end
 
-  @doc """
-  Writes `<filename>.nfo` for each movie file.
-  """
-  def write_movie_nfos(%MediaItem{} = media_item, media_files, _library_path) do
+  defp write_movie_nfos(%MediaItem{} = media_item, media_files, _library_path) do
     xml = generate_movie_xml(media_item)
 
     Enum.each(media_files, fn media_file ->
@@ -125,10 +132,7 @@ defmodule Mydia.Metadata.NfoWriter do
     end)
   end
 
-  @doc """
-  Writes tvshow.nfo, season.nfo files, and episode NFOs for a TV show.
-  """
-  def write_tv_show_nfos(%MediaItem{} = media_item, media_files, %LibraryPath{} = library_path) do
+  defp write_tv_show_nfos(%MediaItem{} = media_item, media_files, %LibraryPath{} = library_path) do
     # Write tvshow.nfo in the show root directory
     case derive_show_root(media_files, library_path) do
       nil ->
@@ -151,10 +155,7 @@ defmodule Mydia.Metadata.NfoWriter do
     write_episode_nfos(media_item, media_files)
   end
 
-  @doc """
-  Writes `<filename>.nfo` for each episode file.
-  """
-  def write_episode_nfos(%MediaItem{} = media_item, media_files) do
+  defp write_episode_nfos(%MediaItem{} = media_item, media_files) do
     # Build a lookup of episodes by ID for quick access
     episodes_by_id =
       case media_item.episodes do
@@ -362,6 +363,20 @@ defmodule Mydia.Metadata.NfoWriter do
       end
     end)
     |> Enum.uniq_by(fn {season_number, _path} -> season_number end)
+  end
+
+  @doc """
+  Counts the number of NFO files that would be written for a media item in a library path.
+  """
+  @spec count_nfo_files(MediaItem.t(), LibraryPath.t()) :: non_neg_integer()
+  def count_nfo_files(%MediaItem{} = media_item, %LibraryPath{} = library_path) do
+    files = get_active_media_files(media_item, library_path)
+
+    case media_item.type do
+      "movie" -> length(files)
+      "tv_show" -> 1 + length(files) + length(detect_season_folders(files, library_path))
+      _ -> 0
+    end
   end
 
   # Private helpers

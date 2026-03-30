@@ -18,6 +18,7 @@ defmodule Mydia.Jobs.MetadataRefresh do
 
   require Logger
   alias Mydia.{Media, Metadata}
+  alias Mydia.Metadata.NfoWriter
 
   defmodule Args do
     @moduledoc false
@@ -202,7 +203,7 @@ defmodule Mydia.Jobs.MetadataRefresh do
               end
 
               # Regenerate NFO files if enabled for any library path
-              Mydia.Metadata.NfoWriter.maybe_write_nfos(updated_item.id)
+              NfoWriter.maybe_write_nfos(updated_item)
 
               :ok
 
