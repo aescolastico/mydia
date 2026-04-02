@@ -736,25 +736,59 @@ defmodule Mydia.Jobs.TVShowSearch do
             )
 
           # If season pack processing failed, fall back to individual episodes
+          # But if it's a duplicate (already downloading), skip entirely
           case result do
-            :ok -> new_count
-            _ -> search_individual_episodes(episodes, new_count, args)
+            :ok ->
+              new_count
+
+            {:error, :duplicate_download} ->
+              Logger.info(
+                "Season pack already downloading, skipping individual episode search",
+                media_item_id: media_item.id,
+                title: media_item.title,
+                season_number: season_number
+              )
+
+              new_count
+
+            :no_results ->
+              search_individual_episodes(episodes, new_count, args)
+
+            {:error, _reason} ->
+              search_individual_episodes(episodes, new_count, args)
           end
         end
     end
   end
 
-  defp filter_season_packs(results, season_number) do
+  # Checks if a release title looks like a season pack (has season marker but no episode marker)
+  defp season_pack?(result_title, season_number) do
     season_marker = "S#{String.pad_leading("#{season_number}", 2, "0")}"
-    episode_marker_regex = ~r/E\d{2}/i
+    title_upper = String.upcase(result_title)
 
-    Enum.filter(results, fn result ->
-      title_upper = String.upcase(result.title)
+    String.contains?(title_upper, season_marker) and
+      not Regex.match?(~r/E\d{2}/i, title_upper)
+  end
 
-      # Must contain the season marker and NOT contain any episode markers
-      String.contains?(title_upper, season_marker) and
-        not Regex.match?(episode_marker_regex, title_upper)
-    end)
+  defp filter_season_packs(results, season_number) do
+    Enum.filter(results, &season_pack?(&1.title, season_number))
+  end
+
+  # Reject results that look like season packs from individual episode searches
+  defp reject_season_packs(results, season_number) do
+    episode_results = Enum.reject(results, &season_pack?(&1.title, season_number))
+
+    filtered_count = length(results) - length(episode_results)
+
+    if filtered_count > 0 do
+      Logger.info("Filtered #{filtered_count} season pack results from episode search",
+        season_number: season_number,
+        season_packs_filtered: filtered_count,
+        episode_results_remaining: length(episode_results)
+      )
+    end
+
+    episode_results
   end
 
   # Build filter stats for season pack filtering (results rejected because they're individual episodes)
@@ -1033,6 +1067,28 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   defp process_episode_results(episode, results, args, query) do
+    # Filter out season packs — individual episode searches should not grab full season downloads
+    episode_results = reject_season_packs(results, episode.season_number)
+
+    if episode_results == [] do
+      Logger.warning("All results were season packs, no episode-specific results",
+        episode_id: episode.id,
+        show: episode.media_item.title,
+        season: episode.season_number,
+        episode: episode.episode_number,
+        total_results: length(results)
+      )
+
+      # Record backoff — no suitable results for this episode
+      record_episode_backoff(episode, "all_season_packs")
+
+      :ok
+    else
+      process_ranked_episode_results(episode, episode_results, args, query)
+    end
+  end
+
+  defp process_ranked_episode_results(episode, results, args, query) do
     ranking_opts = build_ranking_options(episode, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -1731,13 +1787,27 @@ defmodule Mydia.Jobs.TVShowSearch do
             )
 
           # If season pack processing failed, fall back to individual episodes
+          # But if it's a duplicate (already downloading), skip entirely
           case result do
             :ok ->
               {new_count, %{results_found: length(results), downloads_initiated: 1}}
 
-            _ ->
+            {:error, :duplicate_download} ->
+              Logger.info(
+                "Season pack already downloading, skipping individual episode search",
+                media_item_id: media_item.id,
+                title: media_item.title,
+                season_number: season_number
+              )
+
+              {new_count, %{results_found: length(results), downloads_initiated: 0}}
+
+            :no_results ->
               {count, ep_stats} = search_individual_episodes_with_stats(episodes, new_count, args)
-              # Add the season pack results to the stats
+              {count, %{ep_stats | results_found: ep_stats.results_found + length(results)}}
+
+            {:error, _reason} ->
+              {count, ep_stats} = search_individual_episodes_with_stats(episodes, new_count, args)
               {count, %{ep_stats | results_found: ep_stats.results_found + length(results)}}
           end
         end
