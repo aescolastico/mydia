@@ -632,4 +632,183 @@ defmodule Mydia.Jobs.TVShowSearchTest do
                perform_job(TVShowSearch, %{"mode" => "invalid_mode"})
     end
   end
+
+  describe "season pack filtering in episode search" do
+    test "filters out season pack results when searching for individual episodes",
+         %{bypass: bypass} do
+      # Override mock to return only season pack results (no episode markers)
+      IndexerMock.mock_prowlarr_search(bypass,
+        results: [
+          IndexerMock.season_pack_result(%{title: "Test Show", season: 1, seeders: 200}),
+          IndexerMock.season_pack_result(%{
+            title: "Test Show",
+            season: 1,
+            quality: "720p",
+            seeders: 150
+          })
+        ]
+      )
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+
+      episode =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 3,
+          air_date: ~D[2020-01-15]
+        })
+
+      # Should return :ok but no download initiated (all results were season packs)
+      assert :ok =
+               perform_job(TVShowSearch, %{
+                 "mode" => "specific",
+                 "episode_id" => episode.id
+               })
+
+      # Verify no downloads were created
+      import Ecto.Query
+      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+      assert downloads == []
+    end
+
+    test "selects episode results over season packs in mixed results",
+         %{bypass: bypass} do
+      # Override mock to return mix of episode and season pack results
+      IndexerMock.mock_prowlarr_search(bypass,
+        results: [
+          # Season pack with high seeders (would normally score higher)
+          IndexerMock.season_pack_result(%{title: "Test Show", season: 1, seeders: 500}),
+          # Individual episode with lower seeders (should be selected after filtering)
+          IndexerMock.tv_episode_result(%{
+            title: "Test Show",
+            season: 1,
+            episode: 3,
+            seeders: 50
+          })
+        ]
+      )
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+
+      episode =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 3,
+          air_date: ~D[2020-01-15]
+        })
+
+      assert :ok =
+               perform_job(TVShowSearch, %{
+                 "mode" => "specific",
+                 "episode_id" => episode.id
+               })
+
+      # Verify a download was created with the episode result, not the season pack
+      import Ecto.Query
+      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+      assert length(downloads) == 1
+      download = hd(downloads)
+      assert download.episode_id == episode.id
+      # Title should contain episode marker (E03), not be a season pack
+      assert String.contains?(download.title, "E03")
+    end
+
+    test "does not filter multi-episode packs (they contain episode markers)",
+         %{bypass: bypass} do
+      # Override mock with a multi-episode release (has E marker, should pass filter)
+      IndexerMock.mock_prowlarr_search(bypass,
+        results: [
+          %{
+            title: "Test.Show.S01E01-E03.1080p.WEB-DL.x264-GROUP",
+            size: 5_000_000_000,
+            seeders: 100,
+            leechers: 10,
+            indexer: "Test Indexer",
+            category: 5000,
+            protocol: "torrent"
+          }
+        ]
+      )
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+
+      episode =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: ~D[2020-01-08]
+        })
+
+      assert :ok =
+               perform_job(TVShowSearch, %{
+                 "mode" => "specific",
+                 "episode_id" => episode.id
+               })
+
+      # Multi-episode pack should NOT be filtered — it has an E marker
+      import Ecto.Query
+      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+      assert length(downloads) == 1
+      download = hd(downloads)
+      assert String.contains?(download.title, "S01E01-E03")
+    end
+  end
+
+  describe "season pack duplicate download fallback" do
+    test "does not fall back to individual episodes when season pack is already downloading",
+         %{bypass: bypass} do
+      # Mock returns a season pack result for season search
+      IndexerMock.mock_prowlarr_search(bypass,
+        results: [
+          IndexerMock.season_pack_result(%{title: "Dupe Test Show", season: 1, seeders: 100})
+        ]
+      )
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Dupe Test Show"})
+
+      # Create enough missing episodes to trigger season pack preference (>= 70%)
+      episodes =
+        for ep_num <- 1..5 do
+          episode_fixture(%{
+            media_item_id: tv_show.id,
+            season_number: 1,
+            episode_number: ep_num,
+            air_date: Date.add(~D[2020-01-01], ep_num * 7)
+          })
+        end
+
+      # First search — should download the season pack
+      assert :ok =
+               perform_job(TVShowSearch, %{
+                 "mode" => "season",
+                 "media_item_id" => tv_show.id,
+                 "season_number" => 1
+               })
+
+      import Ecto.Query
+
+      downloads_after_first =
+        Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.media_item_id == ^tv_show.id))
+
+      first_count = length(downloads_after_first)
+
+      # Second search — season pack is already active, should NOT fall back
+      # to individual episode downloads
+      assert :ok =
+               perform_job(TVShowSearch, %{
+                 "mode" => "season",
+                 "media_item_id" => tv_show.id,
+                 "season_number" => 1
+               })
+
+      downloads_after_second =
+        Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.media_item_id == ^tv_show.id))
+
+      # No new downloads should be created
+      assert length(downloads_after_second) == first_count
+    end
+  end
 end
