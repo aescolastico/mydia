@@ -634,14 +634,15 @@ defmodule Mydia.Jobs.TVShowSearchTest do
   end
 
   describe "season pack filtering in episode search" do
-    test "filters out season pack results when searching for individual episodes",
-         %{bypass: bypass} do
-      # Override mock to return only season pack results (no episode markers)
-      IndexerMock.mock_prowlarr_search(bypass,
+    test "filters out season pack results when searching for individual episodes" do
+      # Use a dedicated Bypass to avoid async test interference
+      bypass = Bypass.open()
+
+      IndexerMock.mock_prowlarr_all(bypass,
         results: [
-          IndexerMock.season_pack_result(%{title: "Test Show", season: 1, seeders: 200}),
+          IndexerMock.season_pack_result(%{title: "PackOnly Show", season: 1, seeders: 200}),
           IndexerMock.season_pack_result(%{
-            title: "Test Show",
+            title: "PackOnly Show",
             season: 1,
             quality: "720p",
             seeders: 150
@@ -649,7 +650,16 @@ defmodule Mydia.Jobs.TVShowSearchTest do
         ]
       )
 
-      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+      {:ok, _indexer} =
+        Settings.create_indexer_config(%{
+          name: "Season Pack Filter Test Indexer",
+          type: :prowlarr,
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-key",
+          enabled: true
+        })
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "PackOnly Show"})
 
       episode =
         episode_fixture(%{
@@ -666,22 +676,25 @@ defmodule Mydia.Jobs.TVShowSearchTest do
                  "episode_id" => episode.id
                })
 
-      # Verify no downloads were created
+      # Verify no downloads were created for this episode
       import Ecto.Query
-      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+
+      downloads =
+        Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.episode_id == ^episode.id))
+
       assert downloads == []
     end
 
-    test "selects episode results over season packs in mixed results",
-         %{bypass: bypass} do
-      # Override mock to return mix of episode and season pack results
-      IndexerMock.mock_prowlarr_search(bypass,
+    test "selects episode results over season packs in mixed results" do
+      bypass = Bypass.open()
+
+      IndexerMock.mock_prowlarr_all(bypass,
         results: [
           # Season pack with high seeders (would normally score higher)
-          IndexerMock.season_pack_result(%{title: "Test Show", season: 1, seeders: 500}),
+          IndexerMock.season_pack_result(%{title: "MixedResult Show", season: 1, seeders: 500}),
           # Individual episode with lower seeders (should be selected after filtering)
           IndexerMock.tv_episode_result(%{
-            title: "Test Show",
+            title: "MixedResult Show",
             season: 1,
             episode: 3,
             seeders: 50
@@ -689,7 +702,16 @@ defmodule Mydia.Jobs.TVShowSearchTest do
         ]
       )
 
-      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+      {:ok, _indexer} =
+        Settings.create_indexer_config(%{
+          name: "Mixed Results Test Indexer",
+          type: :prowlarr,
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-key",
+          enabled: true
+        })
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "MixedResult Show"})
 
       episode =
         episode_fixture(%{
@@ -707,21 +729,23 @@ defmodule Mydia.Jobs.TVShowSearchTest do
 
       # Verify a download was created with the episode result, not the season pack
       import Ecto.Query
-      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+
+      downloads =
+        Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.episode_id == ^episode.id))
+
       assert length(downloads) == 1
       download = hd(downloads)
-      assert download.episode_id == episode.id
       # Title should contain episode marker (E03), not be a season pack
       assert String.contains?(download.title, "E03")
     end
 
-    test "does not filter multi-episode packs (they contain episode markers)",
-         %{bypass: bypass} do
-      # Override mock with a multi-episode release (has E marker, should pass filter)
-      IndexerMock.mock_prowlarr_search(bypass,
+    test "does not filter multi-episode packs (they contain episode markers)" do
+      bypass = Bypass.open()
+
+      IndexerMock.mock_prowlarr_all(bypass,
         results: [
           %{
-            title: "Test.Show.S01E01-E03.1080p.WEB-DL.x264-GROUP",
+            title: "MultiEp.Show.S01E01-E03.1080p.WEB-DL.x264-GROUP",
             size: 5_000_000_000,
             seeders: 100,
             leechers: 10,
@@ -732,7 +756,16 @@ defmodule Mydia.Jobs.TVShowSearchTest do
         ]
       )
 
-      tv_show = media_item_fixture(%{type: "tv_show", title: "Test Show"})
+      {:ok, _indexer} =
+        Settings.create_indexer_config(%{
+          name: "Multi-Episode Test Indexer",
+          type: :prowlarr,
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-key",
+          enabled: true
+        })
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "MultiEp Show"})
 
       episode =
         episode_fixture(%{
@@ -750,7 +783,10 @@ defmodule Mydia.Jobs.TVShowSearchTest do
 
       # Multi-episode pack should NOT be filtered — it has an E marker
       import Ecto.Query
-      downloads = Mydia.Repo.all(from(d in Mydia.Downloads.Download))
+
+      downloads =
+        Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.episode_id == ^episode.id))
+
       assert length(downloads) == 1
       download = hd(downloads)
       assert String.contains?(download.title, "S01E01-E03")
@@ -758,19 +794,28 @@ defmodule Mydia.Jobs.TVShowSearchTest do
   end
 
   describe "season pack duplicate download fallback" do
-    test "does not fall back to individual episodes when season pack is already downloading",
-         %{bypass: bypass} do
-      # Mock returns a season pack result for season search
-      IndexerMock.mock_prowlarr_search(bypass,
+    test "does not fall back to individual episodes when season pack is already downloading" do
+      bypass = Bypass.open()
+
+      IndexerMock.mock_prowlarr_all(bypass,
         results: [
-          IndexerMock.season_pack_result(%{title: "Dupe Test Show", season: 1, seeders: 100})
+          IndexerMock.season_pack_result(%{title: "DupePack Show", season: 1, seeders: 100})
         ]
       )
 
-      tv_show = media_item_fixture(%{type: "tv_show", title: "Dupe Test Show"})
+      {:ok, _indexer} =
+        Settings.create_indexer_config(%{
+          name: "Dupe Fallback Test Indexer",
+          type: :prowlarr,
+          base_url: "http://localhost:#{bypass.port}",
+          api_key: "test-key",
+          enabled: true
+        })
+
+      tv_show = media_item_fixture(%{type: "tv_show", title: "DupePack Show"})
 
       # Create enough missing episodes to trigger season pack preference (>= 70%)
-      episodes =
+      _episodes =
         for ep_num <- 1..5 do
           episode_fixture(%{
             media_item_id: tv_show.id,
