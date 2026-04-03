@@ -493,4 +493,38 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
   end
 
   def parse_optional_float(_), do: nil
+
+  # Available categories by media type
+  def available_categories_for("movie") do
+    [
+      {"Movie", "movie"},
+      {"Anime Movie", "anime_movie"},
+      {"Cartoon Movie", "cartoon_movie"}
+    ]
+  end
+
+  def available_categories_for("tv_show") do
+    [
+      {"TV Show", "tv_show"},
+      {"Anime Series", "anime_series"},
+      {"Cartoon Series", "cartoon_series"}
+    ]
+  end
+
+  def available_categories_for(_), do: []
+
+  # Navigation paths by media type
+  def media_type_path("movie"), do: "/movies"
+  def media_type_path("tv_show"), do: "/tv"
+  def media_type_path(_), do: "/"
+
+  # Monitoring preset labels (shared between events and components)
+  def monitoring_preset_label(nil), do: "All Episodes"
+  def monitoring_preset_label(:all), do: "All Episodes"
+  def monitoring_preset_label(:future), do: "Future Episodes"
+  def monitoring_preset_label(:missing), do: "Missing Episodes"
+  def monitoring_preset_label(:existing), do: "Existing Episodes"
+  def monitoring_preset_label(:first_season), do: "First Season"
+  def monitoring_preset_label(:latest_season), do: "Latest Season"
+  def monitoring_preset_label(:none), do: "None"
 end

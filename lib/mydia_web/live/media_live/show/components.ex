@@ -1276,14 +1276,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
 
   # Helper functions for monitoring preset labels
 
-  defp monitoring_preset_label(nil), do: "All Episodes"
-  defp monitoring_preset_label(:all), do: "All Episodes"
-  defp monitoring_preset_label(:future), do: "Future Episodes"
-  defp monitoring_preset_label(:missing), do: "Missing Episodes"
-  defp monitoring_preset_label(:existing), do: "Existing Episodes"
-  defp monitoring_preset_label(:first_season), do: "First Season"
-  defp monitoring_preset_label(:latest_season), do: "Latest Season"
-  defp monitoring_preset_label(:none), do: "None"
+  # monitoring_preset_label/1 is provided by MydiaWeb.MediaLive.Show.Helpers (imported above)
 
   @doc """
   Monitoring icon that shows different states:

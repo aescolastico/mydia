@@ -2,13 +2,16 @@ defmodule MydiaWeb.MediaLive.Show do
   use MydiaWeb, :live_view
   alias Mydia.Media
   alias Mydia.Settings
-  alias Mydia.Library
-  alias Mydia.Downloads
-  alias Mydia.Collections
-  alias Mydia.Indexers.SearchResult
-  alias MydiaWeb.Live.Authorization
   alias MydiaWeb.MediaLive.Show.Modals
   alias MydiaWeb.MediaLive.Show.Components
+  alias MydiaWeb.MediaLive.Show.EpisodeEvents
+  alias MydiaWeb.MediaLive.Show.DownloadEvents
+  alias MydiaWeb.MediaLive.Show.MediaItemEvents
+  alias MydiaWeb.MediaLive.Show.CategoryEvents
+  alias MydiaWeb.MediaLive.Show.CollectionEvents
+  alias MydiaWeb.MediaLive.Show.SubtitleEvents
+  alias MydiaWeb.MediaLive.Show.FileEvents
+  alias MydiaWeb.MediaLive.Show.SearchEvents
 
   # Import helper modules
   import MydiaWeb.MediaLive.Show.Formatters
@@ -128,7 +131,7 @@ defmodule MydiaWeb.MediaLive.Show do
      # Trailer modal state
      |> assign(:show_trailer_modal, false)
      # Collection state
-     |> load_collection_data(media_item)
+     |> CollectionEvents.load_collection_data(media_item)
      |> stream_configure(:search_results, dom_id: &generate_positioned_id/1)
      |> stream(:search_results, [])}
   end
@@ -139,1280 +142,210 @@ defmodule MydiaWeb.MediaLive.Show do
   end
 
   @impl true
-  def handle_event("toggle_monitored", _params, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-      new_monitored = !media_item.monitored
-
-      {:ok, updated_item} =
-        Media.update_media_item(media_item, %{monitored: new_monitored},
-          reason: if(new_monitored, do: "Monitoring enabled", else: "Monitoring disabled")
-        )
-
-      {:noreply,
-       socket
-       |> assign(:media_item, updated_item)
-       |> put_flash(
-         :info,
-         "Monitoring #{if updated_item.monitored, do: "enabled", else: "disabled"}"
-       )}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  @valid_monitoring_presets ~w(all future missing existing first_season latest_season none)
-
-  def handle_event("apply_monitoring_preset", %{"preset" => preset_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket),
-         true <- preset_str in @valid_monitoring_presets do
-      media_item = socket.assigns.media_item
-      preset = String.to_existing_atom(preset_str)
-
-      # Show loading state
-      socket = assign(socket, :applying_monitoring_preset, true)
-
-      case Media.apply_monitoring_preset(media_item, preset) do
-        {:ok, updated_item, count} ->
-          # Reload the full media item with episodes to refresh the UI
-          reloaded_item = load_media_item(updated_item.id)
-
-          preset_label = monitoring_preset_label(preset)
-
-          {:noreply,
-           socket
-           |> assign(:media_item, reloaded_item)
-           |> assign(:applying_monitoring_preset, false)
-           |> put_flash(:info, "Applied '#{preset_label}' monitoring to #{count} episodes")}
-
-        {:error, reason} ->
-          Logger.error("Failed to apply monitoring preset: #{inspect(reason)}")
-
-          {:noreply,
-           socket
-           |> assign(:applying_monitoring_preset, false)
-           |> put_flash(:error, "Failed to apply monitoring preset")}
-      end
-    else
-      {:unauthorized, socket} ->
-        {:noreply, socket}
-
-      false ->
-        {:noreply, put_flash(socket, :error, "Invalid monitoring preset")}
-    end
-  end
-
-  def handle_event("manual_search", _params, socket) do
-    with :ok <- Authorization.authorize_manage_downloads(socket) do
-      media_item = socket.assigns.media_item
-
-      # Build search query from media item
-      search_query =
-        case media_item.type do
-          "movie" ->
-            # For movies, search with title and year
-            if media_item.year do
-              "#{media_item.title} #{media_item.year}"
-            else
-              media_item.title
-            end
-
-          "tv_show" ->
-            # For TV shows, just use the title
-            media_item.title
-        end
-
-      # Open modal and start search
-      min_seeders = socket.assigns.min_seeders
-
-      {:noreply,
-       socket
-       |> assign(:show_manual_search_modal, true)
-       |> assign(:manual_search_query, search_query)
-       |> assign(:manual_search_context, %{type: :media_item})
-       |> assign(:searching, true)
-       |> assign(:results_empty?, false)
-       |> assign(:download_error, nil)
-       |> stream(:search_results, [], reset: true)
-       |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("auto_search_download", _params, socket) do
-    with :ok <- Authorization.authorize_manage_downloads(socket) do
-      media_item = socket.assigns.media_item
-
-      # Queue the background job based on media type
-      case media_item.type do
-        "movie" ->
-          # Queue MovieSearchJob for this specific movie
-          %{mode: "specific", media_item_id: media_item.id}
-          |> Mydia.Jobs.MovieSearch.new()
-          |> Oban.insert()
-
-          Logger.info("Queued auto search for movie",
-            media_item_id: media_item.id,
-            title: media_item.title
-          )
-
-          # Set a timeout to reset auto_searching state if no download is created
-          Process.send_after(self(), :auto_search_timeout, 30_000)
-
-          {:noreply,
-           socket
-           |> assign(:auto_searching, true)
-           |> put_flash(:info, "Searching indexers for #{media_item.title}...")}
-
-        "tv_show" ->
-          # Queue TVShowSearchJob for all missing episodes
-          %{mode: "show", media_item_id: media_item.id}
-          |> Mydia.Jobs.TVShowSearch.new()
-          |> Oban.insert()
-
-          Logger.info("Queued auto search for TV show",
-            media_item_id: media_item.id,
-            title: media_item.title
-          )
-
-          # Set a timeout to reset auto_searching state if no download is created
-          Process.send_after(self(), :auto_search_timeout, 30_000)
-
-          {:noreply,
-           socket
-           |> assign(:auto_searching, true)
-           |> put_flash(:info, "Searching for all missing episodes of #{media_item.title}...")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("refresh_metadata", _params, socket) do
-    media_item = socket.assigns.media_item
-
-    # Re-fetch metadata from provider (backdrop, poster, etc.)
-    metadata_result = Media.refresh_metadata(media_item)
-
-    case {media_item.type, metadata_result} do
-      {"tv_show", {:ok, updated_item}} ->
-        # Also refresh episodes for TV shows
-        case Media.refresh_episodes_for_tv_show(updated_item) do
-          {:ok, count} ->
-            {:noreply,
-             socket
-             |> assign(:media_item, load_media_item(media_item.id))
-             |> put_flash(:info, "Refreshed metadata: #{count} episodes updated")}
-
-          {:error, reason} ->
-            # Metadata was updated but episodes failed - still show the updated item
-            {:noreply,
-             socket
-             |> assign(:media_item, load_media_item(media_item.id))
-             |> put_flash(
-               :warning,
-               "Metadata refreshed but episode refresh failed: #{inspect(reason)}"
-             )}
-        end
-
-      {"movie", {:ok, _updated_item}} ->
-        {:noreply,
-         socket
-         |> assign(:media_item, load_media_item(media_item.id))
-         |> put_flash(:info, "Metadata refreshed")}
-
-      {_, {:error, :missing_provider_id}} ->
-        {:noreply, put_flash(socket, :error, "Cannot refresh: Missing provider ID (TMDB/TVDB)")}
-
-      {_, {:error, reason}} ->
-        {:noreply, put_flash(socket, :error, "Failed to refresh metadata: #{inspect(reason)}")}
-    end
-  end
-
-  def handle_event("refresh_all_file_metadata", _params, socket) do
-    media_item = socket.assigns.media_item
-    media_files = media_item.media_files
-
-    if Enum.empty?(media_files) do
-      {:noreply, put_flash(socket, :info, "No media files to refresh")}
-    else
-      # Start async task to refresh all file metadata
-      {:noreply,
-       socket
-       |> assign(:refreshing_file_metadata, true)
-       |> start_async(:refresh_files, fn -> refresh_files(media_files) end)}
-    end
-  end
-
-  def handle_event("rescan_season_files", %{"season-number" => season_number_str}, socket) do
-    media_item = socket.assigns.media_item
-    season_num = String.to_integer(season_number_str)
-
-    # Get all media files for episodes in this season
-    season_media_files = get_season_media_files(media_item, season_num)
-
-    if Enum.empty?(season_media_files) do
-      {:noreply, put_flash(socket, :info, "No media files to refresh for season #{season_num}")}
-    else
-      # Start async task to refresh season file metadata
-      {:noreply,
-       socket
-       |> assign(:rescanning_season, season_num)
-       |> start_async(:rescan_season_files, fn ->
-         {season_num, refresh_files(season_media_files)}
-       end)}
-    end
-  end
-
-  def handle_event("rescan_series", _params, socket) do
-    media_item = socket.assigns.media_item
-
-    if media_item.type != "tv_show" do
-      {:noreply, put_flash(socket, :error, "Re-scan is only available for TV shows")}
-    else
-      # Start async task to re-scan the series directory for new files AND refresh metadata
-      {:noreply,
-       socket
-       |> put_flash(:info, "Re-scanning series: discovering new files and refreshing metadata...")
-       |> start_async(:rescan_series, fn ->
-         # Step 1: Discover new files in the directory
-         scan_result = Library.rescan_series(media_item.id)
-
-         # Step 2: Refresh file metadata for all files (existing + new)
-         case scan_result do
-           {:ok, _result} ->
-             # Reload the media item to get the updated file list
-             updated_media_item =
-               Media.get_media_item!(media_item.id,
-                 preload: [episodes: [media_files: :library_path]]
-               )
-
-             all_media_files = Enum.flat_map(updated_media_item.episodes, & &1.media_files)
-             refresh_result = refresh_files(all_media_files)
-             {scan_result, refresh_result}
-
-           error ->
-             {error, {:ok, 0, 0}}
-         end
-       end)}
-    end
-  end
-
-  def handle_event("rescan_season", %{"season-number" => season_number_str}, socket) do
-    media_item = socket.assigns.media_item
-    season_num = String.to_integer(season_number_str)
-
-    if media_item.type != "tv_show" do
-      {:noreply, put_flash(socket, :error, "Re-scan is only available for TV shows")}
-    else
-      # Start async task to re-scan the season for new files AND refresh metadata
-      {:noreply,
-       socket
-       |> assign(:rescanning_season, season_num)
-       |> put_flash(
-         :info,
-         "Re-scanning season #{season_num}: discovering new files and refreshing metadata..."
-       )
-       |> start_async(:rescan_season, fn ->
-         # Step 1: Discover new files in the season directory
-         scan_result = Library.rescan_season(media_item.id, season_num)
-
-         # Step 2: Refresh file metadata for all season files (existing + new)
-         case scan_result do
-           {:ok, _result} ->
-             # Reload the media item to get the updated file list
-             updated_media_item =
-               Media.get_media_item!(media_item.id,
-                 preload: [episodes: [media_files: :library_path]]
-               )
-
-             season_media_files = get_season_media_files(updated_media_item, season_num)
-             refresh_result = refresh_files(season_media_files)
-             {season_num, scan_result, refresh_result}
-
-           error ->
-             {season_num, error, {:ok, 0, 0}}
-         end
-       end)}
-    end
-  end
-
-  def handle_event("rescan_movie", _params, socket) do
-    media_item = socket.assigns.media_item
-
-    if media_item.type != "movie" do
-      {:noreply, put_flash(socket, :error, "Re-scan is only available for movies")}
-    else
-      # Start async task to re-scan the movie directory for new files AND refresh metadata
-      {:noreply,
-       socket
-       |> put_flash(:info, "Re-scanning movie: discovering new files and refreshing metadata...")
-       |> start_async(:rescan_movie, fn ->
-         # Step 1: Discover new files in the directory
-         scan_result = Library.rescan_movie(media_item.id)
-
-         # Step 2: Refresh file metadata for all files (existing + new)
-         case scan_result do
-           {:ok, _result} ->
-             # Reload the media item to get the updated file list
-             updated_media_item =
-               Media.get_media_item!(media_item.id, preload: [media_files: :library_path])
-
-             all_media_files = updated_media_item.media_files
-             refresh_result = refresh_files(all_media_files)
-             {scan_result, refresh_result}
-
-           error ->
-             {error, {:ok, 0, 0}}
-         end
-       end)}
-    end
-  end
-
-  def handle_event("show_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_delete_confirm, true)
-     |> assign(:delete_files, false)}
-  end
-
-  def handle_event("hide_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_delete_confirm, false)
-     |> assign(:delete_files, false)}
-  end
-
-  def handle_event("toggle_delete_files", %{"delete_files" => value}, socket) do
-    delete_files = value == "true"
-
-    Logger.info("toggle_delete_files", value: value, delete_files: delete_files)
-
-    {:noreply, assign(socket, :delete_files, delete_files)}
-  end
-
-  def handle_event("delete_media", _params, socket) do
-    with :ok <- Authorization.authorize_delete_media(socket) do
-      media_item = socket.assigns.media_item
-      delete_files = socket.assigns.delete_files
-
-      Logger.info("LiveView delete_media event",
-        media_item_id: media_item.id,
-        title: media_item.title,
-        delete_files: delete_files
-      )
-
-      case Media.delete_media_item(media_item, delete_files: delete_files) do
-        {:ok, _} ->
-          message =
-            if delete_files do
-              "#{media_item.title} deleted successfully (including files)"
-            else
-              "#{media_item.title} removed from library (files preserved)"
-            end
-
-          {:noreply,
-           socket
-           |> put_flash(:info, message)
-           |> push_navigate(to: media_type_path(media_item.type))}
-
-        {:error, _changeset} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to delete #{media_item.title}")
-           |> assign(:show_delete_confirm, false)}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("toggle_episode_monitored", %{"episode-id" => episode_id}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      episode = Media.get_episode!(episode_id)
-      {:ok, _updated_episode} = Media.update_episode(episode, %{monitored: !episode.monitored})
-
-      {:noreply,
-       socket
-       |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-       |> put_flash(
-         :info,
-         "Episode monitoring #{if episode.monitored, do: "disabled", else: "enabled"}"
-       )}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("monitor_season", %{"season-number" => season_number_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      season_number = String.to_integer(season_number_str)
-      media_item = socket.assigns.media_item
-
-      case Media.update_season_monitoring(media_item.id, season_number, true) do
-        {:ok, count} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, load_media_item(media_item.id))
-           |> put_flash(
-             :info,
-             "Monitoring enabled for #{count} episodes in Season #{season_number}"
-           )}
-
-        {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("unmonitor_season", %{"season-number" => season_number_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      season_number = String.to_integer(season_number_str)
-      media_item = socket.assigns.media_item
-
-      case Media.update_season_monitoring(media_item.id, season_number, false) do
-        {:ok, count} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, load_media_item(media_item.id))
-           |> put_flash(
-             :info,
-             "Monitoring disabled for #{count} episodes in Season #{season_number}"
-           )}
-
-        {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("toggle_season_expanded", %{"season-number" => season_number_str}, socket) do
-    season_number = String.to_integer(season_number_str)
-    expanded_seasons = socket.assigns.expanded_seasons
-
-    updated_seasons =
-      if MapSet.member?(expanded_seasons, season_number) do
-        MapSet.delete(expanded_seasons, season_number)
-      else
-        MapSet.put(expanded_seasons, season_number)
-      end
-
-    {:noreply, assign(socket, :expanded_seasons, updated_seasons)}
-  end
-
-  def handle_event("toggle_episode_expanded", %{"episode-id" => episode_id}, socket) do
-    expanded_episodes = socket.assigns.expanded_episodes
-
-    updated_episodes =
-      if MapSet.member?(expanded_episodes, episode_id) do
-        MapSet.delete(expanded_episodes, episode_id)
-      else
-        MapSet.put(expanded_episodes, episode_id)
-      end
-
-    {:noreply, assign(socket, :expanded_episodes, updated_episodes)}
-  end
-
-  def handle_event("search_episode", %{"episode-id" => episode_id}, socket) do
-    episode = Media.get_episode!(episode_id, preload: [:media_item])
-    media_item = episode.media_item
-
-    # Build search query for the episode
-    # Format: "Show Title S01E02" or "Show Title 1x02"
-    search_query =
-      "#{media_item.title} S#{String.pad_leading(to_string(episode.season_number), 2, "0")}E#{String.pad_leading(to_string(episode.episode_number), 2, "0")}"
-
-    # Open modal and start search
-    min_seeders = socket.assigns.min_seeders
-
-    {:noreply,
-     socket
-     |> assign(:show_manual_search_modal, true)
-     |> assign(:manual_search_query, search_query)
-     |> assign(:manual_search_context, %{type: :episode, episode_id: episode_id})
-     |> assign(:searching, true)
-     |> assign(:results_empty?, false)
-     |> assign(:download_error, nil)
-     |> stream(:search_results, [], reset: true)
-     |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
-  end
-
-  def handle_event("manual_search_season", %{"season-number" => season_number_str}, socket) do
-    media_item = socket.assigns.media_item
-    season_num = String.to_integer(season_number_str)
-
-    # Build search query for the season
-    # Format: "Show Title S01"
-    search_query =
-      "#{media_item.title} S#{String.pad_leading(to_string(season_num), 2, "0")}"
-
-    # Open modal and start search
-    min_seeders = socket.assigns.min_seeders
-
-    {:noreply,
-     socket
-     |> assign(:show_manual_search_modal, true)
-     |> assign(:manual_search_query, search_query)
-     |> assign(:manual_search_context, %{type: :season, season_number: season_num})
-     |> assign(:searching, true)
-     |> assign(:results_empty?, false)
-     |> assign(:download_error, nil)
-     |> stream(:search_results, [], reset: true)
-     |> start_async(:search, fn -> perform_search(search_query, min_seeders) end)}
-  end
-
-  def handle_event("auto_search_season", %{"season-number" => season_number_str}, socket) do
-    media_item = socket.assigns.media_item
-    season_num = String.to_integer(season_number_str)
-
-    # Queue TVShowSearchJob with season mode
-    %{mode: "season", media_item_id: media_item.id, season_number: season_num}
-    |> Mydia.Jobs.TVShowSearch.new()
-    |> Oban.insert()
-
-    Logger.info("Queued auto search for season",
-      media_item_id: media_item.id,
-      season_number: season_num,
-      title: media_item.title
-    )
-
-    # Set a timeout to reset auto_searching_season state if no download is created
-    Process.send_after(self(), {:auto_search_season_timeout, season_num}, 30_000)
-
-    {:noreply,
-     socket
-     |> assign(:auto_searching_season, season_num)
-     |> put_flash(:info, "Searching for season #{season_num} (preferring season pack)...")}
-  end
-
-  def handle_event("auto_search_episode", %{"episode-id" => episode_id}, socket) do
-    # Load episode to get details for flash message
-    episode = Media.get_episode!(episode_id)
-
-    # Queue TVShowSearchJob with specific episode mode
-    %{mode: "specific", episode_id: episode_id}
-    |> Mydia.Jobs.TVShowSearch.new()
-    |> Oban.insert()
-
-    Logger.info("Queued auto search for episode",
-      episode_id: episode_id,
-      season_number: episode.season_number,
-      episode_number: episode.episode_number
-    )
-
-    # Set a timeout to reset auto_searching_episode state if no download is created
-    Process.send_after(self(), {:auto_search_episode_timeout, episode_id}, 30_000)
-
-    {:noreply,
-     socket
-     |> assign(:auto_searching_episode, episode_id)
-     |> put_flash(
-       :info,
-       "Searching for S#{episode.season_number}E#{episode.episode_number}..."
-     )}
-  end
-
-  def handle_event("show_file_delete_confirm", %{"file-id" => file_id}, socket) do
-    file = Library.get_media_file!(file_id, preload: :library_path)
-
-    {:noreply,
-     socket
-     |> assign(:show_file_delete_confirm, true)
-     |> assign(:file_to_delete, file)}
-  end
-
-  def handle_event("hide_file_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_file_delete_confirm, false)
-     |> assign(:file_to_delete, nil)}
-  end
-
-  def handle_event("delete_media_file", _params, socket) do
-    with :ok <- Authorization.authorize_delete_media(socket) do
-      file = socket.assigns.file_to_delete
-
-      case Library.delete_media_file(file) do
-        {:ok, _} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-           |> assign(:show_file_delete_confirm, false)
-           |> assign(:file_to_delete, nil)
-           |> put_flash(:info, "Media file deleted successfully")}
-
-        {:error, _changeset} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to delete media file")
-           |> assign(:show_file_delete_confirm, false)
-           |> assign(:file_to_delete, nil)}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("show_file_details", %{"file-id" => file_id}, socket) do
-    file = Library.get_media_file!(file_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_file_details_modal, true)
-     |> assign(:file_details, file)}
-  end
-
-  def handle_event("hide_file_details", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_file_details_modal, false)
-     |> assign(:file_details, nil)}
-  end
-
-  def handle_event(
-        "pre_transcode",
-        %{"media-file-id" => media_file_id, "resolution" => resolution},
-        socket
-      ) do
-    media_item = socket.assigns.media_item
-
-    case Downloads.DownloadService.prepare_by_file(media_file_id, resolution) do
-      {:ok, _job_info} ->
-        {:noreply,
-         socket
-         |> assign(:transcode_jobs, load_transcode_jobs(media_item))
-         |> put_flash(:info, "Pre-transcode started for #{resolution}")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to start pre-transcode: #{inspect(reason)}")}
-    end
-  end
-
-  def handle_event("cancel_transcode", %{"job-id" => job_id}, socket) do
-    case Downloads.DownloadService.cancel_job(job_id) do
-      {:ok, :cancelled} ->
-        media_item = socket.assigns.media_item
-
-        {:noreply,
-         socket
-         |> assign(:transcode_jobs, load_transcode_jobs(media_item))
-         |> put_flash(:info, "Transcode cancelled")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to cancel: #{inspect(reason)}")}
-    end
-  end
-
-  def handle_event("show_rename_modal", _params, socket) do
-    # Reload media item to ensure we have fresh file data
-    media_item = load_media_item(socket.assigns.media_item.id)
-
-    # Generate rename previews for all files
-    rename_previews =
-      Mydia.Library.FileRenamer.generate_rename_previews_for_media_item(media_item)
-
-    {:noreply,
-     socket
-     |> assign(:show_rename_modal, true)
-     |> assign(:rename_previews, rename_previews)}
-  end
-
-  def handle_event("hide_rename_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_rename_modal, false)
-     |> assign(:rename_previews, [])
-     |> assign(:renaming_files, false)}
-  end
-
-  def handle_event("confirm_rename_files", _params, socket) do
-    rename_previews = socket.assigns.rename_previews
-
-    # Build rename specs for batch operation
-    rename_specs =
-      Enum.map(rename_previews, fn preview ->
-        %{file_id: preview.file_id, new_path: preview.proposed_path}
-      end)
-
-    # Start async rename operation
-    {:noreply,
-     socket
-     |> assign(:renaming_files, true)
-     |> start_async(:rename_files, fn ->
-       Mydia.Library.FileRenamer.rename_files_batch(rename_specs)
-     end)}
-  end
-
-  def handle_event("mark_file_preferred", %{"file-id" => file_id}, socket) do
-    file = Library.get_media_file!(file_id)
-    media_item = socket.assigns.media_item
-
-    # Mark this file with the media item's quality profile
-    case Library.update_media_file(file, %{quality_profile_id: media_item.quality_profile_id}) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-         |> put_flash(:info, "Marked as preferred version")}
-
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Failed to mark file as preferred")}
-    end
-  end
-
-  def handle_event("retry_download", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id, preload: [:media_item, :episode])
-
-    # Clear error message if any
-    case Downloads.update_download(download, %{error_message: nil}) do
-      {:ok, updated} ->
-        # Re-add to client using the original download URL
-        search_result = %Mydia.Indexers.SearchResult{
-          download_url: updated.download_url,
-          title: updated.title,
-          indexer: updated.indexer,
-          size: updated.metadata["size"],
-          seeders: updated.metadata["seeders"],
-          leechers: updated.metadata["leechers"],
-          quality: updated.metadata["quality"]
-        }
-
-        opts =
-          []
-          |> maybe_add_opt(:media_item_id, updated.media_item_id)
-          |> maybe_add_opt(:episode_id, updated.episode_id)
-          |> maybe_add_opt(:client_name, updated.download_client)
-
-        # Delete old download record and create new one
-        Downloads.delete_download(updated)
-
-        case Downloads.initiate_download(search_result, opts) do
-          {:ok, _new_download} ->
-            {:noreply, put_flash(socket, :info, "Download re-initiated")}
-
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to retry download: #{inspect(reason)}")}
-        end
-
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Failed to update download")}
-    end
-  end
-
-  def handle_event("show_download_cancel_confirm", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_download_cancel_confirm, true)
-     |> assign(:download_to_cancel, download)}
-  end
-
-  def handle_event("hide_download_cancel_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_cancel_confirm, false)
-     |> assign(:download_to_cancel, nil)}
-  end
-
-  def handle_event("cancel_download", _params, socket) do
-    download = socket.assigns.download_to_cancel
-
-    case Downloads.cancel_download(download) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:show_download_cancel_confirm, false)
-         |> assign(:download_to_cancel, nil)
-         |> put_flash(:info, "Download cancelled")}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to cancel download")
-         |> assign(:show_download_cancel_confirm, false)
-         |> assign(:download_to_cancel, nil)}
-    end
-  end
-
-  def handle_event("show_download_delete_confirm", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_download_delete_confirm, true)
-     |> assign(:download_to_delete, download)}
-  end
-
-  def handle_event("hide_download_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_delete_confirm, false)
-     |> assign(:download_to_delete, nil)}
-  end
-
-  def handle_event("delete_download_record", _params, socket) do
-    download = socket.assigns.download_to_delete
-
-    case Downloads.delete_download(download) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-         |> assign(:show_download_delete_confirm, false)
-         |> assign(:download_to_delete, nil)
-         |> put_flash(:info, "Download removed from history")}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to delete download")
-         |> assign(:show_download_delete_confirm, false)
-         |> assign(:download_to_delete, nil)}
-    end
-  end
-
-  def handle_event("show_download_details", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_download_details_modal, true)
-     |> assign(:download_details, download)}
-  end
-
-  def handle_event("hide_download_details", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_details_modal, false)
-     |> assign(:download_details, nil)}
-  end
-
-  def handle_event("close_manual_search_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_manual_search_modal, false)
-     |> assign(:manual_search_query, "")
-     |> assign(:manual_search_context, nil)
-     |> assign(:searching, false)
-     |> assign(:results_empty?, false)
-     |> assign(:raw_search_results, [])
-     |> assign(:indexer_errors, [])
-     |> assign(:download_error, nil)
-     |> stream(:search_results, [], reset: true)}
-  end
-
-  def handle_event("filter_search", params, socket) do
-    # Parse filter params
-    min_seeders =
-      case params["min_seeders"] do
-        "" -> 0
-        val when is_binary(val) -> String.to_integer(val)
-        _ -> 0
-      end
-
-    quality_filter =
-      case params["quality"] do
-        "" -> nil
-        q when q in ["720p", "1080p", "2160p", "4k"] -> q
-        _ -> nil
-      end
-
-    {:noreply,
-     socket
-     |> assign(:min_seeders, min_seeders)
-     |> assign(:quality_filter, quality_filter)
-     |> apply_search_filters()}
-  end
-
-  def handle_event("sort_search", %{"sort_by" => sort_by}, socket) do
-    sort_by = String.to_existing_atom(sort_by)
-
-    {:noreply,
-     socket
-     |> assign(:sort_by, sort_by)
-     |> apply_search_sort()}
-  end
-
-  def handle_event(
-        "download_from_search",
-        %{
-          "download-url" => download_url,
-          "title" => title,
-          "indexer" => indexer,
-          "size" => size,
-          "seeders" => seeders,
-          "leechers" => leechers,
-          "quality" => quality
-        },
-        socket
-      ) do
-    with :ok <- Authorization.authorize_manage_downloads(socket) do
-      media_item = socket.assigns.media_item
-      context = socket.assigns.manual_search_context
-
-      # Determine if this is for a specific episode or the media item
-      {media_item_id, episode_id} =
-        case context do
-          %{type: :episode, episode_id: ep_id} ->
-            {media_item.id, ep_id}
-
-          %{type: :season, season_number: _season_num} ->
-            # Season pack - associate with media item, not specific episode
-            {media_item.id, nil}
-
-          _ ->
-            {media_item.id, nil}
-        end
-
-      # Create SearchResult struct to pass to initiate_download
-      search_result = %SearchResult{
-        download_url: download_url,
-        title: title,
-        indexer: indexer,
-        size: parse_int(size),
-        seeders: parse_int(seeders),
-        leechers: parse_int(leechers),
-        quality: quality
-      }
-
-      # Build options for initiate_download
-      opts =
-        [manual: true]
-        |> maybe_add_opt(:media_item_id, media_item_id)
-        |> maybe_add_opt(:episode_id, episode_id)
-
-      # Start async download to provide immediate UI feedback
-      {:noreply,
-       socket
-       |> assign(:downloading_release_url, download_url)
-       |> start_async(:download_release, fn ->
-         # Add small delay to ensure UI feedback is visible
-         result = Downloads.initiate_download(search_result, opts)
-         Process.sleep(400)
-         {result, title, media_item.id, download_url}
-       end)}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  # Subtitle event handlers
-
-  def handle_event("open_subtitle_search", %{"media-file-id" => media_file_id}, socket) do
-    media_file = Mydia.Library.get_media_file!(media_file_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_subtitle_search_modal, true)
-     |> assign(:selected_media_file, media_file)
-     |> assign(:subtitle_search_results, [])}
-  end
-
-  def handle_event("close_subtitle_search_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_subtitle_search_modal, false)
-     |> assign(:selected_media_file, nil)
-     |> assign(:subtitle_search_results, [])
-     |> assign(:searching_subtitles, false)}
-  end
-
-  def handle_event("update_subtitle_languages", %{"languages" => languages}, socket) do
-    {:noreply, assign(socket, :selected_languages, languages)}
-  end
-
-  def handle_event("perform_subtitle_search", _params, socket) do
-    media_file = socket.assigns.selected_media_file
-    languages = Enum.join(socket.assigns.selected_languages, ",")
-
-    {:noreply,
-     socket
-     |> assign(:searching_subtitles, true)
-     |> start_async(:subtitle_search, fn ->
-       Mydia.Subtitles.search_subtitles(media_file.id, languages: languages)
-     end)}
-  end
-
-  def handle_event(
-        "download_subtitle_result",
-        %{
-          "file-id" => file_id,
-          "language" => language,
-          "format" => format,
-          "subtitle-hash" => subtitle_hash
-        } = params,
-        socket
-      ) do
-    media_file = socket.assigns.selected_media_file
-
-    # Build subtitle_info map from params
-    subtitle_info = %{
-      file_id: String.to_integer(file_id),
-      language: language,
-      format: format,
-      subtitle_hash: subtitle_hash,
-      rating: parse_optional_float(params["rating"]),
-      download_count: parse_optional_int(params["download-count"]),
-      hearing_impaired: params["hearing-impaired"] == "true"
-    }
-
-    {:noreply,
-     socket
-     |> assign(:downloading_subtitle, true)
-     |> start_async(:download_subtitle, fn ->
-       Mydia.Subtitles.download_subtitle(subtitle_info, media_file.id)
-     end)}
-  end
-
-  def handle_event("delete_subtitle", %{"subtitle-id" => subtitle_id}, socket) do
-    case Mydia.Subtitles.delete_subtitle(subtitle_id) do
-      :ok ->
-        {:noreply,
-         socket
-         |> assign(:media_file_subtitles, load_media_file_subtitles(socket.assigns.media_item))
-         |> put_flash(:info, "Subtitle deleted successfully")}
-
-      {:error, reason} ->
-        Logger.error("Failed to delete subtitle", subtitle_id: subtitle_id, reason: reason)
-
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to delete subtitle: #{inspect(reason)}")}
-    end
-  end
-
-  # Category override event handlers
-
-  def handle_event("show_category_modal", _params, socket) do
-    media_item = socket.assigns.media_item
-
-    changeset =
-      Media.change_media_item_category(media_item, %{
-        category: media_item.category,
-        category_override: media_item.category_override
-      })
-
-    {:noreply,
-     socket
-     |> assign(:show_category_modal, true)
-     |> assign(:category_form, to_form(changeset))}
-  end
-
-  def handle_event("hide_category_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_category_modal, false)
-     |> assign(:category_form, nil)}
-  end
-
-  def handle_event("show_trailer_modal", _params, socket) do
-    {:noreply, assign(socket, :show_trailer_modal, true)}
-  end
-
-  def handle_event("hide_trailer_modal", _params, socket) do
-    {:noreply, assign(socket, :show_trailer_modal, false)}
-  end
-
-  def handle_event("validate_category", %{"media_item" => params}, socket) do
-    changeset =
-      socket.assigns.media_item
-      |> Media.change_media_item_category(params)
-      |> Map.put(:action, :validate)
-
-    {:noreply, assign(socket, :category_form, to_form(changeset))}
-  end
-
-  def handle_event("save_category", %{"media_item" => params}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-
-      # Set override to true when manually changing category
-      params = Map.put(params, "category_override", params["override"] == "true")
-
-      case Media.update_media_item(media_item, params, reason: "Category updated") do
-        {:ok, updated_item} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, updated_item)
-           |> assign(:show_category_modal, false)
-           |> assign(:category_form, nil)
-           |> put_flash(:info, "Category updated successfully")}
-
-        {:error, %Ecto.Changeset{} = changeset} ->
-          {:noreply, assign(socket, :category_form, to_form(changeset))}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("reset_category_to_auto", _params, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-
-      # Re-classify using the category classifier
-      new_category = Mydia.Media.CategoryClassifier.classify(media_item)
-
-      case Media.update_media_item(
-             media_item,
-             %{category: new_category, category_override: false},
-             reason: "Category reset to auto-detected"
-           ) do
-        {:ok, updated_item} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, updated_item)
-           |> assign(:show_category_modal, false)
-           |> assign(:category_form, nil)
-           |> put_flash(
-             :info,
-             "Category reset to auto-detected: #{category_display_name(new_category)}"
-           )}
-
-        {:error, %Ecto.Changeset{} = changeset} ->
-          {:noreply,
-           socket
-           |> assign(:category_form, to_form(changeset))
-           |> put_flash(:error, "Failed to reset category")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  # Quality profile event handler
-
-  def handle_event("update_quality_profile", %{"profile-id" => profile_id}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-
-      # Convert empty string to nil
-      quality_profile_id = if profile_id == "", do: nil, else: profile_id
-
-      case Media.update_media_item(
-             media_item,
-             %{quality_profile_id: quality_profile_id},
-             reason: "Quality profile updated"
-           ) do
-        {:ok, _updated_item} ->
-          # Reload media item to get preloaded associations
-          reloaded_item = load_media_item(media_item.id)
-
-          {:noreply,
-           socket
-           |> assign(:media_item, reloaded_item)
-           |> put_flash(:info, "Quality profile updated")}
-
-        {:error, _changeset} ->
-          {:noreply, put_flash(socket, :error, "Failed to update quality profile")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  # Collection event handlers
-
-  def handle_event("toggle_favorite", _params, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.toggle_favorite(user, media_item.id) do
-      {:ok, :added} ->
-        {:noreply,
-         socket
-         |> assign(:is_favorite, true)
-         |> load_collection_data(media_item)
-         |> put_flash(:info, "Added to Favorites")}
-
-      {:ok, :removed} ->
-        {:noreply,
-         socket
-         |> assign(:is_favorite, false)
-         |> load_collection_data(media_item)
-         |> put_flash(:info, "Removed from Favorites")}
-
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to update favorites")}
-    end
-  end
-
-  def handle_event("open_add_to_collection_modal", _params, socket) do
-    {:noreply, assign(socket, :show_add_to_collection_modal, true)}
-  end
-
-  def handle_event("close_add_to_collection_modal", _params, socket) do
-    {:noreply, assign(socket, :show_add_to_collection_modal, false)}
-  end
-
-  def handle_event("add_to_collection", %{"collection-id" => collection_id}, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.get_collection(user, collection_id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Collection not found")}
-
-      collection ->
-        case Collections.add_item(collection, media_item.id) do
-          {:ok, _item} ->
-            {:noreply,
-             socket
-             |> load_collection_data(media_item)
-             |> assign(:show_add_to_collection_modal, false)
-             |> put_flash(:info, "Added to #{collection.name}")}
-
-          {:error, :smart_collection} ->
-            {:noreply, put_flash(socket, :error, "Cannot add items to smart collections")}
-
-          {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to add to collection")}
-        end
-    end
-  end
-
-  def handle_event("remove_from_collection", %{"collection-id" => collection_id}, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.get_collection(user, collection_id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Collection not found")}
-
-      collection ->
-        case Collections.remove_item(collection, media_item.id) do
-          {:ok, _item} ->
-            {:noreply,
-             socket
-             |> load_collection_data(media_item)
-             |> put_flash(:info, "Removed from #{collection.name}")}
-
-          {:error, :smart_collection} ->
-            {:noreply, put_flash(socket, :error, "Cannot remove items from smart collections")}
-
-          {:error, :not_found} ->
-            {:noreply, put_flash(socket, :error, "Item not in collection")}
-
-          {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to remove from collection")}
-        end
-    end
-  end
-
-  # Private helpers for monitoring presets
-  defp monitoring_preset_label(:all), do: "All Episodes"
-  defp monitoring_preset_label(:future), do: "Future Episodes"
-  defp monitoring_preset_label(:missing), do: "Missing Episodes"
-  defp monitoring_preset_label(:existing), do: "Existing Episodes"
-  defp monitoring_preset_label(:first_season), do: "First Season"
-  defp monitoring_preset_label(:latest_season), do: "Latest Season"
-  defp monitoring_preset_label(:none), do: "None"
+  def handle_event("toggle_monitored", params, socket),
+    do: EpisodeEvents.toggle_monitored(params, socket)
+
+  @impl true
+  def handle_event("apply_monitoring_preset", params, socket),
+    do: EpisodeEvents.apply_monitoring_preset(params, socket)
+
+  def handle_event("manual_search", params, socket),
+    do: SearchEvents.manual_search(params, socket)
+
+  def handle_event("auto_search_download", params, socket),
+    do: SearchEvents.auto_search_download(params, socket)
+
+  def handle_event("refresh_metadata", params, socket),
+    do: FileEvents.refresh_metadata(params, socket)
+
+  def handle_event("refresh_all_file_metadata", params, socket),
+    do: FileEvents.refresh_all_file_metadata(params, socket)
+
+  def handle_event("rescan_season_files", params, socket),
+    do: FileEvents.rescan_season_files(params, socket)
+
+  def handle_event("rescan_series", params, socket),
+    do: FileEvents.rescan_series(params, socket)
+
+  def handle_event("rescan_season", params, socket),
+    do: FileEvents.rescan_season(params, socket)
+
+  def handle_event("rescan_movie", params, socket),
+    do: FileEvents.rescan_movie(params, socket)
+
+  def handle_event("show_delete_confirm", params, socket),
+    do: MediaItemEvents.show_delete_confirm(params, socket)
+
+  def handle_event("hide_delete_confirm", params, socket),
+    do: MediaItemEvents.hide_delete_confirm(params, socket)
+
+  def handle_event("toggle_delete_files", params, socket),
+    do: MediaItemEvents.toggle_delete_files(params, socket)
+
+  def handle_event("delete_media", params, socket),
+    do: MediaItemEvents.delete_media(params, socket)
+
+  def handle_event("toggle_episode_monitored", params, socket),
+    do: EpisodeEvents.toggle_episode_monitored(params, socket)
+
+  def handle_event("monitor_season", params, socket),
+    do: EpisodeEvents.monitor_season(params, socket)
+
+  def handle_event("unmonitor_season", params, socket),
+    do: EpisodeEvents.unmonitor_season(params, socket)
+
+  def handle_event("toggle_season_expanded", params, socket),
+    do: EpisodeEvents.toggle_season_expanded(params, socket)
+
+  def handle_event("toggle_episode_expanded", params, socket),
+    do: EpisodeEvents.toggle_episode_expanded(params, socket)
+
+  def handle_event("search_episode", params, socket),
+    do: SearchEvents.search_episode(params, socket)
+
+  def handle_event("manual_search_season", params, socket),
+    do: SearchEvents.manual_search_season(params, socket)
+
+  def handle_event("auto_search_season", params, socket),
+    do: SearchEvents.auto_search_season(params, socket)
+
+  def handle_event("auto_search_episode", params, socket),
+    do: SearchEvents.auto_search_episode(params, socket)
+
+  def handle_event("show_file_delete_confirm", params, socket),
+    do: FileEvents.show_file_delete_confirm(params, socket)
+
+  def handle_event("hide_file_delete_confirm", params, socket),
+    do: FileEvents.hide_file_delete_confirm(params, socket)
+
+  def handle_event("delete_media_file", params, socket),
+    do: FileEvents.delete_media_file(params, socket)
+
+  def handle_event("show_file_details", params, socket),
+    do: FileEvents.show_file_details(params, socket)
+
+  def handle_event("hide_file_details", params, socket),
+    do: FileEvents.hide_file_details(params, socket)
+
+  def handle_event("pre_transcode", params, socket),
+    do: FileEvents.pre_transcode(params, socket)
+
+  def handle_event("cancel_transcode", params, socket),
+    do: FileEvents.cancel_transcode(params, socket)
+
+  def handle_event("show_rename_modal", params, socket),
+    do: FileEvents.show_rename_modal(params, socket)
+
+  def handle_event("hide_rename_modal", params, socket),
+    do: FileEvents.hide_rename_modal(params, socket)
+
+  def handle_event("confirm_rename_files", params, socket),
+    do: FileEvents.confirm_rename_files(params, socket)
+
+  def handle_event("mark_file_preferred", params, socket),
+    do: FileEvents.mark_file_preferred(params, socket)
+
+  def handle_event("retry_download", params, socket),
+    do: DownloadEvents.retry_download(params, socket)
+
+  def handle_event("show_download_cancel_confirm", params, socket),
+    do: DownloadEvents.show_download_cancel_confirm(params, socket)
+
+  def handle_event("hide_download_cancel_confirm", params, socket),
+    do: DownloadEvents.hide_download_cancel_confirm(params, socket)
+
+  def handle_event("cancel_download", params, socket),
+    do: DownloadEvents.cancel_download(params, socket)
+
+  def handle_event("show_download_delete_confirm", params, socket),
+    do: DownloadEvents.show_download_delete_confirm(params, socket)
+
+  def handle_event("hide_download_delete_confirm", params, socket),
+    do: DownloadEvents.hide_download_delete_confirm(params, socket)
+
+  def handle_event("delete_download_record", params, socket),
+    do: DownloadEvents.delete_download_record(params, socket)
+
+  def handle_event("show_download_details", params, socket),
+    do: DownloadEvents.show_download_details(params, socket)
+
+  def handle_event("hide_download_details", params, socket),
+    do: DownloadEvents.hide_download_details(params, socket)
+
+  def handle_event("close_manual_search_modal", params, socket),
+    do: SearchEvents.close_manual_search_modal(params, socket)
+
+  def handle_event("filter_search", params, socket),
+    do: SearchEvents.filter_search(params, socket)
+
+  def handle_event("sort_search", params, socket),
+    do: SearchEvents.sort_search(params, socket)
+
+  def handle_event("download_from_search", params, socket),
+    do: SearchEvents.download_from_search(params, socket)
+
+  # Subtitle events
+
+  def handle_event("open_subtitle_search", params, socket),
+    do: SubtitleEvents.open_subtitle_search(params, socket)
+
+  def handle_event("close_subtitle_search_modal", params, socket),
+    do: SubtitleEvents.close_subtitle_search_modal(params, socket)
+
+  def handle_event("update_subtitle_languages", params, socket),
+    do: SubtitleEvents.update_subtitle_languages(params, socket)
+
+  def handle_event("perform_subtitle_search", params, socket),
+    do: SubtitleEvents.perform_subtitle_search(params, socket)
+
+  def handle_event("download_subtitle_result", params, socket),
+    do: SubtitleEvents.download_subtitle_result(params, socket)
+
+  def handle_event("delete_subtitle", params, socket),
+    do: SubtitleEvents.delete_subtitle(params, socket)
+
+  # Category, trailer, and quality profile events
+
+  def handle_event("show_category_modal", params, socket),
+    do: CategoryEvents.show_category_modal(params, socket)
+
+  def handle_event("hide_category_modal", params, socket),
+    do: CategoryEvents.hide_category_modal(params, socket)
+
+  def handle_event("show_trailer_modal", params, socket),
+    do: CategoryEvents.show_trailer_modal(params, socket)
+
+  def handle_event("hide_trailer_modal", params, socket),
+    do: CategoryEvents.hide_trailer_modal(params, socket)
+
+  def handle_event("validate_category", params, socket),
+    do: CategoryEvents.validate_category(params, socket)
+
+  def handle_event("save_category", params, socket),
+    do: CategoryEvents.save_category(params, socket)
+
+  def handle_event("reset_category_to_auto", params, socket),
+    do: CategoryEvents.reset_category_to_auto(params, socket)
+
+  def handle_event("update_quality_profile", params, socket),
+    do: CategoryEvents.update_quality_profile(params, socket)
+
+  # Collection events
+
+  def handle_event("toggle_favorite", params, socket),
+    do: CollectionEvents.toggle_favorite(params, socket)
+
+  def handle_event("open_add_to_collection_modal", params, socket),
+    do: CollectionEvents.open_add_to_collection_modal(params, socket)
+
+  def handle_event("close_add_to_collection_modal", params, socket),
+    do: CollectionEvents.close_add_to_collection_modal(params, socket)
+
+  def handle_event("add_to_collection", params, socket),
+    do: CollectionEvents.add_to_collection(params, socket)
+
+  def handle_event("remove_from_collection", params, socket),
+    do: CollectionEvents.remove_from_collection(params, socket)
 
   @impl true
   def handle_info({:download_created, download}, socket) do
@@ -1567,430 +500,40 @@ defmodule MydiaWeb.MediaLive.Show do
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
+  # handle_async dispatches to event modules
+
   @impl true
-  def handle_async(:search, {:ok, {:ok, results, indexer_errors}}, socket) do
-    start_time = System.monotonic_time(:millisecond)
+  def handle_async(:search, result, socket),
+    do: SearchEvents.handle_search_async(result, socket)
 
-    media_item = socket.assigns.media_item
-    quality_profile = media_item.quality_profile
-    media_type = get_media_type(media_item)
-    search_query = socket.assigns.manual_search_query
+  def handle_async(:download_release, result, socket),
+    do: SearchEvents.handle_download_release_async(result, socket)
 
-    filtered_results = filter_search_results(results, socket.assigns)
+  def handle_async(:refresh_files, result, socket),
+    do: FileEvents.handle_refresh_files_async(result, socket)
 
-    sorted_results =
-      sort_search_results(
-        filtered_results,
-        socket.assigns.sort_by,
-        quality_profile,
-        media_type,
-        search_query
-      )
+  def handle_async(:rescan_season_files, result, socket),
+    do: FileEvents.handle_rescan_season_files_async(result, socket)
 
-    prepared_results = prepare_for_stream(sorted_results)
+  def handle_async(:rescan_series, result, socket),
+    do: FileEvents.handle_rescan_series_async(result, socket)
 
-    duration = System.monotonic_time(:millisecond) - start_time
+  def handle_async(:rescan_movie, result, socket),
+    do: FileEvents.handle_rescan_movie_async(result, socket)
 
-    Logger.info(
-      "Search completed: query=\"#{search_query}\", " <>
-        "results=#{length(results)}, filtered=#{length(filtered_results)}, " <>
-        "indexer_errors=#{length(indexer_errors)}, processing_time=#{duration}ms"
-    )
+  def handle_async(:rescan_season, result, socket),
+    do: FileEvents.handle_rescan_season_async(result, socket)
 
-    {:noreply,
-     socket
-     |> assign(:searching, false)
-     |> assign(:results_empty?, sorted_results == [])
-     |> assign(:raw_search_results, results)
-     |> assign(:indexer_errors, indexer_errors)
-     |> stream(:search_results, prepared_results, reset: true)}
-  end
+  def handle_async(:rename_files, result, socket),
+    do: FileEvents.handle_rename_files_async(result, socket)
 
-  def handle_async(:search, {:ok, {:error, reason}}, socket) do
-    Logger.error("Search failed: #{inspect(reason)}")
+  def handle_async(:subtitle_search, result, socket),
+    do: SubtitleEvents.handle_subtitle_search_async(result, socket)
 
-    {:noreply,
-     socket
-     |> assign(:searching, false)
-     |> put_flash(:error, "Search failed: #{inspect(reason)}")}
-  end
+  def handle_async(:download_subtitle, result, socket),
+    do: SubtitleEvents.handle_download_subtitle_async(result, socket)
 
-  def handle_async(:search, {:exit, reason}, socket) do
-    Logger.error("Search task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:searching, false)
-     |> put_flash(:error, "Search failed unexpectedly")}
-  end
-
-  def handle_async(:refresh_files, {:ok, {:ok, success_count, error_count}}, socket) do
-    message =
-      if error_count > 0 do
-        "Refreshed #{success_count} file(s), #{error_count} failed"
-      else
-        "Successfully refreshed #{success_count} file(s)"
-      end
-
-    {:noreply,
-     socket
-     |> assign(:refreshing_file_metadata, false)
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> put_flash(:info, message)}
-  end
-
-  def handle_async(:refresh_files, {:ok, {:error, reason}}, socket) do
-    Logger.error("File metadata refresh failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:refreshing_file_metadata, false)
-     |> put_flash(:error, "Failed to refresh file metadata: #{inspect(reason)}")}
-  end
-
-  def handle_async(:refresh_files, {:exit, reason}, socket) do
-    Logger.error("File metadata refresh task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:refreshing_file_metadata, false)
-     |> put_flash(:error, "Metadata refresh failed unexpectedly")}
-  end
-
-  def handle_async(
-        :rescan_season_files,
-        {:ok, {season_num, {:ok, success_count, error_count}}},
-        socket
-      ) do
-    message =
-      if error_count > 0 do
-        "Re-scanned #{success_count} file(s) in Season #{season_num}, #{error_count} failed"
-      else
-        "Successfully re-scanned #{success_count} file(s) in Season #{season_num}"
-      end
-
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> put_flash(:info, message)}
-  end
-
-  def handle_async(:rescan_season_files, {:ok, {season_num, {:error, reason}}}, socket) do
-    Logger.error("Season file metadata refresh failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:error, "Failed to refresh Season #{season_num} files: #{inspect(reason)}")}
-  end
-
-  def handle_async(:rescan_season_files, {:exit, reason}, socket) do
-    Logger.error("Season file metadata refresh task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:error, "Season metadata refresh failed unexpectedly")}
-  end
-
-  def handle_async(:rescan_series, {:ok, {{:ok, scan_result}, {:ok, refreshed, _errors}}}, socket) do
-    message = rescan_flash_message("Re-scan", scan_result, refreshed)
-
-    {:noreply,
-     socket
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> put_flash(:info, message)}
-  end
-
-  def handle_async(:rescan_series, {:ok, {{:error, :not_a_tv_show}, _}}, socket) do
-    {:noreply, put_flash(socket, :error, "Re-scan is only available for TV shows")}
-  end
-
-  def handle_async(:rescan_series, {:ok, {{:error, :no_media_files}, _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       "No existing media files found. Please import at least one file first."
-     )}
-  end
-
-  def handle_async(:rescan_series, {:ok, {{:error, reason}, _}}, socket) do
-    Logger.error("Series re-scan failed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Failed to re-scan series: #{inspect(reason)}")}
-  end
-
-  def handle_async(:rescan_series, {:exit, reason}, socket) do
-    Logger.error("Series re-scan task crashed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Series re-scan failed unexpectedly")}
-  end
-
-  def handle_async(:rescan_movie, {:ok, {{:ok, scan_result}, {:ok, refreshed, _errors}}}, socket) do
-    message = rescan_flash_message("Re-scan", scan_result, refreshed)
-
-    {:noreply,
-     socket
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> put_flash(:info, message)}
-  end
-
-  def handle_async(:rescan_movie, {:ok, {{:error, :not_a_movie}, _}}, socket) do
-    {:noreply, put_flash(socket, :error, "Re-scan is only available for movies")}
-  end
-
-  def handle_async(:rescan_movie, {:ok, {{:error, :no_media_files}, _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       "No existing media files found. Please import at least one file first."
-     )}
-  end
-
-  def handle_async(:rescan_movie, {:ok, {{:error, reason}, _}}, socket) do
-    Logger.error("Movie re-scan failed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Failed to re-scan movie: #{inspect(reason)}")}
-  end
-
-  def handle_async(:rescan_movie, {:exit, reason}, socket) do
-    Logger.error("Movie re-scan task crashed: #{inspect(reason)}")
-    {:noreply, put_flash(socket, :error, "Movie re-scan failed unexpectedly")}
-  end
-
-  def handle_async(
-        :rescan_season,
-        {:ok, {season_num, {:ok, scan_result}, {:ok, refreshed, _errors}}},
-        socket
-      ) do
-    message = rescan_flash_message("Season #{season_num} re-scan", scan_result, refreshed)
-
-    {:noreply,
-     socket
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:info, message)}
-  end
-
-  def handle_async(:rescan_season, {:ok, {_season_num, {:error, :not_a_tv_show}, _}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:error, "Re-scan is only available for TV shows")}
-  end
-
-  def handle_async(:rescan_season, {:ok, {season_num, {:error, :no_media_files}, _}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(
-       :error,
-       "No existing media files found for season #{season_num}. Please import at least one file first."
-     )}
-  end
-
-  def handle_async(:rescan_season, {:ok, {season_num, {:error, reason}, _}}, socket) do
-    Logger.error("Season #{season_num} re-scan failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:error, "Failed to re-scan season #{season_num}: #{inspect(reason)}")}
-  end
-
-  def handle_async(:rescan_season, {:exit, reason}, socket) do
-    Logger.error("Season re-scan task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:rescanning_season, nil)
-     |> put_flash(:error, "Season re-scan failed unexpectedly")}
-  end
-
-  def handle_async(:rename_files, {:ok, {:ok, results}}, socket) do
-    # Count successes and errors
-    success_count = Enum.count(results, &match?({:ok, _}, &1))
-    error_count = Enum.count(results, &match?({:error, _}, &1))
-
-    message =
-      cond do
-        error_count == 0 ->
-          "Successfully renamed #{success_count} file(s)"
-
-        success_count == 0 ->
-          "Failed to rename all files"
-
-        true ->
-          "Renamed #{success_count} file(s), #{error_count} failed"
-      end
-
-    flash_type = if error_count > 0, do: :warning, else: :info
-
-    {:noreply,
-     socket
-     |> assign(:renaming_files, false)
-     |> assign(:show_rename_modal, false)
-     |> assign(:rename_previews, [])
-     |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-     |> put_flash(flash_type, message)}
-  end
-
-  def handle_async(:rename_files, {:ok, {:error, reason}}, socket) do
-    Logger.error("File rename failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:renaming_files, false)
-     |> put_flash(:error, "Failed to rename files: #{inspect(reason)}")}
-  end
-
-  def handle_async(:rename_files, {:exit, reason}, socket) do
-    Logger.error("File rename task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:renaming_files, false)
-     |> put_flash(:error, "File rename failed unexpectedly")}
-  end
-
-  # Download from search async handlers
-
-  def handle_async(
-        :download_release,
-        {:ok, {{:ok, _download}, title, media_item_id, download_url}},
-        socket
-      ) do
-    Logger.info("Download initiated: #{title}")
-
-    socket =
-      socket
-      |> assign(:downloading_release_url, nil)
-      |> assign(:download_error, nil)
-      |> assign(:media_item, load_media_item(media_item_id))
-      |> assign(
-        :downloads_with_status,
-        load_downloads_with_status(load_media_item(media_item_id))
-      )
-
-    # Re-stream the downloaded item with downloaded: true so the button
-    # re-renders as "Grabbed". Stream items don't react to assign changes,
-    # so we must re-insert the item itself.
-    raw_results = Map.get(socket.assigns, :raw_search_results, [])
-    assigns = socket.assigns
-    media_item = assigns.media_item
-
-    media_type = if media_item.type == "movie", do: :movie, else: :episode
-    filtered = filter_search_results(raw_results, assigns)
-
-    sorted =
-      sort_search_results(
-        filtered,
-        assigns.sort_by,
-        media_item.quality_profile,
-        media_type,
-        Map.get(assigns, :manual_search_query)
-      )
-
-    prepared = prepare_for_stream(sorted)
-
-    socket =
-      case Enum.find(prepared, &(&1.download_url == download_url)) do
-        nil -> socket
-        item -> stream_insert(socket, :search_results, Map.put(item, :downloaded, true))
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_async(
-        :download_release,
-        {:ok, {{:error, reason}, title, _media_item_id, _download_url}},
-        socket
-      ) do
-    Logger.error("Failed to initiate download for #{title}: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:downloading_release_url, nil)
-     |> assign(:download_error, "Failed to start download: #{inspect(reason)}")}
-  end
-
-  def handle_async(:download_release, {:exit, reason}, socket) do
-    Logger.error("Download task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:downloading_release_url, nil)
-     |> assign(:download_error, "Download failed unexpectedly")}
-  end
-
-  # Subtitle async handlers
-
-  def handle_async(:subtitle_search, {:ok, {:ok, results}}, socket) do
-    Logger.info("Subtitle search completed", result_count: length(results))
-
-    {:noreply,
-     socket
-     |> assign(:searching_subtitles, false)
-     |> assign(:subtitle_search_results, results)}
-  end
-
-  def handle_async(:subtitle_search, {:ok, {:error, reason}}, socket) do
-    Logger.error("Subtitle search failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:searching_subtitles, false)
-     |> put_flash(:error, "Subtitle search failed: #{inspect(reason)}")}
-  end
-
-  def handle_async(:subtitle_search, {:exit, reason}, socket) do
-    Logger.error("Subtitle search task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:searching_subtitles, false)
-     |> put_flash(:error, "Subtitle search failed unexpectedly")}
-  end
-
-  def handle_async(:download_subtitle, {:ok, {:ok, _subtitle}}, socket) do
-    Logger.info("Subtitle downloaded successfully")
-
-    {:noreply,
-     socket
-     |> assign(:downloading_subtitle, false)
-     |> assign(:show_subtitle_search_modal, false)
-     |> assign(:selected_media_file, nil)
-     |> assign(:subtitle_search_results, [])
-     |> assign(:media_file_subtitles, load_media_file_subtitles(socket.assigns.media_item))
-     |> put_flash(:info, "Subtitle downloaded successfully")}
-  end
-
-  def handle_async(:download_subtitle, {:ok, {:error, reason}}, socket) do
-    Logger.error("Subtitle download failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:downloading_subtitle, false)
-     |> put_flash(:error, "Subtitle download failed: #{inspect(reason)}")}
-  end
-
-  def handle_async(:download_subtitle, {:exit, reason}, socket) do
-    Logger.error("Subtitle download task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:downloading_subtitle, false)
-     |> put_flash(:error, "Subtitle download failed unexpectedly")}
-  end
-
-  defp get_media_type(media_item) do
-    case media_item.type do
-      "movie" -> :movie
-      "tv_show" -> :episode
-      _ -> :movie
-    end
-  end
+  # Private helpers
 
   defp build_search_completion_message(stats) do
     indexers = stats.indexers_searched
@@ -2010,72 +553,5 @@ defmodule MydiaWeb.MediaLive.Show do
       true ->
         "Search complete: #{indexers} indexer(s) searched, no results found"
     end
-  end
-
-  # Category helper functions
-
-  defp available_categories_for("movie") do
-    [
-      {"Movie", "movie"},
-      {"Anime Movie", "anime_movie"},
-      {"Cartoon Movie", "cartoon_movie"}
-    ]
-  end
-
-  defp available_categories_for("tv_show") do
-    [
-      {"TV Show", "tv_show"},
-      {"Anime Series", "anime_series"},
-      {"Cartoon Series", "cartoon_series"}
-    ]
-  end
-
-  defp available_categories_for(_), do: []
-
-  defp category_display_name(:movie), do: "Movie"
-  defp category_display_name(:anime_movie), do: "Anime Movie"
-  defp category_display_name(:cartoon_movie), do: "Cartoon Movie"
-  defp category_display_name(:tv_show), do: "TV Show"
-  defp category_display_name(:anime_series), do: "Anime Series"
-  defp category_display_name(:cartoon_series), do: "Cartoon Series"
-  defp category_display_name(cat), do: to_string(cat)
-
-  defp rescan_flash_message(prefix, scan_result, refreshed) do
-    deleted = Map.get(scan_result, :deleted_files, 0)
-
-    parts = ["Found #{scan_result.new_files} new file(s)"]
-
-    parts =
-      if deleted > 0,
-        do: parts ++ ["moved #{deleted} file(s) to trash"],
-        else: parts
-
-    parts = parts ++ ["refreshed metadata for #{refreshed} file(s)"]
-
-    parts =
-      if Enum.empty?(scan_result.errors),
-        do: parts,
-        else: parts ++ ["#{length(scan_result.errors)} error(s)"]
-
-    "#{prefix} complete! #{Enum.join(parts, ", ")}"
-  end
-
-  defp media_type_path("movie"), do: ~p"/movies"
-  defp media_type_path("tv_show"), do: ~p"/tv"
-  defp media_type_path(_), do: ~p"/"
-
-  # Collection helpers
-
-  defp load_collection_data(socket, media_item) do
-    user = socket.assigns.current_scope.user
-    is_favorite = Collections.is_favorite?(user, media_item.id)
-    item_collections = Collections.collections_for_item(user, media_item.id)
-    user_collections = Collections.list_collections(user, type: "manual", include_shared: false)
-
-    socket
-    |> assign(:is_favorite, is_favorite)
-    |> assign(:item_collections, item_collections)
-    |> assign(:user_collections, user_collections)
-    |> assign(:show_add_to_collection_modal, false)
   end
 end
