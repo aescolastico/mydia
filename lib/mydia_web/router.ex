@@ -189,7 +189,7 @@ defmodule MydiaWeb.Router do
       live "/config/settings", AdminSettingsLive.Index, :index
       live "/config/quality", AdminQualityProfilesLive.Index, :index
       live "/config/clients", AdminDownloadClientsLive.Index, :index
-      live "/config/indexers", AdminConfigLive.Index, :index
+      live "/config/indexers", AdminIndexersLive.Index, :index
       live "/config/library-paths", AdminLibraryPathsLive.Index, :index
       live "/config/media-servers", AdminMediaServersLive.Index, :index
       live "/config/remote-access", AdminConfigLive.Index, :index
