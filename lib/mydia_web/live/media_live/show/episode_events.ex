@@ -1,0 +1,164 @@
+defmodule MydiaWeb.MediaLive.Show.EpisodeEvents do
+  @moduledoc false
+
+  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.LiveView, only: [put_flash: 3]
+
+  alias Mydia.Media
+  alias MydiaWeb.Live.Authorization
+
+  import MydiaWeb.MediaLive.Show.Loaders, only: [load_media_item: 1]
+  import MydiaWeb.MediaLive.Show.Helpers, only: [monitoring_preset_label: 1]
+
+  require Logger
+
+  @valid_monitoring_presets ~w(all future missing existing first_season latest_season none)
+
+  def toggle_monitored(_params, socket) do
+    with :ok <- Authorization.authorize_update_media(socket) do
+      media_item = socket.assigns.media_item
+      new_monitored = !media_item.monitored
+
+      {:ok, updated_item} =
+        Media.update_media_item(media_item, %{monitored: new_monitored},
+          reason: if(new_monitored, do: "Monitoring enabled", else: "Monitoring disabled")
+        )
+
+      {:noreply,
+       socket
+       |> assign(:media_item, updated_item)
+       |> put_flash(
+         :info,
+         "Monitoring #{if updated_item.monitored, do: "enabled", else: "disabled"}"
+       )}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def apply_monitoring_preset(%{"preset" => preset_str}, socket) do
+    with :ok <- Authorization.authorize_update_media(socket),
+         true <- preset_str in @valid_monitoring_presets do
+      media_item = socket.assigns.media_item
+      preset = String.to_existing_atom(preset_str)
+
+      socket = assign(socket, :applying_monitoring_preset, true)
+
+      case Media.apply_monitoring_preset(media_item, preset) do
+        {:ok, updated_item, count} ->
+          reloaded_item = load_media_item(updated_item.id)
+          preset_label = monitoring_preset_label(preset)
+
+          {:noreply,
+           socket
+           |> assign(:media_item, reloaded_item)
+           |> assign(:applying_monitoring_preset, false)
+           |> put_flash(:info, "Applied '#{preset_label}' monitoring to #{count} episodes")}
+
+        {:error, reason} ->
+          Logger.error("Failed to apply monitoring preset: #{inspect(reason)}")
+
+          {:noreply,
+           socket
+           |> assign(:applying_monitoring_preset, false)
+           |> put_flash(:error, "Failed to apply monitoring preset")}
+      end
+    else
+      {:unauthorized, socket} ->
+        {:noreply, socket}
+
+      false ->
+        {:noreply, put_flash(socket, :error, "Invalid monitoring preset")}
+    end
+  end
+
+  def toggle_episode_monitored(%{"episode-id" => episode_id}, socket) do
+    with :ok <- Authorization.authorize_update_media(socket) do
+      episode = Media.get_episode!(episode_id)
+      {:ok, _updated_episode} = Media.update_episode(episode, %{monitored: !episode.monitored})
+
+      {:noreply,
+       socket
+       |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
+       |> put_flash(
+         :info,
+         "Episode monitoring #{if episode.monitored, do: "disabled", else: "enabled"}"
+       )}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def monitor_season(%{"season-number" => season_number_str}, socket) do
+    with :ok <- Authorization.authorize_update_media(socket) do
+      season_number = String.to_integer(season_number_str)
+      media_item = socket.assigns.media_item
+
+      case Media.update_season_monitoring(media_item.id, season_number, true) do
+        {:ok, count} ->
+          {:noreply,
+           socket
+           |> assign(:media_item, load_media_item(media_item.id))
+           |> put_flash(
+             :info,
+             "Monitoring enabled for #{count} episodes in Season #{season_number}"
+           )}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def unmonitor_season(%{"season-number" => season_number_str}, socket) do
+    with :ok <- Authorization.authorize_update_media(socket) do
+      season_number = String.to_integer(season_number_str)
+      media_item = socket.assigns.media_item
+
+      case Media.update_season_monitoring(media_item.id, season_number, false) do
+        {:ok, count} ->
+          {:noreply,
+           socket
+           |> assign(:media_item, load_media_item(media_item.id))
+           |> put_flash(
+             :info,
+             "Monitoring disabled for #{count} episodes in Season #{season_number}"
+           )}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def toggle_season_expanded(%{"season-number" => season_number_str}, socket) do
+    season_number = String.to_integer(season_number_str)
+    expanded_seasons = socket.assigns.expanded_seasons
+
+    updated_seasons =
+      if MapSet.member?(expanded_seasons, season_number) do
+        MapSet.delete(expanded_seasons, season_number)
+      else
+        MapSet.put(expanded_seasons, season_number)
+      end
+
+    {:noreply, assign(socket, :expanded_seasons, updated_seasons)}
+  end
+
+  def toggle_episode_expanded(%{"episode-id" => episode_id}, socket) do
+    expanded_episodes = socket.assigns.expanded_episodes
+
+    updated_episodes =
+      if MapSet.member?(expanded_episodes, episode_id) do
+        MapSet.delete(expanded_episodes, episode_id)
+      else
+        MapSet.put(expanded_episodes, episode_id)
+      end
+
+    {:noreply, assign(socket, :expanded_episodes, updated_episodes)}
+  end
+end

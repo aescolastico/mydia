@@ -4,11 +4,15 @@ defmodule MydiaWeb.MediaLive.Show do
   alias Mydia.Settings
   alias Mydia.Library
   alias Mydia.Downloads
-  alias Mydia.Collections
   alias Mydia.Indexers.SearchResult
   alias MydiaWeb.Live.Authorization
   alias MydiaWeb.MediaLive.Show.Modals
   alias MydiaWeb.MediaLive.Show.Components
+  alias MydiaWeb.MediaLive.Show.EpisodeEvents
+  alias MydiaWeb.MediaLive.Show.DownloadEvents
+  alias MydiaWeb.MediaLive.Show.MediaItemEvents
+  alias MydiaWeb.MediaLive.Show.CategoryEvents
+  alias MydiaWeb.MediaLive.Show.CollectionEvents
 
   # Import helper modules
   import MydiaWeb.MediaLive.Show.Formatters
@@ -128,7 +132,7 @@ defmodule MydiaWeb.MediaLive.Show do
      # Trailer modal state
      |> assign(:show_trailer_modal, false)
      # Collection state
-     |> load_collection_data(media_item)
+     |> CollectionEvents.load_collection_data(media_item)
      |> stream_configure(:search_results, dom_id: &generate_positioned_id/1)
      |> stream(:search_results, [])}
   end
@@ -139,68 +143,12 @@ defmodule MydiaWeb.MediaLive.Show do
   end
 
   @impl true
-  def handle_event("toggle_monitored", _params, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-      new_monitored = !media_item.monitored
+  def handle_event("toggle_monitored", params, socket),
+    do: EpisodeEvents.toggle_monitored(params, socket)
 
-      {:ok, updated_item} =
-        Media.update_media_item(media_item, %{monitored: new_monitored},
-          reason: if(new_monitored, do: "Monitoring enabled", else: "Monitoring disabled")
-        )
-
-      {:noreply,
-       socket
-       |> assign(:media_item, updated_item)
-       |> put_flash(
-         :info,
-         "Monitoring #{if updated_item.monitored, do: "enabled", else: "disabled"}"
-       )}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  @valid_monitoring_presets ~w(all future missing existing first_season latest_season none)
-
-  def handle_event("apply_monitoring_preset", %{"preset" => preset_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket),
-         true <- preset_str in @valid_monitoring_presets do
-      media_item = socket.assigns.media_item
-      preset = String.to_existing_atom(preset_str)
-
-      # Show loading state
-      socket = assign(socket, :applying_monitoring_preset, true)
-
-      case Media.apply_monitoring_preset(media_item, preset) do
-        {:ok, updated_item, count} ->
-          # Reload the full media item with episodes to refresh the UI
-          reloaded_item = load_media_item(updated_item.id)
-
-          preset_label = monitoring_preset_label(preset)
-
-          {:noreply,
-           socket
-           |> assign(:media_item, reloaded_item)
-           |> assign(:applying_monitoring_preset, false)
-           |> put_flash(:info, "Applied '#{preset_label}' monitoring to #{count} episodes")}
-
-        {:error, reason} ->
-          Logger.error("Failed to apply monitoring preset: #{inspect(reason)}")
-
-          {:noreply,
-           socket
-           |> assign(:applying_monitoring_preset, false)
-           |> put_flash(:error, "Failed to apply monitoring preset")}
-      end
-    else
-      {:unauthorized, socket} ->
-        {:noreply, socket}
-
-      false ->
-        {:noreply, put_flash(socket, :error, "Invalid monitoring preset")}
-    end
-  end
+  @impl true
+  def handle_event("apply_monitoring_preset", params, socket),
+    do: EpisodeEvents.apply_monitoring_preset(params, socket)
 
   def handle_event("manual_search", _params, socket) do
     with :ok <- Authorization.authorize_manage_downloads(socket) do
@@ -470,153 +418,32 @@ defmodule MydiaWeb.MediaLive.Show do
     end
   end
 
-  def handle_event("show_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_delete_confirm, true)
-     |> assign(:delete_files, false)}
-  end
+  def handle_event("show_delete_confirm", params, socket),
+    do: MediaItemEvents.show_delete_confirm(params, socket)
 
-  def handle_event("hide_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_delete_confirm, false)
-     |> assign(:delete_files, false)}
-  end
+  def handle_event("hide_delete_confirm", params, socket),
+    do: MediaItemEvents.hide_delete_confirm(params, socket)
 
-  def handle_event("toggle_delete_files", %{"delete_files" => value}, socket) do
-    delete_files = value == "true"
+  def handle_event("toggle_delete_files", params, socket),
+    do: MediaItemEvents.toggle_delete_files(params, socket)
 
-    Logger.info("toggle_delete_files", value: value, delete_files: delete_files)
+  def handle_event("delete_media", params, socket),
+    do: MediaItemEvents.delete_media(params, socket)
 
-    {:noreply, assign(socket, :delete_files, delete_files)}
-  end
+  def handle_event("toggle_episode_monitored", params, socket),
+    do: EpisodeEvents.toggle_episode_monitored(params, socket)
 
-  def handle_event("delete_media", _params, socket) do
-    with :ok <- Authorization.authorize_delete_media(socket) do
-      media_item = socket.assigns.media_item
-      delete_files = socket.assigns.delete_files
+  def handle_event("monitor_season", params, socket),
+    do: EpisodeEvents.monitor_season(params, socket)
 
-      Logger.info("LiveView delete_media event",
-        media_item_id: media_item.id,
-        title: media_item.title,
-        delete_files: delete_files
-      )
+  def handle_event("unmonitor_season", params, socket),
+    do: EpisodeEvents.unmonitor_season(params, socket)
 
-      case Media.delete_media_item(media_item, delete_files: delete_files) do
-        {:ok, _} ->
-          message =
-            if delete_files do
-              "#{media_item.title} deleted successfully (including files)"
-            else
-              "#{media_item.title} removed from library (files preserved)"
-            end
+  def handle_event("toggle_season_expanded", params, socket),
+    do: EpisodeEvents.toggle_season_expanded(params, socket)
 
-          {:noreply,
-           socket
-           |> put_flash(:info, message)
-           |> push_navigate(to: media_type_path(media_item.type))}
-
-        {:error, _changeset} ->
-          {:noreply,
-           socket
-           |> put_flash(:error, "Failed to delete #{media_item.title}")
-           |> assign(:show_delete_confirm, false)}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("toggle_episode_monitored", %{"episode-id" => episode_id}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      episode = Media.get_episode!(episode_id)
-      {:ok, _updated_episode} = Media.update_episode(episode, %{monitored: !episode.monitored})
-
-      {:noreply,
-       socket
-       |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-       |> put_flash(
-         :info,
-         "Episode monitoring #{if episode.monitored, do: "disabled", else: "enabled"}"
-       )}
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("monitor_season", %{"season-number" => season_number_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      season_number = String.to_integer(season_number_str)
-      media_item = socket.assigns.media_item
-
-      case Media.update_season_monitoring(media_item.id, season_number, true) do
-        {:ok, count} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, load_media_item(media_item.id))
-           |> put_flash(
-             :info,
-             "Monitoring enabled for #{count} episodes in Season #{season_number}"
-           )}
-
-        {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("unmonitor_season", %{"season-number" => season_number_str}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      season_number = String.to_integer(season_number_str)
-      media_item = socket.assigns.media_item
-
-      case Media.update_season_monitoring(media_item.id, season_number, false) do
-        {:ok, count} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, load_media_item(media_item.id))
-           |> put_flash(
-             :info,
-             "Monitoring disabled for #{count} episodes in Season #{season_number}"
-           )}
-
-        {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to update season monitoring")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  def handle_event("toggle_season_expanded", %{"season-number" => season_number_str}, socket) do
-    season_number = String.to_integer(season_number_str)
-    expanded_seasons = socket.assigns.expanded_seasons
-
-    updated_seasons =
-      if MapSet.member?(expanded_seasons, season_number) do
-        MapSet.delete(expanded_seasons, season_number)
-      else
-        MapSet.put(expanded_seasons, season_number)
-      end
-
-    {:noreply, assign(socket, :expanded_seasons, updated_seasons)}
-  end
-
-  def handle_event("toggle_episode_expanded", %{"episode-id" => episode_id}, socket) do
-    expanded_episodes = socket.assigns.expanded_episodes
-
-    updated_episodes =
-      if MapSet.member?(expanded_episodes, episode_id) do
-        MapSet.delete(expanded_episodes, episode_id)
-      else
-        MapSet.put(expanded_episodes, episode_id)
-      end
-
-    {:noreply, assign(socket, :expanded_episodes, updated_episodes)}
-  end
+  def handle_event("toggle_episode_expanded", params, socket),
+    do: EpisodeEvents.toggle_episode_expanded(params, socket)
 
   def handle_event("search_episode", %{"episode-id" => episode_id}, socket) do
     episode = Media.get_episode!(episode_id, preload: [:media_item])
@@ -865,133 +692,32 @@ defmodule MydiaWeb.MediaLive.Show do
     end
   end
 
-  def handle_event("retry_download", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id, preload: [:media_item, :episode])
+  def handle_event("retry_download", params, socket),
+    do: DownloadEvents.retry_download(params, socket)
 
-    # Clear error message if any
-    case Downloads.update_download(download, %{error_message: nil}) do
-      {:ok, updated} ->
-        # Re-add to client using the original download URL
-        search_result = %Mydia.Indexers.SearchResult{
-          download_url: updated.download_url,
-          title: updated.title,
-          indexer: updated.indexer,
-          size: updated.metadata["size"],
-          seeders: updated.metadata["seeders"],
-          leechers: updated.metadata["leechers"],
-          quality: updated.metadata["quality"]
-        }
+  def handle_event("show_download_cancel_confirm", params, socket),
+    do: DownloadEvents.show_download_cancel_confirm(params, socket)
 
-        opts =
-          []
-          |> maybe_add_opt(:media_item_id, updated.media_item_id)
-          |> maybe_add_opt(:episode_id, updated.episode_id)
-          |> maybe_add_opt(:client_name, updated.download_client)
+  def handle_event("hide_download_cancel_confirm", params, socket),
+    do: DownloadEvents.hide_download_cancel_confirm(params, socket)
 
-        # Delete old download record and create new one
-        Downloads.delete_download(updated)
+  def handle_event("cancel_download", params, socket),
+    do: DownloadEvents.cancel_download(params, socket)
 
-        case Downloads.initiate_download(search_result, opts) do
-          {:ok, _new_download} ->
-            {:noreply, put_flash(socket, :info, "Download re-initiated")}
+  def handle_event("show_download_delete_confirm", params, socket),
+    do: DownloadEvents.show_download_delete_confirm(params, socket)
 
-          {:error, reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to retry download: #{inspect(reason)}")}
-        end
+  def handle_event("hide_download_delete_confirm", params, socket),
+    do: DownloadEvents.hide_download_delete_confirm(params, socket)
 
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Failed to update download")}
-    end
-  end
+  def handle_event("delete_download_record", params, socket),
+    do: DownloadEvents.delete_download_record(params, socket)
 
-  def handle_event("show_download_cancel_confirm", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
+  def handle_event("show_download_details", params, socket),
+    do: DownloadEvents.show_download_details(params, socket)
 
-    {:noreply,
-     socket
-     |> assign(:show_download_cancel_confirm, true)
-     |> assign(:download_to_cancel, download)}
-  end
-
-  def handle_event("hide_download_cancel_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_cancel_confirm, false)
-     |> assign(:download_to_cancel, nil)}
-  end
-
-  def handle_event("cancel_download", _params, socket) do
-    download = socket.assigns.download_to_cancel
-
-    case Downloads.cancel_download(download) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:show_download_cancel_confirm, false)
-         |> assign(:download_to_cancel, nil)
-         |> put_flash(:info, "Download cancelled")}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to cancel download")
-         |> assign(:show_download_cancel_confirm, false)
-         |> assign(:download_to_cancel, nil)}
-    end
-  end
-
-  def handle_event("show_download_delete_confirm", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_download_delete_confirm, true)
-     |> assign(:download_to_delete, download)}
-  end
-
-  def handle_event("hide_download_delete_confirm", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_delete_confirm, false)
-     |> assign(:download_to_delete, nil)}
-  end
-
-  def handle_event("delete_download_record", _params, socket) do
-    download = socket.assigns.download_to_delete
-
-    case Downloads.delete_download(download) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-         |> assign(:show_download_delete_confirm, false)
-         |> assign(:download_to_delete, nil)
-         |> put_flash(:info, "Download removed from history")}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to delete download")
-         |> assign(:show_download_delete_confirm, false)
-         |> assign(:download_to_delete, nil)}
-    end
-  end
-
-  def handle_event("show_download_details", %{"download-id" => download_id}, socket) do
-    download = Downloads.get_download!(download_id)
-
-    {:noreply,
-     socket
-     |> assign(:show_download_details_modal, true)
-     |> assign(:download_details, download)}
-  end
-
-  def handle_event("hide_download_details", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_download_details_modal, false)
-     |> assign(:download_details, nil)}
-  end
+  def handle_event("hide_download_details", params, socket),
+    do: DownloadEvents.hide_download_details(params, socket)
 
   def handle_event("close_manual_search_modal", _params, socket) do
     {:noreply,
@@ -1187,232 +913,48 @@ defmodule MydiaWeb.MediaLive.Show do
     end
   end
 
-  # Category override event handlers
+  # Category, trailer, and quality profile events
 
-  def handle_event("show_category_modal", _params, socket) do
-    media_item = socket.assigns.media_item
+  def handle_event("show_category_modal", params, socket),
+    do: CategoryEvents.show_category_modal(params, socket)
 
-    changeset =
-      Media.change_media_item_category(media_item, %{
-        category: media_item.category,
-        category_override: media_item.category_override
-      })
+  def handle_event("hide_category_modal", params, socket),
+    do: CategoryEvents.hide_category_modal(params, socket)
 
-    {:noreply,
-     socket
-     |> assign(:show_category_modal, true)
-     |> assign(:category_form, to_form(changeset))}
-  end
+  def handle_event("show_trailer_modal", params, socket),
+    do: CategoryEvents.show_trailer_modal(params, socket)
 
-  def handle_event("hide_category_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_category_modal, false)
-     |> assign(:category_form, nil)}
-  end
+  def handle_event("hide_trailer_modal", params, socket),
+    do: CategoryEvents.hide_trailer_modal(params, socket)
 
-  def handle_event("show_trailer_modal", _params, socket) do
-    {:noreply, assign(socket, :show_trailer_modal, true)}
-  end
+  def handle_event("validate_category", params, socket),
+    do: CategoryEvents.validate_category(params, socket)
 
-  def handle_event("hide_trailer_modal", _params, socket) do
-    {:noreply, assign(socket, :show_trailer_modal, false)}
-  end
+  def handle_event("save_category", params, socket),
+    do: CategoryEvents.save_category(params, socket)
 
-  def handle_event("validate_category", %{"media_item" => params}, socket) do
-    changeset =
-      socket.assigns.media_item
-      |> Media.change_media_item_category(params)
-      |> Map.put(:action, :validate)
+  def handle_event("reset_category_to_auto", params, socket),
+    do: CategoryEvents.reset_category_to_auto(params, socket)
 
-    {:noreply, assign(socket, :category_form, to_form(changeset))}
-  end
+  def handle_event("update_quality_profile", params, socket),
+    do: CategoryEvents.update_quality_profile(params, socket)
 
-  def handle_event("save_category", %{"media_item" => params}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
+  # Collection events
 
-      # Set override to true when manually changing category
-      params = Map.put(params, "category_override", params["override"] == "true")
+  def handle_event("toggle_favorite", params, socket),
+    do: CollectionEvents.toggle_favorite(params, socket)
 
-      case Media.update_media_item(media_item, params, reason: "Category updated") do
-        {:ok, updated_item} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, updated_item)
-           |> assign(:show_category_modal, false)
-           |> assign(:category_form, nil)
-           |> put_flash(:info, "Category updated successfully")}
+  def handle_event("open_add_to_collection_modal", params, socket),
+    do: CollectionEvents.open_add_to_collection_modal(params, socket)
 
-        {:error, %Ecto.Changeset{} = changeset} ->
-          {:noreply, assign(socket, :category_form, to_form(changeset))}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
+  def handle_event("close_add_to_collection_modal", params, socket),
+    do: CollectionEvents.close_add_to_collection_modal(params, socket)
 
-  def handle_event("reset_category_to_auto", _params, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
+  def handle_event("add_to_collection", params, socket),
+    do: CollectionEvents.add_to_collection(params, socket)
 
-      # Re-classify using the category classifier
-      new_category = Mydia.Media.CategoryClassifier.classify(media_item)
-
-      case Media.update_media_item(
-             media_item,
-             %{category: new_category, category_override: false},
-             reason: "Category reset to auto-detected"
-           ) do
-        {:ok, updated_item} ->
-          {:noreply,
-           socket
-           |> assign(:media_item, updated_item)
-           |> assign(:show_category_modal, false)
-           |> assign(:category_form, nil)
-           |> put_flash(
-             :info,
-             "Category reset to auto-detected: #{category_display_name(new_category)}"
-           )}
-
-        {:error, %Ecto.Changeset{} = changeset} ->
-          {:noreply,
-           socket
-           |> assign(:category_form, to_form(changeset))
-           |> put_flash(:error, "Failed to reset category")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  # Quality profile event handler
-
-  def handle_event("update_quality_profile", %{"profile-id" => profile_id}, socket) do
-    with :ok <- Authorization.authorize_update_media(socket) do
-      media_item = socket.assigns.media_item
-
-      # Convert empty string to nil
-      quality_profile_id = if profile_id == "", do: nil, else: profile_id
-
-      case Media.update_media_item(
-             media_item,
-             %{quality_profile_id: quality_profile_id},
-             reason: "Quality profile updated"
-           ) do
-        {:ok, _updated_item} ->
-          # Reload media item to get preloaded associations
-          reloaded_item = load_media_item(media_item.id)
-
-          {:noreply,
-           socket
-           |> assign(:media_item, reloaded_item)
-           |> put_flash(:info, "Quality profile updated")}
-
-        {:error, _changeset} ->
-          {:noreply, put_flash(socket, :error, "Failed to update quality profile")}
-      end
-    else
-      {:unauthorized, socket} -> {:noreply, socket}
-    end
-  end
-
-  # Collection event handlers
-
-  def handle_event("toggle_favorite", _params, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.toggle_favorite(user, media_item.id) do
-      {:ok, :added} ->
-        {:noreply,
-         socket
-         |> assign(:is_favorite, true)
-         |> load_collection_data(media_item)
-         |> put_flash(:info, "Added to Favorites")}
-
-      {:ok, :removed} ->
-        {:noreply,
-         socket
-         |> assign(:is_favorite, false)
-         |> load_collection_data(media_item)
-         |> put_flash(:info, "Removed from Favorites")}
-
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to update favorites")}
-    end
-  end
-
-  def handle_event("open_add_to_collection_modal", _params, socket) do
-    {:noreply, assign(socket, :show_add_to_collection_modal, true)}
-  end
-
-  def handle_event("close_add_to_collection_modal", _params, socket) do
-    {:noreply, assign(socket, :show_add_to_collection_modal, false)}
-  end
-
-  def handle_event("add_to_collection", %{"collection-id" => collection_id}, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.get_collection(user, collection_id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Collection not found")}
-
-      collection ->
-        case Collections.add_item(collection, media_item.id) do
-          {:ok, _item} ->
-            {:noreply,
-             socket
-             |> load_collection_data(media_item)
-             |> assign(:show_add_to_collection_modal, false)
-             |> put_flash(:info, "Added to #{collection.name}")}
-
-          {:error, :smart_collection} ->
-            {:noreply, put_flash(socket, :error, "Cannot add items to smart collections")}
-
-          {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to add to collection")}
-        end
-    end
-  end
-
-  def handle_event("remove_from_collection", %{"collection-id" => collection_id}, socket) do
-    user = socket.assigns.current_scope.user
-    media_item = socket.assigns.media_item
-
-    case Collections.get_collection(user, collection_id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Collection not found")}
-
-      collection ->
-        case Collections.remove_item(collection, media_item.id) do
-          {:ok, _item} ->
-            {:noreply,
-             socket
-             |> load_collection_data(media_item)
-             |> put_flash(:info, "Removed from #{collection.name}")}
-
-          {:error, :smart_collection} ->
-            {:noreply, put_flash(socket, :error, "Cannot remove items from smart collections")}
-
-          {:error, :not_found} ->
-            {:noreply, put_flash(socket, :error, "Item not in collection")}
-
-          {:error, _reason} ->
-            {:noreply, put_flash(socket, :error, "Failed to remove from collection")}
-        end
-    end
-  end
-
-  # Private helpers for monitoring presets
-  defp monitoring_preset_label(:all), do: "All Episodes"
-  defp monitoring_preset_label(:future), do: "Future Episodes"
-  defp monitoring_preset_label(:missing), do: "Missing Episodes"
-  defp monitoring_preset_label(:existing), do: "Existing Episodes"
-  defp monitoring_preset_label(:first_season), do: "First Season"
-  defp monitoring_preset_label(:latest_season), do: "Latest Season"
-  defp monitoring_preset_label(:none), do: "None"
+  def handle_event("remove_from_collection", params, socket),
+    do: CollectionEvents.remove_from_collection(params, socket)
 
   @impl true
   def handle_info({:download_created, download}, socket) do
@@ -2012,34 +1554,6 @@ defmodule MydiaWeb.MediaLive.Show do
     end
   end
 
-  # Category helper functions
-
-  defp available_categories_for("movie") do
-    [
-      {"Movie", "movie"},
-      {"Anime Movie", "anime_movie"},
-      {"Cartoon Movie", "cartoon_movie"}
-    ]
-  end
-
-  defp available_categories_for("tv_show") do
-    [
-      {"TV Show", "tv_show"},
-      {"Anime Series", "anime_series"},
-      {"Cartoon Series", "cartoon_series"}
-    ]
-  end
-
-  defp available_categories_for(_), do: []
-
-  defp category_display_name(:movie), do: "Movie"
-  defp category_display_name(:anime_movie), do: "Anime Movie"
-  defp category_display_name(:cartoon_movie), do: "Cartoon Movie"
-  defp category_display_name(:tv_show), do: "TV Show"
-  defp category_display_name(:anime_series), do: "Anime Series"
-  defp category_display_name(:cartoon_series), do: "Cartoon Series"
-  defp category_display_name(cat), do: to_string(cat)
-
   defp rescan_flash_message(prefix, scan_result, refreshed) do
     deleted = Map.get(scan_result, :deleted_files, 0)
 
@@ -2058,24 +1572,5 @@ defmodule MydiaWeb.MediaLive.Show do
         else: parts ++ ["#{length(scan_result.errors)} error(s)"]
 
     "#{prefix} complete! #{Enum.join(parts, ", ")}"
-  end
-
-  defp media_type_path("movie"), do: ~p"/movies"
-  defp media_type_path("tv_show"), do: ~p"/tv"
-  defp media_type_path(_), do: ~p"/"
-
-  # Collection helpers
-
-  defp load_collection_data(socket, media_item) do
-    user = socket.assigns.current_scope.user
-    is_favorite = Collections.is_favorite?(user, media_item.id)
-    item_collections = Collections.collections_for_item(user, media_item.id)
-    user_collections = Collections.list_collections(user, type: "manual", include_shared: false)
-
-    socket
-    |> assign(:is_favorite, is_favorite)
-    |> assign(:item_collections, item_collections)
-    |> assign(:user_collections, user_collections)
-    |> assign(:show_add_to_collection_modal, false)
   end
 end
