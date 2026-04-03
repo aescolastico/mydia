@@ -1,4 +1,4 @@
-defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
+defmodule MydiaWeb.AdminIndexersLive.IndexerLibraryTest do
   use MydiaWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -14,7 +14,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "shows Browse Indexer Library option when feature flag is enabled", %{conn: conn} do
       set_cardigann_feature_flag(true)
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/indexers")
       # The "Add Indexer" dropdown should have "Browse Indexer Library" option
       assert html =~ "Browse Indexer Library"
     end
@@ -24,7 +24,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     } do
       set_cardigann_feature_flag(false)
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/indexers")
       # The "Add Indexer" dropdown should NOT have "Browse Indexer Library" option
       refute html =~ "Browse Indexer Library"
     end
@@ -32,7 +32,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "opens indexer library modal when clicking Browse Indexer Library", %{conn: conn} do
       set_cardigann_feature_flag(true)
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Click the "Browse Indexer Library" button (in dropdown) to open the modal
       html =
@@ -52,7 +52,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       cardigann_definition_fixture(%{enabled: true})
       cardigann_definition_fixture(%{enabled: false})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -70,7 +70,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "closes modal when clicking close button", %{conn: conn} do
       set_cardigann_feature_flag(true)
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -99,7 +99,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       private_def =
         cardigann_definition_fixture(%{name: "Private Indexer", type: "private"})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -122,7 +122,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       disabled_def =
         cardigann_definition_fixture(%{name: "Disabled Indexer", enabled: false})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -143,7 +143,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       indexer1 = cardigann_definition_fixture(%{name: "RARBG"})
       indexer2 = cardigann_definition_fixture(%{name: "1337x"})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -169,7 +169,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "enables a disabled indexer", %{conn: conn} do
       definition = cardigann_definition_fixture(%{enabled: false})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -178,7 +178,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       view
       |> element(
-        "input[type='checkbox'][phx-click='toggle_indexer'][phx-value-id='#{definition.id}']"
+        "input[type='checkbox'][phx-click='library_toggle_indexer'][phx-value-id='#{definition.id}']"
       )
       |> render_click()
 
@@ -190,7 +190,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "disables an enabled indexer", %{conn: conn} do
       definition = cardigann_definition_fixture(%{enabled: true})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -199,7 +199,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       view
       |> element(
-        "input[type='checkbox'][phx-click='toggle_indexer'][phx-value-id='#{definition.id}']"
+        "input[type='checkbox'][phx-click='library_toggle_indexer'][phx-value-id='#{definition.id}']"
       )
       |> render_click()
 
@@ -217,7 +217,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "opens configuration modal for private indexers", %{conn: conn} do
       definition = cardigann_definition_fixture(%{type: "private", name: "Private Site"})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the library modal using dropdown button
       view
@@ -226,7 +226,9 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       html =
         view
-        |> element("button[phx-click='configure_indexer'][phx-value-id='#{definition.id}']")
+        |> element(
+          "button[phx-click='library_configure_indexer'][phx-value-id='#{definition.id}']"
+        )
         |> render_click()
 
       assert html =~ "Configure Private Site"
@@ -237,7 +239,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "saves configuration", %{conn: conn} do
       definition = cardigann_definition_fixture(%{type: "private"})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the library modal using dropdown button
       view
@@ -246,7 +248,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       # Open config modal
       view
-      |> element("button[phx-click='configure_indexer'][phx-value-id='#{definition.id}']")
+      |> element("button[phx-click='library_configure_indexer'][phx-value-id='#{definition.id}']")
       |> render_click()
 
       # Submit config
@@ -272,7 +274,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     setup :start_indexers_health
 
     test "shows message when no indexers exist", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       html =
@@ -287,7 +289,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
     test "shows message when filters return no results", %{conn: conn} do
       cardigann_definition_fixture(%{type: "public"})
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       # Open the modal using dropdown button
       view
@@ -313,7 +315,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       # Create an enabled library indexer
       cardigann_definition_fixture(%{name: "Enabled Library Indexer", enabled: true})
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/indexers")
 
       # Should show the Library Indexers section
       assert html =~ "Library Indexers"
@@ -326,7 +328,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
       # Create a disabled library indexer only
       cardigann_definition_fixture(%{name: "Disabled Library Indexer", enabled: false})
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/indexers")
 
       # Should NOT show the Library Indexers section (since no enabled ones exist)
       refute html =~ "Disabled Library Indexer"
@@ -337,7 +339,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       cardigann_definition_fixture(%{name: "Test Indexer", enabled: true})
 
-      {:ok, view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, html} = live(conn, ~p"/admin/config/indexers")
 
       # Should not contain "Cardigann" anywhere
       refute html =~ "Cardigann"

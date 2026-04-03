@@ -1,6 +1,8 @@
 defmodule MydiaWeb.DiscoverLive.Index do
   use MydiaWeb, :live_view
 
+  import MydiaWeb.DiscoverComponents
+
   require Logger
 
   alias Mydia.Media

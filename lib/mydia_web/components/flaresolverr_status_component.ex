@@ -1,4 +1,4 @@
-defmodule MydiaWeb.AdminConfigLive.FlareSolverrStatusComponent do
+defmodule MydiaWeb.FlareSolverrStatusComponent do
   @moduledoc """
   Component for displaying FlareSolverr status in the admin config page.
 

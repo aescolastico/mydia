@@ -277,6 +277,16 @@ git commit -m "message"
   - Use semantic color names (`primary`, `secondary`, `accent`, `base-100`, etc.)
 - **Reference DaisyUI documentation** for complete component APIs and variants
 
+### Component Organization
+
+Components follow a three-tier system:
+
+- `lib/mydia_web/components/core_components.ex` — Framework-level components (input, button, modal, table, icon). Always globally imported.
+- `lib/mydia_web/components/<domain>_components.ex` — Shared domain components (LibraryComponents, CollectionComponents, etc.). Globally imported via `html_helpers` only if used by 3+ LiveViews.
+- `lib/mydia_web/live/<feature>_live/components.ex` — LiveView-specific components. Never globally imported. Used only by the sibling LiveView.
+- No component file should exceed ~500 LOC. Split by sub-domain if larger.
+- When a function component needs its own `handle_event`, promote it to a LiveComponent or extract it into its own LiveView.
+
 ### UI/UX & design guidelines
 
 - **Produce world-class UI designs** with a focus on usability, aesthetics, and modern design principles
