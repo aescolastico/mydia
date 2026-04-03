@@ -1,0 +1,303 @@
+defmodule MydiaWeb.AdminDownloadClientsLive.Index do
+  use MydiaWeb, :live_view
+
+  alias Mydia.Settings
+  alias Mydia.Settings.DownloadClientConfig
+  alias Mydia.Downloads.ClientHealth
+
+  require Logger
+  alias Mydia.Logger, as: MydiaLogger
+
+  @impl true
+  def mount(_params, _session, socket) do
+    {:ok,
+     socket
+     |> assign(:page_title, "Configuration - Download Clients")
+     |> assign(:active_tab, :clients)
+     |> load_data()}
+  end
+
+  @impl true
+  def handle_params(_params, _url, socket) do
+    {:noreply, socket}
+  end
+
+  ## Download Client Events
+
+  @impl true
+  def handle_event("new_download_client", _params, socket) do
+    changeset = DownloadClientConfig.changeset(%DownloadClientConfig{}, %{})
+
+    {:noreply,
+     socket
+     |> assign(:show_download_client_modal, true)
+     |> assign(:download_client_form, to_form(changeset))
+     |> assign(:download_client_mode, :new)
+     |> assign(:testing_download_client_connection, false)}
+  end
+
+  @impl true
+  def handle_event("edit_download_client", %{"id" => id}, socket) do
+    client = Settings.get_download_client_config!(id)
+
+    if Settings.runtime_config?(client) do
+      {:noreply,
+       socket
+       |> put_flash(
+         :error,
+         "Cannot edit runtime-configured download client. This client is configured via environment variables and is read-only in the UI."
+       )}
+    else
+      changeset = DownloadClientConfig.changeset(client, %{})
+
+      {:noreply,
+       socket
+       |> assign(:show_download_client_modal, true)
+       |> assign(:download_client_form, to_form(changeset))
+       |> assign(:download_client_mode, :edit)
+       |> assign(:editing_download_client, client)
+       |> assign(:testing_download_client_connection, false)}
+    end
+  end
+
+  @impl true
+  def handle_event("validate_download_client", %{"download_client_config" => params}, socket) do
+    client =
+      case socket.assigns.download_client_mode do
+        :new -> %DownloadClientConfig{}
+        :edit -> socket.assigns.editing_download_client
+      end
+
+    changeset =
+      client
+      |> DownloadClientConfig.changeset(params)
+      |> Map.put(:action, :validate)
+
+    {:noreply, assign(socket, :download_client_form, to_form(changeset))}
+  end
+
+  @impl true
+  def handle_event("save_download_client", %{"download_client_config" => params}, socket) do
+    result =
+      case socket.assigns.download_client_mode do
+        :new ->
+          Settings.create_download_client_config(params)
+
+        :edit ->
+          Settings.update_download_client_config(
+            socket.assigns.editing_download_client,
+            params
+          )
+      end
+
+    case result do
+      {:ok, _client} ->
+        {:noreply,
+         socket
+         |> assign(:show_download_client_modal, false)
+         |> put_flash(:info, "Download client saved successfully")
+         |> load_data()}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, assign(socket, :download_client_form, to_form(changeset))}
+    end
+  end
+
+  @impl true
+  def handle_event("delete_download_client", %{"id" => id}, socket) do
+    client = Settings.get_download_client_config!(id)
+
+    if Settings.runtime_config?(client) do
+      {:noreply,
+       socket
+       |> put_flash(
+         :error,
+         "Cannot delete runtime-configured download client. This client is configured via environment variables and is read-only in the UI."
+       )}
+    else
+      case Settings.delete_download_client_config(client) do
+        {:ok, _client} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Download client deleted successfully")
+           |> load_data()}
+
+        {:error, error} ->
+          MydiaLogger.log_error(:liveview, "Failed to delete download client",
+            error: error,
+            operation: :delete_download_client,
+            client_id: id,
+            client_name: client.name,
+            user_id: socket.assigns.current_user.id
+          )
+
+          error_msg = MydiaLogger.user_error_message(:delete_download_client, error)
+
+          {:noreply,
+           socket
+           |> put_flash(:error, error_msg)}
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("close_download_client_modal", _params, socket) do
+    {:noreply, assign(socket, :show_download_client_modal, false)}
+  end
+
+  @impl true
+  def handle_event("test_download_client", %{"id" => id}, socket) do
+    client = Settings.get_download_client_config!(id)
+
+    client_config =
+      if client.type == :blackhole do
+        %{
+          type: :blackhole,
+          connection_settings: client.connection_settings || %{}
+        }
+      else
+        %{
+          type: client.type,
+          host: client.host,
+          port: client.port,
+          use_ssl: client.use_ssl,
+          username: client.username,
+          password: client.password,
+          api_key: client.api_key,
+          url_base: client.url_base,
+          options: client.connection_settings || %{}
+        }
+      end
+
+    case test_client_connection(client_config) do
+      {:ok, info} ->
+        version_info =
+          cond do
+            Map.has_key?(info, :version) -> "Version: #{info.version}"
+            Map.has_key?(info, :rpc_version) -> "RPC Version: #{info.rpc_version}"
+            true -> "Connected"
+          end
+
+        {:noreply, put_flash(socket, :info, "Connection successful! #{version_info}")}
+
+      {:error, error} ->
+        MydiaLogger.log_error(:liveview, "Download client connection test failed",
+          error: error,
+          operation: :test_download_client,
+          client_id: id,
+          client_type: client.type,
+          client_host: client.host,
+          user_id: socket.assigns.current_user.id
+        )
+
+        error_msg =
+          case error do
+            %{message: msg} -> msg
+            _ -> MydiaLogger.extract_error_message(error)
+          end
+
+        {:noreply, put_flash(socket, :error, "Connection failed: #{error_msg}")}
+    end
+  end
+
+  @impl true
+  def handle_event("test_download_client_connection", _params, socket) do
+    changeset = socket.assigns.download_client_form.source
+    params = Ecto.Changeset.apply_changes(changeset)
+
+    type =
+      case params.type do
+        type when is_atom(type) -> type
+        type when is_binary(type) -> String.to_existing_atom(type)
+      end
+
+    test_config =
+      if type == :blackhole do
+        %{
+          type: :blackhole,
+          connection_settings: params.connection_settings || %{}
+        }
+      else
+        %{
+          type: type,
+          host: params.host,
+          port: params.port,
+          use_ssl: params.use_ssl || false,
+          username: params.username,
+          password: params.password,
+          api_key: params.api_key,
+          url_base: params.url_base,
+          options: params.connection_settings || %{}
+        }
+      end
+
+    case test_client_connection(test_config) do
+      {:ok, info} ->
+        version_info =
+          cond do
+            Map.has_key?(info, :version) -> "Version: #{info.version}"
+            Map.has_key?(info, :rpc_version) -> "RPC Version: #{info.rpc_version}"
+            true -> "Connected"
+          end
+
+        {:noreply,
+         socket
+         |> assign(:testing_download_client_connection, false)
+         |> put_flash(:info, "Connection successful! #{version_info}")}
+
+      {:error, error} ->
+        MydiaLogger.log_warning(:liveview, "Download client connection test failed",
+          operation: :test_download_client_connection,
+          error: error,
+          client_type: type,
+          user_id: socket.assigns.current_user.id
+        )
+
+        error_msg =
+          case error do
+            %{message: msg} -> msg
+            _ -> MydiaLogger.extract_error_message(error)
+          end
+
+        {:noreply,
+         socket
+         |> assign(:testing_download_client_connection, false)
+         |> put_flash(:error, "Connection failed: #{error_msg}")}
+    end
+  end
+
+  ## Private Helpers
+
+  defp load_data(socket) do
+    download_clients = Settings.list_download_client_configs()
+    client_health = get_client_health_status(download_clients)
+
+    socket
+    |> assign(:download_clients, download_clients)
+    |> assign(:client_health, client_health)
+    |> assign(:show_download_client_modal, false)
+    |> assign(:testing_download_client_connection, false)
+  end
+
+  defp get_client_health_status(clients) do
+    clients
+    |> Enum.map(fn client ->
+      case ClientHealth.check_health(client.id) do
+        {:ok, health} -> {client.id, health}
+        {:error, _} -> {client.id, %{status: :unknown, error: "Unable to check health"}}
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp test_client_connection(client_config) do
+    alias Mydia.Downloads.Client.Registry
+
+    with {:ok, adapter} <- Registry.get_adapter(client_config.type),
+         {:ok, result} <- adapter.test_connection(client_config) do
+      {:ok, result}
+    else
+      {:error, _} = error -> error
+    end
+  end
+end
