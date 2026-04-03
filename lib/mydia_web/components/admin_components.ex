@@ -11,13 +11,14 @@ defmodule MydiaWeb.AdminComponents do
     router: MydiaWeb.Router,
     statics: MydiaWeb.static_paths()
 
-  @remote_access_enabled Application.compile_env(:mydia, :features, [])
-                         |> Keyword.get(:remote_access_enabled, false)
-
   attr :active_tab, :atom, required: true
 
   def tab_nav(assigns) do
-    assigns = assign(assigns, :remote_access_enabled, @remote_access_enabled)
+    remote_access_enabled =
+      Application.get_env(:mydia, :features, [])
+      |> Keyword.get(:remote_access_enabled, false)
+
+    assigns = assign(assigns, :remote_access_enabled, remote_access_enabled)
 
     ~H"""
     <div role="tablist" class="tabs tabs-border mb-6">
