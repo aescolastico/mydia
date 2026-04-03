@@ -1,4 +1,4 @@
-defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
+defmodule MydiaWeb.AdminIndexersLive.IndexerLibraryTest do
   use MydiaWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -178,7 +178,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       view
       |> element(
-        "input[type='checkbox'][phx-click='toggle_indexer'][phx-value-id='#{definition.id}']"
+        "input[type='checkbox'][phx-click='library_toggle_indexer'][phx-value-id='#{definition.id}']"
       )
       |> render_click()
 
@@ -199,7 +199,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       view
       |> element(
-        "input[type='checkbox'][phx-click='toggle_indexer'][phx-value-id='#{definition.id}']"
+        "input[type='checkbox'][phx-click='library_toggle_indexer'][phx-value-id='#{definition.id}']"
       )
       |> render_click()
 
@@ -226,7 +226,9 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       html =
         view
-        |> element("button[phx-click='configure_indexer'][phx-value-id='#{definition.id}']")
+        |> element(
+          "button[phx-click='library_configure_indexer'][phx-value-id='#{definition.id}']"
+        )
         |> render_click()
 
       assert html =~ "Configure Private Site"
@@ -246,7 +248,7 @@ defmodule MydiaWeb.AdminConfigLive.IndexerLibraryTest do
 
       # Open config modal
       view
-      |> element("button[phx-click='configure_indexer'][phx-value-id='#{definition.id}']")
+      |> element("button[phx-click='library_configure_indexer'][phx-value-id='#{definition.id}']")
       |> render_click()
 
       # Submit config

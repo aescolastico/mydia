@@ -365,34 +365,6 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
     """
   end
 
-  # Helper for image URLs
-  defp build_image_url(nil), do: nil
-  defp build_image_url(path) when is_binary(path), do: ImageUrl.image_url(path, "w92")
-  defp build_image_url(_), do: nil
-
-  # Helper for file size formatting
-  defp format_size(nil), do: "-"
-  defp format_size(bytes) when bytes < 1024, do: "#{bytes} B"
-  defp format_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
-
-  defp format_size(bytes) when bytes < 1024 * 1024 * 1024,
-    do: "#{Float.round(bytes / 1024 / 1024, 1)} MB"
-
-  defp format_size(bytes), do: "#{Float.round(bytes / 1024 / 1024 / 1024, 1)} GB"
-
-  # Helper for relative time formatting
-  defp relative_time(datetime) do
-    now = DateTime.utc_now()
-    diff = DateTime.diff(now, datetime, :second)
-
-    cond do
-      diff < 60 -> "Just now"
-      diff < 3600 -> "#{div(diff, 60)}m ago"
-      diff < 86400 -> "#{div(diff, 3600)}h ago"
-      true -> "#{div(diff, 86400)}d ago"
-    end
-  end
-
   # Library type helpers
   defp library_type_icon(:series), do: "hero-tv"
   defp library_type_icon(:movies), do: "hero-film"

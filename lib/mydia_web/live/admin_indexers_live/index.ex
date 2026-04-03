@@ -18,8 +18,10 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
      |> assign(:page_title, "Configuration - Indexers")
      |> assign(:active_tab, :indexers)
      |> assign(:cardigann_enabled, CardigannFeatureFlags.enabled?())
-     |> assign(:flaresolverr_status, FlareSolverrStatusComponent.get_status())
-     |> load_data()}
+     |> assign(:flaresolverr_status, %{configured: false, status: :loading})
+     |> init_library_assigns()
+     |> load_data()
+     |> maybe_load_flaresolverr_status()}
   end
 
   @impl true
@@ -27,7 +29,7 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     {:noreply, socket}
   end
 
-  ## Handle info for IndexerLibraryComponent sync forwarding
+  ## Handle info callbacks
 
   @impl true
   def handle_info(:reload_library_indexers, socket) do
@@ -35,11 +37,25 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
   end
 
   @impl true
-  def handle_info({:sync_complete, component_id, result}, socket) do
-    send_update(MydiaWeb.AdminIndexersLive.IndexerLibraryComponent,
-      id: component_id,
-      sync_result: result
-    )
+  def handle_info({:sync_complete, result}, socket) do
+    socket =
+      case result do
+        {:ok, stats} ->
+          socket
+          |> assign(:library_syncing, false)
+          |> put_flash(
+            :info,
+            "Sync completed: #{stats.created} created, #{stats.updated} updated, #{stats.failed} failed"
+          )
+          |> load_library_definitions()
+
+        {:error, reason} ->
+          Logger.error("[IndexerLibrary] Sync failed: #{inspect(reason)}")
+
+          socket
+          |> assign(:library_syncing, false)
+          |> put_flash(:error, "Sync failed: #{format_sync_error(reason)}")
+      end
 
     {:noreply, reload_library_indexers(socket)}
   end
@@ -64,6 +80,11 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
      socket
      |> assign(:library_config_testing, false)
      |> assign(:library_config_test_result, test_result)}
+  end
+
+  @impl true
+  def handle_info({:flaresolverr_status, status}, socket) do
+    {:noreply, assign(socket, :flaresolverr_status, status)}
   end
 
   ## Indexer Events
@@ -296,62 +317,54 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
 
   @impl true
   def handle_event("show_indexer_library", _params, socket) do
-    {:noreply, assign(socket, :show_indexer_library_modal, true)}
+    {:noreply,
+     socket
+     |> assign(:show_indexer_library_modal, true)
+     |> load_library_definitions()}
   end
 
   @impl true
   def handle_event("close_indexer_library", _params, socket) do
-    {:noreply, assign(socket, :show_indexer_library_modal, false)}
+    {:noreply,
+     socket
+     |> assign(:show_indexer_library_modal, false)
+     |> init_library_assigns()}
   end
 
   @impl true
   def handle_event("test_indexer_connection", _params, socket) do
-    try do
-      changeset = socket.assigns.indexer_form.source
-      params = Ecto.Changeset.apply_changes(changeset)
+    changeset = socket.assigns.indexer_form.source
+    params = Ecto.Changeset.apply_changes(changeset)
 
-      type =
-        case params.type do
-          type when is_atom(type) -> type
-          type when is_binary(type) -> String.to_existing_atom(type)
-        end
-
-      test_config = %{type: type, base_url: params.base_url, api_key: params.api_key}
-
-      case Mydia.Indexers.test_connection(test_config) do
-        {:ok, info} ->
-          version = Map.get(info, :version, "unknown")
-
-          {:noreply,
-           socket
-           |> assign(:testing_indexer_connection, false)
-           |> put_flash(:info, "Connection successful! Version: #{version}")}
-
-        {:error, error} ->
-          error_msg =
-            case error do
-              msg when is_binary(msg) -> msg
-              %{message: msg} -> msg
-              _ -> MydiaLogger.extract_error_message(error)
-            end
-
-          {:noreply,
-           socket
-           |> assign(:testing_indexer_connection, false)
-           |> put_flash(:error, "Connection failed: #{error_msg}")}
+    type =
+      case params.type do
+        type when is_atom(type) -> type
+        type when is_binary(type) -> String.to_existing_atom(type)
       end
-    rescue
-      e ->
+
+    test_config = %{type: type, base_url: params.base_url, api_key: params.api_key}
+
+    case Mydia.Indexers.test_connection(test_config) do
+      {:ok, info} ->
+        version = Map.get(info, :version, "unknown")
+
         {:noreply,
          socket
          |> assign(:testing_indexer_connection, false)
-         |> put_flash(:error, "Connection failed: #{Exception.message(e)}")}
-    catch
-      kind, reason ->
+         |> put_flash(:info, "Connection successful! Version: #{version}")}
+
+      {:error, error} ->
+        error_msg =
+          case error do
+            msg when is_binary(msg) -> msg
+            %{message: msg} -> msg
+            _ -> MydiaLogger.extract_error_message(error)
+          end
+
         {:noreply,
          socket
          |> assign(:testing_indexer_connection, false)
-         |> put_flash(:error, "Connection failed: #{inspect(kind)} - #{inspect(reason)}")}
+         |> put_flash(:error, "Connection failed: #{error_msg}")}
     end
   end
 
@@ -580,39 +593,6 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
   end
 
   @impl true
-  def handle_event(
-        "save_library_indexer_config",
-        %{"config" => config_params, "action" => "save"},
-        socket
-      ) do
-    definition = socket.assigns.configuring_library_indexer
-
-    case Indexers.configure_cardigann_definition(definition, config_params) do
-      {:ok, _updated_definition} ->
-        {:noreply,
-         socket
-         |> assign(:show_library_config_modal, false)
-         |> assign(:configuring_library_indexer, nil)
-         |> assign(:library_indexer_settings, [])
-         |> assign(:library_config_testing, false)
-         |> assign(:library_config_test_result, nil)
-         |> put_flash(:info, "Configuration saved for #{definition.name}")
-         |> load_data()}
-
-      {:error, changeset} ->
-        MydiaLogger.log_error(:liveview, "Failed to configure library indexer",
-          error: changeset,
-          operation: :configure_library_indexer,
-          definition_id: definition.id,
-          user_id: socket.assigns.current_user.id
-        )
-
-        error_msg = MydiaLogger.user_error_message(:configure_library_indexer, changeset)
-        {:noreply, put_flash(socket, :error, error_msg)}
-    end
-  end
-
-  @impl true
   def handle_event("save_library_indexer_config", %{"config" => config_params}, socket) do
     definition = socket.assigns.configuring_library_indexer
 
@@ -684,6 +664,133 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     end
   end
 
+  ## Indexer Library Events (flattened from IndexerLibraryComponent)
+
+  @impl true
+  def handle_event("library_filter", params, socket) do
+    {:noreply,
+     socket
+     |> assign(:library_filter_type, params["type"] || socket.assigns.library_filter_type)
+     |> assign(
+       :library_filter_language,
+       params["language"] || socket.assigns.library_filter_language
+     )
+     |> assign(
+       :library_filter_enabled,
+       params["enabled"] || socket.assigns.library_filter_enabled
+     )
+     |> load_library_definitions()}
+  end
+
+  @impl true
+  def handle_event("library_search", %{"search" => %{"query" => query}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:library_search_query, query)
+     |> load_library_definitions()}
+  end
+
+  @impl true
+  def handle_event("library_toggle_indexer", %{"id" => id}, socket) do
+    definition = Indexers.get_cardigann_definition!(id)
+
+    result =
+      if definition.enabled do
+        Indexers.disable_cardigann_definition(definition)
+      else
+        Indexers.enable_cardigann_definition(definition)
+      end
+
+    case result do
+      {:ok, _updated_definition} ->
+        {:noreply,
+         socket
+         |> load_library_definitions()
+         |> reload_library_indexers()}
+
+      {:error, changeset} ->
+        MydiaLogger.log_error(:liveview, "Failed to toggle indexer",
+          error: changeset,
+          operation: :toggle_library_indexer,
+          definition_id: id,
+          user_id: socket.assigns.current_user.id
+        )
+
+        error_msg = MydiaLogger.user_error_message(:toggle_library_indexer, changeset)
+        {:noreply, put_flash(socket, :error, error_msg)}
+    end
+  end
+
+  @impl true
+  def handle_event("library_sync_definitions", _params, socket) do
+    parent = self()
+
+    Task.start(fn ->
+      result = Mydia.Indexers.DefinitionSync.sync_from_github()
+      send(parent, {:sync_complete, result})
+    end)
+
+    {:noreply,
+     socket
+     |> assign(:library_syncing, true)
+     |> put_flash(:info, "Sync started - this may take a few minutes...")}
+  end
+
+  @impl true
+  def handle_event("library_configure_indexer", %{"id" => id}, socket) do
+    definition = Indexers.get_cardigann_definition!(id)
+    config = definition.config || %{}
+
+    config_form =
+      to_form(%{
+        "username" => config["username"] || "",
+        "password" => config["password"] || ""
+      })
+
+    {:noreply,
+     socket
+     |> assign(:library_configuring_definition, definition)
+     |> assign(:library_config_form, config_form)}
+  end
+
+  @impl true
+  def handle_event("library_close_config", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:library_configuring_definition, nil)
+     |> assign(:library_config_form, nil)}
+  end
+
+  @impl true
+  def handle_event(
+        "library_save_config",
+        %{"definition_id" => id, "config" => config_params},
+        socket
+      ) do
+    definition = Indexers.get_cardigann_definition!(id)
+
+    case Indexers.configure_cardigann_definition(definition, config_params) do
+      {:ok, _updated} ->
+        {:noreply,
+         socket
+         |> assign(:library_configuring_definition, nil)
+         |> assign(:library_config_form, nil)
+         |> put_flash(:info, "Configuration saved successfully")
+         |> load_library_definitions()}
+
+      {:error, changeset} ->
+        MydiaLogger.log_error(:liveview, "Failed to save indexer config",
+          error: changeset,
+          operation: :save_indexer_config,
+          definition_id: id,
+          user_id: socket.assigns.current_user.id
+        )
+
+        error_msg = MydiaLogger.user_error_message(:save_indexer_config, changeset)
+        {:noreply, put_flash(socket, :error, error_msg)}
+    end
+  end
+
   ## Private Helpers
 
   defp load_data(socket) do
@@ -736,13 +843,95 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
 
   defp get_indexer_health_status(indexers) do
     indexers
-    |> Enum.map(fn indexer ->
-      case IndexerHealth.check_health(indexer.id) do
-        {:ok, health} -> {indexer.id, health}
-        {:error, _} -> {indexer.id, %{status: :unknown, error: "Unable to check health"}}
-      end
-    end)
+    |> Task.async_stream(
+      fn indexer ->
+        case IndexerHealth.check_health(indexer.id) do
+          {:ok, health} -> {indexer.id, health}
+          {:error, _} -> {indexer.id, %{status: :unknown, error: "Unable to check health"}}
+        end
+      end,
+      timeout: :infinity,
+      max_concurrency: 10
+    )
+    |> Enum.map(fn {:ok, result} -> result end)
     |> Map.new()
+  end
+
+  defp maybe_load_flaresolverr_status(socket) do
+    if connected?(socket) do
+      parent = self()
+
+      Task.start(fn ->
+        status = FlareSolverrStatusComponent.get_status()
+        send(parent, {:flaresolverr_status, status})
+      end)
+
+      socket
+    else
+      socket
+    end
+  end
+
+  defp init_library_assigns(socket) do
+    socket
+    |> assign(:library_definitions, [])
+    |> assign(:library_available_languages, [])
+    |> assign(:library_filter_type, "all")
+    |> assign(:library_filter_language, "all")
+    |> assign(:library_filter_enabled, "all")
+    |> assign(:library_search_query, "")
+    |> assign(:library_syncing, false)
+    |> assign(:library_configuring_definition, nil)
+    |> assign(:library_config_form, nil)
+  end
+
+  defp load_library_definitions(socket) do
+    filters = build_library_filters(socket.assigns)
+    definitions = Indexers.list_cardigann_definitions(filters)
+
+    all_definitions = Indexers.list_cardigann_definitions()
+
+    languages =
+      all_definitions
+      |> Enum.map(& &1.language)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    socket
+    |> assign(:library_definitions, definitions)
+    |> assign(:library_available_languages, languages)
+  end
+
+  defp build_library_filters(assigns) do
+    filters = []
+
+    filters =
+      if assigns.library_filter_type != "all" do
+        [{:type, assigns.library_filter_type} | filters]
+      else
+        filters
+      end
+
+    filters =
+      if assigns.library_filter_language != "all" do
+        [{:language, assigns.library_filter_language} | filters]
+      else
+        filters
+      end
+
+    filters =
+      case assigns.library_filter_enabled do
+        "enabled" -> [{:enabled, true} | filters]
+        "disabled" -> [{:enabled, false} | filters]
+        _ -> filters
+      end
+
+    if assigns.library_search_query != "" do
+      [{:search, assigns.library_search_query} | filters]
+    else
+      filters
+    end
   end
 
   defp maybe_auto_fetch_prowlarr_indexers(socket, changeset) do
@@ -831,4 +1020,12 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
       do: Map.put(params, "indexer_ids", indexer_ids),
       else: params
   end
+
+  defp format_sync_error(:rate_limit_exceeded),
+    do: "GitHub API rate limit exceeded. Try again later."
+
+  defp format_sync_error(:not_found), do: "Repository or definitions path not found."
+  defp format_sync_error({:unexpected_status, status}), do: "Unexpected HTTP status: #{status}"
+  defp format_sync_error(reason) when is_binary(reason), do: reason
+  defp format_sync_error(reason), do: inspect(reason)
 end

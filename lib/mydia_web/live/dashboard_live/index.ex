@@ -1,5 +1,8 @@
 defmodule MydiaWeb.DashboardLive.Index do
   use MydiaWeb, :live_view
+
+  import MydiaWeb.DiscoverComponents
+
   alias Mydia.Media
   alias Mydia.Library
   alias Mydia.Downloads

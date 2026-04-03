@@ -720,11 +720,6 @@ defmodule MydiaWeb.AdminMediaServersLive.Components do
   defp health_status_dot_class(:unknown), do: "bg-warning"
   defp health_status_dot_class(_), do: "bg-base-content/30"
 
-  defp health_badge(:healthy), do: "badge-success"
-  defp health_badge(:unhealthy), do: "badge-error"
-  defp health_badge(:unknown), do: "badge-warning"
-  defp health_badge(_), do: "badge-ghost"
-
   defp health_status_badge_class(:healthy), do: "badge-success"
   defp health_status_badge_class(:unhealthy), do: "badge-error"
   defp health_status_badge_class(:unknown), do: "badge-ghost"

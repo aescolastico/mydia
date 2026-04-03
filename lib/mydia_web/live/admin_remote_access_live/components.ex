@@ -1,83 +1,31 @@
-defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
+defmodule MydiaWeb.AdminRemoteAccessLive.Components do
   @moduledoc """
-  LiveComponent for managing remote access settings.
-
-  This component provides an inline interface for configuring remote access,
-  managing paired devices, and generating pairing codes.
+  Function components for the remote access admin page.
   """
-  use MydiaWeb, :live_component
+  use MydiaWeb, :html
 
   alias Mydia.RemoteAccess
 
-  require Logger
+  attr :ra_config, :map, required: true
+  attr :p2p_status, :map, required: true
+  attr :devices, :list, required: true
+  attr :claim_code, :string
+  attr :claim_code_rendezvous_status, :atom
+  attr :claim_expires_at, :any
+  attr :countdown_seconds, :integer, default: 0
+  attr :pairing_error, :string
+  attr :show_revoke_modal, :boolean, default: false
+  attr :selected_device, :map
+  attr :show_delete_modal, :boolean, default: false
+  attr :device_to_delete, :map
+  attr :show_pairing_modal, :boolean, default: false
+  attr :show_add_url_modal, :boolean, default: false
+  attr :new_url, :string, default: ""
+  attr :show_advanced, :boolean, default: false
+  attr :show_all_devices, :boolean, default: false
+  attr :show_clear_inactive_modal, :boolean, default: false
 
-  @impl true
-  def update(%{countdown_tick: true} = _assigns, socket) do
-    # Handle countdown tick from parent
-    socket = handle_countdown_tick(socket)
-    {:ok, socket}
-  end
-
-  def update(%{refresh_p2p: true} = _assigns, socket) do
-    # Handle P2P status refresh from parent
-    socket =
-      socket
-      |> load_p2p_status()
-
-    {:ok, socket}
-  end
-
-  def update(%{claim_consumed: consumed_code} = _assigns, socket) do
-    # A claim code was used - clear the pairing UI if it matches the displayed code
-    current_code = socket.assigns[:claim_code]
-
-    if current_code && normalize_code(current_code) == normalize_code(consumed_code) do
-      {:ok,
-       socket
-       |> assign(:claim_code, nil)
-       |> assign(:claim_expires_at, nil)
-       |> assign(:countdown_seconds, 0)
-       |> assign(:show_pairing_modal, false)
-       |> load_devices()
-       |> put_flash(:info, "Device paired successfully!")}
-    else
-      {:ok, socket}
-    end
-  end
-
-  def update(assigns, socket) do
-    socket =
-      socket
-      |> assign(assigns)
-      |> assign_new(:claim_code, fn -> nil end)
-      |> assign_new(:claim_expires_at, fn -> nil end)
-      |> assign_new(:countdown_seconds, fn -> 0 end)
-      |> assign_new(:claim_code_rendezvous_status, fn -> nil end)
-      |> assign_new(:pairing_error, fn -> nil end)
-      |> assign_new(:show_revoke_modal, fn -> false end)
-      |> assign_new(:selected_device, fn -> nil end)
-      |> assign_new(:show_delete_modal, fn -> false end)
-      |> assign_new(:device_to_delete, fn -> nil end)
-      |> assign_new(:show_pairing_modal, fn -> false end)
-      |> assign_new(:show_add_url_modal, fn -> false end)
-      |> assign_new(:new_url, fn -> "" end)
-      |> assign_new(:show_advanced, fn -> false end)
-      |> assign_new(:show_all_devices, fn -> false end)
-      |> assign_new(:show_clear_inactive_modal, fn -> false end)
-      |> load_config()
-      |> load_devices()
-      |> load_p2p_status()
-
-    # Subscribe to claim expiry notifications on first mount
-    if connected?(socket) and is_nil(assigns[:subscribed]) do
-      Phoenix.PubSub.subscribe(Mydia.PubSub, "remote_access:claims")
-    end
-
-    {:ok, assign(socket, :subscribed, true)}
-  end
-
-  @impl true
-  def render(assigns) do
+  def remote_access_panel(assigns) do
     # Check if P2P is running
     p2p_running =
       assigns.ra_config && assigns.ra_config.enabled && assigns.p2p_status &&
@@ -138,7 +86,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
           class="toggle toggle-success"
           checked={@ra_config && @ra_config.enabled}
           phx-click="toggle_remote_access"
-          phx-target={@myself}
           phx-value-enabled={to_string(!(@ra_config && @ra_config.enabled))}
         />
       </div>
@@ -151,7 +98,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
             <div
               class="group flex items-center gap-3 p-4 bg-gradient-to-br from-primary/5 via-base-200 to-secondary/5 rounded-xl border border-primary/20 cursor-pointer hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all"
               phx-click="open_pairing_modal"
-              phx-target={@myself}
             >
               <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
                 <.icon name="hero-qr-code" class="w-5 h-5 text-primary-content" />
@@ -238,7 +184,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                 <button
                   class="hidden lg:flex items-center gap-1.5 text-xs text-base-content/40 hover:text-base-content/60 transition-colors"
                   phx-click="copy_peer_id"
-                  phx-target={@myself}
                   onclick={"navigator.clipboard.writeText('#{@p2p_status.node_id}')"}
                   title={"Copy Node ID: #{@p2p_status.node_id}"}
                 >
@@ -250,7 +195,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100 shrink-0"
                 phx-click="refresh_p2p"
-                phx-target={@myself}
                 title="Refresh"
               >
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" />
@@ -286,7 +230,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
 
         inactive_devices =
           Enum.reject(@devices, fn d ->
-            is_recent_activity?(d.last_seen_at) && is_nil(d.revoked_at)
+            recent_activity?(d.last_seen_at) && is_nil(d.revoked_at)
           end)
 
         inactive_count = length(inactive_devices) %>
@@ -300,7 +244,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-ghost btn-xs text-base-content/60"
                 phx-click="open_clear_inactive_modal"
-                phx-target={@myself}
               >
                 <.icon name="hero-trash" class="w-3 h-3" /> Clear inactive ({inactive_count})
               </button>
@@ -336,7 +279,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                         "w-9 h-9 rounded-lg flex items-center justify-center shrink-0",
                         cond do
                           RemoteAccess.RemoteDevice.revoked?(device) -> "bg-error/10 text-error"
-                          is_recent_activity?(device.last_seen_at) -> "bg-success/10 text-success"
+                          recent_activity?(device.last_seen_at) -> "bg-success/10 text-success"
                           true -> "bg-base-300 text-base-content/50"
                         end
                       ]}>
@@ -350,7 +293,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                           <%= if RemoteAccess.RemoteDevice.revoked?(device) do %>
                             <span class="badge badge-error badge-xs">Revoked</span>
                           <% else %>
-                            <%= if is_recent_activity?(device.last_seen_at) do %>
+                            <%= if recent_activity?(device.last_seen_at) do %>
                               <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0">
                               </span>
                             <% end %>
@@ -360,7 +303,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                           <%= cond do %>
                             <% RemoteAccess.RemoteDevice.revoked?(device) -> %>
                               Access revoked
-                            <% is_recent_activity?(device.last_seen_at) -> %>
+                            <% recent_activity?(device.last_seen_at) -> %>
                               Online now
                             <% is_nil(device.last_seen_at) -> %>
                               Never connected
@@ -388,7 +331,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                               <button
                                 class="text-warning"
                                 phx-click="open_revoke_modal"
-                                phx-target={@myself}
                                 phx-value-id={device.id}
                               >
                                 <.icon name="hero-no-symbol" class="w-4 h-4" /> Revoke
@@ -399,7 +341,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                             <button
                               class="text-error"
                               phx-click="open_delete_modal"
-                              phx-target={@myself}
                               phx-value-id={device.id}
                             >
                               <.icon name="hero-trash" class="w-4 h-4" /> Remove
@@ -416,7 +357,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-ghost btn-sm w-full gap-2"
                 phx-click="toggle_show_all_devices"
-                phx-target={@myself}
               >
                 <.icon name="hero-chevron-down" class="w-4 h-4" />
                 Show {hidden_count} more device{if hidden_count == 1, do: "", else: "s"}
@@ -426,7 +366,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-ghost btn-sm w-full gap-2"
                 phx-click="toggle_show_all_devices"
-                phx-target={@myself}
               >
                 <.icon name="hero-chevron-up" class="w-4 h-4" /> Show less
               </button>
@@ -444,7 +383,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-sm btn-ghost gap-1"
                 phx-click="open_add_url_modal"
-                phx-target={@myself}
               >
                 <.icon name="hero-plus" class="w-4 h-4" /> Add URL
               </button>
@@ -474,7 +412,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                         <button
                           class="btn btn-xs btn-ghost btn-square opacity-50 group-hover:opacity-100 hover:btn-error"
                           phx-click="remove_direct_url"
-                          phx-target={@myself}
                           phx-value-url={url}
                           title="Remove URL"
                         >
@@ -568,15 +505,15 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               will be disconnected and won't be able to access your library until paired again.
             </p>
             <div class="modal-action">
-              <button phx-click="close_revoke_modal" phx-target={@myself} class="btn btn-ghost">
+              <button phx-click="close_revoke_modal" class="btn btn-ghost">
                 Cancel
               </button>
-              <button phx-click="submit_revoke" phx-target={@myself} class="btn btn-warning">
+              <button phx-click="submit_revoke" class="btn btn-warning">
                 Revoke
               </button>
             </div>
           </div>
-          <div class="modal-backdrop" phx-click="close_revoke_modal" phx-target={@myself}></div>
+          <div class="modal-backdrop" phx-click="close_revoke_modal"></div>
         </div>
       <% end %>
 
@@ -590,15 +527,15 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               will be removed. You'll need to pair it again to reconnect.
             </p>
             <div class="modal-action">
-              <button phx-click="close_delete_modal" phx-target={@myself} class="btn btn-ghost">
+              <button phx-click="close_delete_modal" class="btn btn-ghost">
                 Cancel
               </button>
-              <button phx-click="submit_delete" phx-target={@myself} class="btn btn-error">
+              <button phx-click="submit_delete" class="btn btn-error">
                 Remove
               </button>
             </div>
           </div>
-          <div class="modal-backdrop" phx-click="close_delete_modal" phx-target={@myself}></div>
+          <div class="modal-backdrop" phx-click="close_delete_modal"></div>
         </div>
       <% end %>
 
@@ -606,7 +543,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
       <%= if @show_clear_inactive_modal do %>
         <% inactive_to_clear =
           Enum.reject(@devices, fn d ->
-            is_recent_activity?(d.last_seen_at) && is_nil(d.revoked_at)
+            recent_activity?(d.last_seen_at) && is_nil(d.revoked_at)
           end) %>
         <div class="modal modal-open">
           <div class="modal-box">
@@ -627,12 +564,11 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
             <div class="modal-action">
               <button
                 phx-click="close_clear_inactive_modal"
-                phx-target={@myself}
                 class="btn btn-ghost"
               >
                 Cancel
               </button>
-              <button phx-click="submit_clear_inactive" phx-target={@myself} class="btn btn-error">
+              <button phx-click="submit_clear_inactive" class="btn btn-error">
                 Clear All
               </button>
             </div>
@@ -640,7 +576,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
           <div
             class="modal-backdrop"
             phx-click="close_clear_inactive_modal"
-            phx-target={@myself}
           >
           </div>
         </div>
@@ -660,7 +595,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               id="add-direct-url-form"
               phx-change="update_new_url"
               phx-submit="add_direct_url"
-              phx-target={@myself}
             >
               <input
                 type="url"
@@ -673,7 +607,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                 <button
                   type="button"
                   phx-click="close_add_url_modal"
-                  phx-target={@myself}
                   class="btn btn-ghost"
                 >
                   Cancel
@@ -684,7 +617,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               </div>
             </.form>
           </div>
-          <div class="modal-backdrop" phx-click="close_add_url_modal" phx-target={@myself}></div>
+          <div class="modal-backdrop" phx-click="close_add_url_modal"></div>
         </div>
       <% end %>
 
@@ -706,7 +639,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
               <button
                 class="btn btn-sm btn-circle btn-ghost"
                 phx-click="close_pairing_modal"
-                phx-target={@myself}
               >
                 <.icon name="hero-x-mark" class="w-5 h-5" />
               </button>
@@ -773,7 +705,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                       <button
                         class="btn btn-ghost btn-sm btn-square"
                         phx-click="copy_claim_code"
-                        phx-target={@myself}
                         onclick={"navigator.clipboard.writeText('#{@claim_code}')"}
                         title="Copy code"
                       >
@@ -830,7 +761,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
                     id="regenerate-pairing-code-btn"
                     class="link link-hover text-sm text-base-content/60"
                     phx-click="generate_claim_code"
-                    phx-target={@myself}
                     phx-disable-with="..."
                   >
                     New Code
@@ -857,7 +787,6 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
           <div
             class="modal-backdrop bg-base-300/60 backdrop-blur-sm"
             phx-click="close_pairing_modal"
-            phx-target={@myself}
           >
           </div>
         </div>
@@ -866,383 +795,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
     """
   end
 
-  ## Event Handlers
-
-  @impl true
-  def handle_event("toggle_remote_access", params, socket) do
-    enabled_str = Map.get(params, "enabled", "false")
-    enabled = enabled_str == "true"
-    config = socket.assigns.ra_config
-
-    with {:ok, socket} <- maybe_initialize_keypair(socket, config, enabled),
-         {:ok, updated_config} <- RemoteAccess.toggle_remote_access(enabled),
-         :ok <- maybe_start_or_stop_p2p(enabled) do
-      {:noreply,
-       socket
-       |> assign(:ra_config, updated_config)
-       |> load_p2p_status()
-       |> put_flash(:info, "Remote access #{if enabled, do: "enabled", else: "disabled"}")}
-    else
-      {:error, :init_failed, changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to initialize remote access: #{format_errors(changeset)}")}
-
-      {:error, :not_configured} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Remote access not configured. Please try again.")}
-
-      {:error, :remote_access_not_configured} ->
-        {:noreply,
-         socket
-         |> load_p2p_status()
-         |> put_flash(:error, "Failed to start P2P: remote access not fully configured")}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to update remote access setting")}
-    end
-  end
-
-  def handle_event("generate_claim_code", _params, socket) do
-    Logger.debug("Generate claim code button clicked")
-    {:noreply, do_generate_claim_code(socket)}
-  end
-
-  def handle_event("copy_claim_code", _params, socket) do
-    {:noreply, put_flash(socket, :info, "Code copied to clipboard")}
-  end
-
-  def handle_event("copy_peer_id", _params, socket) do
-    {:noreply, put_flash(socket, :info, "Node ID copied to clipboard")}
-  end
-
-  def handle_event("open_revoke_modal", %{"id" => id}, socket) do
-    device = RemoteAccess.get_device!(id)
-
-    {:noreply,
-     socket
-     |> assign(:show_revoke_modal, true)
-     |> assign(:selected_device, device)}
-  end
-
-  def handle_event("close_revoke_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_revoke_modal, false)
-     |> assign(:selected_device, nil)}
-  end
-
-  def handle_event("submit_revoke", _params, socket) do
-    device = socket.assigns.selected_device
-
-    case RemoteAccess.revoke_device(device) do
-      {:ok, _revoked_device} ->
-        {:noreply,
-         socket
-         |> assign(:show_revoke_modal, false)
-         |> assign(:selected_device, nil)
-         |> put_flash(:info, "Device revoked successfully.")
-         |> load_devices()}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to revoke device")}
-    end
-  end
-
-  def handle_event("open_delete_modal", %{"id" => id}, socket) do
-    device = RemoteAccess.get_device!(id)
-
-    {:noreply,
-     socket
-     |> assign(:show_delete_modal, true)
-     |> assign(:device_to_delete, device)}
-  end
-
-  def handle_event("close_delete_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_delete_modal, false)
-     |> assign(:device_to_delete, nil)}
-  end
-
-  def handle_event("submit_delete", _params, socket) do
-    device = socket.assigns.device_to_delete
-
-    case RemoteAccess.delete_device(device) do
-      {:ok, _deleted_device} ->
-        {:noreply,
-         socket
-         |> assign(:show_delete_modal, false)
-         |> assign(:device_to_delete, nil)
-         |> put_flash(:info, "Device deleted successfully.")
-         |> load_devices()}
-
-      {:error, _changeset} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Failed to delete device")}
-    end
-  end
-
-  def handle_event("open_clear_inactive_modal", _params, socket) do
-    {:noreply, assign(socket, :show_clear_inactive_modal, true)}
-  end
-
-  def handle_event("close_clear_inactive_modal", _params, socket) do
-    {:noreply, assign(socket, :show_clear_inactive_modal, false)}
-  end
-
-  def handle_event("submit_clear_inactive", _params, socket) do
-    devices = socket.assigns.devices
-
-    # Find inactive devices (not recently active or revoked)
-    inactive_devices =
-      Enum.reject(devices, fn d ->
-        is_recent_activity?(d.last_seen_at) && is_nil(d.revoked_at)
-      end)
-
-    # Delete all inactive devices
-    deleted_count =
-      Enum.reduce(inactive_devices, 0, fn device, count ->
-        case RemoteAccess.delete_device(device) do
-          {:ok, _} -> count + 1
-          {:error, _} -> count
-        end
-      end)
-
-    {:noreply,
-     socket
-     |> assign(:show_clear_inactive_modal, false)
-     |> put_flash(
-       :info,
-       "Removed #{deleted_count} inactive device#{if deleted_count == 1, do: "", else: "s"}."
-     )
-     |> load_devices()}
-  end
-
-  def handle_event("open_pairing_modal", _params, socket) do
-    # Open modal and immediately generate a code if we don't have one
-    socket = assign(socket, :show_pairing_modal, true)
-
-    socket =
-      if is_nil(socket.assigns.claim_code) do
-        do_generate_claim_code(socket)
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("close_pairing_modal", _params, socket) do
-    {:noreply, assign(socket, :show_pairing_modal, false)}
-  end
-
-  def handle_event("open_add_url_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_add_url_modal, true)
-     |> assign(:new_url, "")}
-  end
-
-  def handle_event("close_add_url_modal", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_add_url_modal, false)
-     |> assign(:new_url, "")}
-  end
-
-  def handle_event("update_new_url", %{"url" => value}, socket) do
-    {:noreply, assign(socket, :new_url, value)}
-  end
-
-  def handle_event("update_new_url", %{"direct_url" => %{"url" => value}}, socket) do
-    {:noreply, assign(socket, :new_url, value)}
-  end
-
-  def handle_event("add_direct_url", _params, socket) do
-    config = socket.assigns.ra_config
-    new_url = String.trim(socket.assigns.new_url)
-
-    if new_url != "" do
-      current_urls = config.direct_urls || []
-      updated_urls = Enum.uniq(current_urls ++ [new_url])
-
-      # Legacy relay URL update - now a no-op, URLs stored locally only
-      {:ok, _urls} = RemoteAccess.update_relay_urls(updated_urls)
-
-      {:noreply,
-       socket
-       |> assign(:show_add_url_modal, false)
-       |> assign(:new_url, "")
-       |> load_config()
-       |> put_flash(:info, "Direct URL added successfully")}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("remove_direct_url", %{"url" => url}, socket) do
-    config = socket.assigns.ra_config
-    current_urls = config.direct_urls || []
-    updated_urls = Enum.reject(current_urls, &(&1 == url))
-
-    {:ok, _urls} = RemoteAccess.update_relay_urls(updated_urls)
-
-    {:noreply,
-     socket
-     |> load_config()
-     |> put_flash(:info, "Direct URL removed successfully")}
-  end
-
-  def handle_event("refresh_p2p", _params, socket) do
-    {:noreply,
-     socket
-     |> load_p2p_status()
-     |> put_flash(:info, "Status refreshed")}
-  end
-
-  def handle_event("toggle_advanced", _params, socket) do
-    {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
-  end
-
-  def handle_event("toggle_show_all_devices", _params, socket) do
-    {:noreply, assign(socket, :show_all_devices, !socket.assigns.show_all_devices)}
-  end
-
-  ## Countdown update (called from parent via send_update)
-
-  def handle_countdown_tick(socket) do
-    claim_expires_at = socket.assigns.claim_expires_at
-
-    if claim_expires_at do
-      now = DateTime.utc_now()
-      seconds_remaining = DateTime.diff(claim_expires_at, now, :second)
-
-      if seconds_remaining > 0 do
-        # Schedule the next tick via the parent
-        send(self(), {:remote_access_countdown_tick, socket.assigns.id})
-        assign(socket, :countdown_seconds, seconds_remaining)
-      else
-        socket
-        |> assign(:claim_code, nil)
-        |> assign(:claim_expires_at, nil)
-        |> assign(:countdown_seconds, 0)
-        |> put_flash(:info, "Pairing code expired")
-      end
-    else
-      socket
-    end
-  end
-
-  ## Claim code generation (called from parent via send_update)
-
-  def do_generate_claim_code(socket) do
-    user_id = socket.assigns.current_user.id
-    p2p_status = socket.assigns.p2p_status
-
-    Logger.debug("Generating pairing code for user #{user_id}, p2p_status=#{inspect(p2p_status)}")
-
-    case RemoteAccess.generate_claim_code(user_id) do
-      {:ok, claim} ->
-        Logger.info("Pairing code generated successfully: #{claim.code}")
-        expires_at = claim.expires_at
-        now = DateTime.utc_now()
-        seconds = DateTime.diff(expires_at, now, :second)
-
-        # Schedule the first countdown tick via the parent LiveView
-        send(self(), {:remote_access_countdown_tick, socket.assigns.id})
-
-        socket
-        |> assign(:pairing_error, nil)
-        |> assign(:claim_code, claim.code)
-        |> assign(:claim_code_rendezvous_status, :registered)
-        |> assign(:claim_expires_at, expires_at)
-        |> assign(:countdown_seconds, max(0, seconds))
-
-      {:error, :p2p_not_running} ->
-        Logger.warning("Failed to generate pairing code: P2P service not running")
-        assign(socket, :pairing_error, "P2P service is not running. Please try again.")
-
-      {:error, :p2p_not_ready} ->
-        Logger.warning("Failed to generate pairing code: P2P not ready yet")
-
-        assign(
-          socket,
-          :pairing_error,
-          "P2P service is still starting up. Please try again in a moment."
-        )
-
-      {:error, :rate_limited} ->
-        Logger.warning("Failed to generate pairing code: rate limited by relay")
-        assign(socket, :pairing_error, "Too many requests. Please wait a minute and try again.")
-
-      {:error, :create_claim_failed} ->
-        Logger.error("Failed to generate pairing code: relay returned an error")
-        assign(socket, :pairing_error, "Relay service returned an error. Please try again.")
-
-      {:error, reason} ->
-        Logger.error("Failed to generate pairing code: #{inspect(reason)}")
-
-        assign(
-          socket,
-          :pairing_error,
-          "Could not connect to relay service. Please check your connection and try again."
-        )
-    end
-  end
-
-  ## Private Helpers
-
-  defp maybe_initialize_keypair(socket, nil, true) do
-    case RemoteAccess.initialize_keypair() do
-      {:ok, new_config} ->
-        {:ok, assign(socket, :ra_config, new_config)}
-
-      {:error, changeset} ->
-        {:error, :init_failed, changeset}
-    end
-  end
-
-  defp maybe_initialize_keypair(socket, _config, _enabled), do: {:ok, socket}
-
-  # P2P is started automatically by the application supervision tree
-  # These are effectively no-ops now but kept for API compatibility
-  defp maybe_start_or_stop_p2p(true), do: RemoteAccess.start_relay()
-  defp maybe_start_or_stop_p2p(false), do: RemoteAccess.stop_relay()
-
-  defp format_errors(%Ecto.Changeset{} = changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
-  end
-
-  defp format_errors(_), do: "unknown error"
-
-  defp load_config(socket) do
-    config = RemoteAccess.get_config()
-    assign(socket, :ra_config, config)
-  end
-
-  defp load_devices(socket) do
-    user_id = socket.assigns.current_user.id
-    devices = RemoteAccess.list_devices(user_id)
-    assign(socket, :devices, devices)
-  end
-
-  defp load_p2p_status(socket) do
-    {:ok, p2p_status} = RemoteAccess.p2p_status()
-    assign(socket, :p2p_status, p2p_status)
-  end
+  ## Helper functions used by the template
 
   defp format_countdown(seconds) when seconds <= 0, do: "Expired"
 
@@ -1257,12 +810,11 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
   end
 
   # Consider a device "active" (online now) if seen within the last 10 minutes.
-  # This matches the touch throttle of 5 minutes, plus buffer for network delays.
   @active_threshold_seconds 600
 
-  defp is_recent_activity?(nil), do: false
+  defp recent_activity?(nil), do: false
 
-  defp is_recent_activity?(last_seen) do
+  defp recent_activity?(last_seen) do
     threshold = DateTime.utc_now() |> DateTime.add(-@active_threshold_seconds, :second)
     DateTime.compare(last_seen, threshold) == :gt
   end
@@ -1290,19 +842,8 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
   defp pluralize(1, word), do: "1 #{word}"
   defp pluralize(n, word), do: "#{n} #{word}s"
 
-  # Normalize claim code by removing whitespace and dashes, converting to uppercase
-  defp normalize_code(code) when is_binary(code) do
-    code
-    |> String.replace(~r/[\s-]/, "")
-    |> String.upcase()
-  end
-
-  defp normalize_code(nil), do: nil
-
   defp generate_qr_code(config, p2p_status, claim_code) do
     if config && claim_code do
-      # Build QR code content for P2P-based pairing
-      # The client will use node_addr for direct dialing and claim_code for validation
       content =
         Jason.encode!(%{
           instance_id: config.instance_id,
@@ -1310,15 +851,12 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
           claim_code: claim_code
         })
 
-      # Generate QR code as SVG
       qr_code = EQRCode.encode(content)
       EQRCode.svg(qr_code, width: 180)
     else
       nil
     end
   end
-
-  # Connection info helpers
 
   defp get_local_address do
     config = Application.get_env(:mydia, :direct_urls, [])
@@ -1347,11 +885,9 @@ defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
   end
 
   defp get_detected_urls do
-    # Get auto-detected URLs (public IP + local network)
     public_urls = Mydia.RemoteAccess.DirectUrls.detect_public_urls()
     local_urls = Mydia.RemoteAccess.DirectUrls.detect_local_urls()
 
-    # Combine and deduplicate
     (public_urls ++ local_urls)
     |> Enum.uniq()
   end

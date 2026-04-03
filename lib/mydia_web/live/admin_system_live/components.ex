@@ -8,9 +8,9 @@ defmodule MydiaWeb.AdminSystemLive.Components do
 
   attr :system_info, :map, required: true
   attr :database_info, :map, required: true
-  attr :library_paths, :list, required: true
-  attr :download_clients, :list, required: true
-  attr :indexers, :list, required: true
+  attr :library_paths_count, :integer, required: true
+  attr :download_clients_count, :integer, required: true
+  attr :indexers_count, :integer, required: true
   attr :active_sessions, :list, required: true
   attr :active_jobs, :list, required: true
   attr :recent_activity, :list, required: true
@@ -111,138 +111,51 @@ defmodule MydiaWeb.AdminSystemLive.Components do
 
       <div class="divider"></div>
 
-      <%!-- Bottom Row: Summary Tables in Grid --%>
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 sm:gap-8">
-        <%!-- Library Paths Summary --%>
-        <div>
-          <h3 class="text-lg font-semibold flex items-center gap-2 mb-4">
-            <.icon name="hero-folder" class="w-5 h-5 text-primary" /> Library Paths
-            <span class="badge badge-ghost">{length(@library_paths)}</span>
-          </h3>
-          <%= if @library_paths == [] do %>
-            <div class="alert alert-info">
-              <.icon name="hero-information-circle" class="w-5 h-5" />
-              <span>No paths configured</span>
-            </div>
-          <% else %>
-            <div class="overflow-x-auto">
-              <table class="table table-zebra">
-                <thead>
-                  <tr>
-                    <th>Path</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <%= for path <- @library_paths do %>
-                    <tr>
-                      <td class="font-mono text-sm truncate max-w-[180px]" title={path.path}>
-                        {path.path}
-                      </td>
-                      <td><span class="badge badge-sm">{path.type}</span></td>
-                      <td>
-                        <span class={[
-                          "badge badge-sm",
-                          if(path.monitored, do: "badge-success", else: "badge-ghost")
-                        ]}>
-                          {if path.monitored, do: "Active", else: "Off"}
-                        </span>
-                      </td>
-                    </tr>
-                  <% end %>
-                </tbody>
-              </table>
-            </div>
-          <% end %>
+      <%!-- Bottom Row: Configuration Summary --%>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+        <div class="stat p-4 bg-base-200 rounded-lg">
+          <div class="stat-figure text-primary">
+            <.icon name="hero-folder" class="w-8 h-8" />
+          </div>
+          <div class="stat-title">Library Paths</div>
+          <div class="stat-value text-xl">{@library_paths_count}</div>
+          <div class="stat-desc">
+            <%= if @library_paths_count == 0 do %>
+              No paths configured
+            <% else %>
+              Configured
+            <% end %>
+          </div>
         </div>
 
-        <%!-- Download Clients Summary --%>
-        <div>
-          <h3 class="text-lg font-semibold flex items-center gap-2 mb-4">
-            <.icon name="hero-arrow-down-tray" class="w-5 h-5 text-primary" /> Clients
-            <span class="badge badge-ghost">{length(@download_clients)}</span>
-          </h3>
-          <%= if @download_clients == [] do %>
-            <div class="alert alert-info">
-              <.icon name="hero-information-circle" class="w-5 h-5" />
-              <span>No clients configured</span>
-            </div>
-          <% else %>
-            <div class="overflow-x-auto">
-              <table class="table table-zebra">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <%= for client <- @download_clients do %>
-                    <tr>
-                      <td class="font-medium">{client.name}</td>
-                      <td><span class="badge badge-sm">{client.type}</span></td>
-                      <td>
-                        <span class={[
-                          "badge badge-sm",
-                          if(client.enabled, do: "badge-success", else: "badge-ghost")
-                        ]}>
-                          {if client.enabled, do: "On", else: "Off"}
-                        </span>
-                      </td>
-                    </tr>
-                  <% end %>
-                </tbody>
-              </table>
-            </div>
-          <% end %>
+        <div class="stat p-4 bg-base-200 rounded-lg">
+          <div class="stat-figure text-primary">
+            <.icon name="hero-arrow-down-tray" class="w-8 h-8" />
+          </div>
+          <div class="stat-title">Download Clients</div>
+          <div class="stat-value text-xl">{@download_clients_count}</div>
+          <div class="stat-desc">
+            <%= if @download_clients_count == 0 do %>
+              No clients configured
+            <% else %>
+              Configured
+            <% end %>
+          </div>
         </div>
 
-        <%!-- Indexers Summary --%>
-        <div>
-          <h3 class="text-lg font-semibold flex items-center gap-2 mb-4">
-            <.icon name="hero-magnifying-glass" class="w-5 h-5 text-primary" /> Indexers
-            <span class="badge badge-ghost">{length(@indexers)}</span>
-          </h3>
-          <%= if @indexers == [] do %>
-            <div class="alert alert-info">
-              <.icon name="hero-information-circle" class="w-5 h-5" />
-              <span>No indexers configured</span>
-            </div>
-          <% else %>
-            <div class="overflow-x-auto">
-              <table class="table table-zebra">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <%= for indexer <- @indexers do %>
-                    <tr>
-                      <td class="font-medium">{indexer.name}</td>
-                      <td>
-                        <span class="badge badge-sm">
-                          {format_indexer_type(indexer.type)}
-                        </span>
-                      </td>
-                      <td>
-                        <span class={[
-                          "badge badge-sm",
-                          if(indexer.enabled, do: "badge-success", else: "badge-ghost")
-                        ]}>
-                          {if indexer.enabled, do: "On", else: "Off"}
-                        </span>
-                      </td>
-                    </tr>
-                  <% end %>
-                </tbody>
-              </table>
-            </div>
-          <% end %>
+        <div class="stat p-4 bg-base-200 rounded-lg">
+          <div class="stat-figure text-primary">
+            <.icon name="hero-magnifying-glass" class="w-8 h-8" />
+          </div>
+          <div class="stat-title">Indexers</div>
+          <div class="stat-value text-xl">{@indexers_count}</div>
+          <div class="stat-desc">
+            <%= if @indexers_count == 0 do %>
+              No indexers configured
+            <% else %>
+              Configured
+            <% end %>
+          </div>
         </div>
       </div>
 
@@ -612,47 +525,4 @@ defmodule MydiaWeb.AdminSystemLive.Components do
   defp health_badge(:unhealthy), do: "badge-error"
   defp health_badge(:unknown), do: "badge-warning"
   defp health_badge(_), do: "badge-ghost"
-
-  defp health_status_badge_class(:healthy), do: "badge-success"
-  defp health_status_badge_class(:unhealthy), do: "badge-error"
-  defp health_status_badge_class(:unknown), do: "badge-ghost"
-
-  defp health_status_icon(:healthy), do: "hero-check-circle"
-  defp health_status_icon(:unhealthy), do: "hero-x-circle"
-  defp health_status_icon(:unknown), do: "hero-question-mark-circle"
-
-  defp health_status_label(:healthy), do: "Healthy"
-  defp health_status_label(:unhealthy), do: "Unhealthy"
-  defp health_status_label(:unknown), do: "Unknown"
-
-  defp format_indexer_type(type) when is_atom(type) do
-    type |> to_string() |> String.capitalize()
-  end
-
-  defp format_indexer_type(type), do: to_string(type)
-
-  # Library type helpers
-  defp library_type_icon(:series), do: "hero-tv"
-  defp library_type_icon(:movies), do: "hero-film"
-  defp library_type_icon(:mixed), do: "hero-square-3-stack-3d"
-  defp library_type_icon(:music), do: "hero-musical-note"
-  defp library_type_icon(:books), do: "hero-book-open"
-  defp library_type_icon(:adult), do: "hero-eye-slash"
-  defp library_type_icon(_), do: "hero-folder"
-
-  defp library_type_badge_class(:series), do: "badge-info"
-  defp library_type_badge_class(:movies), do: "badge-accent"
-  defp library_type_badge_class(:mixed), do: "badge-secondary"
-  defp library_type_badge_class(:music), do: "badge-success"
-  defp library_type_badge_class(:books), do: "badge-warning"
-  defp library_type_badge_class(:adult), do: "badge-error"
-  defp library_type_badge_class(_), do: "badge-ghost"
-
-  defp library_type_display(:series), do: "Series"
-  defp library_type_display(:movies), do: "Movies"
-  defp library_type_display(:mixed), do: "Mixed"
-  defp library_type_display(:music), do: "Music"
-  defp library_type_display(:books), do: "Books"
-  defp library_type_display(:adult), do: "Adult"
-  defp library_type_display(type), do: to_string(type)
 end

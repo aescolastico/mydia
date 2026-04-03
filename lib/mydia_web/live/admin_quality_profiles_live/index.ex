@@ -36,7 +36,13 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
          |> assign(:default_quality_profile_id, profile_id)}
 
       {:error, reason} ->
-        Logger.error("Failed to update default quality profile: #{inspect(reason)}")
+        MydiaLogger.log_error(:liveview, "Failed to update default quality profile",
+          error: reason,
+          operation: :update_default_quality_profile,
+          profile_id: profile_id,
+          user_id: socket.assigns.current_user.id
+        )
+
         {:noreply, put_flash(socket, :error, "Failed to update default quality profile")}
     end
   end

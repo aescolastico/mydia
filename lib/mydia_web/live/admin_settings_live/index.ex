@@ -219,6 +219,9 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
 
     flaresolverr = config.flaresolverr || %Mydia.Config.Schema.FlareSolverr{}
 
+    # Fetch all DB settings in one query to avoid N+1 per-key lookups
+    all_db_settings = Settings.list_config_settings() |> Map.new(&{&1.key, &1})
+
     %{
       "Server" => [
         %{
@@ -226,28 +229,28 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Port",
           type: :integer,
           value: config.server.port,
-          source: get_source("PORT", "server.port")
+          source: get_source("PORT", "server.port", all_db_settings)
         },
         %{
           key: "server.host",
           label: "Host",
           type: :string,
           value: config.server.host,
-          source: get_source("HOST", "server.host")
+          source: get_source("HOST", "server.host", all_db_settings)
         },
         %{
           key: "server.url_scheme",
           label: "URL Scheme",
           type: :string,
           value: config.server.url_scheme,
-          source: get_source("URL_SCHEME", "server.url_scheme")
+          source: get_source("URL_SCHEME", "server.url_scheme", all_db_settings)
         },
         %{
           key: "server.url_host",
           label: "URL Host",
           type: :string,
           value: config.server.url_host,
-          source: get_source("URL_HOST", "server.url_host")
+          source: get_source("URL_HOST", "server.url_host", all_db_settings)
         }
       ],
       "Database" => [
@@ -256,14 +259,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Database Path",
           type: :string,
           value: config.database.path,
-          source: get_source("DATABASE_PATH", "database.path")
+          source: get_source("DATABASE_PATH", "database.path", all_db_settings)
         },
         %{
           key: "database.pool_size",
           label: "Pool Size",
           type: :integer,
           value: config.database.pool_size,
-          source: get_source("POOL_SIZE", "database.pool_size")
+          source: get_source("POOL_SIZE", "database.pool_size", all_db_settings)
         }
       ],
       "Authentication" => [
@@ -272,14 +275,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Local Auth Enabled",
           type: :boolean,
           value: config.auth.local_enabled,
-          source: get_source("LOCAL_AUTH_ENABLED", "auth.local_enabled")
+          source: get_source("LOCAL_AUTH_ENABLED", "auth.local_enabled", all_db_settings)
         },
         %{
           key: "auth.oidc_enabled",
           label: "OIDC Enabled",
           type: :boolean,
           value: config.auth.oidc_enabled,
-          source: get_source("OIDC_ENABLED", "auth.oidc_enabled")
+          source: get_source("OIDC_ENABLED", "auth.oidc_enabled", all_db_settings)
         }
       ],
       "Media" => [
@@ -288,21 +291,22 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Movies Path",
           type: :string,
           value: config.media.movies_path,
-          source: get_source("MOVIES_PATH", "media.movies_path")
+          source: get_source("MOVIES_PATH", "media.movies_path", all_db_settings)
         },
         %{
           key: "media.tv_path",
           label: "TV Path",
           type: :string,
           value: config.media.tv_path,
-          source: get_source("TV_PATH", "media.tv_path")
+          source: get_source("TV_PATH", "media.tv_path", all_db_settings)
         },
         %{
           key: "media.scan_interval_hours",
           label: "Scan Interval (hours)",
           type: :integer,
           value: config.media.scan_interval_hours,
-          source: get_source("MEDIA_SCAN_INTERVAL_HOURS", "media.scan_interval_hours")
+          source:
+            get_source("MEDIA_SCAN_INTERVAL_HOURS", "media.scan_interval_hours", all_db_settings)
         }
       ],
       "Downloads" => [
@@ -312,7 +316,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :integer,
           value: config.downloads.monitor_interval_minutes,
           source:
-            get_source("DOWNLOAD_MONITOR_INTERVAL_MINUTES", "downloads.monitor_interval_minutes")
+            get_source(
+              "DOWNLOAD_MONITOR_INTERVAL_MINUTES",
+              "downloads.monitor_interval_minutes",
+              all_db_settings
+            )
         }
       ],
       "Crash Reporting" => [
@@ -320,8 +328,9 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           key: "crash_reporting.enabled",
           label: "Share Crashes with Developers",
           type: :boolean,
-          value: get_crash_reporting_enabled(),
-          source: get_source("CRASH_REPORTING_ENABLED", "crash_reporting.enabled")
+          value: get_crash_reporting_enabled(all_db_settings),
+          source:
+            get_source("CRASH_REPORTING_ENABLED", "crash_reporting.enabled", all_db_settings)
         }
       ],
       "Library" => [
@@ -331,16 +340,22 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           description:
             "Automatically queue a library re-scan on startup when database issues (orphaned files) are detected",
           type: :boolean,
-          value: get_library_auto_repair_enabled(),
-          source: get_source("DATABASE_AUTO_REPAIR", "library.auto_repair_enabled")
+          value: get_library_auto_repair_enabled(all_db_settings),
+          source:
+            get_source("DATABASE_AUTO_REPAIR", "library.auto_repair_enabled", all_db_settings)
         },
         %{
           key: "library.auto_repair_threshold",
           label: "Auto-Repair Threshold",
           description: "Minimum number of issues required to trigger auto-repair",
           type: :integer,
-          value: get_library_auto_repair_threshold(),
-          source: get_source("DATABASE_AUTO_REPAIR_THRESHOLD", "library.auto_repair_threshold")
+          value: get_library_auto_repair_threshold(all_db_settings),
+          source:
+            get_source(
+              "DATABASE_AUTO_REPAIR_THRESHOLD",
+              "library.auto_repair_threshold",
+              all_db_settings
+            )
         }
       ],
       "FlareSolverr" => [
@@ -349,14 +364,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Enabled",
           type: :boolean,
           value: flaresolverr.enabled,
-          source: get_source("FLARESOLVERR_ENABLED", "flaresolverr.enabled")
+          source: get_source("FLARESOLVERR_ENABLED", "flaresolverr.enabled", all_db_settings)
         },
         %{
           key: "flaresolverr.url",
           label: "FlareSolverr URL",
           type: :string,
           value: flaresolverr.url || "",
-          source: get_source("FLARESOLVERR_URL", "flaresolverr.url"),
+          source: get_source("FLARESOLVERR_URL", "flaresolverr.url", all_db_settings),
           placeholder: "http://flaresolverr:8191"
         },
         %{
@@ -364,21 +379,22 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Timeout (ms)",
           type: :integer,
           value: flaresolverr.timeout,
-          source: get_source("FLARESOLVERR_TIMEOUT", "flaresolverr.timeout")
+          source: get_source("FLARESOLVERR_TIMEOUT", "flaresolverr.timeout", all_db_settings)
         },
         %{
           key: "flaresolverr.max_timeout",
           label: "Max Timeout (ms)",
           type: :integer,
           value: flaresolverr.max_timeout,
-          source: get_source("FLARESOLVERR_MAX_TIMEOUT", "flaresolverr.max_timeout")
+          source:
+            get_source("FLARESOLVERR_MAX_TIMEOUT", "flaresolverr.max_timeout", all_db_settings)
         }
       ]
     }
   end
 
-  defp get_crash_reporting_enabled do
-    case Settings.get_config_setting_by_key("crash_reporting.enabled") do
+  defp get_crash_reporting_enabled(all_db_settings) do
+    case Map.get(all_db_settings, "crash_reporting.enabled") do
       nil ->
         case System.get_env("CRASH_REPORTING_ENABLED") do
           nil -> false
@@ -390,10 +406,10 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     end
   end
 
-  defp get_library_auto_repair_enabled do
+  defp get_library_auto_repair_enabled(all_db_settings) do
     case System.get_env("DATABASE_AUTO_REPAIR") do
       nil ->
-        case Settings.get_config_setting_by_key("library.auto_repair_enabled") do
+        case Map.get(all_db_settings, "library.auto_repair_enabled") do
           nil ->
             Application.get_env(:mydia, :database_auto_repair, true)
 
@@ -406,10 +422,10 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     end
   end
 
-  defp get_library_auto_repair_threshold do
+  defp get_library_auto_repair_threshold(all_db_settings) do
     case System.get_env("DATABASE_AUTO_REPAIR_THRESHOLD") do
       nil ->
-        case Settings.get_config_setting_by_key("library.auto_repair_threshold") do
+        case Map.get(all_db_settings, "library.auto_repair_threshold") do
           nil ->
             Application.get_env(:mydia, :database_auto_repair_threshold, 10)
 
@@ -434,12 +450,12 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
   defp parse_boolean_value("yes"), do: true
   defp parse_boolean_value(_), do: false
 
-  defp get_source(env_var_name, key) do
+  defp get_source(env_var_name, key, all_db_settings) do
     cond do
       env_var_name != nil and System.get_env(env_var_name) != nil ->
         :env
 
-      Settings.get_config_setting_by_key(key) ->
+      Map.has_key?(all_db_settings, key) ->
         :database
 
       true ->

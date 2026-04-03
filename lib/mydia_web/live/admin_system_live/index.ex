@@ -20,7 +20,6 @@ defmodule MydiaWeb.AdminSystemLive.Index do
       :timer.send_interval(refresh_interval, self(), :refresh_system_data)
       Phoenix.PubSub.subscribe(Mydia.PubSub, "hls_sessions")
       Phoenix.PubSub.subscribe(Mydia.PubSub, "transcodes")
-      Phoenix.PubSub.subscribe(Mydia.PubSub, "library_scanner")
     end
 
     {:ok,
@@ -91,18 +90,6 @@ defmodule MydiaWeb.AdminSystemLive.Index do
      |> assign(:recent_activity, recent_activity)}
   end
 
-  # Ignore library scan messages
-  @impl true
-  def handle_info({event, _}, socket)
-      when event in [
-             :library_scan_started,
-             :library_scan_progress,
-             :library_scan_completed,
-             :library_scan_failed
-           ] do
-    {:noreply, socket}
-  end
-
   ## Status Tab Events
 
   @impl true
@@ -131,26 +118,14 @@ defmodule MydiaWeb.AdminSystemLive.Index do
      |> put_flash(:info, "Cleared recent activity")}
   end
 
-  @impl true
-  def handle_event("clear_crash_queue", _params, socket) do
-    Mydia.CrashReporter.clear_queue()
-
-    {:noreply,
-     socket
-     |> load_data()
-     |> put_flash(:info, "Crash report queue cleared")}
-  end
-
   ## Private Helpers
 
   defp load_data(socket) do
     # Load summary counts for status overview (not full lists)
     socket
-    |> assign(:library_paths, Settings.list_library_paths())
-    |> assign(:download_clients, Settings.list_download_client_configs())
-    |> assign(:indexers, Settings.list_indexer_configs())
-    |> assign(:crash_report_stats, Mydia.CrashReporter.stats())
-    |> assign(:queued_crash_reports, Mydia.CrashReporter.list_queued_reports())
+    |> assign(:library_paths_count, length(Settings.list_library_paths()))
+    |> assign(:download_clients_count, length(Settings.list_download_client_configs()))
+    |> assign(:indexers_count, length(Settings.list_indexer_configs()))
   end
 
   defp load_system_data(socket) do

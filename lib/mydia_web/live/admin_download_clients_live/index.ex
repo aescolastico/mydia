@@ -281,12 +281,17 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
 
   defp get_client_health_status(clients) do
     clients
-    |> Enum.map(fn client ->
-      case ClientHealth.check_health(client.id) do
-        {:ok, health} -> {client.id, health}
-        {:error, _} -> {client.id, %{status: :unknown, error: "Unable to check health"}}
-      end
-    end)
+    |> Task.async_stream(
+      fn client ->
+        case ClientHealth.check_health(client.id) do
+          {:ok, health} -> {client.id, health}
+          {:error, _} -> {client.id, %{status: :unknown, error: "Unable to check health"}}
+        end
+      end,
+      timeout: :infinity,
+      max_concurrency: 10
+    )
+    |> Enum.map(fn {:ok, result} -> result end)
     |> Map.new()
   end
 

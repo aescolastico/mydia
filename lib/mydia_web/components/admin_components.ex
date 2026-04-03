@@ -2,16 +2,22 @@ defmodule MydiaWeb.AdminComponents do
   @moduledoc """
   Shared components for admin configuration pages.
   """
-  use MydiaWeb, :html
+  use Phoenix.Component
+
+  import MydiaWeb.CoreComponents, only: [icon: 1]
+
+  use Phoenix.VerifiedRoutes,
+    endpoint: MydiaWeb.Endpoint,
+    router: MydiaWeb.Router,
+    statics: MydiaWeb.static_paths()
+
+  @remote_access_enabled Application.compile_env(:mydia, :features, [])
+                         |> Keyword.get(:remote_access_enabled, false)
 
   attr :active_tab, :atom, required: true
 
   def tab_nav(assigns) do
-    remote_access_enabled =
-      Application.get_env(:mydia, :features, [])
-      |> Keyword.get(:remote_access_enabled, false)
-
-    assigns = assign(assigns, :remote_access_enabled, remote_access_enabled)
+    assigns = assign(assigns, :remote_access_enabled, @remote_access_enabled)
 
     ~H"""
     <div role="tablist" class="tabs tabs-border mb-6">
@@ -69,6 +75,28 @@ defmodule MydiaWeb.AdminComponents do
           Remote Access
         </.tab_link>
       <% end %>
+    </div>
+    """
+  end
+
+  attr :active_tab, :atom, required: true
+  slot :inner_block, required: true
+
+  def admin_page(assigns) do
+    ~H"""
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold">Configuration</h1>
+        <p class="text-base-content/70 mt-1">
+          System status, application settings, and configuration management
+        </p>
+      </div>
+    </div>
+
+    <.tab_nav active_tab={@active_tab} />
+
+    <div class="bg-base-100">
+      {render_slot(@inner_block)}
     </div>
     """
   end

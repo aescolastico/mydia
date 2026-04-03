@@ -1060,20 +1060,4 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
     </div>
     """
   end
-
-  # ============================================================================
-  # Private Helpers
-  # ============================================================================
-
-  defp health_status_badge_class(:healthy), do: "badge-success"
-  defp health_status_badge_class(:unhealthy), do: "badge-error"
-  defp health_status_badge_class(:unknown), do: "badge-ghost"
-
-  defp health_status_icon(:healthy), do: "hero-check-circle"
-  defp health_status_icon(:unhealthy), do: "hero-x-circle"
-  defp health_status_icon(:unknown), do: "hero-question-mark-circle"
-
-  defp health_status_label(:healthy), do: "Healthy"
-  defp health_status_label(:unhealthy), do: "Unhealthy"
-  defp health_status_label(:unknown), do: "Unknown"
 end
