@@ -8,7 +8,7 @@ defmodule MydiaWeb.AdminSystemLive.Index do
   alias Mydia.Playback
   alias Mydia.Downloads
   alias Mydia.System
-  alias MydiaWeb.AdminConfigLive.FlareSolverrStatusComponent
+  alias MydiaWeb.FlareSolverrStatusComponent
 
   # Capture Mix.env at compile time since Mix is not available in releases
   @env Mix.env()

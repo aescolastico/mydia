@@ -12,7 +12,7 @@
     <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
 
     <div class="bg-base-100">
-      <MydiaWeb.AdminConfigLive.Components.library_paths_tab
+      <MydiaWeb.AdminLibraryPathsLive.Components.library_paths_tab
         library_paths={@library_paths}
         reorganizing_library_ids={@reorganizing_library_ids}
         reclassifying_library_ids={@reclassifying_library_ids}
@@ -21,7 +21,7 @@
 
     <%!-- Library Path Modal --%>
     <%= if assigns[:show_library_path_modal] do %>
-      <MydiaWeb.AdminConfigLive.Components.library_path_modal
+      <MydiaWeb.AdminLibraryPathsLive.Components.library_path_modal
         library_path_form={@library_path_form}
         library_path_mode={@library_path_mode}
       />

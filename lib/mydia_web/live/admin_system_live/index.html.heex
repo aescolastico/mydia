@@ -12,7 +12,7 @@
     <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
 
     <div class="bg-base-100">
-      <MydiaWeb.AdminConfigLive.Components.status_tab
+      <MydiaWeb.AdminSystemLive.Components.status_tab
         system_info={@system_info}
         database_info={@database_info}
         library_paths={@library_paths}
@@ -26,7 +26,7 @@
       <div class="px-4 sm:px-6 pb-6">
         <div class="divider">External Services</div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-          <MydiaWeb.AdminConfigLive.FlareSolverrStatusComponent.flaresolverr_status_card flaresolverr_status={
+          <MydiaWeb.FlareSolverrStatusComponent.flaresolverr_status_card flaresolverr_status={
             @flaresolverr_status
           } />
         </div>

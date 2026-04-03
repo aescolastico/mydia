@@ -12,7 +12,7 @@
     <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
 
     <div class="bg-base-100">
-      <MydiaWeb.AdminConfigLive.Components.media_servers_tab
+      <MydiaWeb.AdminMediaServersLive.Components.media_servers_tab
         media_servers={@media_servers}
         media_server_health={@media_server_health}
       />
@@ -20,7 +20,7 @@
 
     <%!-- Media Server Modal --%>
     <%= if assigns[:show_media_server_modal] do %>
-      <MydiaWeb.AdminConfigLive.Components.media_server_modal
+      <MydiaWeb.AdminMediaServersLive.Components.media_server_modal
         media_server_form={@media_server_form}
         media_server_mode={@media_server_mode}
         testing_media_server_connection={assigns[:testing_media_server_connection] || false}

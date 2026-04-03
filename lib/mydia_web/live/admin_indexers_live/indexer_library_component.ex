@@ -1,4 +1,4 @@
-defmodule MydiaWeb.AdminConfigLive.IndexerLibraryComponent do
+defmodule MydiaWeb.AdminIndexersLive.IndexerLibraryComponent do
   @moduledoc """
   LiveComponent for managing the indexer library.
 

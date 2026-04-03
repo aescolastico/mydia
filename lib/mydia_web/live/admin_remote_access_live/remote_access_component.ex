@@ -1,4 +1,4 @@
-defmodule MydiaWeb.AdminConfigLive.RemoteAccessComponent do
+defmodule MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent do
   @moduledoc """
   LiveComponent for managing remote access settings.
 

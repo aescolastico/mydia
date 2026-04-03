@@ -184,7 +184,7 @@ defmodule MydiaWeb.Router do
         {MydiaWeb.Live.UserAuth, {:ensure_role, :admin}},
         {MydiaWeb.Live.UserAuth, :load_navigation_data}
       ] do
-      live "/config", AdminConfigLive.Index, :index
+      live "/config", AdminSystemLive.Index, :index
       live "/config/status", AdminSystemLive.Index, :index
       live "/config/settings", AdminSettingsLive.Index, :index
       live "/config/quality", AdminQualityProfilesLive.Index, :index

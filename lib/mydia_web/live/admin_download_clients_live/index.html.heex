@@ -12,7 +12,7 @@
     <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
 
     <div class="bg-base-100">
-      <MydiaWeb.AdminConfigLive.Components.download_clients_tab
+      <MydiaWeb.AdminDownloadClientsLive.Components.download_clients_tab
         download_clients={@download_clients}
         client_health={@client_health}
       />
@@ -20,7 +20,7 @@
 
     <%!-- Download Client Modal --%>
     <%= if assigns[:show_download_client_modal] do %>
-      <MydiaWeb.AdminConfigLive.Components.download_client_modal
+      <MydiaWeb.AdminDownloadClientsLive.Components.download_client_modal
         download_client_form={@download_client_form}
         download_client_mode={@download_client_mode}
         testing_download_client_connection={assigns[:testing_download_client_connection] || false}

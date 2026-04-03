@@ -6,7 +6,7 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
   alias Mydia.Indexers
   alias Mydia.Indexers.Health, as: IndexerHealth
   alias Mydia.Indexers.CardigannFeatureFlags
-  alias MydiaWeb.AdminConfigLive.FlareSolverrStatusComponent
+  alias MydiaWeb.FlareSolverrStatusComponent
 
   require Logger
   alias Mydia.Logger, as: MydiaLogger
@@ -36,7 +36,7 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
 
   @impl true
   def handle_info({:sync_complete, component_id, result}, socket) do
-    send_update(MydiaWeb.AdminConfigLive.IndexerLibraryComponent,
+    send_update(MydiaWeb.AdminIndexersLive.IndexerLibraryComponent,
       id: component_id,
       sync_result: result
     )

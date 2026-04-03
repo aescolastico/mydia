@@ -12,7 +12,7 @@
     <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
 
     <div class="bg-base-100">
-      <MydiaWeb.AdminConfigLive.Components.indexers_tab
+      <MydiaWeb.AdminIndexersLive.Components.indexers_tab
         indexers={@indexers}
         indexer_health={@indexer_health}
         library_indexers={@library_indexers}
@@ -27,7 +27,7 @@
 
     <%!-- Indexer Modal --%>
     <%= if assigns[:show_indexer_modal] do %>
-      <MydiaWeb.AdminConfigLive.Components.indexer_modal
+      <MydiaWeb.AdminIndexersLive.Components.indexer_modal
         indexer_form={@indexer_form}
         indexer_mode={@indexer_mode}
         testing_indexer_connection={assigns[:testing_indexer_connection] || false}
@@ -42,7 +42,7 @@
     <%!-- Indexer Library Modal --%>
     <%= if assigns[:show_indexer_library_modal] and @cardigann_enabled do %>
       <.live_component
-        module={MydiaWeb.AdminConfigLive.IndexerLibraryComponent}
+        module={MydiaWeb.AdminIndexersLive.IndexerLibraryComponent}
         id="indexer-library"
         current_user={@current_user}
       />
@@ -50,7 +50,7 @@
 
     <%!-- Library Indexer Config Modal --%>
     <%= if assigns[:show_library_config_modal] and assigns[:configuring_library_indexer] do %>
-      <MydiaWeb.AdminConfigLive.Components.library_config_modal
+      <MydiaWeb.AdminIndexersLive.Components.library_config_modal
         configuring_library_indexer={@configuring_library_indexer}
         settings={@library_indexer_settings}
         testing={assigns[:library_config_testing] || false}

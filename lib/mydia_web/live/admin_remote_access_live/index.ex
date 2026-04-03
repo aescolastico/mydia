@@ -28,7 +28,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.Index do
 
   @impl true
   def handle_info({:remote_access_do_countdown_tick, component_id}, socket) do
-    send_update(MydiaWeb.AdminConfigLive.RemoteAccessComponent,
+    send_update(MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent,
       id: component_id,
       countdown_tick: true
     )
@@ -38,7 +38,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.Index do
 
   @impl true
   def handle_info({:remote_access_refresh_p2p, component_id}, socket) do
-    send_update(MydiaWeb.AdminConfigLive.RemoteAccessComponent,
+    send_update(MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent,
       id: component_id,
       refresh_p2p: true
     )
@@ -49,7 +49,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.Index do
   @impl true
   def handle_info({:claim_consumed, %{code: code, user_id: user_id}}, socket) do
     if socket.assigns.current_scope && socket.assigns.current_scope.user.id == user_id do
-      send_update(MydiaWeb.AdminConfigLive.RemoteAccessComponent,
+      send_update(MydiaWeb.AdminRemoteAccessLive.RemoteAccessComponent,
         id: "remote-access",
         claim_consumed: code
       )
