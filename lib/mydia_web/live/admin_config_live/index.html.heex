@@ -8,75 +8,8 @@
         </p>
       </div>
     </div>
-    <%!-- Tabs Navigation --%>
-    <div role="tablist" class="tabs tabs-border mb-6">
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "status" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="status"
-      >
-        <.icon name="hero-chart-bar" class="w-4 h-4" /> Status
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "general" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="general"
-      >
-        <.icon name="hero-cog-6-tooth" class="w-4 h-4" /> Settings
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "quality" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="quality"
-      >
-        <.icon name="hero-sparkles" class="w-4 h-4" /> Quality
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "clients" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="clients"
-      >
-        <.icon name="hero-arrow-down-tray" class="w-4 h-4" /> Clients
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "indexers" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="indexers"
-      >
-        <.icon name="hero-magnifying-glass" class="w-4 h-4" /> Indexers
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "library" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="library"
-      >
-        <.icon name="hero-folder" class="w-4 h-4" /> Library
-      </button>
-      <button
-        role="tab"
-        class={["tab gap-2", @active_tab == "media_servers" && "tab-active"]}
-        phx-click="change_tab"
-        phx-value-tab="media_servers"
-      >
-        <.icon name="hero-server-stack" class="w-4 h-4" /> Media Servers
-      </button>
-      <%= if @remote_access_enabled do %>
-        <button
-          role="tab"
-          class={["tab gap-2", @active_tab == "remote_access" && "tab-active"]}
-          phx-click="change_tab"
-          phx-value-tab="remote_access"
-        >
-          <.icon name="hero-signal" class="w-4 h-4" /> Remote Access
-        </button>
-      <% end %>
-    </div>
+    <%!-- Tabs Navigation (navigates to split LiveViews) --%>
+    <MydiaWeb.AdminComponents.tab_nav active_tab={:status} />
     <%!-- Tab Content --%>
     <div class="bg-base-100">
       <%!-- System Status Tab --%>

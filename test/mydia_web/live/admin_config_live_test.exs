@@ -109,7 +109,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
     end
 
     test "renders system status tab by default", %{view: view} do
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Status")
+      assert has_element?(view, ~s{a[class*="tab-active"]}, "Status")
     end
 
     test "displays system information", %{view: view} do
@@ -152,49 +152,25 @@ defmodule MydiaWeb.AdminConfigLiveTest do
       %{conn: conn, view: view}
     end
 
-    test "switches to settings tab", %{view: view} do
-      view
-      |> element(~s{button[role="tab"]}, "Settings")
-      |> render_click()
-
-      assert_patched(view, ~p"/admin/config?tab=general")
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Settings")
+    test "renders tab navigation links", %{view: view} do
+      # Tabs are now navigation links to separate LiveViews
+      assert has_element?(view, ~s{a[role="tab"]}, "Status")
+      assert has_element?(view, ~s{a[role="tab"]}, "Settings")
+      assert has_element?(view, ~s{a[role="tab"]}, "Quality")
+      assert has_element?(view, ~s{a[role="tab"]}, "Clients")
+      assert has_element?(view, ~s{a[role="tab"]}, "Indexers")
+      assert has_element?(view, ~s{a[role="tab"]}, "Library")
+      assert has_element?(view, ~s{a[role="tab"]}, "Media Servers")
     end
 
-    test "switches to quality tab", %{view: view} do
-      view
-      |> element(~s{button[role="tab"]}, "Quality")
-      |> render_click()
-
-      assert_patched(view, ~p"/admin/config?tab=quality")
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Quality")
-    end
-
-    test "switches to clients tab", %{view: view} do
-      view
-      |> element(~s{button[role="tab"]}, "Clients")
-      |> render_click()
-
-      assert_patched(view, ~p"/admin/config?tab=clients")
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Clients")
-    end
-
-    test "switches to indexers tab", %{view: view} do
-      view
-      |> element(~s{button[role="tab"]}, "Indexers")
-      |> render_click()
-
-      assert_patched(view, ~p"/admin/config?tab=indexers")
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Indexers")
-    end
-
-    test "switches to library tab", %{view: view} do
-      view
-      |> element(~s{button[role="tab"]}, "Library")
-      |> render_click()
-
-      assert_patched(view, ~p"/admin/config?tab=library")
-      assert has_element?(view, ~s{button[class*="tab-active"]}, "Library")
+    test "tab links point to correct routes", %{view: view} do
+      html = render(view)
+      assert html =~ ~s{href="/admin/config/settings"}
+      assert html =~ ~s{href="/admin/config/quality"}
+      assert html =~ ~s{href="/admin/config/clients"}
+      assert html =~ ~s{href="/admin/config/indexers"}
+      assert html =~ ~s{href="/admin/config/library-paths"}
+      assert html =~ ~s{href="/admin/config/media-servers"}
     end
   end
 
@@ -209,7 +185,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=quality")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/quality")
       %{conn: conn, view: view}
     end
 
@@ -234,7 +210,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         })
 
       # Load the view to see the new profile
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=quality")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/quality")
 
       # Quality profiles are displayed in list items with DaisyUI list components
       assert html =~ "HD"
@@ -295,7 +271,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=clients")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/clients")
       %{conn: conn, view: view}
     end
 
@@ -319,7 +295,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=clients")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/clients")
       # Runtime clients will still be shown, so we can't test for completely empty state
       # Just verify the page renders without error
       assert html =~ "Download Clients"
@@ -363,7 +339,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
       %{conn: conn, view: view}
     end
 
@@ -385,7 +361,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=indexers")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/indexers")
       # Runtime indexers will still be shown, so we can't test for completely empty state
       # Just verify the page renders without error
       assert html =~ "Indexers"
@@ -528,7 +504,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=general")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/settings")
       %{conn: conn, view: view}
     end
 
@@ -594,7 +570,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, view, _html} = live(conn, ~p"/admin/config?tab=library")
+      {:ok, view, _html} = live(conn, ~p"/admin/config/library-paths")
       %{conn: conn, view: view}
     end
 
@@ -615,7 +591,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
         |> put_session(:guardian_default_token, token)
         |> put_req_header("authorization", "Bearer #{token}")
 
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=library")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/library-paths")
       # Runtime paths will still be shown, so we can't test for completely empty state
       # Just verify the page renders without error
       assert html =~ "Library Paths"
@@ -710,7 +686,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
     end
 
     test "template shows disabled buttons for runtime configs", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=clients")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/clients")
 
       # If any runtime configs are present (from ENV or fixtures), they should have
       # disabled buttons. We can't guarantee there are runtime configs in test,
@@ -723,7 +699,7 @@ defmodule MydiaWeb.AdminConfigLiveTest do
     end
 
     test "template shows ENV badge for runtime configs", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/admin/config?tab=clients")
+      {:ok, _view, html} = live(conn, ~p"/admin/config/clients")
 
       # If any runtime configs are present, they should show the ENV badge
       if html =~ "runtime::download_client" do
