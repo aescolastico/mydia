@@ -348,15 +348,14 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
       ) do
     Logger.info("Download initiated: #{title}")
 
+    media_item = load_media_item(media_item_id)
+
     socket =
       socket
       |> assign(:downloading_release_url, nil)
       |> assign(:download_error, nil)
-      |> assign(:media_item, load_media_item(media_item_id))
-      |> assign(
-        :downloads_with_status,
-        load_downloads_with_status(load_media_item(media_item_id))
-      )
+      |> assign(:media_item, media_item)
+      |> assign(:downloads_with_status, load_downloads_with_status(media_item))
 
     raw_results = Map.get(socket.assigns, :raw_search_results, [])
     assigns = socket.assigns
@@ -404,13 +403,5 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
      socket
      |> assign(:downloading_release_url, nil)
      |> assign(:download_error, "Download failed unexpectedly")}
-  end
-
-  defp get_media_type(media_item) do
-    case media_item.type do
-      "movie" -> :movie
-      "tv_show" -> :episode
-      _ -> :movie
-    end
   end
 end

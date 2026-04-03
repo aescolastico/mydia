@@ -220,7 +220,7 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
     SearchScorer.score_result_with_breakdown(result, opts)
   end
 
-  defp get_media_type(media_item) do
+  def get_media_type(media_item) do
     case media_item.type do
       "movie" -> :movie
       "tv_show" -> :episode

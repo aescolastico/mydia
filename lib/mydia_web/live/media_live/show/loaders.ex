@@ -97,10 +97,6 @@ defmodule MydiaWeb.MediaLive.Show.Loaders do
     |> Enum.group_by(& &1.media_file_id)
   end
 
-  def reload_media_item(socket) do
-    Phoenix.Component.assign(socket, :media_item, load_media_item(socket.assigns.media_item.id))
-  end
-
   # Load subtitles for all media files in a media item
   # Returns a map of media_file_id => list of subtitles
   def load_media_file_subtitles(media_item) do
