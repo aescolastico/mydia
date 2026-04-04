@@ -74,9 +74,9 @@ defmodule Mydia.Jobs.MovieSearchTest do
     # Create test library path for media files
     library_path = library_path_fixture(%{path: "/test/library", type: "movies"})
 
-    # Disable all existing indexer configs from test database
+    # Disable all existing DB indexer configs so only our Bypass mock is used
     Settings.list_indexer_configs()
-    |> Enum.filter(fn config -> not is_nil(config.inserted_at) end)
+    |> Enum.reject(&Mydia.Settings.runtime_config?/1)
     |> Enum.each(fn config ->
       Settings.update_indexer_config(config, %{enabled: false})
     end)

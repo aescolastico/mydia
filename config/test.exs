@@ -84,6 +84,9 @@ config :mydia,
   # timer-triggered re-renders from clearing flash messages during tests
   admin_refresh_interval: :timer.minutes(10)
 
+# Disable search delay in tests (production uses 3000ms to throttle API calls)
+config :mydia, :episode_monitor, search_delay_ms: 0
+
 # Guardian JWT configuration for tests
 config :mydia, Mydia.Auth.Guardian,
   issuer: "mydia",

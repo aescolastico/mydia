@@ -83,8 +83,9 @@ defmodule Mydia.RemoteAccess.MediaTokenTest do
       # Verify the TTL was applied (exp should be about 1 second after iat)
       assert claims["exp"] - claims["iat"] <= 2
 
-      # Wait longer than TTL + allowed_drift (2 seconds drift configured) + margin
-      Process.sleep(4000)
+      # Wait for token to expire (allowed_drift is 0 in test config,
+      # 2000ms for reliable expiry with second-precision JWT timestamps)
+      Process.sleep(2000)
 
       assert {:error, :token_expired} = MediaToken.verify_token(token)
     end
@@ -145,8 +146,9 @@ defmodule Mydia.RemoteAccess.MediaTokenTest do
       # Verify the TTL was applied (exp should be about 1 second after iat)
       assert claims["exp"] - claims["iat"] <= 2
 
-      # Wait longer than TTL + allowed_drift (2 seconds drift configured) + margin
-      Process.sleep(4000)
+      # Wait for token to expire (allowed_drift is 0 in test config,
+      # 2000ms for reliable expiry with second-precision JWT timestamps)
+      Process.sleep(2000)
 
       assert {:error, :token_expired} = MediaToken.refresh_token(expired_token)
     end
