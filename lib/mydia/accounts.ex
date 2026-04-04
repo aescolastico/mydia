@@ -5,6 +5,13 @@ defmodule Mydia.Accounts do
 
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
+
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_user_filters,
+    filters: [
+      role: :eq
+    ]
+
   require Logger
   alias Mydia.Repo
   alias Mydia.Accounts.{User, ApiKey, UserPreference}
@@ -380,16 +387,6 @@ defmodule Mydia.Accounts do
   end
 
   ## Private Functions
-
-  defp apply_user_filters(query, opts) do
-    Enum.reduce(opts, query, fn
-      {:role, role}, query ->
-        where(query, [u], u.role == ^role)
-
-      _other, query ->
-        query
-    end)
-  end
 
   defp not_expired?(%ApiKey{expires_at: nil}), do: true
 

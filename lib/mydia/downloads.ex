@@ -5,6 +5,14 @@ defmodule Mydia.Downloads do
 
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
+
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_download_filters,
+    filters: [
+      media_item_id: :eq,
+      episode_id: :eq
+    ]
+
   alias Mydia.Repo
   alias Mydia.Downloads.Download
   alias Mydia.Downloads.Client
@@ -613,19 +621,6 @@ defmodule Mydia.Downloads do
       {:error, error} ->
         {:error, {:client_error, error}}
     end
-  end
-
-  defp apply_download_filters(query, opts) do
-    Enum.reduce(opts, query, fn
-      {:media_item_id, media_item_id}, query ->
-        where(query, [d], d.media_item_id == ^media_item_id)
-
-      {:episode_id, episode_id}, query ->
-        where(query, [d], d.episode_id == ^episode_id)
-
-      _other, query ->
-        query
-    end)
   end
 
   @doc """
