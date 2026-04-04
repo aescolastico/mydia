@@ -24,6 +24,7 @@ defmodule Mydia.Settings.LibraryPath do
           category_paths: map(),
           auto_organize: boolean(),
           auto_import: boolean(),
+          write_nfo: boolean(),
           quality_profile:
             Mydia.Settings.QualityProfile.t() | nil | Ecto.Association.NotLoaded.t(),
           quality_profile_id: binary() | nil,
@@ -54,6 +55,8 @@ defmodule Mydia.Settings.LibraryPath do
     field :auto_organize, :boolean, default: false
     # Enable/disable automatic record creation from discovered files
     field :auto_import, :boolean, default: false
+    # Enable/disable writing Jellyfin-compatible NFO metadata files alongside media files
+    field :write_nfo, :boolean, default: false
 
     belongs_to :quality_profile, Mydia.Settings.QualityProfile
     belongs_to :updated_by, Mydia.Accounts.User
@@ -80,7 +83,8 @@ defmodule Mydia.Settings.LibraryPath do
       :disabled,
       :category_paths,
       :auto_organize,
-      :auto_import
+      :auto_import,
+      :write_nfo
     ])
     |> validate_required([:path, :type])
     |> validate_inclusion(:type, @path_types)

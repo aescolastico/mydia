@@ -18,6 +18,7 @@ defmodule Mydia.Jobs.MetadataRefresh do
 
   require Logger
   alias Mydia.{Media, Metadata}
+  alias Mydia.Metadata.NfoWriter
 
   defmodule Args do
     @moduledoc false
@@ -200,6 +201,9 @@ defmodule Mydia.Jobs.MetadataRefresh do
               if media_type == :tv_show and fetch_episodes do
                 Media.refresh_episodes_for_tv_show(updated_item)
               end
+
+              # Regenerate NFO files if enabled for any library path
+              NfoWriter.maybe_write_nfos(updated_item)
 
               :ok
 

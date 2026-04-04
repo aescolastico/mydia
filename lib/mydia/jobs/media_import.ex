@@ -28,6 +28,7 @@ defmodule Mydia.Jobs.MediaImport do
   alias Mydia.Library.FileParser.V2, as: FileParser
   alias Mydia.Indexers.QualityParser
   alias Mydia.MediaServer.Notifier, as: MediaServerNotifier
+  alias Mydia.Metadata.NfoWriter
   alias Mydia.Settings.LibraryPath
 
   defmodule Args do
@@ -233,6 +234,11 @@ defmodule Mydia.Jobs.MediaImport do
                   errors: inspect(changeset.errors)
                 )
             end
+          end
+
+          # Write NFO metadata files if enabled for this library path
+          if download.media_item_id do
+            NfoWriter.maybe_write_nfos(download.media_item_id)
           end
 
           # Notify media servers (Plex, Jellyfin) to scan for new content
