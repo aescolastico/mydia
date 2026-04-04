@@ -15,6 +15,21 @@ max_cases =
 ExUnit.start(max_cases: max_cases, exclude: [:external, :feature, :requires_relay])
 Ecto.Adapters.SQL.Sandbox.mode(Mydia.Repo, :manual)
 
+# Clear runtime config indexers, download clients, and media servers so tests
+# never accidentally hit real external services (e.g. Prowlarr from Docker env vars).
+# Tests that need indexers should create their own via Bypass + Settings.create_indexer_config.
+case Application.get_env(:mydia, :runtime_config) do
+  %{} = config ->
+    Application.put_env(
+      :mydia,
+      :runtime_config,
+      %{config | indexers: [], download_clients: [], media_servers: []}
+    )
+
+  _ ->
+    :ok
+end
+
 # Configure ExMachina
 {:ok, _} = Application.ensure_all_started(:ex_machina)
 

@@ -136,7 +136,8 @@ defmodule MydiaWeb.Plugs.MediaAuthTest do
       user = create_user()
       device = create_device(user)
       {:ok, token, _claims} = MediaToken.create_token(device, ttl: {1, :second})
-      # Sleep long enough for token to expire (add extra margin for test reliability)
+      # Wait for token to expire (allowed_drift is 0 in test config,
+      # 2000ms for reliable expiry through the TokenCache path)
       Process.sleep(2000)
 
       %{token: token}

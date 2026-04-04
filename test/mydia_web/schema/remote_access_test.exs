@@ -51,8 +51,9 @@ defmodule MydiaWeb.Schema.RemoteAccessTest do
       # Verify the TTL was applied (exp should be about 1 second after iat)
       assert claims["exp"] - claims["iat"] <= 2
 
-      # Wait for token to expire (TTL + allowed_drift of 2 seconds + margin)
-      Process.sleep(4000)
+      # Wait for token to expire (allowed_drift is 0 in test config,
+      # 2000ms for reliable expiry with second-precision JWT timestamps)
+      Process.sleep(2000)
 
       variables = %{"token" => expired_token}
       result = run_query(@refresh_media_token_mutation, variables)

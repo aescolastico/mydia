@@ -6,46 +6,48 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
   alias Mydia.Indexers.CardigannDefinition
   alias Mydia.Repo
 
-  @sample_yaml """
-  id: test-indexer
-  name: Test Indexer
-  description: A test indexer for unit tests
-  language: en-US
-  type: public
-  encoding: UTF-8
-  links:
-    - https://test-indexer.example.com
-  caps:
-    modes:
-      search: {search-type: q}
-      tv-search: {search-type: q, tv-attributes: q, season, ep}
-      movie-search: {search-type: q, movie-attributes: q, imdbid}
-    categories:
-      2000: Movies
-      5000: TV
-    categorymappings:
-      - {id: 2000, cat: Movies, desc: "Movies"}
-      - {id: 5000, cat: TV, desc: "TV Shows"}
-  search:
-    path: /search/{{ .Keywords }}/
-    rows:
-      selector: "table.results tr"
-      after: 1
-    fields:
-      title:
-        selector: "td.title a"
-      download:
-        selector: "td.download a"
-        attribute: href
-      size:
-        selector: "td.size"
-      seeders:
-        selector: "td.seeders"
-      leechers:
-        selector: "td.leechers"
-      category:
-        selector: "td.category"
-  """
+  defp sample_yaml(base_url) do
+    """
+    id: test-indexer
+    name: Test Indexer
+    description: A test indexer for unit tests
+    language: en-US
+    type: public
+    encoding: UTF-8
+    links:
+      - #{base_url}
+    caps:
+      modes:
+        search: {search-type: q}
+        tv-search: {search-type: q, tv-attributes: q, season, ep}
+        movie-search: {search-type: q, movie-attributes: q, imdbid}
+      categories:
+        2000: Movies
+        5000: TV
+      categorymappings:
+        - {id: 2000, cat: Movies, desc: "Movies"}
+        - {id: 5000, cat: TV, desc: "TV Shows"}
+    search:
+      path: /search/{{ .Keywords }}/
+      rows:
+        selector: "table.results tr"
+        after: 1
+      fields:
+        title:
+          selector: "td.title a"
+        download:
+          selector: "td.download a"
+          attribute: href
+        size:
+          selector: "td.size"
+        seeders:
+          selector: "td.seeders"
+        leechers:
+          selector: "td.leechers"
+        category:
+          selector: "td.category"
+    """
+  end
 
   setup do
     # Clear any existing definitions
@@ -55,7 +57,28 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
     original_features = Application.get_env(:mydia, :features, [])
     Application.put_env(:mydia, :features, cardigann_enabled: true)
 
-    # Insert test definition
+    # Use Bypass to avoid real HTTP connections during test_connection/search
+    bypass = Bypass.open()
+    base_url = "http://localhost:#{bypass.port}"
+
+    # Stub the root path for test_connection reachability check
+    Bypass.stub(bypass, "GET", "/", fn conn ->
+      Plug.Conn.resp(conn, 200, "OK")
+    end)
+
+    # Stub search paths with empty HTML table (Cardigann parses HTML from search results)
+    for query <- ["test+query", "test%20query", "query"] do
+      Bypass.stub(bypass, "GET", "/search/#{query}/", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/html")
+        |> Plug.Conn.resp(
+          200,
+          "<html><body><table class=\"results\"><tr><th>Header</th></tr></table></body></html>"
+        )
+      end)
+    end
+
+    # Insert test definition with Bypass URL
     {:ok, definition} =
       %CardigannDefinition{}
       |> CardigannDefinition.changeset(%{
@@ -65,7 +88,7 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
         language: "en-US",
         type: "public",
         encoding: "UTF-8",
-        links: %{"0" => "https://test-indexer.example.com"},
+        links: %{"0" => base_url},
         capabilities: %{
           modes: %{"search" => %{}, "tv-search" => %{}, "movie-search" => %{}},
           categories: %{"2000" => "Movies", "5000" => "TV"},
@@ -74,7 +97,7 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
             %{"id" => 5000, "cat" => "TV", "desc" => "TV Shows"}
           ]
         },
-        definition: @sample_yaml,
+        definition: sample_yaml(base_url),
         schema_version: "v11",
         enabled: true,
         last_synced_at: DateTime.utc_now()
@@ -85,7 +108,7 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
       Application.put_env(:mydia, :features, original_features)
     end)
 
-    %{definition: definition}
+    %{definition: definition, bypass: bypass}
   end
 
   describe "test_connection/1" do
@@ -96,24 +119,9 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
         indexer_id: "test-indexer"
       }
 
-      # Mock HTTP request to base URL
-      # In a real test we'd use a mocking library or bypass
-      # For now, we'll test that the adapter at least attempts to connect
-      result = Cardigann.test_connection(config)
-
-      # Should either succeed or fail with connection error (not config error)
-      case result do
-        {:ok, info} ->
-          assert info.name == "Test Indexer"
-          assert info.indexer_id == "test-indexer"
-
-        {:error, %Error{type: :connection_failed}} ->
-          # This is expected if the test indexer is not actually running
-          assert true
-
-        other ->
-          flunk("Unexpected result: #{inspect(other)}")
-      end
+      assert {:ok, info} = Cardigann.test_connection(config)
+      assert info.name == "Test Indexer"
+      assert info.indexer_id == "test-indexer"
     end
 
     test "fails with missing indexer_id" do
@@ -150,22 +158,11 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
         indexer_id: "test-indexer"
       }
 
-      # This will fail during HTTP request, but we can verify it processes config correctly
-      result = Cardigann.search(config, "test query", categories: [2000], min_seeders: 5)
+      # Bypass returns an empty HTML table, so search should succeed with no results
+      assert {:ok, results} =
+               Cardigann.search(config, "test query", categories: [2000], min_seeders: 5)
 
-      # Should fail with connection error (not config error)
-      case result do
-        {:ok, _results} ->
-          # If somehow it succeeds (unlikely in test env), that's fine
-          assert true
-
-        {:error, %Error{type: error_type}} ->
-          # Should fail with connection/search error, not config error
-          assert error_type in [:connection_failed, :search_failed]
-
-        other ->
-          flunk("Unexpected result: #{inspect(other)}")
-      end
+      assert is_list(results)
     end
 
     test "fails with missing indexer_id" do
@@ -178,26 +175,15 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
     end
 
     test "applies search filters correctly" do
-      # Test that filters would be applied if we had results
-      # This is more of a unit test of the filter logic
-
       config = %{
         type: :cardigann,
         name: "Test Indexer",
         indexer_id: "test-indexer"
       }
 
-      # The search will fail at HTTP stage, but config processing should work
-      result = Cardigann.search(config, "query", min_seeders: 10, limit: 5)
-
-      # Verify it doesn't fail with invalid config
-      case result do
-        {:error, %Error{type: error_type}} ->
-          assert error_type in [:connection_failed, :search_failed]
-
-        _ ->
-          assert true
-      end
+      # Bypass returns empty results, verifying config processing doesn't error
+      assert {:ok, results} = Cardigann.search(config, "query", min_seeders: 10, limit: 5)
+      assert is_list(results)
     end
   end
 
@@ -292,17 +278,9 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
           indexer_id: "test-indexer"
         }
 
-        # Should proceed to search (will fail with connection error in test env)
-        result = Cardigann.search(config, "test query")
-
-        case result do
-          {:ok, _results} ->
-            assert true
-
-          {:error, %Error{type: error_type}} ->
-            # Should fail with connection/search error, not config error
-            assert error_type in [:connection_failed, :search_failed]
-        end
+        # Should proceed to search (Bypass returns empty results)
+        assert {:ok, results} = Cardigann.search(config, "test query")
+        assert is_list(results)
       after
         Application.put_env(:mydia, :features, original)
       end
@@ -345,14 +323,9 @@ defmodule Mydia.Indexers.Adapter.CardigannTest do
           indexer_id: "test-indexer"
         }
 
-        # Should proceed to test connection (will fail with connection error in test env)
-        result = Cardigann.test_connection(config)
-
-        case result do
-          {:ok, _info} -> assert true
-          {:error, %Error{type: :connection_failed}} -> assert true
-          other -> flunk("Unexpected result: #{inspect(other)}")
-        end
+        # Should proceed to test connection (Bypass returns 200)
+        assert {:ok, info} = Cardigann.test_connection(config)
+        assert info.name == "Test Indexer"
       after
         Application.put_env(:mydia, :features, original)
       end
