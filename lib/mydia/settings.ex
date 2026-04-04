@@ -39,6 +39,14 @@ defmodule Mydia.Settings do
   the config loader to build the configuration hierarchy.
   """
 
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_quality_profile_filters,
+    filters: [
+      is_system: :boolean,
+      version: :eq,
+      source_url: :eq
+    ]
+
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
   require Logger
@@ -1994,32 +2002,6 @@ defmodule Mydia.Settings do
   end
 
   ## Private Functions
-
-  # Applies optional filters to quality profile queries
-  defp apply_quality_profile_filters(query, opts) do
-    query
-    |> apply_is_system_filter(opts[:is_system])
-    |> apply_version_filter(opts[:version])
-    |> apply_source_url_filter(opts[:source_url])
-  end
-
-  defp apply_is_system_filter(query, nil), do: query
-
-  defp apply_is_system_filter(query, is_system) when is_boolean(is_system) do
-    where(query, [q], q.is_system == ^is_system)
-  end
-
-  defp apply_version_filter(query, nil), do: query
-
-  defp apply_version_filter(query, version) when is_integer(version) do
-    where(query, [q], q.version == ^version)
-  end
-
-  defp apply_source_url_filter(query, nil), do: query
-
-  defp apply_source_url_filter(query, source_url) when is_binary(source_url) do
-    where(query, [q], q.source_url == ^source_url)
-  end
 
   # Merges database records with runtime configuration items.
   #

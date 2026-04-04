@@ -3,9 +3,6 @@ defmodule Mydia.Downloads do
   The Downloads context handles download queue management.
   """
 
-  import Ecto.Query, warn: false
-  import Mydia.QueryHelpers
-
   use Mydia.QueryHelpers.Filterable,
     function_name: :apply_download_filters,
     filters: [
@@ -13,6 +10,8 @@ defmodule Mydia.Downloads do
       episode_id: :eq
     ]
 
+  import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Downloads.Download
   alias Mydia.Downloads.Client

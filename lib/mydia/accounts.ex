@@ -3,15 +3,14 @@ defmodule Mydia.Accounts do
   The Accounts context handles users and API keys.
   """
 
-  import Ecto.Query, warn: false
-  import Mydia.QueryHelpers
-
   use Mydia.QueryHelpers.Filterable,
     function_name: :apply_user_filters,
     filters: [
       role: :eq
     ]
 
+  import Ecto.Query, warn: false
+  import Mydia.QueryHelpers
   require Logger
   alias Mydia.Repo
   alias Mydia.Accounts.{User, ApiKey, UserPreference}

@@ -17,8 +17,6 @@ defmodule Mydia.Collections do
   System collections cannot be deleted or renamed.
   """
 
-  import Ecto.Query, warn: false
-
   use Mydia.QueryHelpers.Filterable,
     function_name: :apply_collection_filters,
     filters: [
@@ -26,6 +24,7 @@ defmodule Mydia.Collections do
       visibility: {:eq, values: ["private", "shared"]}
     ]
 
+  import Ecto.Query, warn: false
   import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Collections.{Collection, CollectionItem, SmartRules}

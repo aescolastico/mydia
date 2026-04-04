@@ -3,15 +3,14 @@ defmodule Mydia.QueryHelpers.FilterableTest do
 
   alias Mydia.Repo
   alias Mydia.Accounts.User
+  alias Mydia.Settings.QualityProfile
 
-  # Test module that uses the Filterable macro with various filter types
+  # Test module that uses the Filterable macro with eq + allowlist
   defmodule UserFilters do
     use Mydia.QueryHelpers.Filterable,
       function_name: :apply_user_filters,
       filters: [
-        role: {:eq, values: ["admin", "user"]},
-        email: :ilike,
-        confirmed: :boolean
+        role: {:eq, values: ["admin", "user"]}
       ]
 
     import Ecto.Query, warn: false
@@ -40,7 +39,25 @@ defmodule Mydia.QueryHelpers.FilterableTest do
     end
   end
 
+  # Test module exercising the :boolean filter against a real boolean column
+  defmodule ProfileFilters do
+    use Mydia.QueryHelpers.Filterable,
+      function_name: :apply_profile_filters,
+      filters: [
+        is_system: :boolean
+      ]
+
+    import Ecto.Query, warn: false
+
+    def list(opts \\ []) do
+      QualityProfile
+      |> apply_profile_filters(opts)
+      |> Repo.all()
+    end
+  end
+
   import Mydia.AccountsFixtures
+  import Mydia.SettingsFixtures
 
   describe "eq filter with values constraint" do
     test "filters by allowed value" do
@@ -82,53 +99,36 @@ defmodule Mydia.QueryHelpers.FilterableTest do
     end
   end
 
-  describe "ilike filter" do
-    test "matches case-insensitively" do
-      user = user_fixture(%{email: "TestUser@example.com"})
-      _other = user_fixture(%{email: "another@different.org"})
+  describe "boolean filter" do
+    test "filters by true" do
+      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      # System profiles are seeded/created elsewhere; just verify non-system profiles are excluded
+      results = ProfileFilters.list(is_system: false)
 
-      results = UserFilters.list(email: "testuser")
-      assert length(results) == 1
-      assert hd(results).id == user.id
+      assert Enum.any?(results, &(&1.id == profile.id))
+      assert Enum.all?(results, &(&1.is_system == false))
     end
 
-    test "matches partial strings" do
-      user = user_fixture(%{email: "hello.world@example.com"})
+    test "filters by false" do
+      _profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      results = ProfileFilters.list(is_system: true)
 
-      results = UserFilters.list(email: "hello")
-      assert Enum.any?(results, &(&1.id == user.id))
+      assert Enum.all?(results, &(&1.is_system == true))
     end
 
-    test "skips empty string" do
-      _user = user_fixture()
-      _other = user_fixture()
+    test "skips non-boolean values" do
+      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
 
-      results = UserFilters.list(email: "")
-      assert length(results) >= 2
+      # Non-boolean values fail the guard and fall through to the catch-all
+      results = ProfileFilters.list(is_system: "not_a_boolean")
+      assert Enum.any?(results, &(&1.id == profile.id))
     end
 
     test "skips nil" do
-      _user = user_fixture()
+      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
 
-      results = UserFilters.list(email: nil)
-      assert length(results) >= 1
-    end
-  end
-
-  describe "boolean filter" do
-    test "filters by true" do
-      confirmed = user_fixture(%{confirmed_at: DateTime.utc_now()})
-      _unconfirmed = user_fixture(%{confirmed_at: nil})
-
-      # Note: the :confirmed field doesn't exist on User schema,
-      # so this test verifies the guard works (only booleans pass through)
-      # We test the generated code compiles and non-boolean values are skipped
-      results = UserFilters.list(confirmed: "not_a_boolean")
-      assert length(results) >= 2
-
-      # Verify booleans are accepted by the guard (though the actual column
-      # may not exist — this tests the macro generation, not the DB column)
-      assert is_list(results)
+      results = ProfileFilters.list(is_system: nil)
+      assert Enum.any?(results, &(&1.id == profile.id))
     end
   end
 
@@ -148,7 +148,7 @@ defmodule Mydia.QueryHelpers.FilterableTest do
       _user = user_fixture(%{email: "user@mydia.test"})
       _other_admin = user_fixture(%{role: "admin", email: "other@different.org"})
 
-      results = UserFilters.list(role: "admin", email: "mydia")
+      results = SimpleFilters.list(role: "admin", email: "admin@mydia.test")
       assert length(results) == 1
       assert hd(results).id == admin.id
     end

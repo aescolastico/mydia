@@ -16,16 +16,35 @@ defmodule Mydia.QueryHelpers.Filterable do
 
     * `:eq`       — equality (`field == ^val`). Skips nil values.
     * `{:eq, values: list}` — equality with an allowlist guard.
-    * `:ilike`    — case-insensitive LIKE (`%term%`). Skips nil and `""`.
     * `:boolean`  — equality with `is_boolean` guard.
-    * `:gte`      — greater-than-or-equal (`field >= ^val`). Skips nil.
-    * `:lte`      — less-than-or-equal (`field <= ^val`). Skips nil.
 
-  Filters whose value is `nil` (or `""` for `:ilike`) are silently skipped.
-  Unknown option keys fall through the catch-all and are ignored.
+  Unknown option keys fall through the catch-all and are ignored, so callers
+  can pass extra opts like `:preload`, `:limit`, etc. alongside filter opts.
 
-  Complex filters (joins, subqueries, multi-field search) should remain as
-  manual `defp` functions alongside the generated one.
+  ## Binding constraint
+
+  Generated filters always reference the **first positional binding** of the
+  query (`[r]`). This is safe for queries with a single source, but will
+  target the wrong binding if the caller composes the filter with a query
+  that has joins or reordered bindings. For such queries, keep the filter
+  function hand-written.
+
+  Likewise, complex filters (joins, subqueries, multi-field search) should
+  remain as manual `defp` functions alongside the generated one.
+
+  ## Nil handling
+
+  Unlike naive `Enum.reduce/3` reducers, the generated clauses carry
+  `when not is_nil(val)` guards for `:eq`, and `when is_boolean(val)` for
+  `:boolean`. Passing `nil` leaves the query unchanged (returns all rows)
+  rather than producing `WHERE col = NULL` (which matches no rows). Callers
+  that relied on the latter must guard at the call site.
+
+  ## Extending
+
+  Additional filter types (`:ilike`, `:gte`, `:lte`, etc.) can be added by
+  extending `normalize_spec/1` and `build_clause/3`. Only types with actual
+  callers are implemented today.
   """
 
   defmacro __using__(opts) do
@@ -63,10 +82,7 @@ defmodule Mydia.QueryHelpers.Filterable do
 
   @doc false
   def normalize_spec(:eq), do: %{type: :eq, values: nil}
-  def normalize_spec(:ilike), do: %{type: :ilike}
   def normalize_spec(:boolean), do: %{type: :boolean}
-  def normalize_spec(:gte), do: %{type: :gte}
-  def normalize_spec(:lte), do: %{type: :lte}
 
   def normalize_spec({:eq, kw}) do
     %{type: :eq, values: Keyword.get(kw, :values)}
@@ -94,43 +110,11 @@ defmodule Mydia.QueryHelpers.Filterable do
     ]
   end
 
-  def build_clause(clause_name, field, %{type: :ilike}) do
-    [
-      quote do
-        defp unquote(clause_name)({unquote(field), val}, query)
-             when is_binary(val) and val != "" do
-          pattern = "%#{String.downcase(val)}%"
-          where(query, [r], like(fragment("lower(?)", field(r, unquote(field))), ^pattern))
-        end
-      end
-    ]
-  end
-
   def build_clause(clause_name, field, %{type: :boolean}) do
     [
       quote do
         defp unquote(clause_name)({unquote(field), val}, query) when is_boolean(val) do
           where(query, [r], field(r, unquote(field)) == ^val)
-        end
-      end
-    ]
-  end
-
-  def build_clause(clause_name, field, %{type: :gte}) do
-    [
-      quote do
-        defp unquote(clause_name)({unquote(field), val}, query) when not is_nil(val) do
-          where(query, [r], field(r, unquote(field)) >= ^val)
-        end
-      end
-    ]
-  end
-
-  def build_clause(clause_name, field, %{type: :lte}) do
-    [
-      quote do
-        defp unquote(clause_name)({unquote(field), val}, query) when not is_nil(val) do
-          where(query, [r], field(r, unquote(field)) <= ^val)
         end
       end
     ]
