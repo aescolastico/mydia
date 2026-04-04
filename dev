@@ -206,6 +206,15 @@ run_isolated() {
         sh -c "(mix deps.check --all > /dev/null 2>&1 || mix deps.get --quiet) && $cmd"
 }
 
+# Print helpful re-run commands after test failures
+print_test_rerun_hints() {
+    echo ""
+    echo -e "${YELLOW}── Re-run failed tests ──${NC}"
+    echo "  ./dev test --failed              Re-run previously failed tests"
+    echo "  ./dev test path/to_test.exs:42   Re-run a specific test"
+    echo "  ./dev test path/to_test.exs      Re-run a specific file"
+}
+
 # Run a single precommit step with compact output
 # Usage: run_step <label> <command>
 # Returns 0 on success, 1 on failure (stores output for failure dump)
@@ -427,13 +436,12 @@ case "$COMMAND" in
             run_precommit
         elif [[ "$1" == "test" ]]; then
             echo -e "${GREEN}Running tests in isolated container...${NC}"
-            FAILED_STEPS=()
-            FAILED_OUTPUTS=()
-            run_step_test "Tests" "run_isolated 'mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color ${*:2}'"
-            if [ ${#FAILED_OUTPUTS[@]} -gt 0 ]; then
-                echo ""
-                echo "${FAILED_OUTPUTS[0]}"
+            test_exit_code=0
+            run_isolated "mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color ${*:2}" || test_exit_code=$?
+            if [ $test_exit_code -ne 0 ]; then
+                print_test_rerun_hints
             fi
+            exit $test_exit_code
         else
             run_in_container mix "$@"
         fi
@@ -442,13 +450,12 @@ case "$COMMAND" in
     # Common development shortcuts
     test)
         echo -e "${GREEN}Running tests in isolated container...${NC}"
-        FAILED_STEPS=()
-        FAILED_OUTPUTS=()
-        run_step_test "Tests" "run_isolated 'mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color $*'"
-        if [ ${#FAILED_OUTPUTS[@]} -gt 0 ]; then
-            echo ""
-            echo "${FAILED_OUTPUTS[0]}"
+        test_exit_code=0
+        run_isolated "mix ecto.create --quiet && mix ecto.migrate --quiet && mix test --color $*" || test_exit_code=$?
+        if [ $test_exit_code -ne 0 ]; then
+            print_test_rerun_hints
         fi
+        exit $test_exit_code
         ;;
 
     feature-test)
