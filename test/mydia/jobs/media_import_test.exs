@@ -9,6 +9,42 @@ defmodule Mydia.Jobs.MediaImportTest do
 
   @moduletag :tmp_dir
 
+  describe "Args.parse/1" do
+    test "parses save_path from job args" do
+      args = MediaImport.Args.parse(%{"download_id" => "123", "save_path" => "/downloads/movie"})
+      assert args.save_path == "/downloads/movie"
+    end
+
+    test "save_path is nil when not provided" do
+      args = MediaImport.Args.parse(%{"download_id" => "123"})
+      assert args.save_path == nil
+    end
+
+    test "save_path is nil when empty string" do
+      args = MediaImport.Args.parse(%{"download_id" => "123", "save_path" => ""})
+      assert args.save_path == ""
+    end
+
+    test "preserves all other fields" do
+      args =
+        MediaImport.Args.parse(%{
+          "download_id" => "123",
+          "save_path" => "/path",
+          "snooze_count" => 5,
+          "use_hardlinks" => false,
+          "move_files" => true,
+          "rename_files" => true
+        })
+
+      assert args.download_id == "123"
+      assert args.save_path == "/path"
+      assert args.snooze_count == 5
+      assert args.use_hardlinks == false
+      assert args.move_files == true
+      assert args.rename_files == true
+    end
+  end
+
   describe "perform/1" do
     test "schedules retry when download is not completed (first snooze)" do
       media_item = media_item_fixture()
@@ -239,6 +275,144 @@ defmodule Mydia.Jobs.MediaImportTest do
     test "handles video file filtering", %{tmp_dir: _tmp_dir} do
       # This would test that only video files are imported
       # and other files (like .nfo, .txt, etc.) are skipped
+    end
+  end
+
+  describe "import with save_path fallback" do
+    @tag :tmp_dir
+    test "falls back to save_path when client query fails", %{tmp_dir: tmp_dir} do
+      _library_path = create_test_library_path(tmp_dir, :movies)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+      video_file = Path.join(download_dir, "Fallback.Movie.2024.1080p.mkv")
+      File.write!(video_file, "fake video content")
+
+      media_item = media_item_fixture(%{type: "movie", title: "Fallback Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "FallbackClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "FallbackClient",
+          download_client_id: "test123"
+        })
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.imported_at != nil
+    end
+
+    @tag :tmp_dir
+    test "returns client_error when client fails and save_path is missing" do
+      media_item = media_item_fixture(%{type: "movie", title: "No Save Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "NoSavePathClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "NoSavePathClient",
+          download_client_id: "test123"
+        })
+
+      assert {:error, :client_error} =
+               perform_job(MediaImport, %{"download_id" => download.id})
+    end
+
+    @tag :tmp_dir
+    test "returns client_error when client fails and save_path is empty string" do
+      media_item = media_item_fixture(%{type: "movie", title: "Empty Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "EmptyPathClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "EmptyPathClient",
+          download_client_id: "test123"
+        })
+
+      assert {:error, :client_error} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => ""
+               })
+    end
+
+    @tag :tmp_dir
+    test "returns error when save_path points to non-existent path", %{tmp_dir: _tmp_dir} do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "BadPathClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "BadPathClient",
+          download_client_id: "test123"
+        })
+
+      assert {:error, :client_error} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => "/no/such/path/exists"
+               })
     end
   end
 

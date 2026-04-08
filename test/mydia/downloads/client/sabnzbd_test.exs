@@ -175,4 +175,106 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
       assert error.type in [:connection_failed, :network_error, :timeout]
     end
   end
+
+  describe "add_torrent/3 with Bypass" do
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+      {:ok, bypass: bypass, config: config}
+    end
+
+    test "sends title-based multipart filename and nzbname param for file upload",
+         %{bypass: bypass, config: config} do
+      nzb_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nzb></nzb>"
+
+      Bypass.expect(bypass, "POST", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["nzbname"] == "Movie Name (2024)"
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "Movie Name (2024).nzb"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_test123"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_test123"} =
+               Sabnzbd.add_torrent(config, {:file, nzb_content}, title: "Movie Name (2024)")
+    end
+
+    test "sends nzbname param for URL addition", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["nzbname"] == "Show S01E01"
+        assert conn.query_params["mode"] == "addurl"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_test456"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_test456"} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"},
+                 title: "Show S01E01"
+               )
+    end
+
+    test "falls back to upload.nzb when no title provided for file upload",
+         %{bypass: bypass, config: config} do
+      nzb_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nzb></nzb>"
+
+      Bypass.expect(bypass, "POST", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "nzbname")
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "upload.nzb"
+        refute body =~ "nil"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_test789"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_test789"} =
+               Sabnzbd.add_torrent(config, {:file, nzb_content})
+    end
+
+    test "falls back to upload.nzb when title is nil for file upload",
+         %{bypass: bypass, config: config} do
+      nzb_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nzb></nzb>"
+
+      Bypass.expect(bypass, "POST", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "nzbname")
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "upload.nzb"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_nil"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_nil"} =
+               Sabnzbd.add_torrent(config, {:file, nzb_content}, title: nil)
+    end
+
+    test "no nzbname param when no title for URL addition",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "nzbname")
+        assert conn.query_params["mode"] == "addurl"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_url"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_url"} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"})
+    end
+  end
 end
