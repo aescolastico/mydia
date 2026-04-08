@@ -30,6 +30,10 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
   describe "Indexers" do
     setup %{conn: conn, token: token} do
       start_supervised!(Mydia.Indexers.Health)
+      # Ensure real adapters are registered — other async:false test modules (e.g.
+      # RegistryTest) call Registry.clear() in their setup and may leave the registry
+      # empty or populated with test-only adapters.
+      Mydia.Indexers.register_adapters()
 
       conn =
         conn
@@ -173,6 +177,7 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
   describe "Runtime Config Protection" do
     setup %{conn: conn, token: token} do
       start_supervised!(Mydia.Indexers.Health)
+      Mydia.Indexers.register_adapters()
 
       conn =
         conn

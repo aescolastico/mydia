@@ -128,7 +128,19 @@ defmodule Mydia.Jobs.MediaImportTest do
 
     test "returns error if no library path is configured", %{tmp_dir: _tmp_dir} do
       # Don't create any library paths
-      setup_runtime_config([build_test_client_config()])
+      # Use a DB-backed client config so it's isolated within this test's SQL sandbox,
+      # avoiding races with other async tests that also write to Application env.
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "TestClient",
+          type: :qbittorrent,
+          host: "localhost",
+          port: 8080,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
 
       media_item = media_item_fixture(%{type: "movie", title: "Test Movie", year: 2024})
 

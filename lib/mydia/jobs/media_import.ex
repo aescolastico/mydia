@@ -183,6 +183,9 @@ defmodule Mydia.Jobs.MediaImport do
     library_path = determine_library_path(download)
 
     if library_path do
+      # Apply library path's auto_rename setting at execution time
+      args = if library_path.auto_rename, do: %{args | rename_files: true}, else: args
+
       # Organize files into library structure
       case organize_and_import_files(download, files, library_path, args) do
         {:ok, imported_files} ->

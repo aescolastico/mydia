@@ -124,6 +124,9 @@ defmodule MydiaWeb.Schema.CommonTypes do
 
     field :write_nfo, non_null(:boolean),
       description: "Whether NFO files are written alongside media"
+
+    field :auto_rename, non_null(:boolean),
+      description: "Whether auto-rename on import is enabled"
   end
 
   @desc "Result of toggling favorite status"
