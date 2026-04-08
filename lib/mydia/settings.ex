@@ -31,18 +31,9 @@ defmodule Mydia.Settings do
   variables). Database records take precedence - runtime items are only included
   if they don't already exist in the database (matched by name or path).
 
-  This pattern is implemented via the private `merge_with_runtime_config/4` helper
-  and used by `list_download_client_configs/1`, `list_indexer_configs/1`, and
-  `list_library_paths/1`.
-
   Note: `list_config_settings/0` is intentionally database-only as it's used by
   the config loader to build the configuration hierarchy.
   """
-
-  import Ecto.Query, warn: false
-  import Mydia.QueryHelpers
-  require Logger
-  alias Mydia.Repo
 
   alias Mydia.Settings.{
     QualityProfile,
@@ -50,10 +41,10 @@ defmodule Mydia.Settings do
     DownloadClientConfig,
     IndexerConfig,
     MediaServerConfig,
-    LibraryPath,
-    DefaultQualityProfiles,
-    DefaultMetadataPreferences
+    LibraryPath
   }
+
+  # ── Quality Profiles ─────────────────────────────────────────────────
 
   @doc """
   Returns the list of quality profiles.
@@ -65,13 +56,7 @@ defmodule Mydia.Settings do
     - `:source_url` - Filter by source URL (exact match)
   """
   @spec list_quality_profiles(keyword()) :: [QualityProfile.t()]
-  def list_quality_profiles(opts \\ []) do
-    QualityProfile
-    |> apply_quality_profile_filters(opts)
-    |> maybe_preload(opts[:preload])
-    |> order_by([q], asc: q.name)
-    |> Repo.all()
-  end
+  defdelegate list_quality_profiles(opts \\ []), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Gets a single quality profile.
@@ -82,32 +67,19 @@ defmodule Mydia.Settings do
   Raises `Ecto.NoResultsError` if the quality profile does not exist.
   """
   @spec get_quality_profile!(binary(), keyword()) :: QualityProfile.t()
-  def get_quality_profile!(id, opts \\ []) do
-    QualityProfile
-    |> maybe_preload(opts[:preload])
-    |> Repo.get!(id)
-  end
+  defdelegate get_quality_profile!(id, opts \\ []), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Gets a quality profile by name.
   """
   @spec get_quality_profile_by_name(String.t(), keyword()) :: QualityProfile.t() | nil
-  def get_quality_profile_by_name(name, opts \\ []) do
-    QualityProfile
-    |> where([q], q.name == ^name)
-    |> maybe_preload(opts[:preload])
-    |> Repo.one()
-  end
+  defdelegate get_quality_profile_by_name(name, opts \\ []), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Creates a quality profile.
   """
   @spec create_quality_profile(map()) :: {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
-  def create_quality_profile(attrs \\ %{}) do
-    %QualityProfile{}
-    |> QualityProfile.changeset(attrs)
-    |> Repo.insert()
-  end
+  defdelegate create_quality_profile(attrs \\ %{}), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Updates a quality profile.
@@ -120,28 +92,8 @@ defmodule Mydia.Settings do
   """
   @spec update_quality_profile(QualityProfile.t(), map(), keyword()) ::
           {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
-  def update_quality_profile(%QualityProfile{} = quality_profile, attrs, opts \\ []) do
-    skip_reevaluation = Keyword.get(opts, :skip_reevaluation, false)
-
-    changeset = QualityProfile.changeset(quality_profile, attrs)
-
-    # Check if quality_standards are changing
-    quality_standards_changed? =
-      Ecto.Changeset.get_change(changeset, :quality_standards) != nil
-
-    case Repo.update(changeset) do
-      {:ok, updated_profile} = result ->
-        # Trigger re-evaluation if quality_standards changed and not skipped
-        if quality_standards_changed? and not skip_reevaluation do
-          trigger_profile_reevaluation(updated_profile.id)
-        end
-
-        result
-
-      error ->
-        error
-    end
-  end
+  defdelegate update_quality_profile(quality_profile, attrs, opts \\ []),
+    to: Mydia.Settings.QualityProfiles
 
   @doc """
   Triggers background re-evaluation of all files associated with a quality profile.
@@ -156,34 +108,7 @@ defmodule Mydia.Settings do
     - `:ok` - Re-evaluation task spawned successfully
   """
   @spec trigger_profile_reevaluation(binary()) :: :ok
-  def trigger_profile_reevaluation(profile_id) do
-    Logger.info("Triggering background re-evaluation for quality profile",
-      profile_id: profile_id
-    )
-
-    # Spawn a supervised task to re-evaluate files
-    Task.Supervisor.start_child(Mydia.TaskSupervisor, fn ->
-      alias Mydia.Settings.QualityProfileEngine
-
-      case QualityProfileEngine.reevaluate_profile_files(profile_id) do
-        {:ok, summary} ->
-          Logger.info("Quality profile re-evaluation completed",
-            profile_id: profile_id,
-            processed: summary.processed,
-            updated: summary.updated,
-            errors: length(summary.errors)
-          )
-
-        {:error, reason} ->
-          Logger.error("Quality profile re-evaluation failed",
-            profile_id: profile_id,
-            reason: inspect(reason)
-          )
-      end
-    end)
-
-    :ok
-  end
+  defdelegate trigger_profile_reevaluation(profile_id), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Deletes a quality profile.
@@ -192,38 +117,19 @@ defmodule Mydia.Settings do
   """
   @spec delete_quality_profile(QualityProfile.t()) ::
           {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()} | {:error, :profile_in_use}
-  def delete_quality_profile(%QualityProfile{} = quality_profile) do
-    # Check if profile is assigned to any media items
-    if profile_in_use?(quality_profile.id) do
-      {:error, :profile_in_use}
-    else
-      Repo.delete(quality_profile)
-    end
-  end
+  defdelegate delete_quality_profile(quality_profile), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Checks if a quality profile is assigned to any media items.
   """
   @spec profile_in_use?(binary()) :: boolean()
-  def profile_in_use?(profile_id) do
-    alias Mydia.Media.MediaItem
-
-    MediaItem
-    |> where([m], m.quality_profile_id == ^profile_id)
-    |> Repo.exists?()
-  end
+  defdelegate profile_in_use?(profile_id), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Returns the count of media items using a quality profile.
   """
   @spec count_media_items_for_profile(binary()) :: non_neg_integer()
-  def count_media_items_for_profile(profile_id) do
-    alias Mydia.Media.MediaItem
-
-    MediaItem
-    |> where([m], m.quality_profile_id == ^profile_id)
-    |> Repo.aggregate(:count)
-  end
+  defdelegate count_media_items_for_profile(profile_id), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Force deletes a quality profile, unassigning it from any media items first.
@@ -233,30 +139,14 @@ defmodule Mydia.Settings do
   """
   @spec force_delete_quality_profile(QualityProfile.t()) ::
           {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
-  def force_delete_quality_profile(%QualityProfile{} = quality_profile) do
-    alias Mydia.Media.MediaItem
-
-    Repo.transaction(fn ->
-      # Unassign the profile from all media items
-      MediaItem
-      |> where([m], m.quality_profile_id == ^quality_profile.id)
-      |> Repo.update_all(set: [quality_profile_id: nil])
-
-      # Delete the profile
-      case Repo.delete(quality_profile) do
-        {:ok, deleted_profile} -> deleted_profile
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
-    end)
-  end
+  defdelegate force_delete_quality_profile(quality_profile), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking quality profile changes.
   """
   @spec change_quality_profile(QualityProfile.t(), map()) :: Ecto.Changeset.t()
-  def change_quality_profile(%QualityProfile{} = quality_profile, attrs \\ %{}) do
-    QualityProfile.changeset(quality_profile, attrs)
-  end
+  defdelegate change_quality_profile(quality_profile, attrs \\ %{}),
+    to: Mydia.Settings.QualityProfiles
 
   @doc """
   Ensures default quality profiles exist in the database.
@@ -281,38 +171,7 @@ defmodule Mydia.Settings do
   """
   @spec ensure_default_quality_profiles() ::
           {:ok, non_neg_integer()} | {:error, :database_unavailable}
-  def ensure_default_quality_profiles do
-    try do
-      # Get existing profile names to avoid duplicates
-      existing_names =
-        QualityProfile
-        |> select([q], q.name)
-        |> Repo.all()
-        |> MapSet.new()
-
-      # Create missing default profiles
-      created_count =
-        DefaultQualityProfiles.defaults()
-        |> Enum.reject(fn profile -> MapSet.member?(existing_names, profile.name) end)
-        |> Enum.reduce(0, fn profile_attrs, count ->
-          case create_quality_profile(profile_attrs) do
-            {:ok, _profile} -> count + 1
-            {:error, _changeset} -> count
-          end
-        end)
-
-      {:ok, created_count}
-    rescue
-      # Database might not be available during initial setup
-      DBConnection.ConnectionError -> {:error, :database_unavailable}
-      # Catch query errors (e.g., table doesn't exist yet)
-      Ecto.QueryError -> {:error, :database_unavailable}
-      # Catch SQLite-specific errors
-      Exqlite.Error -> {:error, :database_unavailable}
-      # Catch Repo not started yet error
-      RuntimeError -> {:error, :database_unavailable}
-    end
-  end
+  defdelegate ensure_default_quality_profiles(), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Clones a quality profile with a new name.
@@ -334,25 +193,7 @@ defmodule Mydia.Settings do
   """
   @spec clone_quality_profile(QualityProfile.t(), String.t() | nil) ::
           {:ok, QualityProfile.t()} | {:error, Ecto.Changeset.t()}
-  def clone_quality_profile(%QualityProfile{} = profile, new_name \\ nil) do
-    name = new_name || "#{profile.name} (Copy)"
-
-    attrs = %{
-      name: name,
-      upgrades_allowed: profile.upgrades_allowed,
-      upgrade_until_quality: profile.upgrade_until_quality,
-      qualities: profile.qualities,
-      description: profile.description,
-      is_system: false,
-      version: 1,
-      source_url: nil,
-      quality_standards: profile.quality_standards,
-      metadata_preferences: profile.metadata_preferences,
-      customizations: nil
-    }
-
-    create_quality_profile(attrs)
-  end
+  defdelegate clone_quality_profile(profile, new_name \\ nil), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Gets the default metadata preferences.
@@ -370,9 +211,7 @@ defmodule Mydia.Settings do
       }
   """
   @spec get_default_metadata_preferences() :: map()
-  def get_default_metadata_preferences do
-    DefaultMetadataPreferences.default()
-  end
+  defdelegate get_default_metadata_preferences(), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Gets metadata preferences with custom overrides merged with defaults.
@@ -387,9 +226,8 @@ defmodule Mydia.Settings do
       }
   """
   @spec get_metadata_preferences_with_defaults(map()) :: map()
-  def get_metadata_preferences_with_defaults(custom_prefs) when is_map(custom_prefs) do
-    DefaultMetadataPreferences.with_defaults(custom_prefs)
-  end
+  defdelegate get_metadata_preferences_with_defaults(custom_prefs),
+    to: Mydia.Settings.QualityProfiles
 
   @doc """
   Validates that all providers referenced in metadata preferences are available.
@@ -406,9 +244,7 @@ defmodule Mydia.Settings do
       {:error, ["invalid"]}
   """
   @spec validate_metadata_preferences_providers(map()) :: {:ok, map()} | {:error, [String.t()]}
-  def validate_metadata_preferences_providers(prefs) when is_map(prefs) do
-    DefaultMetadataPreferences.validate_providers(prefs)
-  end
+  defdelegate validate_metadata_preferences_providers(prefs), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Gets the effective metadata provider for a specific field.
@@ -430,28 +266,7 @@ defmodule Mydia.Settings do
       "metadata_relay"
   """
   @spec get_field_provider(map(), String.t()) :: String.t() | nil
-  def get_field_provider(prefs, field) when is_map(prefs) and is_binary(field) do
-    # Check for field-specific override
-    case Map.get(prefs, :field_providers, %{}) do
-      field_providers when is_map(field_providers) ->
-        case Map.get(field_providers, field) do
-          nil ->
-            # No override, use first from priority list
-            prefs
-            |> Map.get(:provider_priority, [])
-            |> List.first()
-
-          provider ->
-            provider
-        end
-
-      _ ->
-        # Invalid field_providers, use first from priority list
-        prefs
-        |> Map.get(:provider_priority, [])
-        |> List.first()
-    end
-  end
+  defdelegate get_field_provider(prefs, field), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Compares two quality profile versions and returns the differences.
@@ -475,68 +290,8 @@ defmodule Mydia.Settings do
           added: map(),
           removed: map()
         }
-  def compare_quality_profile_versions(%QualityProfile{} = profile1, %QualityProfile{} = profile2) do
-    # Fields to compare (excluding id, timestamps, and associations)
-    fields = [
-      :name,
-      :upgrades_allowed,
-      :upgrade_until_quality,
-      :qualities,
-      :description,
-      :is_system,
-      :version,
-      :source_url,
-      :last_synced_at,
-      :quality_standards,
-      :metadata_preferences,
-      :customizations
-    ]
-
-    changed =
-      Enum.reduce(fields, %{}, fn field, acc ->
-        val1 = Map.get(profile1, field)
-        val2 = Map.get(profile2, field)
-
-        if val1 != val2 do
-          Map.put(acc, field, {val1, val2})
-        else
-          acc
-        end
-      end)
-
-    # For added/removed, focus on optional map fields
-    optional_fields = [:quality_standards, :metadata_preferences, :customizations]
-
-    added =
-      Enum.reduce(optional_fields, %{}, fn field, acc ->
-        val1 = Map.get(profile1, field)
-        val2 = Map.get(profile2, field)
-
-        if is_nil(val1) and not is_nil(val2) do
-          Map.put(acc, field, val2)
-        else
-          acc
-        end
-      end)
-
-    removed =
-      Enum.reduce(optional_fields, %{}, fn field, acc ->
-        val1 = Map.get(profile1, field)
-        val2 = Map.get(profile2, field)
-
-        if not is_nil(val1) and is_nil(val2) do
-          Map.put(acc, field, val1)
-        else
-          acc
-        end
-      end)
-
-    %{
-      changed: changed,
-      added: added,
-      removed: removed
-    }
-  end
+  defdelegate compare_quality_profile_versions(profile1, profile2),
+    to: Mydia.Settings.QualityProfiles
 
   @doc """
   Exports a quality profile to a shareable format (JSON or YAML).
@@ -558,36 +313,7 @@ defmodule Mydia.Settings do
       {:ok, "schema_version: 1\\nname: HD-1080p\\n..."}
   """
   @spec export_profile(QualityProfile.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
-  def export_profile(%QualityProfile{} = profile, opts \\ []) do
-    format = Keyword.get(opts, :format, :json)
-    pretty = Keyword.get(opts, :pretty, true)
-
-    # Build export data structure with schema version
-    export_data = %{
-      schema_version: 1,
-      name: profile.name,
-      description: profile.description,
-      upgrades_allowed: profile.upgrades_allowed,
-      upgrade_until_quality: profile.upgrade_until_quality,
-      qualities: profile.qualities,
-      quality_standards: profile.quality_standards,
-      metadata_preferences: profile.metadata_preferences,
-      customizations: profile.customizations,
-      version: profile.version,
-      exported_at: DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-
-    case format do
-      :json ->
-        encode_json(export_data, pretty)
-
-      :yaml ->
-        encode_yaml(export_data)
-
-      _ ->
-        {:error, "Unsupported format: #{format}. Use :json or :yaml"}
-    end
-  end
+  defdelegate export_profile(profile, opts \\ []), to: Mydia.Settings.QualityProfiles
 
   @doc """
   Imports a quality profile from a file or URL.
@@ -619,283 +345,59 @@ defmodule Mydia.Settings do
   """
   @spec import_profile(String.t(), keyword()) ::
           {:ok, QualityProfile.t() | map()} | {:error, String.t()}
-  def import_profile(source, opts \\ []) do
-    dry_run = Keyword.get(opts, :dry_run, false)
-
-    with {:ok, content} <- fetch_import_content(source, opts),
-         {:ok, data} <- parse_import_content(content),
-         {:ok, validated_data} <- validate_import_schema(data),
-         {:ok, attrs} <- prepare_import_attrs(validated_data, source, opts),
-         {:ok, result} <- perform_import(attrs, dry_run) do
-      {:ok, result}
-    end
-  end
-
-  # Private helper functions for export/import
-
-  defp encode_json(data, true) do
-    case Jason.encode(data, pretty: true) do
-      {:ok, json} -> {:ok, json}
-      {:error, error} -> {:error, "JSON encoding failed: #{inspect(error)}"}
-    end
-  end
-
-  defp encode_json(data, false) do
-    case Jason.encode(data) do
-      {:ok, json} -> {:ok, json}
-      {:error, error} -> {:error, "JSON encoding failed: #{inspect(error)}"}
-    end
-  end
-
-  defp encode_yaml(data) do
-    case Ymlr.document(data) do
-      {:ok, yaml} -> {:ok, yaml}
-      {:error, error} -> {:error, "YAML encoding failed: #{inspect(error)}"}
-    end
-  end
-
-  defp fetch_import_content(source, opts) when is_binary(source) do
-    cond do
-      # Check if it's a URL
-      String.starts_with?(source, "http://") or String.starts_with?(source, "https://") ->
-        fetch_from_url(source, opts)
-
-      # Check if it's a file path
-      File.exists?(source) ->
-        File.read(source)
-
-      # Assume it's raw content
-      true ->
-        {:ok, source}
-    end
-  end
-
-  defp fetch_import_content(_source, _opts) do
-    {:error, "Invalid source: must be a file path, URL, or raw content string"}
-  end
-
-  defp fetch_from_url(url, _opts) do
-    timeout = 30_000
-
-    # Disable auto-decoding to get raw body
-    case Req.get(url,
-           connect_options: [timeout: timeout],
-           receive_timeout: timeout,
-           decode_body: false
-         ) do
-      {:ok, %{status: 200, body: body}} ->
-        {:ok, body}
-
-      {:ok, %{status: status}} ->
-        {:error, "Failed to fetch from URL: HTTP #{status}"}
-
-      {:error, error} ->
-        {:error, "Failed to fetch from URL: #{inspect(error)}"}
-    end
-  end
-
-  defp parse_import_content(content) when is_binary(content) do
-    # Try JSON first
-    case Jason.decode(content) do
-      {:ok, data} ->
-        {:ok, data}
-
-      {:error, _json_error} ->
-        # Try YAML if JSON fails
-        case YamlElixir.read_from_string(content) do
-          {:ok, data} ->
-            {:ok, data}
-
-          {:error, yaml_error} ->
-            {:error, "Failed to parse content as JSON or YAML: #{inspect(yaml_error)}"}
-        end
-    end
-  end
-
-  defp validate_import_schema(%{"schema_version" => 1} = data) do
-    # Schema version 1 - validate required fields
-    required_fields = ["name", "qualities"]
-
-    missing_fields =
-      required_fields
-      |> Enum.reject(&Map.has_key?(data, &1))
-
-    if Enum.empty?(missing_fields) do
-      {:ok, data}
-    else
-      {:error, "Missing required fields: #{Enum.join(missing_fields, ", ")}"}
-    end
-  end
-
-  defp validate_import_schema(%{"schema_version" => version}) do
-    {:error,
-     "Unsupported schema version: #{version}. This version only supports schema version 1. Please export the profile from a compatible version."}
-  end
-
-  defp validate_import_schema(_data) do
-    {:error,
-     "Invalid profile format: missing schema_version field. This may be a legacy format that is no longer supported. Please export the profile from a newer version."}
-  end
-
-  defp prepare_import_attrs(data, source, opts) do
-    # Extract attributes from import data
-    attrs = %{
-      name: Keyword.get(opts, :name, data["name"]),
-      description: data["description"],
-      upgrades_allowed: data["upgrades_allowed"],
-      upgrade_until_quality: data["upgrade_until_quality"],
-      qualities: data["qualities"],
-      quality_standards: atomize_keys(data["quality_standards"]),
-      metadata_preferences: atomize_keys(data["metadata_preferences"]),
-      customizations: atomize_keys(data["customizations"]),
-      version: data["version"] || 1,
-      is_system: false,
-      source_url: determine_source_url(source, opts),
-      last_synced_at: DateTime.utc_now()
-    }
-
-    {:ok, attrs}
-  end
-
-  defp determine_source_url(source, opts) do
-    case Keyword.get(opts, :source_url) do
-      nil ->
-        # Auto-detect if source is a URL
-        if is_binary(source) and
-             (String.starts_with?(source, "http://") or String.starts_with?(source, "https://")) do
-          source
-        else
-          nil
-        end
-
-      url ->
-        url
-    end
-  end
-
-  defp atomize_keys(nil), do: nil
-
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn {k, v} ->
-      key = if is_binary(k), do: String.to_atom(k), else: k
-      value = atomize_keys_value(v)
-      {key, value}
-    end)
-  end
-
-  defp atomize_keys_value(map) when is_map(map), do: atomize_keys(map)
-  defp atomize_keys_value(list) when is_list(list), do: Enum.map(list, &atomize_keys_value/1)
-  defp atomize_keys_value(value), do: value
-
-  defp perform_import(attrs, true) do
-    # Dry run - validate and return preview
-    changeset = QualityProfile.changeset(%QualityProfile{}, attrs)
-
-    if changeset.valid? do
-      # Check for conflicts
-      conflicts = detect_profile_conflicts(attrs.name)
-
-      preview = %{
-        action: if(Enum.empty?(conflicts), do: :create, else: :update),
-        profile: Ecto.Changeset.apply_changes(changeset),
-        conflicts: conflicts,
-        dry_run: true
-      }
-
-      {:ok, preview}
-    else
-      {:error, "Validation failed: #{format_changeset_errors(changeset)}"}
-    end
-  end
-
-  defp perform_import(attrs, false) do
-    # Real import - check for conflicts and create/update
-    existing_profile = get_quality_profile_by_name(attrs.name)
-
-    case existing_profile do
-      nil ->
-        # No conflict, create new profile
-        create_quality_profile(attrs)
-
-      _profile ->
-        # Profile exists, return conflict error
-        {:error,
-         "Profile '#{attrs.name}' already exists. Use dry_run mode to preview changes or provide a different name."}
-    end
-  end
-
-  defp detect_profile_conflicts(name) do
-    case get_quality_profile_by_name(name) do
-      nil -> []
-      profile -> [%{type: :name_conflict, existing_profile_id: profile.id, name: name}]
-    end
-  end
-
-  defp format_changeset_errors(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-      end)
-    end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
-  end
-
-  ## Configuration Settings (Database)
+  defdelegate import_profile(source, opts \\ []), to: Mydia.Settings.QualityProfiles
 
   @doc """
-  Lists all configuration settings from the database.
+  Gets the default quality profile ID from settings.
 
-  Note: This function is intentionally database-only (no runtime config merge)
-  as it's used by the config loader to build the configuration hierarchy.
+  Returns the ID as a string (UUID) if set, or nil if not configured.
+
+  ## Examples
+
+      iex> get_default_quality_profile_id()
+      "550e8400-e29b-41d4-a716-446655440000"
+
+      iex> get_default_quality_profile_id()
+      nil
   """
-  @spec list_config_settings(keyword()) :: [ConfigSetting.t()]
-  def list_config_settings(opts \\ []) do
-    ConfigSetting
-    |> maybe_preload(opts[:preload])
-    |> order_by([c], asc: c.category, asc: c.key)
-    |> Repo.all()
-  end
+  @spec get_default_quality_profile_id() :: String.t() | nil
+  defdelegate get_default_quality_profile_id(), to: Mydia.Settings.QualityProfiles
 
   @doc """
-  Gets a configuration setting from the database by key.
+  Gets the default quality profile struct.
+
+  Returns the full QualityProfile struct if a default is set and exists,
+  or nil if not configured or the profile doesn't exist.
+
+  ## Examples
+
+      iex> get_default_quality_profile()
+      %QualityProfile{id: 42, name: "HD-1080p", ...}
+
+      iex> get_default_quality_profile()
+      nil
   """
-  @spec get_config_setting_by_key(String.t()) :: ConfigSetting.t() | nil
-  def get_config_setting_by_key(key) do
-    Repo.get_by(ConfigSetting, key: key)
-  end
+  @spec get_default_quality_profile() :: QualityProfile.t() | nil
+  defdelegate get_default_quality_profile(), to: Mydia.Settings.QualityProfiles
 
   @doc """
-  Creates a configuration setting in the database.
-  """
-  @spec create_config_setting(map()) :: {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
-  def create_config_setting(attrs) do
-    %ConfigSetting{}
-    |> ConfigSetting.changeset(attrs)
-    |> Repo.insert()
-  end
+  Sets the default quality profile.
 
-  @doc """
-  Updates a configuration setting in the database.
-  """
-  @spec update_config_setting(ConfigSetting.t(), map()) ::
-          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
-  def update_config_setting(%ConfigSetting{} = config_setting, attrs) do
-    config_setting
-    |> ConfigSetting.changeset(attrs)
-    |> Repo.update()
-  end
+  Accepts a quality profile ID (string UUID or integer) or nil to clear the default.
 
-  @doc """
-  Deletes a configuration setting from the database.
-  """
-  @spec delete_config_setting(ConfigSetting.t()) ::
-          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
-  def delete_config_setting(%ConfigSetting{} = config_setting) do
-    Repo.delete(config_setting)
-  end
+  ## Examples
 
-  ## Download Client Configs
+      iex> set_default_quality_profile("550e8400-e29b-41d4-a716-446655440000")
+      {:ok, %ConfigSetting{}}
+
+      iex> set_default_quality_profile(nil)
+      {:ok, %ConfigSetting{}}
+  """
+  @spec set_default_quality_profile(String.t() | integer() | nil) ::
+          {:ok, ConfigSetting.t() | nil} | {:error, Ecto.Changeset.t()}
+  defdelegate set_default_quality_profile(profile_id), to: Mydia.Settings.QualityProfiles
+
+  # ── Service Configs (Download Clients, Indexers, Media Servers) ──────
 
   @doc """
   Lists all download client configurations.
@@ -905,17 +407,7 @@ defmodule Mydia.Settings do
   compatible with DownloadClientConfig but without database IDs.
   """
   @spec list_download_client_configs(keyword()) :: [DownloadClientConfig.t()]
-  def list_download_client_configs(opts \\ []) do
-    # Get database configs
-    db_configs =
-      DownloadClientConfig
-      |> maybe_preload(opts[:preload])
-      |> order_by([d], desc: d.enabled, asc: d.priority, asc: d.name)
-      |> Repo.all()
-
-    # Merge with runtime config (database takes precedence by name)
-    merge_with_runtime_config(db_configs, &get_runtime_download_clients/0, :name, opts)
-  end
+  defdelegate list_download_client_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Gets a download client configuration by ID.
@@ -928,86 +420,28 @@ defmodule Mydia.Settings do
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
   @spec get_download_client_config!(binary() | integer(), keyword()) :: DownloadClientConfig.t()
-  def get_download_client_config!(id, opts \\ [])
-
-  def get_download_client_config!(id, opts) when is_binary(id) do
-    if runtime_id?(id) do
-      case parse_runtime_id(id) do
-        {:ok, {:download_client, name}} ->
-          # Find the runtime download client by matching the name
-          runtime_clients = get_runtime_download_clients()
-
-          case Enum.find(runtime_clients, &(&1.name == name)) do
-            nil ->
-              raise "Runtime download client not found: #{name}"
-
-            client ->
-              client
-          end
-
-        _ ->
-          raise "Invalid runtime download client ID: #{id}"
-      end
-    else
-      # Check if it's a valid UUID (binary_id)
-      case Ecto.UUID.cast(id) do
-        {:ok, uuid} ->
-          # Query by UUID
-          DownloadClientConfig
-          |> maybe_preload(opts[:preload])
-          |> Repo.get!(uuid)
-
-        :error ->
-          # Try to parse as integer ID for database lookup
-          case Integer.parse(id) do
-            {int_id, ""} ->
-              get_download_client_config!(int_id, opts)
-
-            _ ->
-              raise "Invalid download client ID: #{id}"
-          end
-      end
-    end
-  end
-
-  def get_download_client_config!(id, opts) when is_integer(id) do
-    DownloadClientConfig
-    |> maybe_preload(opts[:preload])
-    |> Repo.get!(id)
-  end
+  defdelegate get_download_client_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Creates a download client configuration.
   """
   @spec create_download_client_config(map()) ::
           {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
-  def create_download_client_config(attrs) do
-    %DownloadClientConfig{}
-    |> DownloadClientConfig.changeset(attrs)
-    |> Repo.insert()
-  end
+  defdelegate create_download_client_config(attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Updates a download client configuration.
   """
   @spec update_download_client_config(DownloadClientConfig.t(), map()) ::
           {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
-  def update_download_client_config(%DownloadClientConfig{} = config, attrs) do
-    config
-    |> DownloadClientConfig.changeset(attrs)
-    |> Repo.update()
-  end
+  defdelegate update_download_client_config(config, attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Deletes a download client configuration.
   """
   @spec delete_download_client_config(DownloadClientConfig.t()) ::
           {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
-  def delete_download_client_config(%DownloadClientConfig{} = config) do
-    Repo.delete(config)
-  end
-
-  ## Indexer Configs
+  defdelegate delete_download_client_config(config), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Lists all indexer configurations.
@@ -1017,17 +451,7 @@ defmodule Mydia.Settings do
   compatible with IndexerConfig but without database IDs.
   """
   @spec list_indexer_configs(keyword()) :: [IndexerConfig.t()]
-  def list_indexer_configs(opts \\ []) do
-    # Get database configs
-    db_configs =
-      IndexerConfig
-      |> maybe_preload(opts[:preload])
-      |> order_by([i], desc: i.enabled, asc: i.priority, asc: i.name)
-      |> Repo.all()
-
-    # Merge with runtime config (database takes precedence by name)
-    merge_with_runtime_config(db_configs, &get_runtime_indexers/0, :name, opts)
-  end
+  defdelegate list_indexer_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Gets an indexer configuration by ID.
@@ -1040,82 +464,27 @@ defmodule Mydia.Settings do
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
   @spec get_indexer_config!(binary() | integer(), keyword()) :: IndexerConfig.t()
-  def get_indexer_config!(id, opts \\ [])
-
-  def get_indexer_config!(id, opts) when is_binary(id) do
-    if runtime_id?(id) do
-      case parse_runtime_id(id) do
-        {:ok, {:indexer, name}} ->
-          # Find the runtime indexer by matching the name
-          runtime_indexers = get_runtime_indexers()
-
-          case Enum.find(runtime_indexers, &(&1.name == name)) do
-            nil ->
-              raise "Runtime indexer not found: #{name}"
-
-            indexer ->
-              indexer
-          end
-
-        _ ->
-          raise "Invalid runtime indexer ID: #{id}"
-      end
-    else
-      # Try to parse as integer ID for database lookup
-      case Integer.parse(id) do
-        {int_id, ""} ->
-          get_indexer_config!(int_id, opts)
-
-        _ ->
-          # Try as UUID for database lookup
-          case Ecto.UUID.cast(id) do
-            {:ok, uuid} ->
-              IndexerConfig
-              |> maybe_preload(opts[:preload])
-              |> Repo.get!(uuid)
-
-            :error ->
-              raise "Invalid indexer ID: #{id}"
-          end
-      end
-    end
-  end
-
-  def get_indexer_config!(id, opts) when is_integer(id) do
-    IndexerConfig
-    |> maybe_preload(opts[:preload])
-    |> Repo.get!(id)
-  end
+  defdelegate get_indexer_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Creates an indexer configuration.
   """
   @spec create_indexer_config(map()) :: {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def create_indexer_config(attrs) do
-    %IndexerConfig{}
-    |> IndexerConfig.changeset(attrs)
-    |> Repo.insert()
-  end
+  defdelegate create_indexer_config(attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Updates an indexer configuration.
   """
   @spec update_indexer_config(IndexerConfig.t(), map()) ::
           {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def update_indexer_config(%IndexerConfig{} = config, attrs) do
-    config
-    |> IndexerConfig.changeset(attrs)
-    |> Repo.update()
-  end
+  defdelegate update_indexer_config(config, attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Deletes an indexer configuration.
   """
   @spec delete_indexer_config(IndexerConfig.t()) ::
           {:ok, IndexerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def delete_indexer_config(%IndexerConfig{} = config) do
-    Repo.delete(config)
-  end
+  defdelegate delete_indexer_config(config), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Resolves environment variable inheritance for an indexer configuration.
@@ -1145,21 +514,7 @@ defmodule Mydia.Settings do
       true
   """
   @spec resolve_env_inheritance(IndexerConfig.t()) :: IndexerConfig.t()
-  def resolve_env_inheritance(%IndexerConfig{env_name: nil} = config), do: config
-  def resolve_env_inheritance(%IndexerConfig{env_name: ""} = config), do: config
-
-  def resolve_env_inheritance(%IndexerConfig{env_name: env_name} = config)
-      when is_binary(env_name) do
-    # Build environment variable names
-    base_url_var = "#{env_name}_BASE_URL"
-    api_key_var = "#{env_name}_API_KEY"
-
-    # Resolve from environment, falling back to existing values
-    resolved_base_url = System.get_env(base_url_var) || config.base_url
-    resolved_api_key = System.get_env(api_key_var) || config.api_key
-
-    %{config | base_url: resolved_base_url, api_key: resolved_api_key}
-  end
+  defdelegate resolve_env_inheritance(config), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Lists available environment-configured indexer sources.
@@ -1179,25 +534,7 @@ defmodule Mydia.Settings do
   @spec list_available_env_indexers() :: [
           %{env_name: String.t(), base_url: String.t(), has_api_key: boolean()}
         ]
-  def list_available_env_indexers do
-    System.get_env()
-    |> Enum.filter(fn {key, _value} -> String.ends_with?(key, "_BASE_URL") end)
-    |> Enum.map(fn {key, base_url} ->
-      # Extract prefix: "PROWLARR_BASE_URL" -> "PROWLARR"
-      env_name = String.replace_suffix(key, "_BASE_URL", "")
-      api_key_var = "#{env_name}_API_KEY"
-      has_api_key = System.get_env(api_key_var) != nil
-
-      %{
-        env_name: env_name,
-        base_url: base_url,
-        has_api_key: has_api_key
-      }
-    end)
-    |> Enum.sort_by(& &1.env_name)
-  end
-
-  ## Media Server Configs
+  defdelegate list_available_env_indexers(), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Lists all media server configurations.
@@ -1207,17 +544,7 @@ defmodule Mydia.Settings do
   compatible with MediaServerConfig but without database IDs.
   """
   @spec list_media_server_configs(keyword()) :: [MediaServerConfig.t()]
-  def list_media_server_configs(opts \\ []) do
-    # Get database configs
-    db_configs =
-      MediaServerConfig
-      |> maybe_preload(opts[:preload])
-      |> order_by([m], desc: m.enabled, asc: m.name)
-      |> Repo.all()
-
-    # Merge with runtime config (database takes precedence by name)
-    merge_with_runtime_config(db_configs, &get_runtime_media_servers/0, :name, opts)
-  end
+  defdelegate list_media_server_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Gets a media server configuration by ID.
@@ -1230,93 +557,36 @@ defmodule Mydia.Settings do
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
   @spec get_media_server_config!(binary() | integer(), keyword()) :: MediaServerConfig.t()
-  def get_media_server_config!(id, opts \\ [])
-
-  def get_media_server_config!(id, opts) when is_binary(id) do
-    if runtime_id?(id) do
-      case parse_runtime_id(id) do
-        {:ok, {:media_server, name}} ->
-          # Find the runtime media server by matching the name
-          runtime_servers = get_runtime_media_servers()
-
-          case Enum.find(runtime_servers, &(&1.name == name)) do
-            nil ->
-              raise "Runtime media server not found: #{name}"
-
-            server ->
-              server
-          end
-
-        _ ->
-          raise "Invalid runtime media server ID: #{id}"
-      end
-    else
-      # Try to parse as integer ID for database lookup
-      case Integer.parse(id) do
-        {int_id, ""} ->
-          get_media_server_config!(int_id, opts)
-
-        _ ->
-          # Try as UUID for database lookup
-          case Ecto.UUID.cast(id) do
-            {:ok, uuid} ->
-              MediaServerConfig
-              |> maybe_preload(opts[:preload])
-              |> Repo.get!(uuid)
-
-            :error ->
-              raise "Invalid media server ID: #{id}"
-          end
-      end
-    end
-  end
-
-  def get_media_server_config!(id, opts) when is_integer(id) do
-    MediaServerConfig
-    |> maybe_preload(opts[:preload])
-    |> Repo.get!(id)
-  end
+  defdelegate get_media_server_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Creates a media server configuration.
   """
   @spec create_media_server_config(map()) ::
           {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def create_media_server_config(attrs) do
-    %MediaServerConfig{}
-    |> MediaServerConfig.changeset(attrs)
-    |> Repo.insert()
-  end
+  defdelegate create_media_server_config(attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Updates a media server configuration.
   """
   @spec update_media_server_config(MediaServerConfig.t(), map()) ::
           {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def update_media_server_config(%MediaServerConfig{} = config, attrs) do
-    config
-    |> MediaServerConfig.changeset(attrs)
-    |> Repo.update()
-  end
+  defdelegate update_media_server_config(config, attrs), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Deletes a media server configuration.
   """
   @spec delete_media_server_config(MediaServerConfig.t()) ::
           {:ok, MediaServerConfig.t()} | {:error, Ecto.Changeset.t()}
-  def delete_media_server_config(%MediaServerConfig{} = config) do
-    Repo.delete(config)
-  end
+  defdelegate delete_media_server_config(config), to: Mydia.Settings.ServiceConfigs
 
   @doc """
   Returns an `%Ecto.Changeset{}` for tracking media server config changes.
   """
   @spec change_media_server_config(MediaServerConfig.t(), map()) :: Ecto.Changeset.t()
-  def change_media_server_config(%MediaServerConfig{} = config, attrs \\ %{}) do
-    MediaServerConfig.changeset(config, attrs)
-  end
+  defdelegate change_media_server_config(config, attrs \\ %{}), to: Mydia.Settings.ServiceConfigs
 
-  ## Library Paths
+  # ── Library Paths ────────────────────────────────────────────────────
 
   @doc """
   Lists all library paths.
@@ -1326,18 +596,7 @@ defmodule Mydia.Settings do
   compatible with LibraryPath but without database IDs.
   """
   @spec list_library_paths(keyword()) :: [LibraryPath.t()]
-  def list_library_paths(opts \\ []) do
-    # Get database library paths (exclude disabled paths)
-    db_paths =
-      LibraryPath
-      |> where([l], l.disabled == false or is_nil(l.disabled))
-      |> maybe_preload(opts[:preload])
-      |> order_by([l], desc: l.monitored, asc: l.path)
-      |> Repo.all()
-
-    # Merge with runtime config (database takes precedence by path)
-    merge_with_runtime_config(db_paths, &get_runtime_library_paths/0, :path, opts)
-  end
+  defdelegate list_library_paths(opts \\ []), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Gets a library path by ID.
@@ -1350,56 +609,13 @@ defmodule Mydia.Settings do
   `RuntimeError` if a runtime identifier cannot be resolved.
   """
   @spec get_library_path!(binary() | integer(), keyword()) :: LibraryPath.t()
-  def get_library_path!(id, opts \\ [])
-
-  def get_library_path!(id, opts) when is_binary(id) do
-    if runtime_id?(id) do
-      case parse_runtime_id(id) do
-        {:ok, {:library_path, path}} ->
-          # Find the runtime library path by matching the path
-          runtime_paths = get_runtime_library_paths()
-
-          case Enum.find(runtime_paths, &(&1.path == path)) do
-            nil ->
-              raise "Runtime library path not found: #{path}"
-
-            library_path ->
-              library_path
-          end
-
-        _ ->
-          raise "Invalid runtime library path ID: #{id}"
-      end
-    else
-      # Try to parse as integer ID for database lookup, or use directly as UUID
-      case Integer.parse(id) do
-        {int_id, ""} ->
-          get_library_path!(int_id, opts)
-
-        _ ->
-          # Assume it's a UUID string and try to fetch directly
-          LibraryPath
-          |> maybe_preload(opts[:preload])
-          |> Repo.get!(id)
-      end
-    end
-  end
-
-  def get_library_path!(id, opts) when is_integer(id) do
-    LibraryPath
-    |> maybe_preload(opts[:preload])
-    |> Repo.get!(id)
-  end
+  defdelegate get_library_path!(id, opts \\ []), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Creates a library path.
   """
   @spec create_library_path(map()) :: {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
-  def create_library_path(attrs) do
-    %LibraryPath{}
-    |> LibraryPath.changeset(attrs)
-    |> Repo.insert()
-  end
+  defdelegate create_library_path(attrs), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Updates a library path.
@@ -1409,42 +625,7 @@ defmodule Mydia.Settings do
   """
   @spec update_library_path(LibraryPath.t(), map()) ::
           {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
-  def update_library_path(%LibraryPath{} = library_path, attrs) do
-    changeset = LibraryPath.changeset(library_path, attrs)
-
-    # Check if path is being changed
-    case Ecto.Changeset.get_change(changeset, :path) do
-      nil ->
-        # No path change, proceed normally
-        Repo.update(changeset)
-
-      new_path ->
-        # Path is changing, validate accessibility
-        case validate_new_library_path(library_path, new_path) do
-          :ok ->
-            result = Repo.update(changeset)
-
-            # Log the path change if successful
-            if match?({:ok, _}, result) do
-              Logger.info(
-                "Library path updated: #{library_path.path} -> #{new_path}",
-                library_path_id: library_path.id,
-                old_path: library_path.path,
-                new_path: new_path
-              )
-            end
-
-            result
-
-          {:error, reason} ->
-            # Add validation error to changeset
-            changeset_with_error =
-              Ecto.Changeset.add_error(changeset, :path, reason)
-
-            {:error, changeset_with_error}
-        end
-    end
-  end
+  defdelegate update_library_path(library_path, attrs), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Validates that files are accessible at a new library path location.
@@ -1467,74 +648,51 @@ defmodule Mydia.Settings do
       {:error, "Files not accessible at new location. Checked 5 files, 0 found."}
   """
   @spec validate_new_library_path(LibraryPath.t(), String.t()) :: :ok | {:error, String.t()}
-  def validate_new_library_path(%LibraryPath{} = library_path, new_path) do
-    alias Mydia.Library.MediaFile
-
-    # Get sample of media files (up to 10)
-    sample_files =
-      MediaFile
-      |> where([mf], mf.library_path_id == ^library_path.id)
-      |> where([mf], not is_nil(mf.relative_path))
-      |> limit(10)
-      |> Repo.all()
-
-    # If no files exist, allow the change
-    if Enum.empty?(sample_files) do
-      Logger.debug("No files to validate for library path change",
-        library_path_id: library_path.id,
-        old_path: library_path.path,
-        new_path: new_path
-      )
-
-      :ok
-    else
-      # Check how many files are accessible at new location
-      accessible_count =
-        Enum.count(sample_files, fn file ->
-          new_absolute_path = Path.join(new_path, file.relative_path)
-          File.exists?(new_absolute_path)
-        end)
-
-      total_checked = length(sample_files)
-
-      if accessible_count == total_checked do
-        Logger.info("Library path validation passed",
-          library_path_id: library_path.id,
-          old_path: library_path.path,
-          new_path: new_path,
-          files_checked: total_checked
-        )
-
-        :ok
-      else
-        error_message =
-          "Files not accessible at new location. " <>
-            "Checked #{total_checked} files, #{accessible_count} found. " <>
-            "Ensure files have been moved to the new location before updating the path."
-
-        Logger.warning("Library path validation failed",
-          library_path_id: library_path.id,
-          old_path: library_path.path,
-          new_path: new_path,
-          files_checked: total_checked,
-          files_found: accessible_count
-        )
-
-        {:error, error_message}
-      end
-    end
-  end
+  defdelegate validate_new_library_path(library_path, new_path), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Deletes a library path.
   """
   @spec delete_library_path(LibraryPath.t()) ::
           {:ok, LibraryPath.t()} | {:error, Ecto.Changeset.t()}
-  def delete_library_path(%LibraryPath{} = library_path) do
-    Repo.delete(library_path)
-  end
+  defdelegate delete_library_path(library_path), to: Mydia.Settings.LibraryPaths
 
-  ## Runtime Configuration Functions
+  # ── Runtime Configuration ────────────────────────────────────────────
+
+  @doc """
+  Lists all configuration settings from the database.
+
+  Note: This function is intentionally database-only (no runtime config merge)
+  as it's used by the config loader to build the configuration hierarchy.
+  """
+  @spec list_config_settings(keyword()) :: [ConfigSetting.t()]
+  defdelegate list_config_settings(opts \\ []), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Gets a configuration setting from the database by key.
+  """
+  @spec get_config_setting_by_key(String.t()) :: ConfigSetting.t() | nil
+  defdelegate get_config_setting_by_key(key), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Creates a configuration setting in the database.
+  """
+  @spec create_config_setting(map()) :: {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate create_config_setting(attrs), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Updates a configuration setting in the database.
+  """
+  @spec update_config_setting(ConfigSetting.t(), map()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate update_config_setting(config_setting, attrs), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Deletes a configuration setting from the database.
+  """
+  @spec delete_config_setting(ConfigSetting.t()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate delete_config_setting(config_setting), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Loads database configuration settings and converts them to a nested map structure.
@@ -1546,22 +704,7 @@ defmodule Mydia.Settings do
   `{:ok, %{}}` if the database is unavailable.
   """
   @spec load_database_config() :: {:ok, map()}
-  def load_database_config do
-    try do
-      config_settings = list_config_settings()
-      config_map = build_config_map(config_settings)
-      {:ok, config_map}
-    rescue
-      # Database might not be available during initial setup
-      DBConnection.ConnectionError -> {:ok, %{}}
-      # Catch query errors during app startup (e.g., table doesn't exist yet)
-      Ecto.QueryError -> {:ok, %{}}
-      # Catch SQLite-specific errors
-      Exqlite.Error -> {:ok, %{}}
-      # Catch Repo not started yet error during application startup
-      RuntimeError -> {:ok, %{}}
-    end
-  end
+  defdelegate load_database_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets the runtime configuration.
@@ -1569,242 +712,7 @@ defmodule Mydia.Settings do
   Returns the full configuration struct loaded at application startup.
   """
   @spec get_runtime_config() :: Mydia.Config.Schema.t()
-  def get_runtime_config do
-    Application.get_env(:mydia, :runtime_config, Mydia.Config.Schema.defaults())
-  end
-
-  @doc """
-  Gets download clients from the runtime configuration.
-
-  Converts runtime config download client maps to DownloadClientConfig structs
-  for compatibility with the rest of the application. These structs have stable
-  runtime identifiers instead of database IDs (format: "runtime::download_client::name").
-  """
-  @spec get_runtime_download_clients() :: [DownloadClientConfig.t()]
-  def get_runtime_download_clients do
-    runtime_config = get_runtime_config()
-
-    if is_struct(runtime_config) and Map.has_key?(runtime_config, :download_clients) do
-      runtime_config.download_clients
-      |> Enum.map(&map_to_download_client_config/1)
-    else
-      []
-    end
-  end
-
-  defp map_to_download_client_config(map) when is_map(map) do
-    name = Map.get(map, :name)
-
-    %DownloadClientConfig{
-      id: build_runtime_id(:download_client, name),
-      name: name,
-      type: Map.get(map, :type),
-      enabled: Map.get(map, :enabled, true),
-      priority: Map.get(map, :priority, 10),
-      host: Map.get(map, :host),
-      port: Map.get(map, :port),
-      use_ssl: Map.get(map, :use_ssl, false),
-      url_base: Map.get(map, :url_base),
-      username: Map.get(map, :username),
-      password: Map.get(map, :password),
-      api_key: Map.get(map, :api_key),
-      category: Map.get(map, :category),
-      download_directory: Map.get(map, :download_directory),
-      connection_settings: Map.get(map, :connection_settings, %{}),
-      updated_by_id: nil,
-      inserted_at: nil,
-      updated_at: nil
-    }
-  end
-
-  @doc """
-  Gets indexers from the runtime configuration.
-
-  Converts runtime config indexer maps to IndexerConfig structs
-  for compatibility with the rest of the application. These structs have stable
-  runtime identifiers instead of database IDs (format: "runtime::indexer::name").
-  """
-  @spec get_runtime_indexers() :: [IndexerConfig.t()]
-  def get_runtime_indexers do
-    runtime_config = get_runtime_config()
-
-    if is_struct(runtime_config) and Map.has_key?(runtime_config, :indexers) do
-      runtime_config.indexers
-      |> Enum.map(&map_to_indexer_config/1)
-    else
-      []
-    end
-  end
-
-  defp map_to_indexer_config(map) when is_map(map) do
-    name = Map.get(map, :name)
-
-    %IndexerConfig{
-      id: build_runtime_id(:indexer, name),
-      name: name,
-      type: Map.get(map, :type),
-      enabled: Map.get(map, :enabled, true),
-      priority: Map.get(map, :priority, 10),
-      base_url: Map.get(map, :base_url),
-      api_key: Map.get(map, :api_key),
-      indexer_ids: Map.get(map, :indexer_ids, []),
-      categories: Map.get(map, :categories, []),
-      rate_limit: Map.get(map, :rate_limit),
-      connection_settings: Map.get(map, :connection_settings, %{}),
-      updated_by_id: nil,
-      inserted_at: nil,
-      updated_at: nil
-    }
-  end
-
-  @doc """
-  Gets media servers from the runtime configuration.
-
-  Converts runtime config media server maps to MediaServerConfig structs
-  for compatibility with the rest of the application. These structs have stable
-  runtime identifiers instead of database IDs (format: "runtime::media_server::name").
-  """
-  @spec get_runtime_media_servers() :: [MediaServerConfig.t()]
-  def get_runtime_media_servers do
-    runtime_config = get_runtime_config()
-
-    if is_struct(runtime_config) and Map.has_key?(runtime_config, :media_servers) do
-      runtime_config.media_servers
-      |> Enum.map(&map_to_media_server_config/1)
-    else
-      []
-    end
-  end
-
-  defp map_to_media_server_config(map) when is_map(map) do
-    name = Map.get(map, :name)
-
-    %MediaServerConfig{
-      id: build_runtime_id(:media_server, name),
-      name: name,
-      type: Map.get(map, :type),
-      enabled: Map.get(map, :enabled, true),
-      url: Map.get(map, :url),
-      token: Map.get(map, :token),
-      connection_settings: Map.get(map, :connection_settings, %{}),
-      updated_by_id: nil,
-      inserted_at: nil,
-      updated_at: nil
-    }
-  end
-
-  @doc """
-  Gets library paths from the runtime configuration.
-
-  Converts runtime config library paths to LibraryPath structs for compatibility
-  with the rest of the application. These structs have stable runtime identifiers
-  instead of database IDs (format: "runtime::library_path::/path/to/media").
-
-  Supports both the new library_paths schema and legacy media.movies_path/tv_path
-  configuration for backward compatibility.
-  """
-  @spec get_runtime_library_paths() :: [LibraryPath.t()]
-  def get_runtime_library_paths do
-    runtime_config = get_runtime_config()
-
-    # Start with new library_paths schema if available
-    paths =
-      if is_struct(runtime_config) and Map.has_key?(runtime_config, :library_paths) do
-        runtime_config.library_paths
-        |> Enum.map(&map_to_library_path/1)
-      else
-        []
-      end
-
-    # Add legacy movies path if configured and not already in library_paths
-    paths =
-      if is_struct(runtime_config) and Map.has_key?(runtime_config, :media) and
-           runtime_config.media.movies_path do
-        movies_path = runtime_config.media.movies_path
-        movies_auto_organize = Map.get(runtime_config.media, :movies_auto_organize, false)
-
-        # Only add if not already in library_paths
-        if Enum.any?(paths, &(&1.path == movies_path)) do
-          paths
-        else
-          [
-            %LibraryPath{
-              id: build_runtime_id(:library_path, movies_path),
-              path: movies_path,
-              type: :movies,
-              monitored: true,
-              scan_interval: 360,
-              last_scan_at: nil,
-              last_scan_status: nil,
-              last_scan_error: nil,
-              quality_profile_id: nil,
-              updated_by_id: nil,
-              auto_organize: movies_auto_organize,
-              inserted_at: nil,
-              updated_at: nil
-            }
-            | paths
-          ]
-        end
-      else
-        paths
-      end
-
-    # Add legacy TV path if configured and not already in library_paths
-    paths =
-      if is_struct(runtime_config) and Map.has_key?(runtime_config, :media) and
-           runtime_config.media.tv_path do
-        tv_path = runtime_config.media.tv_path
-        tv_auto_organize = Map.get(runtime_config.media, :tv_auto_organize, false)
-
-        # Only add if not already in library_paths
-        if Enum.any?(paths, &(&1.path == tv_path)) do
-          paths
-        else
-          [
-            %LibraryPath{
-              id: build_runtime_id(:library_path, tv_path),
-              path: tv_path,
-              type: :series,
-              monitored: true,
-              scan_interval: 360,
-              last_scan_at: nil,
-              last_scan_status: nil,
-              last_scan_error: nil,
-              quality_profile_id: nil,
-              updated_by_id: nil,
-              auto_organize: tv_auto_organize,
-              inserted_at: nil,
-              updated_at: nil
-            }
-            | paths
-          ]
-        end
-      else
-        paths
-      end
-
-    paths
-  end
-
-  defp map_to_library_path(map) when is_map(map) do
-    path = Map.get(map, :path)
-
-    %LibraryPath{
-      id: build_runtime_id(:library_path, path),
-      path: path,
-      type: Map.get(map, :type),
-      monitored: Map.get(map, :monitored, true),
-      scan_interval: Map.get(map, :scan_interval, 3600),
-      last_scan_at: nil,
-      last_scan_status: nil,
-      last_scan_error: nil,
-      quality_profile_id: Map.get(map, :quality_profile_id),
-      updated_by_id: nil,
-      inserted_at: nil,
-      updated_at: nil
-    }
-  end
+  defdelegate get_runtime_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets a configuration value by path.
@@ -1821,10 +729,7 @@ defmodule Mydia.Settings do
       false
   """
   @spec get_config([atom()]) :: term()
-  def get_config(path) when is_list(path) do
-    config = get_runtime_config()
-    get_in(config, path_to_access_keys(path))
-  end
+  defdelegate get_config(path), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets a configuration value by path with a default.
@@ -1838,276 +743,90 @@ defmodule Mydia.Settings do
       "default"
   """
   @spec get_config([atom()], term()) :: term()
-  def get_config(path, default) when is_list(path) do
-    case get_config(path) do
-      nil -> default
-      value -> value
-    end
-  end
+  defdelegate get_config(path, default), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets server configuration.
   """
   @spec get_server_config() :: Mydia.Config.Schema.Server.t() | nil
-  def get_server_config do
-    get_runtime_config().server
-  end
+  defdelegate get_server_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets database configuration.
   """
   @spec get_database_config() :: Mydia.Config.Schema.Database.t() | nil
-  def get_database_config do
-    get_runtime_config().database
-  end
+  defdelegate get_database_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets authentication configuration.
   """
   @spec get_auth_config() :: Mydia.Config.Schema.Auth.t() | nil
-  def get_auth_config do
-    get_runtime_config().auth
-  end
+  defdelegate get_auth_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets media configuration.
   """
   @spec get_media_config() :: Mydia.Config.Schema.Media.t() | nil
-  def get_media_config do
-    get_runtime_config().media
-  end
+  defdelegate get_media_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets downloads configuration.
   """
   @spec get_downloads_config() :: Mydia.Config.Schema.Downloads.t() | nil
-  def get_downloads_config do
-    get_runtime_config().downloads
-  end
+  defdelegate get_downloads_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets logging configuration.
   """
   @spec get_logging_config() :: Mydia.Config.Schema.Logging.t() | nil
-  def get_logging_config do
-    get_runtime_config().logging
-  end
+  defdelegate get_logging_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Gets Oban configuration.
   """
   @spec get_oban_config() :: Mydia.Config.Schema.Oban.t() | nil
-  def get_oban_config do
-    get_runtime_config().oban
-  end
+  defdelegate get_oban_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
-  Gets the default quality profile ID from settings.
+  Gets download clients from the runtime configuration.
 
-  Returns the ID as a string (UUID) if set, or nil if not configured.
-
-  ## Examples
-
-      iex> get_default_quality_profile_id()
-      "550e8400-e29b-41d4-a716-446655440000"
-
-      iex> get_default_quality_profile_id()
-      nil
+  Converts runtime config download client maps to DownloadClientConfig structs
+  for compatibility with the rest of the application. These structs have stable
+  runtime identifiers instead of database IDs (format: "runtime::download_client::name").
   """
-  @spec get_default_quality_profile_id() :: String.t() | nil
-  def get_default_quality_profile_id do
-    case get_config_setting_by_key("media.default_quality_profile_id") do
-      %ConfigSetting{value: value} when is_binary(value) and value != "" ->
-        value
-
-      _ ->
-        nil
-    end
-  end
+  @spec get_runtime_download_clients() :: [DownloadClientConfig.t()]
+  defdelegate get_runtime_download_clients(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
-  Gets the default quality profile struct.
+  Gets indexers from the runtime configuration.
 
-  Returns the full QualityProfile struct if a default is set and exists,
-  or nil if not configured or the profile doesn't exist.
-
-  ## Examples
-
-      iex> get_default_quality_profile()
-      %QualityProfile{id: 42, name: "HD-1080p", ...}
-
-      iex> get_default_quality_profile()
-      nil
+  Converts runtime config indexer maps to IndexerConfig structs
+  for compatibility with the rest of the application. These structs have stable
+  runtime identifiers instead of database IDs (format: "runtime::indexer::name").
   """
-  @spec get_default_quality_profile() :: QualityProfile.t() | nil
-  def get_default_quality_profile do
-    case get_default_quality_profile_id() do
-      nil -> nil
-      id -> Repo.get(QualityProfile, id)
-    end
-  end
+  @spec get_runtime_indexers() :: [IndexerConfig.t()]
+  defdelegate get_runtime_indexers(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
-  Sets the default quality profile.
+  Gets media servers from the runtime configuration.
 
-  Accepts a quality profile ID (string UUID or integer) or nil to clear the default.
-
-  ## Examples
-
-      iex> set_default_quality_profile("550e8400-e29b-41d4-a716-446655440000")
-      {:ok, %ConfigSetting{}}
-
-      iex> set_default_quality_profile(nil)
-      {:ok, %ConfigSetting{}}
+  Converts runtime config media server maps to MediaServerConfig structs
+  for compatibility with the rest of the application. These structs have stable
+  runtime identifiers instead of database IDs (format: "runtime::media_server::name").
   """
-  @spec set_default_quality_profile(String.t() | integer() | nil) ::
-          {:ok, ConfigSetting.t() | nil} | {:error, Ecto.Changeset.t()}
-  def set_default_quality_profile(nil) do
-    case get_config_setting_by_key("media.default_quality_profile_id") do
-      nil ->
-        {:ok, nil}
+  @spec get_runtime_media_servers() :: [MediaServerConfig.t()]
+  defdelegate get_runtime_media_servers(), to: Mydia.Settings.RuntimeConfig
 
-      existing ->
-        update_config_setting(existing, %{value: ""})
-    end
-  end
+  @doc """
+  Gets library paths from the runtime configuration.
 
-  def set_default_quality_profile(profile_id) when is_binary(profile_id) do
-    attrs = %{
-      key: "media.default_quality_profile_id",
-      value: profile_id,
-      category: :media,
-      description: "Default quality profile for adding media"
-    }
+  Converts runtime config library paths to LibraryPath structs for compatibility
+  with the rest of the application. These structs have stable runtime identifiers
+  instead of database IDs (format: "runtime::library_path::/path/to/media").
 
-    case get_config_setting_by_key("media.default_quality_profile_id") do
-      nil ->
-        create_config_setting(attrs)
-
-      existing ->
-        update_config_setting(existing, attrs)
-    end
-  end
-
-  def set_default_quality_profile(profile_id) when is_integer(profile_id) do
-    set_default_quality_profile(to_string(profile_id))
-  end
-
-  ## Private Functions
-
-  # Applies optional filters to quality profile queries
-  defp apply_quality_profile_filters(query, opts) do
-    query
-    |> apply_is_system_filter(opts[:is_system])
-    |> apply_version_filter(opts[:version])
-    |> apply_source_url_filter(opts[:source_url])
-  end
-
-  defp apply_is_system_filter(query, nil), do: query
-
-  defp apply_is_system_filter(query, is_system) when is_boolean(is_system) do
-    where(query, [q], q.is_system == ^is_system)
-  end
-
-  defp apply_version_filter(query, nil), do: query
-
-  defp apply_version_filter(query, version) when is_integer(version) do
-    where(query, [q], q.version == ^version)
-  end
-
-  defp apply_source_url_filter(query, nil), do: query
-
-  defp apply_source_url_filter(query, source_url) when is_binary(source_url) do
-    where(query, [q], q.source_url == ^source_url)
-  end
-
-  # Merges database records with runtime configuration items.
-  #
-  # Database records take precedence - runtime items are only included if they
-  # don't already exist in the database (matched by the specified merge_key).
-  #
-  # ## Parameters
-  #   - db_records: List of database records
-  #   - runtime_getter: Zero-arity function that returns runtime config items
-  #   - merge_key: Atom key to use for deduplication (:name, :path, etc.)
-  #   - _opts: Reserved for future options (currently unused)
-  #
-  # ## Returns
-  #   Combined list of database records + filtered runtime items
-  defp merge_with_runtime_config(db_records, runtime_getter, merge_key, _opts) do
-    # Get runtime config items
-    runtime_items = runtime_getter.()
-
-    # Create MapSet of database keys for efficient deduplication
-    db_keys = MapSet.new(db_records, &Map.get(&1, merge_key))
-
-    # Filter runtime items to exclude those already in database
-    runtime_items_filtered =
-      Enum.reject(runtime_items, &MapSet.member?(db_keys, Map.get(&1, merge_key)))
-
-    # Return merged list (database + filtered runtime)
-    db_records ++ runtime_items_filtered
-  end
-
-  defp path_to_access_keys(path) do
-    Enum.map(path, fn
-      key when is_atom(key) -> Access.key(key)
-      key -> key
-    end)
-  end
-
-  defp build_config_map(config_settings) do
-    Enum.reduce(config_settings, %{}, fn setting, acc ->
-      # Parse the dot-notation key into path segments
-      # e.g., "server.port" -> [:server, :port]
-      path =
-        setting.key
-        |> String.split(".")
-        |> Enum.map(&String.to_atom/1)
-
-      # Parse the value based on common patterns
-      parsed_value = parse_config_value(setting.value)
-
-      # Put the value into the nested map
-      put_in_path(acc, path, parsed_value)
-    end)
-  end
-
-  defp parse_config_value(nil), do: nil
-  defp parse_config_value(""), do: nil
-
-  defp parse_config_value(value) when is_binary(value) do
-    cond do
-      # Boolean values
-      value == "true" ->
-        true
-
-      value == "false" ->
-        false
-
-      # Integer values
-      match?({_int, ""}, Integer.parse(value)) ->
-        {int, ""} = Integer.parse(value)
-        int
-
-      # Default to string
-      true ->
-        value
-    end
-  end
-
-  defp parse_config_value(value), do: value
-
-  defp put_in_path(map, [key], value) do
-    Map.put(map, key, value)
-  end
-
-  defp put_in_path(map, [key | rest], value) do
-    nested = Map.get(map, key, %{})
-    Map.put(map, key, put_in_path(nested, rest, value))
-  end
-
-  ## Runtime ID Helpers
+  """
+  @spec get_runtime_library_paths() :: [LibraryPath.t()]
+  defdelegate get_runtime_library_paths(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Checks if a configuration struct is from runtime config (environment variables)
@@ -2125,47 +844,5 @@ defmodule Mydia.Settings do
       false
   """
   @spec runtime_config?(map()) :: boolean()
-  def runtime_config?(%{id: id}) when is_binary(id) do
-    String.starts_with?(id, "runtime::")
-  end
-
-  def runtime_config?(_), do: false
-
-  # Builds a stable runtime identifier for a runtime config item.
-  #
-  # Format: "runtime::{type}::{key}"
-  # Examples:
-  #   - "runtime::library_path::/media/movies"
-  #   - "runtime::download_client::qbittorrent"
-  #   - "runtime::indexer::prowlarr"
-  defp build_runtime_id(type, key) when is_atom(type) and is_binary(key) do
-    "runtime::#{type}::#{key}"
-  end
-
-  # Parses a runtime identifier into its type and key components.
-  #
-  # Returns {:ok, {type, key}} or :error
-  defp parse_runtime_id("runtime::" <> rest) do
-    case String.split(rest, "::", parts: 2) do
-      [type_str, key] ->
-        type = String.to_existing_atom(type_str)
-        {:ok, {type, key}}
-
-      _ ->
-        :error
-    end
-  rescue
-    ArgumentError ->
-      # String.to_existing_atom raises if atom doesn't exist
-      :error
-  end
-
-  defp parse_runtime_id(_), do: :error
-
-  # Checks if an ID is a runtime identifier
-  defp runtime_id?(id) when is_binary(id) do
-    String.starts_with?(id, "runtime::")
-  end
-
-  defp runtime_id?(_), do: false
+  defdelegate runtime_config?(config), to: Mydia.Settings.RuntimeConfig
 end

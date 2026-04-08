@@ -3,6 +3,13 @@ defmodule Mydia.MediaRequests do
   The MediaRequests context handles media request submissions, approvals, and rejections.
   """
 
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_request_filters,
+    filters: [
+      status: :eq,
+      requester_id: :eq
+    ]
+
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
   require Logger
@@ -147,19 +154,6 @@ defmodule Mydia.MediaRequests do
   def pending_request_exists?(_), do: false
 
   # Private functions
-
-  defp apply_request_filters(query, opts) do
-    Enum.reduce(opts, query, fn
-      {:status, status}, query when is_binary(status) ->
-        where(query, [r], r.status == ^status)
-
-      {:requester_id, requester_id}, query ->
-        where(query, [r], r.requester_id == ^requester_id)
-
-      _other, query ->
-        query
-    end)
-  end
 
   defp check_duplicate_media(changeset) do
     tmdb_id = Ecto.Changeset.get_field(changeset, :tmdb_id)

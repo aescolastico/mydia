@@ -17,6 +17,13 @@ defmodule Mydia.Collections do
   System collections cannot be deleted or renamed.
   """
 
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_collection_filters,
+    filters: [
+      type: {:eq, values: ["manual", "smart"]},
+      visibility: {:eq, values: ["private", "shared"]}
+    ]
+
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
   alias Mydia.Repo
@@ -596,19 +603,6 @@ defmodule Mydia.Collections do
   end
 
   ## Private Helpers
-
-  defp apply_collection_filters(query, opts) do
-    Enum.reduce(opts, query, fn
-      {:type, type}, query when type in ["manual", "smart"] ->
-        where(query, [c], c.type == ^type)
-
-      {:visibility, visibility}, query when visibility in ["private", "shared"] ->
-        where(query, [c], c.visibility == ^visibility)
-
-      _other, query ->
-        query
-    end)
-  end
 
   defp apply_pagination(query, opts) do
     query

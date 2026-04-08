@@ -3,6 +3,12 @@ defmodule Mydia.Accounts do
   The Accounts context handles users and API keys.
   """
 
+  use Mydia.QueryHelpers.Filterable,
+    function_name: :apply_user_filters,
+    filters: [
+      role: :eq
+    ]
+
   import Ecto.Query, warn: false
   import Mydia.QueryHelpers
   require Logger
@@ -380,16 +386,6 @@ defmodule Mydia.Accounts do
   end
 
   ## Private Functions
-
-  defp apply_user_filters(query, opts) do
-    Enum.reduce(opts, query, fn
-      {:role, role}, query ->
-        where(query, [u], u.role == ^role)
-
-      _other, query ->
-        query
-    end)
-  end
 
   defp not_expired?(%ApiKey{expires_at: nil}), do: true
 
