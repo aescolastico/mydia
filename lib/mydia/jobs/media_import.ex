@@ -36,6 +36,7 @@ defmodule Mydia.Jobs.MediaImport do
     defstruct [
       :download_id,
       :target_files,
+      :save_path,
       snooze_count: 0,
       use_hardlinks: true,
       move_files: false,
@@ -45,6 +46,7 @@ defmodule Mydia.Jobs.MediaImport do
     @type t :: %__MODULE__{
             download_id: String.t() | nil,
             target_files: [map()] | nil,
+            save_path: String.t() | nil,
             snooze_count: integer(),
             use_hardlinks: boolean(),
             move_files: boolean(),
@@ -55,6 +57,7 @@ defmodule Mydia.Jobs.MediaImport do
       %__MODULE__{
         download_id: download_id,
         target_files: Map.get(raw, "target_files"),
+        save_path: Map.get(raw, "save_path"),
         snooze_count: Map.get(raw, "snooze_count", 0),
         use_hardlinks: Map.get(raw, "use_hardlinks", true) != false,
         move_files: Map.get(raw, "move_files", false) == true,
@@ -152,7 +155,6 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp import_download(download, args) do
-    # Get the download client details to locate files
     client_info = get_client_info(download)
 
     if client_info do
@@ -165,12 +167,47 @@ defmodule Mydia.Jobs.MediaImport do
           {:error, :no_files}
 
         {:error, error} ->
-          Logger.error("Failed to get download files",
+          Logger.warning("Client query failed, trying save_path fallback",
             download_id: download.id,
             error: inspect(error)
           )
 
-          {:error, :client_error}
+          if args.save_path && args.save_path != "" do
+            case list_files_in_path(args.save_path) do
+              {:ok, files} when files != [] ->
+                Logger.info("Found files via save_path fallback",
+                  download_id: download.id,
+                  save_path: args.save_path,
+                  file_count: length(files)
+                )
+
+                process_import(download, files, args)
+
+              {:ok, []} ->
+                Logger.error("No files found at save_path",
+                  download_id: download.id,
+                  save_path: args.save_path
+                )
+
+                {:error, :no_files}
+
+              {:error, path_error} ->
+                Logger.error("save_path fallback also failed",
+                  download_id: download.id,
+                  save_path: args.save_path,
+                  error: inspect(path_error)
+                )
+
+                {:error, :client_error}
+            end
+          else
+            Logger.error("Failed to get download files and no save_path available",
+              download_id: download.id,
+              error: inspect(error)
+            )
+
+            {:error, :client_error}
+          end
       end
     else
       Logger.error("Could not get client info for download", download_id: download.id)
@@ -361,12 +398,11 @@ defmodule Mydia.Jobs.MediaImport do
   defp get_download_files(client_info, download) do
     case Client.get_status(client_info.adapter, client_info.config, client_info.client_id) do
       {:ok, status} ->
-        if status.save_path do
-          # List files in the save path
+        if status.save_path && status.save_path != "" do
           list_files_in_path(status.save_path)
         else
           Logger.warning("No save_path in status", download_id: download.id)
-          {:ok, []}
+          {:error, :no_save_path}
         end
 
       {:error, error} ->
@@ -375,61 +411,55 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp list_files_in_path(path) do
-    if File.exists?(path) do
-      if File.dir?(path) do
-        # It's a directory, list all files recursively
-        # Using File.ls! instead of Path.wildcard to handle Unicode paths correctly
-        files = list_files_recursive(path)
+    cond do
+      File.exists?(path) ->
+        if File.dir?(path) do
+          files = list_files_recursive(path)
+          {:ok, files}
+        else
+          [
+            %{
+              path: path,
+              name: Path.basename(path),
+              size: File.stat!(path).size
+            }
+          ]
+          |> then(&{:ok, &1})
+        end
 
-        {:ok, files}
-      else
-        # It's a single file
-        %{
-          path: path,
-          name: Path.basename(path),
-          size: File.stat!(path).size
-        }
-        |> List.wrap()
-        |> then(&{:ok, &1})
-      end
-    else
-      Logger.warning("Download path does not exist", path: path)
-      {:ok, []}
+      File.exists?(Path.dirname(path)) ->
+        {:error, {:path_not_found, path}}
+
+      true ->
+        {:error, {:path_not_found, path}}
     end
+  rescue
+    e in File.Error ->
+      {:error, {:path_not_accessible, path}}
   end
 
   defp list_files_recursive(dir) do
-    try do
-      File.ls!(dir)
-      |> Enum.flat_map(fn entry ->
-        full_path = Path.join(dir, entry)
+    File.ls!(dir)
+    |> Enum.flat_map(fn entry ->
+      full_path = Path.join(dir, entry)
 
-        cond do
-          File.regular?(full_path) ->
-            [
-              %{
-                path: full_path,
-                name: Path.basename(full_path),
-                size: File.stat!(full_path).size
-              }
-            ]
+      cond do
+        File.regular?(full_path) ->
+          [
+            %{
+              path: full_path,
+              name: Path.basename(full_path),
+              size: File.stat!(full_path).size
+            }
+          ]
 
-          File.dir?(full_path) ->
-            list_files_recursive(full_path)
+        File.dir?(full_path) ->
+          list_files_recursive(full_path)
 
-          true ->
-            []
-        end
-      end)
-    rescue
-      e ->
-        Logger.warning("Error listing files in directory",
-          path: dir,
-          error: Exception.message(e)
-        )
-
-        []
-    end
+        true ->
+          []
+      end
+    end)
   end
 
   defp determine_library_path(download) do

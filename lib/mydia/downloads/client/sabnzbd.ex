@@ -119,6 +119,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:nzbname, opts[:title])
 
     api_path = build_api_path(config)
 
@@ -150,7 +151,6 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   defp do_add_nzb(config, {:file, file_contents}, opts) do
     req = HTTP.new_request(config)
 
-    # For file uploads, we need to use multipart form data
     params =
       [
         apikey: config.api_key,
@@ -159,24 +159,24 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:nzbname, opts[:title])
 
     api_path = build_api_path(config)
 
-    # Create multipart form with the NZB file
-    # Write the NZB bytes to a temporary file so we can stream it using File.stream!/3.
     tmp_file =
       Path.join(System.tmp_dir!(), "mydia_upload_#{:erlang.unique_integer([:positive])}.nzb")
 
-    # Write the binary contents to a temporary file (will raise on failure)
     File.write!(tmp_file, file_contents)
 
-    # Create a File.Stream for multipart upload and gather file metadata
     stream = File.stream!(tmp_file, [], 2048)
     stat = File.stat!(tmp_file)
 
+    multipart_filename = nzb_filename(opts[:title])
+
     multipart_body = [
       {"nzbfile",
-       {stream, [filename: "upload.nzb", content_type: MIME.from_path(tmp_file), size: stat.size]}}
+       {stream,
+        [filename: multipart_filename, content_type: MIME.from_path(tmp_file), size: stat.size]}}
     ]
 
     # Perform the request and ensure the temp file is removed afterwards
@@ -632,4 +632,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   defp map_priority(:normal), do: "0"
   defp map_priority(:high), do: "1"
   defp map_priority(_), do: nil
+
+  defp nzb_filename(nil), do: "upload.nzb"
+  defp nzb_filename(title), do: "#{title}.nzb"
 end
