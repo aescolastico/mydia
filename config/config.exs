@@ -348,7 +348,13 @@ config :mydia, :auto_search,
   # Set to 0 for Usenet compatibility (Usenet indexers report 0 seeders)
   # Set to 3-5 for torrent-only setups to filter out dead torrents
   # This setting only affects automatic background searches, not manual searches
-  min_seeders: 0
+  min_seeders: 0,
+  # Case-insensitive substring tokens that disqualify a release title.
+  # Default is empty — opt in by overriding in runtime.exs or releases.exs.
+  # Examples for English-only libraries:
+  #   blocked_release_tokens: ["UkrEng", "[DUB]", "Dragon Money", "Dual-Audio Russian"]
+  # Tokens merge with any per-job `blocked_tags` passed in job args.
+  blocked_release_tokens: []
 
 # Indexer search throttling
 # Controls concurrency and rate limiting for indexer queries

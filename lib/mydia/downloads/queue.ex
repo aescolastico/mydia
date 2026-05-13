@@ -20,6 +20,11 @@ defmodule Mydia.Downloads.Queue do
   ## Public Functions
 
   def initiate_download(%SearchResult{} = search_result, opts \\ []) do
+    # Normalize metadata: callers (e.g. TVShowSearch) may pass a plain map.
+    # Coerce to %SearchResultMetadata{} so downstream pattern matches and
+    # persistence in create_download_record/4 work uniformly.
+    search_result = %{search_result | metadata: normalize_metadata(search_result.metadata)}
+
     # Use protocol from search result
     download_type = search_result.download_protocol
     Logger.info("Download protocol: #{inspect(download_type)} for #{search_result.title}")
@@ -189,6 +194,23 @@ defmodule Mydia.Downloads.Queue do
     success_count = Enum.count(results, &(&1 == :ok))
     {:ok, success_count}
   end
+
+  # Normalizes search-result metadata into a SearchResultMetadata struct.
+  # Some call sites (e.g. tv_show_search.ex) historically passed a plain
+  # map, which silently bypassed every season-pack-aware guard below.
+  defp normalize_metadata(%SearchResultMetadata{} = m), do: m
+  defp normalize_metadata(nil), do: nil
+
+  defp normalize_metadata(%{} = m) do
+    SearchResultMetadata.new(
+      season_pack: m[:season_pack] || m["season_pack"],
+      season_number: m[:season_number] || m["season_number"],
+      episode_count: m[:episode_count] || m["episode_count"],
+      episode_ids: m[:episode_ids] || m["episode_ids"]
+    )
+  end
+
+  defp normalize_metadata(_), do: nil
 
   def check_for_duplicate_download(search_result, opts) do
     media_item_id = Keyword.get(opts, :media_item_id)
@@ -681,10 +703,12 @@ defmodule Mydia.Downloads.Queue do
     # Add season pack metadata if present
     metadata_attrs =
       case search_result.metadata do
-        %SearchResultMetadata{season_pack: true, season_number: season_number} ->
+        %SearchResultMetadata{season_pack: true, season_number: season_number} = m ->
           Map.merge(metadata_attrs, %{
             season_pack: true,
-            season_number: season_number
+            season_number: season_number,
+            episode_count: m.episode_count,
+            episode_ids: m.episode_ids
           })
 
         _ ->

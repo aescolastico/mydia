@@ -234,6 +234,11 @@ defmodule Mydia.Jobs.MediaImport do
             file_count: length(imported_files)
           )
 
+          # Detect partial season packs: a download that claimed to deliver N
+          # episodes but actually matched fewer. Sets match_status accordingly
+          # so future re-imports and reporting can recognize it.
+          partial_pack_status = detect_partial_pack(download, imported_files)
+
           # Reload download to check if it was flagged as having unresolved files
           updated_download =
             Downloads.get_download!(download.id, preload: [:media_item, :episode, :library_path])
@@ -264,7 +269,7 @@ defmodule Mydia.Jobs.MediaImport do
             # This allows the download to appear in the Completed tab
             case Downloads.update_download(updated_download, %{
                    imported_at: DateTime.utc_now(),
-                   match_status: nil
+                   match_status: partial_pack_status
                  }) do
               {:ok, _updated} ->
                 Logger.info("Download marked as imported",
@@ -566,6 +571,40 @@ defmodule Mydia.Jobs.MediaImport do
         true ->
           {:error, :partial_import}
       end
+    end
+  end
+
+  # Returns "partial_pack" if a season-pack download delivered fewer distinct
+  # episodes than the search-time metadata promised; otherwise nil. The infinite
+  # re-download loop we hit in prod was bogus "season packs" that contained a
+  # single episode file — without this check, the download was marked as
+  # successfully imported and the next hourly search re-grabbed it.
+  defp detect_partial_pack(download, imported_files) do
+    metadata = download.metadata || %{}
+    expected_count = metadata["episode_count"]
+
+    cond do
+      not is_integer(expected_count) or expected_count <= 0 ->
+        nil
+
+      true ->
+        actual_count =
+          imported_files
+          |> Enum.map(& &1.episode_id)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.uniq()
+          |> length()
+
+        if actual_count < expected_count do
+          Logger.warning("Season pack delivered fewer episodes than promised",
+            download_id: download.id,
+            title: download.title,
+            expected_episode_count: expected_count,
+            matched_episode_count: actual_count
+          )
+
+          "partial_pack"
+        end
     end
   end
 
