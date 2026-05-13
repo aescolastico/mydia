@@ -42,7 +42,8 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
      marker token plus any adjacent `E\\d+` continuation tokens.
   4. When `target` is provided, lock `type / title / year` and compute
      `binding_confidence` against `target.title + target.alt_titles`
-     using Jaro similarity on canonicalized titles.
+     via `Mydia.Library.Text.title_similarity/2` (canonicalized
+     downcase + accent fold + Jaro fallback).
   5. When unbound, assemble the title from the remaining
      `:title_candidate` tokens in the title zone via
      `TitleAssembler.assemble/2` and infer the type.
@@ -60,6 +61,7 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
   alias Mydia.Library.ReleaseParser.TargetContext
   alias Mydia.Library.ReleaseParser.TitleAssembler
   alias Mydia.Library.ReleaseParser.Token
+  alias Mydia.Library.Text
 
   # Labels that may only have one resolved candidate across the entire
   # token stream. Conflicts are settled by highest confidence.
@@ -718,29 +720,22 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
 
   defp compute_binding_confidence(nil, _), do: 0.0
 
-  # TODO(unit7): switch to Library.Text.title_similarity/2 once promoted.
+  # Score the parsed title against the target's primary title plus
+  # any alt titles. Uses the shared `Library.Text.title_similarity/2`
+  # so the parser, metadata matcher, and search seam all canonicalize
+  # the same way.
   defp compute_binding_confidence(parsed_title, %TargetContext{title: title, alt_titles: alts}) do
-    parsed = canonicalize_title(parsed_title)
+    targets = Enum.reject([title | alts], &(is_nil(&1) or &1 == ""))
 
-    targets =
-      [title | alts] |> Enum.reject(&(is_nil(&1) or &1 == "")) |> Enum.map(&canonicalize_title/1)
+    case targets do
+      [] ->
+        0.0
 
-    targets
-    |> Enum.map(&String.jaro_distance(parsed, &1))
-    |> case do
-      [] -> 0.0
-      list -> Enum.max(list)
+      _ ->
+        targets
+        |> Enum.map(&Text.title_similarity(parsed_title, &1))
+        |> Enum.max()
     end
-  end
-
-  # Inline canonicalization: downcase, strip punctuation, collapse
-  # whitespace. Unit 7 will replace this with Library.Text.
-  defp canonicalize_title(title) when is_binary(title) do
-    title
-    |> String.downcase()
-    |> String.replace(~r/[^\p{L}\p{N}\s]/u, " ")
-    |> String.replace(~r/\s+/u, " ")
-    |> String.trim()
   end
 
   defp ensure_map(nil), do: %{}

@@ -13,6 +13,7 @@ defmodule Mydia.Library.MetadataMatcher do
   alias Mydia.{Media, Metadata}
   alias Mydia.Library.FileParser.V2, as: FileParser
   alias Mydia.Library.Structs.MatchResult
+  alias Mydia.Library.Text
   alias Mydia.Metadata.Structs.MediaMetadata
 
   @type match_result :: MatchResult.t()
@@ -905,51 +906,9 @@ defmodule Mydia.Library.MetadataMatcher do
 
   defp title_similarity(_title1, _title2), do: 0.0
 
-  defp normalize_title(title) do
-    title
-    |> String.downcase()
-    # Convert roman numerals to numbers (common in movie sequels)
-    |> convert_roman_numerals()
-    # Normalize "and" vs "&"
-    |> String.replace(~r/\s+&\s+/, " and ")
-    # Move leading articles to the end: "The Matrix" -> "Matrix The"
-    |> normalize_articles()
-    # Remove all punctuation
-    |> String.replace(~r/[^\w\s]/, "")
-    # Normalize whitespace
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-  end
-
-  # Convert common roman numerals to arabic numbers
-  defp convert_roman_numerals(title) do
-    # Match roman numerals at word boundaries (often used for sequels)
-    # Handle I through X (1-10), which covers most movie sequels
-    replacements = [
-      {~r/\bX\b/i, "10"},
-      {~r/\bIX\b/i, "9"},
-      {~r/\bVIII\b/i, "8"},
-      {~r/\bVII\b/i, "7"},
-      {~r/\bVI\b/i, "6"},
-      {~r/\bV\b/i, "5"},
-      {~r/\bIV\b/i, "4"},
-      {~r/\bIII\b/i, "3"},
-      {~r/\bII\b/i, "2"}
-      # Note: Don't replace single "I" as it's too ambiguous (could be "I" as in "me")
-    ]
-
-    Enum.reduce(replacements, title, fn {pattern, replacement}, acc ->
-      String.replace(acc, pattern, replacement)
-    end)
-  end
-
-  # Move leading articles (the, a, an) to the end: "The Matrix" -> "Matrix The"
-  defp normalize_articles(title) do
-    case Regex.run(~r/^(the|a|an)\s+(.+)$/i, title) do
-      [_, article, rest] -> "#{rest} #{article}"
-      _ -> title
-    end
-  end
+  # Delegates to `Mydia.Library.Text.normalize_title/1` — the shared
+  # title-normalization helper (promoted in V3 parser Unit 7).
+  defp normalize_title(title), do: Text.normalize_title(title)
 
   defp year_match?(result_year, nil), do: result_year != nil
   defp year_match?(nil, _parsed_year), do: false
