@@ -77,9 +77,10 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
   @doc """
   Anchor byte positions in the input.
 
-  Year-inside-title carve-out: a year before the earliest episode marker
-  is treated as part of the title, not as the year anchor — the
-  documented "2001 A Space Odyssey S01E01" corner case from V2.
+  Year-inside-title carve-out: when the release name starts with a year
+  before the earliest episode marker, that year is treated as part of
+  the title, not as the year anchor — the documented
+  "2001 A Space Odyssey S01E01" corner case from V2.
   """
   @spec anchor_positions(String.t()) :: anchors()
   def anchor_positions(input) when is_binary(input) do

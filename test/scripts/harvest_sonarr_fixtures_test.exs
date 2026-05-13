@@ -4,11 +4,21 @@ defmodule HarvestSonarrFixturesTest do
   # Setting that before require_file/1 lets us call the parser internals
   # without triggering live GitHub fetches during the test suite.
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   setup_all do
+    previous = System.get_env("MYDIA_HARVEST_AUTORUN")
     System.put_env("MYDIA_HARVEST_AUTORUN", "false")
     Code.require_file(Path.expand("../../scripts/harvest_sonarr_fixtures.exs", __DIR__))
+
+    on_exit(fn ->
+      if previous do
+        System.put_env("MYDIA_HARVEST_AUTORUN", previous)
+      else
+        System.delete_env("MYDIA_HARVEST_AUTORUN")
+      end
+    end)
+
     :ok
   end
 
@@ -112,6 +122,24 @@ defmodule HarvestSonarrFixturesTest do
     assert entry.expected.language_tags == []
     assert entry.expected.expected == "Subtitles"
     assert entry.expected.language == "English"
+  end
+
+  test "excludes non-empty sized arrays instead of treating them as empty" do
+    cs = """
+        [TestCase("Name.S01E20.eng.srt", new string[5], "Subtitles", "English")]
+        public void should_parse_subtitle(string filename, string[] languageTags, string expected, string expectedLanguage)
+        {
+        }
+    """
+
+    {entries, exclusions} = HarvestSonarrFixtures.parse_file("Synthetic.cs", cs)
+
+    assert entries == []
+
+    assert [
+             {"Synthetic.cs", :unparseable_test_case,
+              "[TestCase(\"Name.S01E20.eng.srt\", new string[5], \"Subtitles\", \"English\")]"}
+           ] = exclusions
   end
 
   test "logs methods with unknown parameter names in exclusion list (does not crash)" do

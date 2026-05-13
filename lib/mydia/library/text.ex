@@ -60,7 +60,7 @@ defmodule Mydia.Library.Text do
       "pokemon"
 
       iex> Mydia.Library.Text.normalize_title("Spider-Man II")
-      "spider man 2"
+      "spiderman 2"
   """
   @spec normalize_title(String.t()) :: String.t()
   def normalize_title(title) when is_binary(title) do

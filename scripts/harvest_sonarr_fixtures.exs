@@ -343,7 +343,7 @@ defmodule HarvestSonarrFixtures do
   defp scan_array(s) do
     cond do
       # Empty sized array: `new string[0]` or `new int[0]`
-      result = Regex.run(~r/^new\s+(?:int|string)\[\d+\](.*)/s, s) ->
+      result = Regex.run(~r/^new\s+(?:int|string)\[0\](.*)/s, s) ->
         [_, rest] = result
         {:ok, [], rest}
 
