@@ -468,18 +468,36 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
   end
 
   # Pull every E-number after the first E in the marker value
-  # (S01E01E02E03 -> [2, 3], plus expansion for ranges like E01-E03).
+  # (S01E01E02E03 -> [2, 3], plus expansion for ranges like E01-E03,
+  # plus continuation chains like E96-97-98-99-100).
   defp additional_episodes(value) do
     parts = Regex.scan(~r/[Ee](\d{1,4})(?:[-–][Ee]?(\d{1,4}))?/, value)
 
-    parts
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      {[_, _ep], 0} -> []
-      {[_, ep], _i} -> [String.to_integer(ep)]
-      {[_, start_s, end_s], 0} -> range_expand(start_s, end_s) |> tl()
-      {[_, start_s, end_s], _i} -> range_expand(start_s, end_s)
-    end)
+    base =
+      parts
+      |> Enum.with_index()
+      |> Enum.flat_map(fn
+        {[_, _ep], 0} -> []
+        {[_, ep], _i} -> [String.to_integer(ep)]
+        {[_, start_s, end_s], 0} -> range_expand(start_s, end_s) |> tl()
+        {[_, start_s, end_s], _i} -> range_expand(start_s, end_s)
+      end)
+
+    base ++ continuation_chain(value)
+  end
+
+  # Continuation chain: after the last `E\d+-\d+` match, look for
+  # additional `-\d+` segments. Captures patterns like
+  # `S26E96-97-98-99-100` where the chain isn't repeating `E`.
+  defp continuation_chain(value) do
+    case Regex.run(~r/[Ee]\d{1,4}[-–]\d{1,4}((?:[-–]\d{1,4})+)/, value) do
+      [_, tail] ->
+        Regex.scan(~r/(\d{1,4})/, tail)
+        |> Enum.map(fn [_, n] -> String.to_integer(n) end)
+
+      _ ->
+        []
+    end
   end
 
   defp range_expand(start_s, end_s) do
