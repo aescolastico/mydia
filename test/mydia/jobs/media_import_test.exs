@@ -130,7 +130,7 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
   end
 
-
+  describe "perform/1" do
     test "schedules retry when download is not completed (first snooze)" do
       media_item = media_item_fixture()
 
