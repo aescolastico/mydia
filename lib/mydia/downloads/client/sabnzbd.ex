@@ -109,6 +109,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   defp do_add_nzb(config, {:url, url}, opts) do
     req = HTTP.new_request(config)
+    title = normalize_title(opts[:title])
 
     params =
       [
@@ -119,7 +120,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
-      |> add_optional_param(:nzbname, opts[:title])
+      |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
 
@@ -150,6 +151,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   defp do_add_nzb(config, {:file, file_contents}, opts) do
     req = HTTP.new_request(config)
+    title = normalize_title(opts[:title])
 
     params =
       [
@@ -159,7 +161,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
-      |> add_optional_param(:nzbname, opts[:title])
+      |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
 
@@ -171,7 +173,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     stream = File.stream!(tmp_file, [], 2048)
     stat = File.stat!(tmp_file)
 
-    multipart_filename = nzb_filename(opts[:title])
+    multipart_filename = nzb_filename(title)
 
     multipart_body = [
       {"nzbfile",
@@ -622,6 +624,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   end
 
   defp add_optional_param(params, _key, nil), do: params
+  defp add_optional_param(params, _key, ""), do: params
 
   defp add_optional_param(params, key, value) do
     params ++ [{key, value}]
@@ -634,5 +637,30 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   defp map_priority(_), do: nil
 
   defp nzb_filename(nil), do: "upload.nzb"
-  defp nzb_filename(title), do: "#{title}.nzb"
+
+  defp nzb_filename(title) do
+    case sanitize_filename_title(title) do
+      nil -> "upload.nzb"
+      safe_title -> "#{safe_title}.nzb"
+    end
+  end
+
+  defp normalize_title(nil), do: nil
+
+  defp normalize_title(title) when is_binary(title) do
+    case String.trim(title) do
+      "" -> nil
+      trimmed_title -> trimmed_title
+    end
+  end
+
+  defp sanitize_filename_title(title) when is_binary(title) do
+    title
+    |> String.trim()
+    |> String.replace(~r{[<>:"/\\|?*]}, "_")
+    |> case do
+      "" -> nil
+      sanitized -> sanitized
+    end
+  end
 end

@@ -20,9 +20,9 @@ defmodule Mydia.Jobs.MediaImportTest do
       assert args.save_path == nil
     end
 
-    test "save_path is nil when empty string" do
+    test "save_path is nil when empty string is provided" do
       args = MediaImport.Args.parse(%{"download_id" => "123", "save_path" => ""})
-      assert args.save_path == ""
+      assert args.save_path == nil
     end
 
     test "preserves all other fields" do
@@ -377,9 +377,9 @@ defmodule Mydia.Jobs.MediaImportTest do
 
       assert {:error, :client_error} =
                perform_job(MediaImport, %{
-                 "download_id" => download.id,
-                 "save_path" => ""
-               })
+                  "download_id" => download.id,
+                  "save_path" => ""
+                })
     end
 
     @tag :tmp_dir
@@ -408,11 +408,14 @@ defmodule Mydia.Jobs.MediaImportTest do
           download_client_id: "test123"
         })
 
-      assert {:error, :client_error} =
+      assert {:error, {:path_not_found, "/no/such/path/exists"}} =
                perform_job(MediaImport, %{
-                 "download_id" => download.id,
-                 "save_path" => "/no/such/path/exists"
-               })
+                  "download_id" => download.id,
+                  "save_path" => "/no/such/path/exists"
+                })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_last_error =~ "Download path not found"
     end
   end
 

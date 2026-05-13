@@ -57,12 +57,21 @@ defmodule Mydia.Jobs.MediaImport do
       %__MODULE__{
         download_id: download_id,
         target_files: Map.get(raw, "target_files"),
-        save_path: Map.get(raw, "save_path"),
+        save_path: parse_save_path(Map.get(raw, "save_path")),
         snooze_count: Map.get(raw, "snooze_count", 0),
         use_hardlinks: Map.get(raw, "use_hardlinks", true) != false,
         move_files: Map.get(raw, "move_files", false) == true,
         rename_files: Map.get(raw, "rename_files", false) == true
       }
+    end
+
+    defp parse_save_path(nil), do: nil
+
+    defp parse_save_path(save_path) when is_binary(save_path) do
+      case String.trim(save_path) do
+        "" -> nil
+        trimmed_path -> trimmed_path
+      end
     end
   end
 
@@ -198,7 +207,7 @@ defmodule Mydia.Jobs.MediaImport do
                   error: inspect(path_error)
                 )
 
-                {:error, :client_error}
+                {:error, path_error}
             end
           else
             Logger.error("Failed to get download files and no save_path available",
@@ -1430,6 +1439,16 @@ defmodule Mydia.Jobs.MediaImport do
     "No files found in download location. " <>
       "The download may have been moved, deleted, or is still extracting. " <>
       "Import will retry automatically."
+  end
+
+  defp format_import_error({:path_not_found, path}, _download) do
+    "Download path not found: #{path}. " <>
+      "The download may have been moved, deleted, or not yet available."
+  end
+
+  defp format_import_error({:path_not_accessible, path}, _download) do
+    "Download path is not accessible: #{path}. " <>
+      "Check filesystem permissions and path accessibility."
   end
 
   defp format_import_error(:no_library_path, download) do

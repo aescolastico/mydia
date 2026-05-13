@@ -261,6 +261,47 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
                Sabnzbd.add_torrent(config, {:file, nzb_content}, title: nil)
     end
 
+    test "falls back to upload.nzb and omits nzbname when title is empty",
+         %{bypass: bypass, config: config} do
+      nzb_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nzb></nzb>"
+
+      Bypass.expect(bypass, "POST", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "nzbname")
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "upload.nzb"
+        refute body =~ ".nzb\"; filename=\".nzb"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_empty"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_empty"} =
+               Sabnzbd.add_torrent(config, {:file, nzb_content}, title: "")
+    end
+
+    test "sanitizes invalid filename characters for file upload title",
+         %{bypass: bypass, config: config} do
+      nzb_content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><nzb></nzb>"
+
+      Bypass.expect(bypass, "POST", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["nzbname"] == "Movie: Name/2024?"
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "Movie_ Name_2024_.nzb"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_sanitized"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_sanitized"} =
+               Sabnzbd.add_torrent(config, {:file, nzb_content}, title: "Movie: Name/2024?")
+    end
+
     test "no nzbname param when no title for URL addition",
          %{bypass: bypass, config: config} do
       Bypass.expect(bypass, "GET", "/api", fn conn ->
@@ -275,6 +316,21 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
 
       assert {:ok, "SABnzbd_nzo_url"} =
                Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"})
+    end
+
+    test "no nzbname param when title is empty for URL addition", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "nzbname")
+        assert conn.query_params["mode"] == "addurl"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_url_empty"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_url_empty"} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"}, title: "")
     end
   end
 end
