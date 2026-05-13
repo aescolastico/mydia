@@ -1,7 +1,12 @@
-# Benchmark script to compare FileParser V1 vs V2
+# Benchmark script for FileParser V1 (legacy) vs V3 (ReleaseParser).
+#
+# V2 was retired in the V3 migration (Unit 8). V1 retirement is
+# tracked in a separate follow-up; until then it still ships in
+# `lib/mydia/library/file_parser.ex` for the `mydia.migrate_episode_files`
+# mix task.
 
 alias Mydia.Library.FileParser
-alias Mydia.Library.FileParser.V2, as: FileParserV2
+alias Mydia.Library.ReleaseParser
 
 # Test cases - real-world filenames
 test_cases = [
@@ -27,7 +32,7 @@ test_cases = [
   "randomfile.mkv"
 ]
 
-IO.puts("\n=== FileParser Benchmark: V1 vs V2 ===\n")
+IO.puts("\n=== FileParser Benchmark: V1 vs V3 ===\n")
 IO.puts("Running #{length(test_cases)} test cases...\n")
 
 # Benchmark V1
@@ -38,53 +43,53 @@ IO.puts("Benchmarking V1...")
   end)
 end)
 
-# Benchmark V2 (raw mode)
-IO.puts("Benchmarking V2 (raw mode)...")
-{v2_time, v2_results} = :timer.tc(fn ->
+# Benchmark V3 (raw mode)
+IO.puts("Benchmarking V3 (raw mode)...")
+{v3_time, v3_results} = :timer.tc(fn ->
   Enum.map(test_cases, fn filename ->
-    FileParserV2.parse(filename)
+    ReleaseParser.parse(filename)
   end)
 end)
 
-# Benchmark V2 with standardization
-IO.puts("Benchmarking V2 (standardized mode)...")
-{v2_std_time, v2_std_results} = :timer.tc(fn ->
+# Benchmark V3 with standardization
+IO.puts("Benchmarking V3 (standardized mode)...")
+{v3_std_time, _v3_std_results} = :timer.tc(fn ->
   Enum.map(test_cases, fn filename ->
-    FileParserV2.parse(filename, standardize: true)
+    ReleaseParser.parse(filename, standardize: true)
   end)
 end)
 
 # Performance results
 IO.puts("\n=== Performance Results ===")
 IO.puts("V1 time:              #{Float.round(v1_time / 1000, 2)} ms (#{Float.round(v1_time / length(test_cases) / 1000, 3)} ms/file)")
-IO.puts("V2 raw time:          #{Float.round(v2_time / 1000, 2)} ms (#{Float.round(v2_time / length(test_cases) / 1000, 3)} ms/file)")
-IO.puts("V2 standardized time: #{Float.round(v2_std_time / 1000, 2)} ms (#{Float.round(v2_std_time / length(test_cases) / 1000, 3)} ms/file)")
-IO.puts("\nSpeedup (V2 raw vs V1): #{Float.round(v1_time / v2_time, 2)}x")
-IO.puts("Overhead (standardization): #{Float.round((v2_std_time - v2_time) / v2_time * 100, 1)}%")
+IO.puts("V3 raw time:          #{Float.round(v3_time / 1000, 2)} ms (#{Float.round(v3_time / length(test_cases) / 1000, 3)} ms/file)")
+IO.puts("V3 standardized time: #{Float.round(v3_std_time / 1000, 2)} ms (#{Float.round(v3_std_time / length(test_cases) / 1000, 3)} ms/file)")
+IO.puts("\nSpeedup (V3 raw vs V1): #{Float.round(v1_time / v3_time, 2)}x")
+IO.puts("Overhead (standardization): #{Float.round((v3_std_time - v3_time) / v3_time * 100, 1)}%")
 
 # Accuracy comparison
 IO.puts("\n=== Accuracy Comparison ===")
 
-differences = Enum.zip([test_cases, v1_results, v2_results])
-|> Enum.filter(fn {_filename, v1, v2} ->
-  v1.type != v2.type || v1.title != v2.title || v1.year != v2.year
+differences = Enum.zip([test_cases, v1_results, v3_results])
+|> Enum.filter(fn {_filename, v1, v3} ->
+  v1.type != v3.type || v1.title != v3.title || v1.year != v3.year
 end)
 
 if differences == [] do
-  IO.puts("✅ All results match between V1 and V2!")
+  IO.puts("All results match between V1 and V3!")
 else
-  IO.puts("⚠️  Found #{length(differences)} difference(s):\n")
+  IO.puts("Found #{length(differences)} difference(s):\n")
 
-  Enum.each(differences, fn {filename, v1, v2} ->
+  Enum.each(differences, fn {filename, v1, v3} ->
     IO.puts("File: #{filename}")
     IO.puts("  V1: type=#{v1.type}, title=#{inspect(v1.title)}, year=#{inspect(v1.year)}")
-    IO.puts("  V2: type=#{v2.type}, title=#{inspect(v2.title)}, year=#{inspect(v2.year)}")
+    IO.puts("  V3: type=#{v3.type}, title=#{inspect(v3.title)}, year=#{inspect(v3.year)}")
     IO.puts("")
   end)
 end
 
-# Phase 3 standardization examples
-IO.puts("\n=== Phase 3: Standardization Examples ===")
+# Standardization examples
+IO.puts("\n=== Standardization Examples ===")
 sample_files = [
   "Movie.2024.1080p.BluRay.DDP5.1.x264.mkv",
   "Show.S01E01.2160p.WEB-DL.HEVC.HDR10.DTS-HD.MA.mkv"
@@ -92,23 +97,23 @@ sample_files = [
 
 Enum.each(sample_files, fn filename ->
   IO.puts("\nFile: #{filename}")
-  raw = FileParserV2.parse(filename)
-  std = FileParserV2.parse(filename, standardize: true)
+  raw = ReleaseParser.parse(filename)
+  std = ReleaseParser.parse(filename, standardize: true)
 
   IO.puts("  Raw mode:")
-  IO.puts("    Resolution: #{raw.quality[:resolution]}, Source: #{raw.quality[:source]}")
-  IO.puts("    Codec: #{raw.quality[:codec]}, Audio: #{raw.quality[:audio]}")
+  IO.puts("    Resolution: #{raw.quality.resolution}, Source: #{raw.quality.source}")
+  IO.puts("    Codec: #{raw.quality.codec}, Audio: #{raw.quality.audio}")
 
   IO.puts("  Standardized mode:")
-  IO.puts("    Resolution: #{std.quality[:resolution]}, Source: #{std.quality[:source]}")
-  IO.puts("    Codec: #{std.quality[:codec]}, Audio: #{std.quality[:audio]}")
+  IO.puts("    Resolution: #{std.quality.resolution}, Source: #{std.quality.source}")
+  IO.puts("    Codec: #{std.quality.codec}, Audio: #{std.quality.audio}")
 end)
 
 # Summary
 IO.puts("\n=== Summary ===")
 IO.puts("V1: #{length(test_cases)} files parsed in #{Float.round(v1_time / 1000, 2)} ms")
-IO.puts("V2 (raw): #{length(test_cases)} files parsed in #{Float.round(v2_time / 1000, 2)} ms")
-IO.puts("V2 (standardized): #{length(test_cases)} files parsed in #{Float.round(v2_std_time / 1000, 2)} ms")
+IO.puts("V3 (raw): #{length(test_cases)} files parsed in #{Float.round(v3_time / 1000, 2)} ms")
+IO.puts("V3 (standardized): #{length(test_cases)} files parsed in #{Float.round(v3_std_time / 1000, 2)} ms")
 IO.puts("Accuracy: #{length(test_cases) - length(differences)}/#{length(test_cases)} matching (#{Float.round((length(test_cases) - length(differences)) / length(test_cases) * 100, 1)}%)")
-IO.puts("Performance: V2 is #{Float.round(v1_time / v2_time, 2)}x #{if v2_time < v1_time, do: "faster", else: "slower"} than V1")
-IO.puts("Per-file avg (V2 standardized): #{Float.round(v2_std_time / length(test_cases) / 1000, 3)} ms #{if v2_std_time / length(test_cases) / 1000 < 10, do: "✅ (< 10ms target)", else: "❌ (> 10ms target)"}")
+IO.puts("Performance: V3 is #{Float.round(v1_time / v3_time, 2)}x #{if v3_time < v1_time, do: "faster", else: "slower"} than V1")
+IO.puts("Per-file avg (V3 standardized): #{Float.round(v3_std_time / length(test_cases) / 1000, 3)} ms #{if v3_std_time / length(test_cases) / 1000 < 10, do: "(< 10ms target)", else: "(> 10ms target)"}")
