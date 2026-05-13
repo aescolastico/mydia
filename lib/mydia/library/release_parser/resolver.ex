@@ -1,0 +1,726 @@
+defmodule Mydia.Library.ReleaseParser.Resolver do
+  @moduledoc """
+  Stage 3 of the V3 release parser: pick a globally consistent
+  assignment of candidate labels to tokens, optionally locked to a
+  target context, and emit per-field confidence.
+
+  Inputs:
+
+  - `tokens` — list of `%Token{}` with `:candidates` already populated
+    by the classifier.
+  - `target` — optional `%TargetContext{}`. When present, type / title /
+    year are locked to the target; season + episodes + quality are still
+    parsed from tokens.
+  - `opts` — currently unused; reserved for future tuning knobs.
+
+  Returns a map shaped for the facade in Unit 6 to massage into a
+  `%ParsedFileInfo{}`:
+
+      %{
+        type: :movie | :tv_show | :unknown,
+        title: String.t() | nil,
+        year: integer() | nil,
+        season: integer() | nil,
+        episodes: [integer()] | nil,
+        quality_tokens: [%{label: atom(), value: term(), token: %Token{}}],
+        release_group: String.t() | nil,
+        language: String.t() | nil,
+        field_confidence: %{atom() => float()},
+        engine_flags: %{atom() => term()} | nil,
+        binding_confidence: float() | nil
+      }
+
+  ## Algorithm — boring on purpose
+
+  1. For each token, pick the single best candidate per label
+     (highest-confidence wins per-token).
+  2. Resolve label-wide conflicts: only one `:year`, `:resolution`,
+     `:episode_marker`, `:source`, `:hdr`, `:release_group` and one
+     `:codec` candidate may survive. Losing tokens are demoted to
+     `:title_candidate` with half their original confidence.
+  3. Assemble the season + episode list from the surviving episode
+     marker token plus any adjacent `E\\d+` continuation tokens.
+  4. When `target` is provided, lock `type / title / year` and compute
+     `binding_confidence` against `target.title + target.alt_titles`
+     using Jaro similarity on canonicalized titles.
+  5. When unbound, assemble the title from the remaining
+     `:title_candidate` tokens in the title zone via
+     `TitleAssembler.assemble/2` and infer the type.
+  6. Emit per-field confidence directly from the candidate that
+     produced each populated field.
+
+  ## Byte safety
+
+  No `String.slice/3` or `String.length/1` calls anywhere — same rule as
+  the rest of the release_parser/ tree.
+  """
+
+  alias Mydia.Library.ReleaseParser.Candidate
+  alias Mydia.Library.ReleaseParser.Config
+  alias Mydia.Library.ReleaseParser.TargetContext
+  alias Mydia.Library.ReleaseParser.TitleAssembler
+  alias Mydia.Library.ReleaseParser.Token
+
+  # Labels that may only have one resolved candidate across the entire
+  # token stream. Conflicts are settled by highest confidence.
+  @singleton_labels [
+    :year,
+    :resolution,
+    :episode_marker,
+    :season_marker,
+    :source,
+    :hdr,
+    :codec,
+    :release_group,
+    :language,
+    :streaming_service
+  ]
+
+  # Vocab-derived labels whose low-confidence candidates should be
+  # dropped before conflict resolution. Anchor labels (year, resolution,
+  # episode_marker) are never filtered because they're regex-detected
+  # and inherently high-confidence. The "Madame Web" carve-out depends
+  # on this: `Web` in the title zone gets source-confidence ~0.15 from
+  # the title-zone penalty, well below the threshold, and is dropped so
+  # the title assembler can claim the token.
+  @vocab_filtered_labels [
+    :source,
+    :codec,
+    :hdr,
+    :audio,
+    :language,
+    :streaming_service,
+    :release_group
+  ]
+
+  @vocab_min_confidence 0.4
+
+  # Labels mapped through to `quality_tokens` for QualityExtractor in
+  # Unit 6.
+  @quality_labels [:resolution, :source, :codec, :hdr, :audio]
+
+  @doc """
+  Resolve the given tokens to a field assignment.
+  """
+  @spec resolve([Token.t()], TargetContext.t() | nil, keyword()) :: map()
+  def resolve(tokens, target, opts \\ [])
+
+  def resolve(tokens, target, _opts) when is_list(tokens) do
+    boundary = title_boundary_for(tokens)
+
+    {assignments, demoted_tokens} =
+      tokens
+      |> per_token_best()
+      |> resolve_singleton_conflicts()
+
+    assignments_map = group_assignments_by_token(assignments)
+
+    {season, episodes, episode_token, episode_conf} =
+      extract_episode_info(tokens, assignments_map)
+
+    year_pick = pick_assignment(assignments, :year)
+    year_value = pick_year_value(year_pick)
+    year_confidence = pick_confidence(year_pick)
+
+    quality_tokens = collect_quality_tokens(assignments)
+    release_group = pick_release_group(assignments)
+    language = pick_language(assignments)
+
+    inferred_type = infer_type(episode_token, year_pick)
+
+    {title_value, title_confidence} =
+      assemble_title(tokens, assignments, demoted_tokens, boundary)
+
+    base = %{
+      type: inferred_type,
+      title: title_value,
+      year: year_value,
+      season: season,
+      episodes: episodes,
+      quality_tokens: quality_tokens,
+      release_group: release_group,
+      language: language,
+      field_confidence: %{},
+      engine_flags: nil,
+      binding_confidence: nil
+    }
+
+    base
+    |> put_field_confidence(:year, year_confidence)
+    |> put_field_confidence(:season, season_confidence(episode_token, episode_conf, season))
+    |> put_field_confidence(:episodes, episode_conf)
+    |> put_field_confidence(:title, title_confidence)
+    |> apply_quality_confidence(quality_tokens)
+    |> apply_release_group_confidence(release_group, assignments)
+    |> apply_language_confidence(language, assignments)
+    |> apply_target_binding(target, tokens)
+  end
+
+  # ---- Per-token best candidate ----
+
+  defp per_token_best(tokens) do
+    Enum.map(tokens, fn %Token{candidates: candidates} = token ->
+      best =
+        candidates
+        |> Enum.group_by(& &1.label)
+        |> Enum.map(fn {_label, group} -> Enum.max_by(group, & &1.confidence) end)
+        |> Enum.reject(&drop_weak_vocab?/1)
+
+      {token, best}
+    end)
+  end
+
+  defp drop_weak_vocab?(%Candidate{label: label, confidence: conf})
+       when label in @vocab_filtered_labels and conf < @vocab_min_confidence,
+       do: true
+
+  defp drop_weak_vocab?(_), do: false
+
+  # ---- Singleton-conflict resolution ----
+  #
+  # Walks each singleton label and keeps the highest-confidence
+  # (token, candidate) pair; for every other token that had a candidate
+  # for that label, the candidate is *removed* from its slate so the
+  # token only contributes through its remaining labels (or
+  # `:title_candidate`). If a losing token has no other candidates we
+  # record a demoted title fallback.
+
+  defp resolve_singleton_conflicts(per_token) do
+    {final, demoted} =
+      Enum.reduce(@singleton_labels, {per_token, %{}}, &resolve_one_label/2)
+
+    assignments = build_assignments(final)
+    {assignments, demoted}
+  end
+
+  defp resolve_one_label(label, {per_token, demoted}) do
+    contenders =
+      per_token
+      |> Enum.flat_map(fn {token, cands} ->
+        case Enum.find(cands, &(&1.label == label)) do
+          nil -> []
+          cand -> [{token, cand}]
+        end
+      end)
+
+    case contenders do
+      [] ->
+        {per_token, demoted}
+
+      [{_, _}] = winner ->
+        {per_token, demoted_after(demoted, winner)}
+
+      multi ->
+        winner_pair = Enum.max_by(multi, fn {_, c} -> c.confidence end)
+        losers = multi -- [winner_pair]
+
+        per_token = strip_losers(per_token, losers, label)
+        demoted = record_demotions(demoted, losers)
+        {per_token, demoted}
+    end
+  end
+
+  defp demoted_after(demoted, _winner), do: demoted
+
+  defp strip_losers(per_token, losers, label) do
+    loser_token_ids = MapSet.new(losers, fn {tok, _} -> token_key(tok) end)
+
+    Enum.map(per_token, fn {token, cands} ->
+      if MapSet.member?(loser_token_ids, token_key(token)) do
+        {token, Enum.reject(cands, &(&1.label == label))}
+      else
+        {token, cands}
+      end
+    end)
+  end
+
+  defp record_demotions(demoted, losers) do
+    Enum.reduce(losers, demoted, fn {token, cand}, acc ->
+      Map.update(acc, token_key(token), [cand], &[cand | &1])
+    end)
+  end
+
+  # Build {token, winning_candidate} list from the surviving per-token
+  # slates. A token may have multiple candidates of different labels; we
+  # keep one entry per (token, label) pair so the downstream pickers can
+  # find by label.
+  defp build_assignments(per_token) do
+    Enum.flat_map(per_token, fn {token, cands} ->
+      Enum.map(cands, fn cand -> {token, cand} end)
+    end)
+  end
+
+  # ---- Field pickers ----
+
+  defp pick_assignment(assignments, label) do
+    case Enum.filter(assignments, fn {_, c} -> c.label == label end) do
+      [] -> nil
+      list -> Enum.max_by(list, fn {_, c} -> c.confidence end)
+    end
+  end
+
+  defp pick_year_value(nil), do: nil
+
+  defp pick_year_value({%Token{value: value}, _candidate}) do
+    case Integer.parse(value) do
+      {int, _} -> int
+      :error -> nil
+    end
+  end
+
+  defp pick_confidence(nil), do: nil
+  defp pick_confidence({_, %Candidate{confidence: c}}), do: c
+
+  defp collect_quality_tokens(assignments) do
+    @quality_labels
+    |> Enum.flat_map(fn label ->
+      assignments
+      |> Enum.filter(fn {_, c} -> c.label == label end)
+      |> case do
+        [] -> []
+        list when label == :audio -> Enum.map(list, &to_quality_entry/1)
+        list -> [list |> Enum.max_by(fn {_, c} -> c.confidence end) |> to_quality_entry()]
+      end
+    end)
+  end
+
+  defp to_quality_entry({token, %Candidate{} = c}) do
+    %{label: c.label, value: c.value || token.value, token: token, confidence: c.confidence}
+  end
+
+  defp pick_release_group(assignments) do
+    case pick_assignment(assignments, :release_group) do
+      nil -> nil
+      {_, %Candidate{value: value}} when is_binary(value) -> value
+      {%Token{value: value}, _} -> value
+    end
+  end
+
+  defp pick_language(assignments) do
+    case pick_assignment(assignments, :language) do
+      nil -> nil
+      {_, %Candidate{value: value}} when is_binary(value) -> value
+      {%Token{value: value}, _} -> value
+    end
+  end
+
+  # ---- Episode extraction ----
+
+  defp extract_episode_info(tokens, assignments_map) do
+    # Find the episode marker token (the one that survived singleton
+    # conflict resolution).
+    marker =
+      Enum.find(tokens, fn token ->
+        case assignments_map_get(assignments_map, token) do
+          nil -> false
+          cands -> Enum.any?(cands, &(&1.label == :episode_marker))
+        end
+      end)
+
+    case marker do
+      nil ->
+        # Look for a season-marker-only token (S01 without E).
+        season_only(tokens, assignments_map)
+
+      %Token{value: value} = token ->
+        {season, episodes} = parse_episode_marker(value)
+        extended = extend_with_adjacent(tokens, token, episodes)
+        marker_cand = find_candidate(assignments_map, token, :episode_marker)
+        confidence = if marker_cand, do: marker_cand.confidence, else: 0.95
+        {season, extended, token, confidence}
+    end
+  end
+
+  defp assignments_map_get(map, %Token{} = token) do
+    Map.get(map, token_key(token))
+  end
+
+  defp find_candidate(map, %Token{} = token, label) do
+    case assignments_map_get(map, token) do
+      nil -> nil
+      cands -> Enum.find(cands, &(&1.label == label))
+    end
+  end
+
+  defp season_only(tokens, assignments_map) do
+    season_token =
+      Enum.find(tokens, fn token ->
+        case assignments_map_get(assignments_map, token) do
+          nil -> false
+          cands -> Enum.any?(cands, &(&1.label == :season_marker))
+        end
+      end)
+
+    case season_token do
+      nil ->
+        {nil, nil, nil, nil}
+
+      %Token{value: value} = token ->
+        case parse_episode_marker(value) do
+          {nil, nil} -> {nil, nil, nil, nil}
+          {season, episodes} -> {season, episodes, token, 0.9}
+        end
+    end
+  end
+
+  # Parse the marker value. Handles:
+  #   S01E01, S01E01E02, S01E01-E03, S01.E01, S01, 1x05
+  # Returns {season, episodes} where season may be nil.
+  defp parse_episode_marker(value) do
+    cond do
+      result = parse_sxxexx(value) -> result
+      result = parse_axb(value) -> result
+      result = parse_season_only(value) -> result
+      true -> {nil, nil}
+    end
+  end
+
+  defp parse_sxxexx(value) do
+    case Regex.run(~r/^[Ss](\d{1,3})(?:[Ee](\d{1,4}))?/, value) do
+      [_, season_str] ->
+        {String.to_integer(season_str), []}
+
+      [_, season_str, ep_str] ->
+        season = String.to_integer(season_str)
+        first_ep = String.to_integer(ep_str)
+        rest = additional_episodes(value)
+        {season, dedupe_sorted([first_ep | rest])}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_axb(value) do
+    case Regex.run(~r/^(\d{1,3})[xX](\d{1,4})$/, value) do
+      [_, season_str, ep_str] ->
+        {String.to_integer(season_str), [String.to_integer(ep_str)]}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_season_only(value) do
+    case Regex.run(~r/^[Ss](\d{1,3})$/, value) do
+      [_, season_str] -> {String.to_integer(season_str), []}
+      _ -> nil
+    end
+  end
+
+  # Pull every E-number after the first E in the marker value
+  # (S01E01E02E03 -> [2, 3], plus expansion for ranges like E01-E03).
+  defp additional_episodes(value) do
+    parts = Regex.scan(~r/[Ee](\d{1,4})(?:[-–][Ee]?(\d{1,4}))?/, value)
+
+    parts
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {[_, _ep], 0} -> []
+      {[_, ep], _i} -> [String.to_integer(ep)]
+      {[_, start_s, end_s], 0} -> range_expand(start_s, end_s) |> tl()
+      {[_, start_s, end_s], _i} -> range_expand(start_s, end_s)
+    end)
+  end
+
+  defp range_expand(start_s, end_s) do
+    s = String.to_integer(start_s)
+    e = String.to_integer(end_s)
+    if s <= e, do: Enum.to_list(s..e), else: [s]
+  end
+
+  # Extend the episode list with continuation tokens that immediately
+  # follow the marker (e.g. `S01E01 E02 E03`).
+  defp extend_with_adjacent(tokens, %Token{} = marker, episodes) do
+    after_marker =
+      tokens
+      |> Enum.drop_while(fn t -> token_key(t) != token_key(marker) end)
+      |> Enum.drop(1)
+      |> Enum.take_while(&continuation_token?/1)
+
+    extra =
+      after_marker
+      |> Enum.flat_map(&continuation_episodes/1)
+
+    case episodes do
+      nil -> nil
+      [] when extra == [] -> []
+      list -> dedupe_sorted(list ++ extra)
+    end
+  end
+
+  defp continuation_token?(%Token{value: value}) do
+    Regex.match?(~r/^[Ee]\d{1,4}(?:[-–][Ee]?\d{1,4})?$/, value)
+  end
+
+  defp continuation_episodes(%Token{value: value}) do
+    case Regex.run(~r/^[Ee](\d{1,4})(?:[-–][Ee]?(\d{1,4}))?$/, value) do
+      [_, single] ->
+        [String.to_integer(single)]
+
+      [_, start_s, end_s] ->
+        range_expand(start_s, end_s)
+
+      _ ->
+        []
+    end
+  end
+
+  defp dedupe_sorted(list) when is_list(list) do
+    list |> Enum.uniq() |> Enum.sort()
+  end
+
+  # ---- Type inference ----
+
+  defp infer_type(nil, nil), do: :unknown
+  defp infer_type(nil, _year), do: :movie
+  defp infer_type(_marker, _year), do: :tv_show
+
+  # ---- Title assembly (unbound) ----
+
+  defp assemble_title(tokens, assignments, demoted_tokens, boundary) do
+    # A token contributes to the title if its surviving slate is empty
+    # (all non-title candidates lost their singleton fights) or if its
+    # remaining best candidate is `:title_candidate`.
+    title_tokens =
+      tokens
+      |> Enum.filter(fn token ->
+        cands = candidates_for_token(assignments, token)
+        title_token?(cands)
+      end)
+
+    title_value = TitleAssembler.assemble(title_tokens, boundary)
+
+    confidence =
+      cond do
+        title_value == nil -> 0.0
+        title_tokens == [] -> 0.5
+        true -> mean_title_confidence(title_tokens, assignments, demoted_tokens)
+      end
+
+    {title_value, confidence}
+  end
+
+  defp candidates_for_token(assignments, %Token{} = token) do
+    assignments
+    |> Enum.filter(fn {t, _} -> token_key(t) == token_key(token) end)
+    |> Enum.map(fn {_, c} -> c end)
+  end
+
+  defp title_token?([]), do: true
+
+  defp title_token?(cands) do
+    best = Enum.max_by(cands, & &1.confidence)
+    best.label == :title_candidate
+  end
+
+  defp mean_title_confidence(title_tokens, assignments, demoted_tokens) do
+    confidences =
+      Enum.map(title_tokens, fn token ->
+        case candidates_for_token(assignments, token) do
+          [] ->
+            # All candidates demoted — use degraded confidence.
+            degraded_confidence(demoted_tokens, token)
+
+          cands ->
+            cands |> Enum.map(& &1.confidence) |> Enum.max()
+        end
+      end)
+
+    case confidences do
+      [] -> 0.5
+      list -> Enum.sum(list) / length(list)
+    end
+  end
+
+  defp degraded_confidence(demoted_tokens, %Token{} = token) do
+    case Map.get(demoted_tokens, token_key(token)) do
+      [%Candidate{confidence: c} | _] -> c * 0.5
+      _ -> 0.3
+    end
+  end
+
+  # ---- Confidence aggregation ----
+
+  defp put_field_confidence(result, _field, nil), do: result
+
+  defp put_field_confidence(result, field, value) when is_float(value) do
+    update_in(result.field_confidence, &Map.put(&1, field, value))
+  end
+
+  defp apply_quality_confidence(result, quality_tokens) do
+    Enum.reduce(quality_tokens, result, fn entry, acc ->
+      put_field_confidence(acc, quality_field_key(entry.label), entry.confidence)
+    end)
+  end
+
+  defp quality_field_key(:resolution), do: :resolution
+  defp quality_field_key(:source), do: :source
+  defp quality_field_key(:codec), do: :codec
+  defp quality_field_key(:hdr), do: :hdr_format
+  defp quality_field_key(:audio), do: :audio
+  defp quality_field_key(other), do: other
+
+  defp apply_release_group_confidence(result, nil, _), do: result
+
+  defp apply_release_group_confidence(result, _group, assignments) do
+    case pick_assignment(assignments, :release_group) do
+      nil -> result
+      {_, %Candidate{confidence: c}} -> put_field_confidence(result, :release_group, c)
+    end
+  end
+
+  defp apply_language_confidence(result, nil, _), do: result
+
+  defp apply_language_confidence(result, _lang, assignments) do
+    case pick_assignment(assignments, :language) do
+      nil -> result
+      {_, %Candidate{confidence: c}} -> put_field_confidence(result, :language, c)
+    end
+  end
+
+  defp season_confidence(nil, _, _), do: nil
+  defp season_confidence(_token, conf, _season), do: conf
+
+  # ---- Target binding ----
+
+  defp apply_target_binding(result, nil, _tokens), do: result
+
+  defp apply_target_binding(result, %TargetContext{} = target, _tokens) do
+    parsed_title_unbound = result.title
+
+    # Lock type / title / year.
+    locked_year = target.year || result.year
+
+    result =
+      %{
+        result
+        | type: target.type,
+          title: target.title,
+          year: locked_year
+      }
+
+    # Compute binding confidence by comparing the parsed-would-be title
+    # to the target's name + alt titles. Title field_confidence is
+    # intentionally NOT clamped to 1.0 when bound — it stays whatever
+    # the parser computed from the tokens. This preserves diagnostic
+    # signal when binding is wrong (plan: "Decision matrix").
+    binding_confidence =
+      compute_binding_confidence(parsed_title_unbound, target)
+
+    flags =
+      result.engine_flags
+      |> ensure_map()
+      |> maybe_flag_binding_suspect(binding_confidence, parsed_title_unbound)
+      |> maybe_flag_season_out_of_range(result.season, target.known_seasons)
+
+    result = %{result | engine_flags: nil_if_empty_map(flags)}
+
+    # Season-out-of-range penalty.
+    result =
+      if season_out_of_range?(result.season, target.known_seasons) do
+        suggest = Config.suggest_threshold()
+
+        update_in(result.field_confidence, fn fc ->
+          Map.update(fc, :season, suggest, fn current -> min(current, suggest) end)
+        end)
+      else
+        result
+      end
+
+    # Year confidence: when the target supplies a year, set
+    # field_confidence.year = 1.0 (target-locked).
+    result =
+      case target.year do
+        nil -> result
+        _y -> put_field_confidence(result, :year, 1.0)
+      end
+
+    %{result | binding_confidence: binding_confidence}
+  end
+
+  defp compute_binding_confidence(nil, _), do: 0.0
+
+  # TODO(unit7): switch to Library.Text.title_similarity/2 once promoted.
+  defp compute_binding_confidence(parsed_title, %TargetContext{title: title, alt_titles: alts}) do
+    parsed = canonicalize_title(parsed_title)
+
+    targets =
+      [title | alts] |> Enum.reject(&(is_nil(&1) or &1 == "")) |> Enum.map(&canonicalize_title/1)
+
+    targets
+    |> Enum.map(&String.jaro_distance(parsed, &1))
+    |> case do
+      [] -> 0.0
+      list -> Enum.max(list)
+    end
+  end
+
+  # Inline canonicalization: downcase, strip punctuation, collapse
+  # whitespace. Unit 7 will replace this with Library.Text.
+  defp canonicalize_title(title) when is_binary(title) do
+    title
+    |> String.downcase()
+    |> String.replace(~r/[^\p{L}\p{N}\s]/u, " ")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
+  end
+
+  defp ensure_map(nil), do: %{}
+  defp ensure_map(%{} = m), do: m
+
+  defp nil_if_empty_map(m) when map_size(m) == 0, do: nil
+  defp nil_if_empty_map(m), do: m
+
+  defp maybe_flag_binding_suspect(flags, confidence, parsed_title)
+       when is_number(confidence) and confidence < 0.5 do
+    flags
+    |> Map.put(:binding_suspect, true)
+    |> Map.put(:parsed_title_unbound, parsed_title)
+  end
+
+  defp maybe_flag_binding_suspect(flags, _confidence, _parsed_title), do: flags
+
+  defp maybe_flag_season_out_of_range(flags, season, known_seasons) do
+    if season_out_of_range?(season, known_seasons) do
+      Map.put(flags, :season_out_of_range, true)
+    else
+      flags
+    end
+  end
+
+  defp season_out_of_range?(nil, _), do: false
+  defp season_out_of_range?(_season, []), do: false
+
+  defp season_out_of_range?(season, known) when is_list(known) do
+    season not in known
+  end
+
+  # ---- Helpers ----
+
+  # Tokens are uniquely identified by their byte offset. We avoid
+  # using the struct itself as a map key so that semantic equality
+  # works even when candidates change shape.
+  defp token_key(%Token{byte_offset: offset, byte_length: len}), do: {offset, len}
+
+  defp group_assignments_by_token(assignments) do
+    Enum.reduce(assignments, %{}, fn {token, cand}, acc ->
+      Map.update(acc, token_key(token), [cand], fn list -> [cand | list] end)
+    end)
+  end
+
+  defp title_boundary_for(tokens) do
+    anchors =
+      tokens
+      |> Enum.flat_map(fn %Token{candidates: cands, byte_offset: o} ->
+        cands
+        |> Enum.filter(fn c -> c.label in [:year, :resolution, :episode_marker] end)
+        |> Enum.map(fn _ -> o end)
+      end)
+
+    case anchors do
+      [] -> :infinity
+      list -> Enum.min(list)
+    end
+  end
+end
