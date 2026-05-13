@@ -119,18 +119,21 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
     end
   end
 
-  # ---- Internals ----
-
-  # Strip the trailing extension only when it matches a known media-file
-  # extension. A blanket "anything after the last dot" strip would eat
-  # parts of release names (e.g. `Show...Name` → `Show...`).
   @known_extensions ~w(
     mkv mp4 avi mov m4v ts webm flv wmv mpg mpeg vob ogv 3gp f4v rm rmvb
     mp3 m4a flac aac ogg opus wav
     srt ass ssa sub idx vtt
   )
 
-  defp drop_extension(input) do
+  @doc """
+  Drop a known media/subtitle extension from a release name.
+
+  A blanket "anything after the last dot" strip would eat parts of
+  release names (e.g. `Show...Name` -> `Show...`), so this only removes
+  extensions from the known parser allow-list.
+  """
+  @spec drop_extension(String.t()) :: String.t()
+  def drop_extension(input) when is_binary(input) do
     case Regex.run(~r/\.([A-Za-z0-9]{1,5})$/, input, return: :index) do
       [{ext_start, ext_len}, {_, _}] ->
         ext = :binary.part(input, ext_start + 1, ext_len - 1) |> String.downcase()
@@ -146,6 +149,8 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
     end
   end
 
+  # ---- Internals ----
+
   # State: (remaining, full_input, current_byte_pos, token_start_or_nil, bracket_or_nil, acc)
   # acc is a list of finished %Token{} values in reverse order.
   defp scan(<<>>, full, pos, start, bracket, acc) do
@@ -158,32 +163,14 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
     scan(rest, full, pos + 1, nil, bracket, acc)
   end
 
-  defp scan(<<?[, rest::binary>>, full, pos, start, bracket, acc) do
+  defp scan(<<byte, rest::binary>>, full, pos, start, bracket, acc)
+       when byte in [?[, ?\(, ?{] do
     acc = emit_pending(full, pos, start, bracket, acc)
-    scan(rest, full, pos + 1, nil, :bracket, acc)
+    scan(rest, full, pos + 1, nil, bracket_context(byte), acc)
   end
 
-  defp scan(<<?], rest::binary>>, full, pos, start, bracket, acc) do
-    acc = emit_pending(full, pos, start, bracket, acc)
-    scan(rest, full, pos + 1, nil, nil, acc)
-  end
-
-  defp scan(<<?(, rest::binary>>, full, pos, start, bracket, acc) do
-    acc = emit_pending(full, pos, start, bracket, acc)
-    scan(rest, full, pos + 1, nil, :paren, acc)
-  end
-
-  defp scan(<<?), rest::binary>>, full, pos, start, bracket, acc) do
-    acc = emit_pending(full, pos, start, bracket, acc)
-    scan(rest, full, pos + 1, nil, nil, acc)
-  end
-
-  defp scan(<<?{, rest::binary>>, full, pos, start, bracket, acc) do
-    acc = emit_pending(full, pos, start, bracket, acc)
-    scan(rest, full, pos + 1, nil, :brace, acc)
-  end
-
-  defp scan(<<?}, rest::binary>>, full, pos, start, bracket, acc) do
+  defp scan(<<byte, rest::binary>>, full, pos, start, bracket, acc)
+       when byte in [?], ?\), ?}] do
     acc = emit_pending(full, pos, start, bracket, acc)
     scan(rest, full, pos + 1, nil, nil, acc)
   end
@@ -217,6 +204,10 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
       acc
     end
   end
+
+  defp bracket_context(?[), do: :bracket
+  defp bracket_context(?\(), do: :paren
+  defp bracket_context(?{), do: :brace
 
   defp first_match_pos(input, regexes) do
     Enum.reduce(regexes, nil, fn re, current ->

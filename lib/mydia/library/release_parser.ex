@@ -33,6 +33,7 @@ defmodule Mydia.Library.ReleaseParser do
   alias Mydia.Library.SampleDetector
   alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Library.Structs.Quality
+  alias Mydia.Library.Text
 
   @type parse_opts :: [
           standardize: boolean(),
@@ -160,7 +161,7 @@ defmodule Mydia.Library.ReleaseParser do
   # replicate that for matching only (the rewritten input keeps the
   # original separators except for the matched span).
   defp strip_trailing_release_group(filename) do
-    stripped_for_match = strip_extension(filename)
+    stripped_for_match = Tokenizer.drop_extension(filename)
     normalized = String.replace(stripped_for_match, ~r/[._]/, " ")
 
     case Regex.run(@release_group_re, normalized, return: :index) do
@@ -214,31 +215,6 @@ defmodule Mydia.Library.ReleaseParser do
           :binary.part(filename, full_start + 1, byte_size(filename) - full_start - 1)
 
         before <> " " <> suffix
-
-      _ ->
-        filename
-    end
-  end
-
-  # Local re-implementation of the tokenizer's extension dropper. Kept
-  # in sync intentionally — if a release-group regex match would
-  # otherwise straddle an extension we strip the extension first.
-  @known_extensions ~w(
-    mkv mp4 avi mov m4v ts webm flv wmv mpg mpeg vob ogv 3gp f4v rm rmvb
-    mp3 m4a flac aac ogg opus wav
-    srt ass ssa sub idx vtt
-  )
-
-  defp strip_extension(filename) do
-    case Regex.run(~r/\.([A-Za-z0-9]{1,5})$/, filename, return: :index) do
-      [{ext_start, ext_len}, {_, _}] ->
-        ext = :binary.part(filename, ext_start + 1, ext_len - 1) |> String.downcase()
-
-        if ext in @known_extensions do
-          :binary.part(filename, 0, ext_start)
-        else
-          filename
-        end
 
       _ ->
         filename
@@ -418,7 +394,7 @@ defmodule Mydia.Library.ReleaseParser do
 
   defp maybe_merge_folder_context(result, nil), do: result
 
-  defp maybe_merge_folder_context(result, %{} = context) do
+  defp maybe_merge_folder_context(%ParsedFileInfo{} = result, %{} = context) do
     %ParsedFileInfo{
       result
       | title: context[:title] || result.title,
@@ -513,7 +489,7 @@ defmodule Mydia.Library.ReleaseParser do
 
     title_factor =
       if filename_result.title do
-        similarity = title_similarity(show_name, filename_result.title)
+        similarity = Text.title_similarity(show_name, filename_result.title)
 
         cond do
           similarity >= 0.8 -> 0.15
@@ -545,7 +521,7 @@ defmodule Mydia.Library.ReleaseParser do
 
     title_agreement_bonus =
       if filename_result.title != nil do
-        if title_similarity(movie_info.title, filename_result.title) >= 0.7 do
+        if Text.title_similarity(movie_info.title, filename_result.title) >= 0.7 do
           0.05
         else
           0.0
@@ -555,26 +531,5 @@ defmodule Mydia.Library.ReleaseParser do
       end
 
     min(base + external_id_bonus + year_bonus + title_agreement_bonus, 1.0)
-  end
-
-  defp title_similarity(t1, t2) when is_binary(t1) and is_binary(t2) do
-    n1 = normalize_for_comparison(t1)
-    n2 = normalize_for_comparison(t2)
-
-    cond do
-      n1 == n2 -> 1.0
-      String.contains?(n1, n2) or String.contains?(n2, n1) -> 0.85
-      true -> String.jaro_distance(n1, n2)
-    end
-  end
-
-  defp title_similarity(_, _), do: 0.0
-
-  defp normalize_for_comparison(title) do
-    title
-    |> String.downcase()
-    |> String.replace(~r/[-_.':]/u, " ")
-    |> String.replace(~r/\s+/u, " ")
-    |> String.trim()
   end
 end

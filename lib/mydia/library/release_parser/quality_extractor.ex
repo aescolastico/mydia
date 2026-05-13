@@ -49,7 +49,8 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
 
   defp do_extract(quality_tokens, all_tokens, opts) do
     standardize? = Keyword.get(opts, :standardize, false)
-    raw = build_raw(quality_tokens, all_tokens)
+    next_by_token = next_token_index(all_tokens)
+    raw = build_raw(quality_tokens, all_tokens, next_by_token)
 
     if standardize? do
       standardize(raw)
@@ -60,12 +61,12 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
 
   # ---- Raw projection (matches V2 raw output) ----
 
-  defp build_raw(quality_tokens, all_tokens) do
+  defp build_raw(quality_tokens, all_tokens, next_by_token) do
     resolution = extract_resolution(quality_tokens)
-    source = extract_source(quality_tokens, all_tokens)
-    codec = extract_codec(quality_tokens, all_tokens)
+    source = extract_source(quality_tokens, next_by_token)
+    codec = extract_codec(quality_tokens, all_tokens, next_by_token)
     hdr = extract_hdr(quality_tokens)
-    audio = extract_audio(quality_tokens, all_tokens)
+    audio = extract_audio(quality_tokens, next_by_token)
 
     %Quality{
       resolution: resolution,
@@ -114,20 +115,20 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   # or `Rip` (the tokenizer's compound-dash split produces these
   # post-split tokens).
 
-  defp extract_source(quality_tokens, all_tokens) do
+  defp extract_source(quality_tokens, next_by_token) do
     case Enum.find(quality_tokens, &(&1.label == :source)) do
       nil ->
         nil
 
       entry ->
         raw = token_text(entry)
-        rejoin_web_compound(raw, entry, all_tokens)
+        rejoin_web_compound(raw, entry, next_by_token)
     end
   end
 
-  defp rejoin_web_compound(raw, entry, all_tokens) do
+  defp rejoin_web_compound(raw, entry, next_by_token) do
     if String.upcase(raw) == "WEB" do
-      case next_token(entry.token, all_tokens) do
+      case next_token(entry.token, next_by_token) do
         %Token{value: value} ->
           upper = String.upcase(value)
 
@@ -152,25 +153,23 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   # (`x264`, `h264`, `HEVC`, `AVC`) directly; this handler covers the
   # dotted forms.
 
-  defp extract_codec(quality_tokens, all_tokens) do
+  defp extract_codec(quality_tokens, all_tokens, next_by_token) do
     case Enum.find(quality_tokens, &(&1.label == :codec)) do
       nil ->
         find_dotted_codec(all_tokens)
 
       entry ->
         raw = token_text(entry)
-        merged = maybe_rejoin_codec(raw, entry, all_tokens)
+        merged = maybe_rejoin_codec(raw, entry, next_by_token)
         merged
     end
   end
 
   defp find_dotted_codec(all_tokens) do
     all_tokens
-    |> Enum.with_index()
-    |> Enum.find_value(fn {tok, idx} ->
-      next = Enum.at(all_tokens, idx + 1)
-
-      if next != nil and dotted_codec_pair?(tok, next) do
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.find_value(fn [tok, next] ->
+      if dotted_codec_pair?(tok, next) do
         "#{tok.value}.#{next.value}"
       else
         nil
@@ -190,7 +189,7 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
 
   defp dotted_codec_pair?(_, _), do: false
 
-  defp maybe_rejoin_codec(raw, entry, all_tokens) do
+  defp maybe_rejoin_codec(raw, entry, next_by_token) do
     # Some codec tokens (XviD, HEVC) survive as a single token — nothing to rejoin.
     upper = String.upcase(raw)
 
@@ -213,7 +212,7 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
       true ->
         # If the token is just "H" or "X" (rare; usually the vocab handles
         # `x264`/`h264` directly), check the next token for `264`/`265`.
-        case next_token(entry.token, all_tokens) do
+        case next_token(entry.token, next_by_token) do
           %Token{value: digits, byte_offset: to} when digits in ["264", "265"] ->
             head_end = entry.token.byte_offset + entry.token.byte_length
 
@@ -258,18 +257,18 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   # `DTS-HD.MA`, `TrueHD.7.1`, `AAC 2.0` get split on dots, spaces, and
   # dashes. Rebuild the V2 canonical *raw* string.
 
-  defp extract_audio(quality_tokens, all_tokens) do
+  defp extract_audio(quality_tokens, next_by_token) do
     case Enum.find(quality_tokens, &(&1.label == :audio)) do
       nil ->
         nil
 
       entry ->
         raw = token_text(entry)
-        rejoin_audio(raw, entry, all_tokens)
+        rejoin_audio(raw, entry, next_by_token)
     end
   end
 
-  defp rejoin_audio(raw, entry, all_tokens) do
+  defp rejoin_audio(raw, entry, next_by_token) do
     upper = String.upcase(raw)
 
     cond do
@@ -278,23 +277,23 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
       # Then ".MA" may follow as a third token. We handle that case
       # below.
       upper in ["DTS"] ->
-        rejoin_dts(entry, all_tokens, raw)
+        rejoin_dts(entry, next_by_token, raw)
 
       # TrueHD: optional channel spec (`TrueHD 7.1` → `TrueHD 7.1`)
       upper == "TRUEHD" ->
-        rejoin_trailing_channel(raw, entry, all_tokens)
+        rejoin_trailing_channel(raw, entry, next_by_token)
 
       # AAC: optional channel spec
       upper in ["AAC", "AAC-LC"] ->
-        rejoin_trailing_channel(raw, entry, all_tokens)
+        rejoin_trailing_channel(raw, entry, next_by_token)
 
       # DDP / DD: may have channel suffix as separate token (`DDP5` `1` → `DDP5.1`).
       Regex.match?(~r/^DDP\d+$/i, raw) or Regex.match?(~r/^DD\d+$/i, raw) ->
-        rejoin_trailing_channel_dot(raw, entry, all_tokens)
+        rejoin_trailing_channel_dot(raw, entry, next_by_token)
 
       # OPUS: with channels
       upper == "OPUS" ->
-        rejoin_trailing_channel(raw, entry, all_tokens)
+        rejoin_trailing_channel(raw, entry, next_by_token)
 
       true ->
         raw
@@ -303,8 +302,8 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
 
   # Handle DTS rejoin: DTS-HD (with optional .MA) or DTS-X. Both are
   # adjacent dash compounds the tokenizer splits.
-  defp rejoin_dts(entry, all_tokens, raw) do
-    case next_token(entry.token, all_tokens) do
+  defp rejoin_dts(entry, next_by_token, raw) do
+    case next_token(entry.token, next_by_token) do
       %Token{value: hd_value, byte_offset: ho, byte_length: hl} = hd_token
       when hd_value in ["HD", "hd", "Hd"] ->
         sep_len = ho - (entry.token.byte_offset + entry.token.byte_length)
@@ -312,7 +311,7 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
         if sep_len == 1 do
           rejoined = "DTS-HD"
 
-          case next_token(hd_token, all_tokens) do
+          case next_token(hd_token, next_by_token) do
             %Token{value: ma_value, byte_offset: mo}
             when ma_value in ["MA", "ma", "Ma"] ->
               if mo == ho + hl + 1 do
@@ -341,16 +340,16 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   # Rejoin TrueHD/AAC/Opus with trailing channel notation: `TrueHD 7.1`
   # becomes `TrueHD 7.1`. The channels arrive as separate tokens
   # `7` and `1` after the dot split.
-  defp rejoin_trailing_channel(raw, entry, all_tokens) do
-    case channel_after(entry.token, all_tokens) do
+  defp rejoin_trailing_channel(raw, entry, next_by_token) do
+    case channel_after(entry.token, next_by_token) do
       nil -> raw
       ch -> "#{raw} #{ch}"
     end
   end
 
   # Rejoin DDP/DD with channel suffix via dot: `DDP5` followed by `1` → `DDP5.1`.
-  defp rejoin_trailing_channel_dot(raw, entry, all_tokens) do
-    case next_token(entry.token, all_tokens) do
+  defp rejoin_trailing_channel_dot(raw, entry, next_by_token) do
+    case next_token(entry.token, next_by_token) do
       %Token{value: digit, byte_offset: to}
       when digit in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] ->
         head_end = entry.token.byte_offset + entry.token.byte_length
@@ -368,9 +367,9 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   end
 
   # Detect a 2-digit channel suffix (e.g. `7` `1` after `TrueHD`).
-  defp channel_after(%Token{} = token, all_tokens) do
-    n1 = next_token(token, all_tokens)
-    n2 = if n1, do: next_token(n1, all_tokens), else: nil
+  defp channel_after(%Token{} = token, next_by_token) do
+    n1 = next_token(token, next_by_token)
+    n2 = if n1, do: next_token(n1, next_by_token), else: nil
 
     cond do
       is_digit_token?(n1) and is_digit_token?(n2) ->
@@ -412,17 +411,17 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
     upper in ["HDR10+"]
   end
 
-  defp next_token(%Token{} = current, all_tokens) do
-    idx =
-      Enum.find_index(all_tokens, fn t ->
-        t.byte_offset == current.byte_offset and t.byte_length == current.byte_length
-      end)
-
-    case idx do
-      nil -> nil
-      i -> Enum.at(all_tokens, i + 1)
-    end
+  defp next_token_index(all_tokens) do
+    all_tokens
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Map.new(fn [current, next] -> {token_key(current), next} end)
   end
+
+  defp next_token(%Token{} = current, next_by_token) do
+    Map.get(next_by_token, token_key(current))
+  end
+
+  defp token_key(%Token{byte_offset: offset, byte_length: length}), do: {offset, length}
 
   # ---- Standardization (matches V2's standardize_quality/1 outputs exactly) ----
 

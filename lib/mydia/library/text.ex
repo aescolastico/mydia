@@ -125,6 +125,7 @@ defmodule Mydia.Library.Text do
   defp light_normalize(title) do
     title
     |> String.downcase()
+    |> String.replace(~r/[^\w\s]/u, "")
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
   end

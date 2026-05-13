@@ -868,40 +868,7 @@ defmodule Mydia.Library.MetadataMatcher do
   defp title_derivative_penalty(_result_title, _search_title), do: 0.0
 
   defp title_similarity(title1, title2) when is_binary(title1) and is_binary(title2) do
-    # Check for substring match on lightly normalized versions first
-    # (before removing articles, which can affect substring matching)
-    light_norm1 = String.downcase(title1) |> String.replace(~r/[^\w\s]/, "") |> String.trim()
-    light_norm2 = String.downcase(title2) |> String.replace(~r/[^\w\s]/, "") |> String.trim()
-
-    cond do
-      # Exact match on light normalization
-      light_norm1 == light_norm2 ->
-        1.0
-
-      # Substring match on light normalization
-      String.contains?(light_norm1, light_norm2) || String.contains?(light_norm2, light_norm1) ->
-        0.8
-
-      # Otherwise, do full normalization for fuzzy matching
-      true ->
-        # Normalize both titles with article removal and roman numeral conversion
-        norm1 = normalize_title(title1)
-        norm2 = normalize_title(title2)
-
-        cond do
-          # Exact match after full normalization
-          norm1 == norm2 ->
-            1.0
-
-          # Substring match after full normalization
-          String.contains?(norm1, norm2) || String.contains?(norm2, norm1) ->
-            0.9
-
-          # Jaro distance for fuzzy matching
-          true ->
-            jaro_similarity(norm1, norm2)
-        end
-    end
+    Text.title_similarity(title1, title2)
   end
 
   defp title_similarity(_title1, _title2), do: 0.0
@@ -919,81 +886,6 @@ defmodule Mydia.Library.MetadataMatcher do
   end
 
   defp year_match?(_result_year, _parsed_year), do: false
-
-  # Simple Jaro similarity implementation
-  # Returns a value between 0.0 (no match) and 1.0 (exact match)
-  defp jaro_similarity(s1, s2) do
-    len1 = String.length(s1)
-    len2 = String.length(s2)
-
-    # Empty strings
-    if len1 == 0 and len2 == 0, do: 1.0
-    if len1 == 0 or len2 == 0, do: 0.0
-
-    # Match window
-    match_distance = max(div(max(len1, len2), 2) - 1, 0)
-
-    s1_chars = String.graphemes(s1)
-    s2_chars = String.graphemes(s2)
-
-    {matches, transpositions} = calculate_matches(s1_chars, s2_chars, match_distance)
-
-    if matches == 0 do
-      0.0
-    else
-      (matches / len1 + matches / len2 + (matches - transpositions) / matches) / 3
-    end
-  end
-
-  defp calculate_matches(s1_chars, s2_chars, match_distance) do
-    len1 = length(s1_chars)
-    len2 = length(s2_chars)
-
-    s1_matches = List.duplicate(false, len1)
-    s2_matches = List.duplicate(false, len2)
-
-    # Find matches
-    {matches, s1_matches, s2_matches} =
-      Enum.reduce(0..(len1 - 1), {0, s1_matches, s2_matches}, fn i, {match_count, s1m, s2m} ->
-        char1 = Enum.at(s1_chars, i)
-        range_start = max(0, i - match_distance)
-        range_end = min(i + match_distance + 1, len2)
-
-        case find_match_in_range(char1, s2_chars, s2m, range_start, range_end) do
-          {:ok, j} ->
-            {match_count + 1, List.replace_at(s1m, i, true), List.replace_at(s2m, j, true)}
-
-          :not_found ->
-            {match_count, s1m, s2m}
-        end
-      end)
-
-    # Count transpositions
-    transpositions = count_transpositions(s1_chars, s2_chars, s1_matches, s2_matches)
-
-    {matches, div(transpositions, 2)}
-  end
-
-  defp find_match_in_range(char, chars, matches, range_start, range_end) do
-    Enum.reduce_while(range_start..(range_end - 1), :not_found, fn j, _acc ->
-      if !Enum.at(matches, j) and Enum.at(chars, j) == char do
-        {:halt, {:ok, j}}
-      else
-        {:cont, :not_found}
-      end
-    end)
-  end
-
-  defp count_transpositions(s1_chars, s2_chars, s1_matches, s2_matches) do
-    s1_matched =
-      Enum.zip(s1_chars, s1_matches) |> Enum.filter(&elem(&1, 1)) |> Enum.map(&elem(&1, 0))
-
-    s2_matched =
-      Enum.zip(s2_chars, s2_matches) |> Enum.filter(&elem(&1, 1)) |> Enum.map(&elem(&1, 0))
-
-    Enum.zip(s1_matched, s2_matched)
-    |> Enum.count(fn {c1, c2} -> c1 != c2 end)
-  end
 
   # Convert database metadata to MediaMetadata struct
   # If metadata is nil, create a minimal struct from the media item

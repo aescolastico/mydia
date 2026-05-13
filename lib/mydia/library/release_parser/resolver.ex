@@ -131,7 +131,7 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
     inferred_type = infer_type(episode_token, year_pick)
 
     {title_value, title_confidence} =
-      assemble_title(tokens, assignments, demoted_tokens, boundary)
+      assemble_title(tokens, assignments_map, demoted_tokens, boundary)
 
     base = %{
       type: inferred_type,
@@ -210,8 +210,8 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
       [] ->
         {per_token, demoted}
 
-      [{_, _}] = winner ->
-        {per_token, demoted_after(demoted, winner)}
+      [{_, _}] ->
+        {per_token, demoted}
 
       multi ->
         winner_pair = Enum.max_by(multi, fn {_, c} -> c.confidence end)
@@ -222,8 +222,6 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
         {per_token, demoted}
     end
   end
-
-  defp demoted_after(demoted, _winner), do: demoted
 
   defp strip_losers(per_token, losers, label) do
     loser_token_ids = MapSet.new(losers, fn {tok, _} -> token_key(tok) end)
@@ -557,14 +555,14 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
 
   # ---- Title assembly (unbound) ----
 
-  defp assemble_title(tokens, assignments, demoted_tokens, boundary) do
+  defp assemble_title(tokens, assignments_map, demoted_tokens, boundary) do
     # A token contributes to the title if its surviving slate is empty
     # (all non-title candidates lost their singleton fights) or if its
     # remaining best candidate is `:title_candidate`.
     title_tokens =
       tokens
       |> Enum.filter(fn token ->
-        cands = candidates_for_token(assignments, token)
+        cands = assignments_map_get(assignments_map, token) || []
         title_token?(cands)
       end)
 
@@ -574,16 +572,10 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
       cond do
         title_value == nil -> 0.0
         title_tokens == [] -> 0.5
-        true -> mean_title_confidence(title_tokens, assignments, demoted_tokens)
+        true -> mean_title_confidence(title_tokens, assignments_map, demoted_tokens)
       end
 
     {title_value, confidence}
-  end
-
-  defp candidates_for_token(assignments, %Token{} = token) do
-    assignments
-    |> Enum.filter(fn {t, _} -> token_key(t) == token_key(token) end)
-    |> Enum.map(fn {_, c} -> c end)
   end
 
   defp title_token?([]), do: true
@@ -593,11 +585,11 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
     best.label == :title_candidate
   end
 
-  defp mean_title_confidence(title_tokens, assignments, demoted_tokens) do
+  defp mean_title_confidence(title_tokens, assignments_map, demoted_tokens) do
     confidences =
       Enum.map(title_tokens, fn token ->
-        case candidates_for_token(assignments, token) do
-          [] ->
+        case assignments_map_get(assignments_map, token) do
+          empty when empty in [nil, []] ->
             # All candidates demoted — use degraded confidence.
             degraded_confidence(demoted_tokens, token)
 

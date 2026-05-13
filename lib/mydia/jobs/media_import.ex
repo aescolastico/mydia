@@ -442,7 +442,7 @@ defmodule Mydia.Jobs.MediaImport do
         {:error, {:path_not_found, path}}
     end
   rescue
-    e in File.Error ->
+    _e in File.Error ->
       {:error, {:path_not_accessible, path}}
   end
 
@@ -526,6 +526,7 @@ defmodule Mydia.Jobs.MediaImport do
 
     # Filter out extras, samples, and trailers
     files_to_import = filter_extras_and_samples(files_to_import)
+    parser_opts = parser_opts_for(download)
 
     if files_to_import == [] do
       Logger.warning("No importable files found in download",
@@ -538,7 +539,7 @@ defmodule Mydia.Jobs.MediaImport do
       # Import each file - destination path is determined per-file for TV shows
       results =
         Enum.map(files_to_import, fn file ->
-          import_file(file, download, library_path, args)
+          import_file(file, download, library_path, args, parser_opts)
         end)
 
       # Separate results into imported, unresolved, and errors
@@ -792,13 +793,18 @@ defmodule Mydia.Jobs.MediaImport do
 
   defp target_context_for(_download), do: nil
 
-  defp import_file(file, download, library_path, args) do
+  defp parser_opts_for(download) do
+    case target_context_for(download) do
+      nil -> []
+      target -> [target: target]
+    end
+  end
+
+  defp import_file(file, download, library_path, args, parser_opts) do
     # Parse filename to extract episode info for TV shows. When the
     # download is already bound to a known `%MediaItem{}`, pass it as
     # a `%TargetContext{}` so the parser locks type / title / year and
     # focuses on season + episode + quality.
-    target = target_context_for(download)
-    parser_opts = if target, do: [target: target], else: []
     parsed = ReleaseParser.parse(file.name, parser_opts)
 
     # Check if this is a season pack download

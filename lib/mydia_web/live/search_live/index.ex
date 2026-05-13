@@ -4,7 +4,6 @@ defmodule MydiaWeb.SearchLive.Index do
   alias Mydia.Indexers.SearchResult
   alias Mydia.Indexers.CategoryMapping
   alias Mydia.Library.ReleaseParser, as: FileParser
-  alias Mydia.Library.Text
   alias Mydia.Metadata
   alias Mydia.Media
   alias Mydia.Downloads
@@ -1171,18 +1170,11 @@ defmodule MydiaWeb.SearchLive.Index do
         _ -> :movie
       end
 
-    # Normalize the parsed title at the parser-output-to-search seam
-    # so the metadata relay sees a canonicalized query (downcase,
-    # accent-fold, article rotation, etc.) — same canonicalization the
-    # parser and metadata matcher use internally. See
-    # `Mydia.Library.Text.normalize_title/1`.
-    search_title = Text.normalize_title(parsed.title)
-
     # Search for the media
     search_opts = [media_type: media_type]
     search_opts = if parsed.year, do: [{:year, parsed.year} | search_opts], else: search_opts
 
-    case Metadata.search(config, search_title, search_opts) do
+    case Metadata.search(config, parsed.title, search_opts) do
       {:ok, []} ->
         Logger.warning("No metadata matches found for: #{parsed.title}")
         {:error, :no_metadata_match}
