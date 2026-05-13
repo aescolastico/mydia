@@ -25,7 +25,7 @@ defmodule Mydia.Indexers.Structs.SearchResultMetadata do
           season_pack: boolean() | nil,
           season_number: integer() | nil,
           episode_count: integer() | nil,
-          episode_ids: [integer()] | nil
+          episode_ids: [String.t()] | nil
         }
 
   @doc """
@@ -48,8 +48,8 @@ defmodule Mydia.Indexers.Structs.SearchResultMetadata do
 
   ## Examples
 
-      iex> season_pack(1, 10, [1, 2, 3])
-      %SearchResultMetadata{season_pack: true, season_number: 1, episode_count: 10, episode_ids: [1, 2, 3]}
+      iex> season_pack(1, 10, ["uuid-1", "uuid-2", "uuid-3"])
+      %SearchResultMetadata{season_pack: true, season_number: 1, episode_count: 10, episode_ids: ["uuid-1", "uuid-2", "uuid-3"]}
   """
   def season_pack(season_number, episode_count, episode_ids \\ []) do
     %__MODULE__{

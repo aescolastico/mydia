@@ -579,7 +579,8 @@ defmodule Mydia.Jobs.MediaImport do
   # re-download loop we hit in prod was bogus "season packs" that contained a
   # single episode file — without this check, the download was marked as
   # successfully imported and the next hourly search re-grabbed it.
-  defp detect_partial_pack(download, imported_files) do
+  @doc false
+  def detect_partial_pack(download, imported_files) do
     metadata = download.metadata || %{}
     expected_count = metadata["episode_count"]
 
