@@ -85,31 +85,79 @@ defmodule Mydia.Library.ReleaseParser.TitleAssembler do
   end
 
   # Capitalize a single token using byte slicing only.
+  #
+  # Semantics matching V2's `smart_capitalize/1` (lib/mydia/library/file_parser_v2.ex:1054):
+  #
+  # - All-uppercase ASCII (e.g. "MOVIE") → title-case ("Movie")
+  # - Mixed case that's neither all-upper nor capitalized (e.g. "ThE",
+  #   "MoViE") → title-case ("The", "Movie")
+  # - Already capitalized ("Movie") or contains a dash ("One-Punch") → unchanged
+  # - All lowercase → capitalize
+  # - All-digits → unchanged
   defp smart_capitalize(""), do: ""
 
   defp smart_capitalize(value) do
     cond do
-      has_upper?(value) -> value
       all_digits?(value) -> value
-      true -> title_case_byte(value)
+      contains_dash?(value) -> value
+      all_ascii_alpha?(value) and all_lower?(value) -> title_case_byte(value)
+      all_ascii_alpha?(value) and all_upper?(value) -> title_case_byte(value)
+      all_ascii_alpha?(value) and already_capitalized?(value) -> value
+      all_ascii_alpha?(value) -> title_case_byte(value)
+      true -> value
     end
   end
 
-  defp has_upper?(value) do
-    has_upper_bytes?(value, 0, byte_size(value))
+  defp contains_dash?(value) do
+    case :binary.match(value, "-") do
+      :nomatch -> false
+      _ -> true
+    end
   end
 
-  defp has_upper_bytes?(_value, idx, size) when idx >= size, do: false
+  defp all_ascii_alpha?(value) do
+    all_alpha_bytes?(value, 0, byte_size(value))
+  end
 
-  defp has_upper_bytes?(value, idx, size) do
+  defp all_alpha_bytes?(_value, idx, size) when idx >= size, do: true
+
+  defp all_alpha_bytes?(value, idx, size) do
     byte = :binary.at(value, idx)
 
-    if byte in ?A..?Z do
-      true
+    if byte in ?A..?Z or byte in ?a..?z do
+      all_alpha_bytes?(value, idx + 1, size)
     else
-      has_upper_bytes?(value, idx + 1, size)
+      false
     end
   end
+
+  defp all_lower?(value) do
+    all_lower_bytes?(value, 0, byte_size(value))
+  end
+
+  defp all_lower_bytes?(_value, idx, size) when idx >= size, do: true
+
+  defp all_lower_bytes?(value, idx, size) do
+    byte = :binary.at(value, idx)
+    if byte in ?a..?z, do: all_lower_bytes?(value, idx + 1, size), else: false
+  end
+
+  defp all_upper?(value) do
+    all_upper_bytes?(value, 0, byte_size(value))
+  end
+
+  defp all_upper_bytes?(_value, idx, size) when idx >= size, do: true
+
+  defp all_upper_bytes?(value, idx, size) do
+    byte = :binary.at(value, idx)
+    if byte in ?A..?Z, do: all_upper_bytes?(value, idx + 1, size), else: false
+  end
+
+  defp already_capitalized?(<<first, rest::binary>>) when first in ?A..?Z do
+    all_lower?(rest)
+  end
+
+  defp already_capitalized?(_), do: false
 
   defp all_digits?(value) do
     all_digits_bytes?(value, 0, byte_size(value))
@@ -127,13 +175,16 @@ defmodule Mydia.Library.ReleaseParser.TitleAssembler do
     end
   end
 
-  # Title-case via byte slicing. The first byte is an ASCII letter (we
-  # only get here when `has_upper?/1` returned false and `all_digits?/1`
-  # returned false). For multibyte leading characters we keep the input
-  # as-is, because byte-level uppercasing would corrupt them.
+  # Title-case via byte slicing. Works for ASCII letters; preserves
+  # multibyte leading characters (byte-level case ops would corrupt
+  # them).
   defp title_case_byte(<<first, rest::binary>>) when first in ?a..?z do
     upper_first = first - 32
     <<upper_first, String.downcase(rest)::binary>>
+  end
+
+  defp title_case_byte(<<first, rest::binary>>) when first in ?A..?Z do
+    <<first, String.downcase(rest)::binary>>
   end
 
   defp title_case_byte(value), do: value

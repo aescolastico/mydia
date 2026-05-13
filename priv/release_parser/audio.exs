@@ -41,7 +41,11 @@ alias Mydia.Library.ReleaseParser.VocabularyEntry
   # forms we actually see (`DDP`, `DDP5`, `DDP51`).
   %VocabularyEntry{
     label: :audio,
-    aliases: ["DDP", "DDP5", "DDP7", "DDP51", "DDP71", "EAC3"],
+    aliases:
+      ["EAC3"] ++
+        Enum.map(0..9, fn n -> "DDP#{n}" end) ++
+        Enum.flat_map(0..9, fn a -> Enum.map(0..9, fn b -> "DDP#{a}#{b}" end) end) ++
+        ["DDP"],
     canonical: "Dolby Digital Plus",
     confidence: 0.92,
     title_zone_bonus: -0.2,
@@ -49,7 +53,11 @@ alias Mydia.Library.ReleaseParser.VocabularyEntry
   },
   %VocabularyEntry{
     label: :audio,
-    aliases: ["DD", "DD5", "DD7", "DD51", "DD71", "AC3"],
+    aliases:
+      ["AC3"] ++
+        Enum.map(0..9, fn n -> "DD#{n}" end) ++
+        Enum.flat_map(0..9, fn a -> Enum.map(0..9, fn b -> "DD#{a}#{b}" end) end) ++
+        ["DD"],
     canonical: "Dolby Digital",
     confidence: 0.88,
     title_zone_bonus: -0.3,

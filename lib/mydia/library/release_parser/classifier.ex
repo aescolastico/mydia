@@ -95,9 +95,13 @@ defmodule Mydia.Library.ReleaseParser.Classifier do
   end
 
   defp vocab_candidates(%Token{value: value}, zone) do
-    value
-    |> Vocabulary.lookup()
-    |> Enum.map(fn %VocabularyEntry{} = entry ->
+    entries =
+      case Vocabulary.lookup(value) do
+        [] -> Vocabulary.lookup(strip_trailing_punct(value))
+        list -> list
+      end
+
+    Enum.map(entries, fn %VocabularyEntry{} = entry ->
       %Candidate{
         label: entry.label,
         value: entry.canonical,
@@ -105,6 +109,21 @@ defmodule Mydia.Library.ReleaseParser.Classifier do
         zone: zone
       }
     end)
+  end
+
+  # Strip trailing punctuation bytes (e.g. `DD+` → `DD`). Limited to
+  # ASCII so we don't touch multibyte token text.
+  defp strip_trailing_punct(""), do: ""
+
+  defp strip_trailing_punct(value) do
+    size = byte_size(value)
+    last = :binary.at(value, size - 1)
+
+    if last in ~c"+!?'" do
+      strip_trailing_punct(binary_part(value, 0, size - 1))
+    else
+      value
+    end
   end
 
   defp zone_bonus(%VocabularyEntry{} = entry, :title), do: entry.title_zone_bonus

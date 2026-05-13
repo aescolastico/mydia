@@ -19,9 +19,11 @@ defmodule Mydia.Library.ReleaseParser.TitleAssemblerTest do
       assert TitleAssembler.assemble(tokens, :infinity) == "Show Name"
     end
 
-    test "preserves already-capitalized tokens" do
+    test "normalizes mixed-case tokens to title-case (matches V2 smart_capitalize)" do
+      # V2's smart_capitalize/1 normalizes `iPhone` to `Iphone` via
+      # `String.capitalize/1` and we preserve V2's behavior for parity.
       tokens = [token("iPhone", 0), token("App", 7)]
-      assert TitleAssembler.assemble(tokens, :infinity) == "iPhone App"
+      assert TitleAssembler.assemble(tokens, :infinity) == "Iphone App"
     end
 
     test "drops tokens past the title boundary" do
@@ -58,10 +60,11 @@ defmodule Mydia.Library.ReleaseParser.TitleAssemblerTest do
       assert TitleAssembler.assemble(tokens, :infinity) == "Single"
     end
 
-    test "smart capitalization downcases the tail of an uppercase-led lowercase word" do
+    test "all-uppercase words are title-cased (matches V2)" do
+      # V2's smart_capitalize/1 lowers all-upper to title-case via
+      # `String.capitalize/1`. We preserve V2's behavior for parity.
       tokens = [token("MOVIE", 0)]
-      # MOVIE has upper-case so it stays as-is (preserves brand styling).
-      assert TitleAssembler.assemble(tokens, :infinity) == "MOVIE"
+      assert TitleAssembler.assemble(tokens, :infinity) == "Movie"
     end
 
     test "fully lowercase word with no upper is title-cased" do

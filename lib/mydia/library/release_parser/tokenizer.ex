@@ -42,12 +42,15 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
                      "HI10P-HI10"
                    ])
 
-  @year_re ~r/(?<![0-9])(19\d{2}|20\d{2})(?![0-9])/
+  # Prefer parenthesized / bracketed years (V2 calls them "primary").
+  @year_re_primary ~r/[\(\[](19\d{2}|20\d{2})[\)\]]/
+  @year_re_secondary ~r/(?<![0-9])(19\d{2}|20\d{2})(?![0-9])/
 
-  @resolution_re ~r/(?<![0-9a-zA-Z])(?:480|540|576|720|1080|1440|2160|4320)[pi](?![a-zA-Z])/i
+  @resolution_re ~r/(?<![0-9a-zA-Z])(?:(?:480|540|576|720|1080|1440|2160|4320)[pi]|4K|8K|UHD)(?![a-zA-Z])/i
 
   @episode_markers [
-    ~r/(?<![a-zA-Z])S\d{1,3}E\d{1,4}(?:[-\s.]?E?\d{1,4})*(?![a-zA-Z])/i,
+    # S01E01 / S01-E01 / S01 E01 / S01.E01, with optional multi-episode tails.
+    ~r/(?<![a-zA-Z])S\d{1,3}[-\s.]?E\d{1,4}(?:[-\s.]?E?\d{1,4})*(?![a-zA-Z])/i,
     ~r/(?<![a-zA-Z])\d{1,3}x\d{1,4}(?![a-zA-Z0-9])/i,
     ~r/(?<![a-zA-Z])S\d{1,3}(?![0-9a-zA-Z])/i,
     ~r/\b[Ss]eason[\s._]+\d{1,3}\b/
@@ -83,11 +86,18 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
     stripped = drop_extension(input)
 
     episode = first_match_pos(stripped, @episode_markers)
-    year = first_match_pos(stripped, [@year_re])
+    primary_year = first_capture_pos(stripped, @year_re_primary)
+
+    year =
+      cond do
+        primary_year != nil -> primary_year
+        true -> first_match_pos(stripped, [@year_re_secondary])
+      end
+
     resolution = first_match_pos(stripped, [@resolution_re])
 
     %{
-      year: year_after_episode_only(year, episode),
+      year: year_after_episode_only(year, episode, primary_year),
       resolution: resolution,
       episode_marker: episode
     }
@@ -220,10 +230,24 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
   defp min_or_take(nil, pos), do: pos
   defp min_or_take(curr, pos), do: min(curr, pos)
 
-  defp year_after_episode_only(nil, _), do: nil
-  defp year_after_episode_only(year, nil), do: year
-  defp year_after_episode_only(year, ep) when year < ep, do: nil
-  defp year_after_episode_only(year, _), do: year
+  # Year-before-episode carve-out: only fire when the year is at
+  # position 0 (i.e. the title literally starts with the year, like
+  # `2001 A Space Odyssey S01E01`). If a parenthesized year matched we
+  # trust that unconditionally.
+  defp year_after_episode_only(nil, _, _), do: nil
+  defp year_after_episode_only(year, nil, _), do: year
+  defp year_after_episode_only(year, _ep, primary_year) when primary_year != nil, do: year
+  defp year_after_episode_only(0, _ep, _), do: nil
+  defp year_after_episode_only(year, _, _), do: year
+
+  # Capture the first capture group (used for parenthesized years where
+  # the match start includes the bracket but we want the digit position).
+  defp first_capture_pos(input, regex) do
+    case Regex.run(regex, input, return: :index) do
+      [_full, {pos, _len} | _] -> pos
+      _ -> nil
+    end
+  end
 
   defp apply_compound_dash_splits(tokens) do
     Enum.flat_map(tokens, fn token ->

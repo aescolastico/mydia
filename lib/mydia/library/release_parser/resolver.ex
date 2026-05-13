@@ -140,6 +140,7 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
       quality_tokens: quality_tokens,
       release_group: release_group,
       language: language,
+      all_tokens: tokens,
       field_confidence: %{},
       engine_flags: nil,
       binding_confidence: nil
@@ -323,13 +324,60 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
         season_only(tokens, assignments_map)
 
       %Token{value: value} = token ->
-        {season, episodes} = parse_episode_marker(value)
+        {season, episodes} =
+          case parse_episode_marker(value) do
+            {nil, []} -> verbose_season_extract(tokens, token)
+            other -> other
+          end
+
         extended = extend_with_adjacent(tokens, token, episodes)
         marker_cand = find_candidate(assignments_map, token, :episode_marker)
         confidence = if marker_cand, do: marker_cand.confidence, else: 0.95
         {season, extended, token, confidence}
     end
   end
+
+  # `Season N` / `Season N Episode M` verbose form. The marker token is
+  # `Season`. Look at the immediate followers for the integer values.
+  defp verbose_season_extract(tokens, %Token{} = marker) do
+    after_marker =
+      tokens
+      |> Enum.drop_while(fn t -> token_key(t) != token_key(marker) end)
+      |> Enum.drop(1)
+
+    case after_marker do
+      [%Token{value: season_str} | rest] ->
+        case Integer.parse(season_str) do
+          {season, ""} ->
+            episodes =
+              case verbose_episode_extract(rest) do
+                {:ok, eps} -> eps
+                :error -> []
+              end
+
+            {season, episodes}
+
+          _ ->
+            {nil, nil}
+        end
+
+      _ ->
+        {nil, nil}
+    end
+  end
+
+  defp verbose_episode_extract([%Token{value: word} | [%Token{value: ep_str} | _]]) do
+    if String.downcase(word) == "episode" do
+      case Integer.parse(ep_str) do
+        {ep, ""} -> {:ok, [ep]}
+        _ -> :error
+      end
+    else
+      :error
+    end
+  end
+
+  defp verbose_episode_extract(_), do: :error
 
   defp assignments_map_get(map, %Token{} = token) do
     Map.get(map, token_key(token))
@@ -371,12 +419,23 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
       result = parse_sxxexx(value) -> result
       result = parse_axb(value) -> result
       result = parse_season_only(value) -> result
+      result = parse_verbose_season(value) -> result
       true -> {nil, nil}
     end
   end
 
+  # Verbose "Season N" (and Sometimes "Episode N") tokens. The marker
+  # value will be just "Season" — the season number lives in the next
+  # token. We return {nil, nil} here and rely on extend_with_adjacent
+  # for the actual extraction (handled below).
+  defp parse_verbose_season(value) do
+    if Regex.match?(~r/^season$/i, value), do: {nil, []}, else: nil
+  end
+
   defp parse_sxxexx(value) do
-    case Regex.run(~r/^[Ss](\d{1,3})(?:[Ee](\d{1,4}))?/, value) do
+    # Accept S01E01, S01-E01, S01 E01, S01.E01 separators between
+    # season and episode digits.
+    case Regex.run(~r/^[Ss](\d{1,3})(?:[-\s.]?[Ee](\d{1,4}))?/, value) do
       [_, season_str] ->
         {String.to_integer(season_str), []}
 
