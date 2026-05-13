@@ -25,7 +25,8 @@ defmodule Mydia.Jobs.MediaImport do
   alias Mydia.{Downloads, Library, Media, Settings}
   alias Mydia.Downloads.Client
   alias Mydia.Library.{FileAnalyzer, FileNamer, FileOrganizer, SampleDetector}
-  alias Mydia.Library.FileParser.V2, as: FileParser
+  alias Mydia.Library.ReleaseParser
+  alias Mydia.Library.ReleaseParser.TargetContext
   alias Mydia.Indexers.QualityParser
   alias Mydia.MediaServer.Notifier, as: MediaServerNotifier
   alias Mydia.Metadata.NfoWriter
@@ -90,7 +91,9 @@ defmodule Mydia.Jobs.MediaImport do
     )
 
     download =
-      Downloads.get_download!(download_id, preload: [:media_item, :episode, :library_path])
+      Downloads.get_download!(download_id,
+        preload: [{:media_item, :episodes}, :episode, :library_path]
+      )
 
     if is_nil(download.completed_at) do
       # Download not yet completed - use snooze mechanism instead of returning ok
@@ -236,7 +239,9 @@ defmodule Mydia.Jobs.MediaImport do
 
           # Reload download to check if it was flagged as having unresolved files
           updated_download =
-            Downloads.get_download!(download.id, preload: [:media_item, :episode, :library_path])
+            Downloads.get_download!(download.id,
+              preload: [{:media_item, :episodes}, :episode, :library_path]
+            )
 
           has_unresolved = updated_download.match_status == "unresolved_files"
 
@@ -777,9 +782,24 @@ defmodule Mydia.Jobs.MediaImport do
     end)
   end
 
+  # Build a `%TargetContext{}` from the download's preloaded
+  # `%MediaItem{}` (with `:episodes`). Returns `nil` when the download
+  # has no bound media item — the parser then runs unbound and infers
+  # type/title/year from the filename.
+  defp target_context_for(%{media_item: %Mydia.Media.MediaItem{} = media_item}) do
+    TargetContext.from_media_item(media_item)
+  end
+
+  defp target_context_for(_download), do: nil
+
   defp import_file(file, download, library_path, args) do
-    # Parse filename to extract episode info for TV shows
-    parsed = FileParser.parse(file.name)
+    # Parse filename to extract episode info for TV shows. When the
+    # download is already bound to a known `%MediaItem{}`, pass it as
+    # a `%TargetContext{}` so the parser locks type / title / year and
+    # focuses on season + episode + quality.
+    target = target_context_for(download)
+    parser_opts = if target, do: [target: target], else: []
+    parsed = ReleaseParser.parse(file.name, parser_opts)
 
     # Check if this is a season pack download
     is_season_pack = get_in(download.metadata, ["season_pack"]) == true
@@ -1133,8 +1153,9 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp create_media_file_record(path, size, episode, download, library_path) do
-    # Extract metadata from filename first (as fallback)
-    filename_metadata = FileParser.parse(Path.basename(path))
+    # Extract metadata from filename first (as fallback). Quality only —
+    # no `%TargetContext{}` needed here.
+    filename_metadata = ReleaseParser.parse(Path.basename(path))
 
     Logger.debug("Parsed filename metadata",
       path: path,

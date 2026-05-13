@@ -7,7 +7,7 @@ defmodule Mydia.Library do
   import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator}
-  alias Mydia.Library.FileParser.V2, as: FileParser
+  alias Mydia.Library.ReleaseParser, as: FileParser
 
   require Logger
 
