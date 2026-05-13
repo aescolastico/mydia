@@ -65,14 +65,8 @@ defmodule Mydia.Jobs.MediaImport do
       }
     end
 
-    defp parse_save_path(nil), do: nil
-
-    defp parse_save_path(save_path) when is_binary(save_path) do
-      case String.trim(save_path) do
-        "" -> nil
-        trimmed_path -> trimmed_path
-      end
-    end
+    defp parse_save_path(save_path) when save_path in [nil, ""], do: nil
+    defp parse_save_path(save_path) when is_binary(save_path), do: save_path
   end
 
   # Exponential backoff schedule in seconds

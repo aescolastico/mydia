@@ -60,6 +60,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   require Logger
+  @invalid_filename_chars ~r{[<>:"/\\|?*]}
 
   @impl true
   def test_connection(config) do
@@ -623,8 +624,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     |> Map.put_new(:api_key, api_from_options)
   end
 
-  defp add_optional_param(params, _key, nil), do: params
-  defp add_optional_param(params, _key, ""), do: params
+  defp add_optional_param(params, _key, value) when value in [nil, ""], do: params
 
   defp add_optional_param(params, key, value) do
     params ++ [{key, value}]
@@ -635,8 +635,6 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   defp map_priority(:normal), do: "0"
   defp map_priority(:high), do: "1"
   defp map_priority(_), do: nil
-
-  defp nzb_filename(nil), do: "upload.nzb"
 
   defp nzb_filename(title) do
     case sanitize_filename_title(title) do
@@ -654,10 +652,11 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     end
   end
 
+  defp sanitize_filename_title(nil), do: nil
+
   defp sanitize_filename_title(title) when is_binary(title) do
     title
-    |> String.trim()
-    |> String.replace(~r{[<>:"/\\|?*]}, "_")
+    |> String.replace(@invalid_filename_chars, "_")
     |> case do
       "" -> nil
       sanitized -> sanitized

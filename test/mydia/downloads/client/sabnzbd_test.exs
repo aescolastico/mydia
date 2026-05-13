@@ -318,7 +318,8 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
                Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"})
     end
 
-    test "no nzbname param when title is empty for URL addition", %{bypass: bypass, config: config} do
+    test "no nzbname param when title is empty string for URL addition",
+         %{bypass: bypass, config: config} do
       Bypass.expect(bypass, "GET", "/api", fn conn ->
         conn = Plug.Conn.fetch_query_params(conn)
         refute Map.has_key?(conn.query_params, "nzbname")
