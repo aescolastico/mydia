@@ -60,6 +60,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   require Logger
+  @invalid_filename_chars ~r{[<>:"/\\|?*]}
 
   @impl true
   def test_connection(config) do
@@ -109,6 +110,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   defp do_add_nzb(config, {:url, url}, opts) do
     req = HTTP.new_request(config)
+    title = normalize_title(opts[:title])
 
     params =
       [
@@ -119,6 +121,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
 
@@ -149,8 +152,8 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   defp do_add_nzb(config, {:file, file_contents}, opts) do
     req = HTTP.new_request(config)
+    title = normalize_title(opts[:title])
 
-    # For file uploads, we need to use multipart form data
     params =
       [
         apikey: config.api_key,
@@ -159,24 +162,24 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
       ]
       |> add_optional_param(:cat, opts[:category])
       |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
 
-    # Create multipart form with the NZB file
-    # Write the NZB bytes to a temporary file so we can stream it using File.stream!/3.
     tmp_file =
       Path.join(System.tmp_dir!(), "mydia_upload_#{:erlang.unique_integer([:positive])}.nzb")
 
-    # Write the binary contents to a temporary file (will raise on failure)
     File.write!(tmp_file, file_contents)
 
-    # Create a File.Stream for multipart upload and gather file metadata
     stream = File.stream!(tmp_file, [], 2048)
     stat = File.stat!(tmp_file)
 
+    multipart_filename = nzb_filename(title)
+
     multipart_body = [
       {"nzbfile",
-       {stream, [filename: "upload.nzb", content_type: MIME.from_path(tmp_file), size: stat.size]}}
+       {stream,
+        [filename: multipart_filename, content_type: MIME.from_path(tmp_file), size: stat.size]}}
     ]
 
     # Perform the request and ensure the temp file is removed afterwards
@@ -621,7 +624,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     |> Map.put_new(:api_key, api_from_options)
   end
 
-  defp add_optional_param(params, _key, nil), do: params
+  defp add_optional_param(params, _key, value) when value in [nil, ""], do: params
 
   defp add_optional_param(params, key, value) do
     params ++ [{key, value}]
@@ -632,4 +635,31 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   defp map_priority(:normal), do: "0"
   defp map_priority(:high), do: "1"
   defp map_priority(_), do: nil
+
+  defp nzb_filename(title) do
+    case sanitize_filename_title(title) do
+      nil -> "upload.nzb"
+      safe_title -> "#{safe_title}.nzb"
+    end
+  end
+
+  defp normalize_title(nil), do: nil
+
+  defp normalize_title(title) when is_binary(title) do
+    case String.trim(title) do
+      "" -> nil
+      trimmed_title -> trimmed_title
+    end
+  end
+
+  defp sanitize_filename_title(nil), do: nil
+
+  defp sanitize_filename_title(title) when is_binary(title) do
+    title
+    |> String.replace(@invalid_filename_chars, "_")
+    |> case do
+      "" -> nil
+      sanitized -> sanitized
+    end
+  end
 end
