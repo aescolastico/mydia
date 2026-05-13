@@ -27,14 +27,16 @@ RUN apt-get update -qq && \
 RUN which rustc || (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable && \
     chmod -R a+w /opt/rustup /opt/cargo 2>/dev/null || true)
 
-# Install Flutter if not present
+# Install Flutter if not present.
+# Note: /opt/flutter/bin isn't on PATH yet at this point (the ENV directive is below),
+# so invoke the binary by absolute path during install.
 RUN which flutter || ( \
     curl -L https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.38.6-stable.tar.xz -o flutter.tar.xz && \
     tar xf flutter.tar.xz -C /opt && \
     rm flutter.tar.xz && \
     git config --global --add safe.directory /opt/flutter && \
-    flutter config --no-analytics && \
-    flutter precache --web --no-android --no-ios --no-linux --no-windows --no-macos --no-fuchsia && \
+    /opt/flutter/bin/flutter config --no-analytics && \
+    /opt/flutter/bin/flutter precache --web --no-android --no-ios --no-linux --no-windows --no-macos --no-fuchsia && \
     chmod -R a+w /opt/flutter)
 
 # Install Hex and Rebar if not present
