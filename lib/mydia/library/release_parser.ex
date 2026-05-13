@@ -2,9 +2,10 @@ defmodule Mydia.Library.ReleaseParser do
   @moduledoc """
   Public facade for the V3 release-name parser.
 
-  Replaces `Mydia.Library.FileParser.V2.parse/2` and
-  `parse_with_path/2`. Same return shape (`%ParsedFileInfo{}`), same
-  `opts[:standardize]` semantics — plus two new optional fields
+  The production parser used by `Mydia.Library`, `Mydia.Jobs.MediaImport`,
+  `Mydia.Jobs.LibraryScanner`, `Mydia.Library.MetadataMatcher`, and
+  `MydiaWeb.SearchLive.Index`. Returns `%ParsedFileInfo{}` with two
+  optional fields beyond the historical V2 surface
   (`field_confidence`, `engine_flags`) carrying parser confidence and
   sideband signals.
 
@@ -97,7 +98,7 @@ defmodule Mydia.Library.ReleaseParser do
 
   @doc """
   Parse a full file path using folder structure to enhance matching
-  accuracy. Mirrors `Mydia.Library.FileParser.V2.parse_with_path/2`.
+  accuracy.
 
   Runs `PathParser.extract_from_path/1` (TV structure) or
   `PathParser.extract_movie_from_path/1` (movie structure) **once**,
