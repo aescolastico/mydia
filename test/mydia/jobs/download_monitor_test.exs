@@ -522,7 +522,351 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
     end
   end
 
+  describe "stall detection" do
+    test "initializes last_progress_at the first time an active download is observed" do
+      # No clients configured — the active download will be in "missing" state,
+      # so it won't reach the stall-tracking path. Initialization happens only
+      # for downloads whose client reports them. Validate that path via Bypass.
+      {bypass, client_config} = start_sabnzbd_bypass()
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-init-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-init-1",
+          last_progress_at: nil,
+          last_known_bytes: 0
+        })
+
+      now = ~U[2026-05-14 12:00:00.000000Z]
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+
+      # First observation: last_progress_at initialized to `now`, bytes captured.
+      assert updated.last_progress_at == now
+      assert updated.last_known_bytes == round(50.0 * 1024 * 1024)
+      assert is_nil(updated.import_failed_at)
+    end
+
+    test "updates last_progress_at and last_known_bytes when bytes increase" do
+      {bypass, client_config} = start_sabnzbd_bypass()
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-progress-1", "test.nzb", size_mb: 100.0, mb_left: 40.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      first_seen = ~U[2026-05-14 11:00:00.000000Z]
+      prev_bytes = round(50.0 * 1024 * 1024)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-progress-1",
+          last_progress_at: first_seen,
+          last_known_bytes: prev_bytes
+        })
+
+      now = ~U[2026-05-14 12:00:00.000000Z]
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      # Bytes increased from ~50MB to ~60MB — progress recorded, no stall flag.
+      assert updated.last_progress_at == now
+      assert updated.last_known_bytes == round(60.0 * 1024 * 1024)
+      assert is_nil(updated.import_failed_at)
+    end
+
+    test "leaves last_progress_at unchanged when bytes are unchanged within grace window" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-stuck-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      first_seen = ~U[2026-05-14 11:30:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-stuck-1",
+          last_progress_at: first_seen,
+          last_known_bytes: same_bytes
+        })
+
+      # 30 minutes after first_seen — still within the 60-minute grace window.
+      now = ~U[2026-05-14 12:00:00.000000Z]
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert updated.last_progress_at == first_seen
+      assert updated.last_known_bytes == same_bytes
+      assert is_nil(updated.import_failed_at)
+    end
+
+    test "does not stall at the exact grace boundary (strict >)" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-boundary-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      first_seen = ~U[2026-05-14 11:00:00.000000Z]
+      # exactly 60 minutes later (== grace) — strict > means NOT yet stalled.
+      now = ~U[2026-05-14 12:00:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-boundary-1",
+          last_progress_at: first_seen,
+          last_known_bytes: same_bytes
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert is_nil(updated.import_failed_at)
+      assert is_nil(updated.import_last_error)
+    end
+
+    test "flags as stalled when bytes are unchanged past the grace window" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-stalled-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      first_seen = ~U[2026-05-14 10:00:00.000000Z]
+      # 61 minutes later — past the 60m grace window by 1 minute.
+      now = ~U[2026-05-14 11:01:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-stalled-1",
+          last_progress_at: first_seen,
+          last_known_bytes: same_bytes
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      # import_failed_at is :utc_datetime (second precision), so compare via diff.
+      assert updated.import_failed_at != nil
+      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
+      assert updated.import_last_error =~ "stalled"
+      assert updated.import_last_error == "stalled after 60m without progress"
+    end
+
+    test "respects per-client incomplete_grace_minutes" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 15)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-grace15-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      first_seen = ~U[2026-05-14 10:00:00.000000Z]
+      # 16 minutes later — past the 15m grace window.
+      now = ~U[2026-05-14 10:16:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-grace15-1",
+          last_progress_at: first_seen,
+          last_known_bytes: same_bytes
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert updated.import_failed_at != nil
+      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
+      assert updated.import_last_error == "stalled after 15m without progress"
+    end
+
+    test "does not flag stalled in terminal state (completed)" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 5)
+
+      mock_sabnzbd_queue(bypass, [],
+        history: [
+          sabnzbd_history_item("nzo-completed-1", "test.nzb", "Completed")
+        ]
+      )
+
+      media_item = media_item_fixture()
+
+      # Last progress was 1 hour ago — well past the 5-minute grace — but
+      # the client now reports the download as completed, so stall detection
+      # must not kick in. We also set `completed_at` and `imported_at` so the
+      # other monitor branches (handle_completion, list_stuck_downloads) treat
+      # this row as already done — leaving only the stall-tracking path under
+      # test.
+      first_seen = ~U[2026-05-14 10:00:00.000000Z]
+      now = ~U[2026-05-14 11:00:00.000000Z]
+      bytes = round(50.0 * 1024 * 1024)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-completed-1",
+          last_progress_at: first_seen,
+          last_known_bytes: bytes,
+          completed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert is_nil(updated.import_failed_at)
+    end
+
+    test "does not stomp an existing import_failed_at on subsequent polls" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 5)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-already-failed-1", "test.nzb",
+          size_mb: 100.0,
+          mb_left: 50.0
+        )
+      ])
+
+      media_item = media_item_fixture()
+
+      one_hour_ago = ~U[2026-05-14 10:00:00.000000Z]
+      previous_failure_at = ~U[2026-05-14 10:30:00.000000Z]
+      now = ~U[2026-05-14 11:00:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-already-failed-1",
+          last_progress_at: one_hour_ago,
+          last_known_bytes: same_bytes,
+          import_failed_at: previous_failure_at,
+          import_last_error: "stalled after 5m without progress"
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      # Pre-existing failure_at must remain — we don't re-flag every poll.
+      assert DateTime.diff(updated.import_failed_at, previous_failure_at, :second) == 0
+    end
+  end
+
   ## Helper Functions
+
+  defp start_sabnzbd_bypass(opts \\ []) do
+    bypass = Bypass.open()
+    grace = Keyword.get(opts, :incomplete_grace_minutes, 60)
+
+    {:ok, client_config} =
+      Mydia.Settings.create_download_client_config(%{
+        name: "SABnzbd-StallTest-#{System.unique_integer([:positive])}",
+        type: :sabnzbd,
+        host: "localhost",
+        port: bypass.port,
+        api_key: "test-api-key",
+        enabled: true,
+        priority: 1,
+        incomplete_grace_minutes: grace
+      })
+
+    {bypass, client_config}
+  end
+
+  defp mock_sabnzbd_queue(bypass, queue_slots, opts \\ []) do
+    history_slots = Keyword.get(opts, :history, [])
+
+    Bypass.expect(bypass, "GET", "/api", fn conn ->
+      conn = Plug.Conn.fetch_query_params(conn)
+
+      case conn.query_params["mode"] do
+        "queue" ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, Jason.encode!(%{"queue" => %{"slots" => queue_slots}}))
+
+        "history" ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            200,
+            Jason.encode!(%{"history" => %{"slots" => history_slots}})
+          )
+
+        _other ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, Jason.encode!(%{}))
+      end
+    end)
+  end
+
+  defp sabnzbd_queue_item(nzo_id, filename, opts) do
+    size_mb = Keyword.fetch!(opts, :size_mb)
+    mb_left = Keyword.fetch!(opts, :mb_left)
+
+    %{
+      "nzo_id" => nzo_id,
+      "filename" => filename,
+      "status" => "Downloading",
+      "mb" => size_mb,
+      "mbleft" => mb_left,
+      "kbpersec" => 0.0,
+      "timeleft" => "0:00:00",
+      "storage" => "/downloads",
+      "added" => System.system_time(:second)
+    }
+  end
+
+  defp sabnzbd_history_item(nzo_id, filename, status) do
+    %{
+      "nzo_id" => nzo_id,
+      "filename" => filename,
+      "status" => status,
+      "bytes" => 1_000_000,
+      "storage" => "/downloads",
+      "completed" => System.system_time(:second)
+    }
+  end
 
   defp setup_runtime_config(download_clients) do
     config = %Mydia.Config.Schema{
