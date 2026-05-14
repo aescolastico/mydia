@@ -122,6 +122,7 @@ defmodule Mydia.Config.Loader do
       database: load_database_env(),
       auth: load_auth_env(),
       media: load_media_env(),
+      metadata: load_metadata_env(),
       downloads: load_downloads_env(),
       logging: load_logging_env(),
       oban: load_oban_env(),
@@ -191,6 +192,11 @@ defmodule Mydia.Config.Loader do
     )
     |> put_if_present(:auto_search_on_add, System.get_env("AUTO_SEARCH_ON_ADD"), &parse_boolean/1)
     |> put_if_present(:monitor_by_default, System.get_env("MONITOR_BY_DEFAULT"), &parse_boolean/1)
+  end
+
+  defp load_metadata_env do
+    %{}
+    |> put_if_present(:language, System.get_env("METADATA_LANGUAGE"))
   end
 
   defp load_downloads_env do

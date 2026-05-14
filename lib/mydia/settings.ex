@@ -770,6 +770,12 @@ defmodule Mydia.Settings do
   defdelegate get_media_config(), to: Mydia.Settings.RuntimeConfig
 
   @doc """
+  Gets metadata provider configuration.
+  """
+  @spec get_metadata_config() :: Mydia.Config.Schema.Metadata.t()
+  defdelegate get_metadata_config(), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
   Gets downloads configuration.
   """
   @spec get_downloads_config() :: Mydia.Config.Schema.Downloads.t() | nil

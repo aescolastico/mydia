@@ -218,6 +218,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       end
 
     flaresolverr = config.flaresolverr || %Mydia.Config.Schema.FlareSolverr{}
+    metadata = config.metadata || %Mydia.Config.Schema.Metadata{}
 
     # Fetch all DB settings in one query to avoid N+1 per-key lookups
     all_db_settings = Settings.list_config_settings() |> Map.new(&{&1.key, &1})
@@ -307,6 +308,18 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           value: config.media.scan_interval_hours,
           source:
             get_source("MEDIA_SCAN_INTERVAL_HOURS", "media.scan_interval_hours", all_db_settings)
+        }
+      ],
+      "Metadata" => [
+        %{
+          key: "metadata.language",
+          label: "Language",
+          description:
+            "Locale sent to TMDB/TVDB through the metadata relay (ISO 639-1 like \"de\" or BCP 47 like \"de-DE\"). Affects displayed titles, descriptions, and posters.",
+          type: :string,
+          value: metadata.language,
+          placeholder: "en-US",
+          source: get_source("METADATA_LANGUAGE", "metadata.language", all_db_settings)
         }
       ],
       "Downloads" => [
@@ -488,6 +501,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       "Database" -> :general
       "Authentication" -> :auth
       "Media" -> :media
+      "Metadata" -> :metadata
       "Downloads" -> :downloads
       "Crash Reporting" -> :crash_reporting
       "Notifications" -> :notifications

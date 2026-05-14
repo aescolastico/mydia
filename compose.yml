@@ -40,6 +40,7 @@ services:
 
       # Metadata relay configuration
       METADATA_RELAY_URL: ${METADATA_RELAY_URL:-https://relay.mydia.dev}
+      METADATA_LANGUAGE: ${METADATA_LANGUAGE:-en-US}
 
       # P2P bind port for direct connections (iroh hole punching)
       # Must match the exposed UDP port below

@@ -14,6 +14,7 @@ defmodule Mydia.Config.Schema do
           database: __MODULE__.Database.t() | nil,
           auth: __MODULE__.Auth.t() | nil,
           media: __MODULE__.Media.t() | nil,
+          metadata: __MODULE__.Metadata.t() | nil,
           downloads: __MODULE__.Downloads.t() | nil,
           logging: __MODULE__.Logging.t() | nil,
           oban: __MODULE__.Oban.t() | nil,
@@ -69,6 +70,12 @@ defmodule Mydia.Config.Schema do
       field :monitor_by_default, :boolean, default: true
       field :season_refresh_threshold_hours, :integer, default: 24
       field :completed_show_refresh_threshold_hours, :integer, default: 168
+    end
+
+    embeds_one :metadata, Metadata, on_replace: :update, primary_key: false do
+      # Language sent to TMDB/TVDB through metadata-relay. Accepts ISO 639-1
+      # codes ("de") or BCP 47 language tags ("de-DE", "pt-BR").
+      field :language, :string, default: "en-US"
     end
 
     embeds_one :downloads, Downloads, on_replace: :update, primary_key: false do
@@ -159,6 +166,7 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:database, with: &database_changeset/2)
     |> cast_embed(:auth, with: &auth_changeset/2)
     |> cast_embed(:media, with: &media_changeset/2)
+    |> cast_embed(:metadata, with: &metadata_changeset/2)
     |> cast_embed(:downloads, with: &downloads_changeset/2)
     |> cast_embed(:logging, with: &logging_changeset/2)
     |> cast_embed(:oban, with: &oban_changeset/2)
@@ -242,6 +250,13 @@ defmodule Mydia.Config.Schema do
     |> validate_number(:scan_interval_hours, greater_than: 0)
     |> validate_number(:season_refresh_threshold_hours, greater_than: 0)
     |> validate_number(:completed_show_refresh_threshold_hours, greater_than: 0)
+  end
+
+  defp metadata_changeset(schema, attrs) do
+    schema
+    |> cast(attrs, [:language])
+    |> validate_required([:language])
+    |> validate_length(:language, min: 2, max: 16)
   end
 
   defp downloads_changeset(schema, attrs) do
@@ -436,6 +451,7 @@ defmodule Mydia.Config.Schema do
       database: %__MODULE__.Database{},
       auth: %__MODULE__.Auth{},
       media: %__MODULE__.Media{},
+      metadata: %__MODULE__.Metadata{},
       downloads: %__MODULE__.Downloads{},
       logging: %__MODULE__.Logging{},
       oban: %__MODULE__.Oban{},
