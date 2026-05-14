@@ -136,17 +136,370 @@ defmodule Mydia.Downloads.Client.QBittorrentTest do
     end
   end
 
-  # Note: Full integration tests would require either:
-  # 1. A real qBittorrent instance (can be configured via environment variables)
-  # 2. HTTP mocking library like Bypass or Mox to simulate qBittorrent responses
-  #
-  # Integration tests should verify:
-  # - Authentication flow with valid/invalid credentials
-  # - Adding torrents (magnet links, files, URLs) with various options
-  # - Retrieving torrent status with all fields parsed correctly
-  # - Listing torrents with various filters (state, category, tag)
-  # - Removing torrents with/without file deletion
-  # - Pausing and resuming torrents
-  # - State mapping (downloading, seeding, paused, error, etc.)
-  # - Error handling for various failure scenarios
+  # ──────────────────────────────────────────────────────────────────
+  # Bypass-based integration tests
+  # ──────────────────────────────────────────────────────────────────
+
+  describe "authentication (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      {:ok, bypass: bypass, config: bypass_config(bypass)}
+    end
+
+    test "extracts SID cookie even when multiple Set-Cookie headers are present", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "1234567890abcdef1234567890abcdef12345678"
+
+      Bypass.expect(bypass, "POST", "/api/v2/auth/login", fn conn ->
+        # Real qBittorrent sometimes sets a CSRF cookie alongside SID.
+        # We must pick the SID cookie, not the first one.
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "_csrf=ignored; Path=/")
+        |> Plug.Conn.merge_resp_headers([
+          {"set-cookie", "SID=session-abc-123; HttpOnly; Path=/"}
+        ])
+        |> Plug.Conn.resp(200, "Ok.")
+      end)
+
+      Bypass.expect(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        # The request must carry our SID, not the _csrf cookie.
+        assert ["SID=session-abc-123"] = Plug.Conn.get_req_header(conn, "cookie")
+        json_resp(conn, 200, [torrent_payload(hash)])
+      end)
+
+      assert {:ok, status} = QBittorrent.get_status(config, hash)
+      assert status.id == hash
+    end
+
+    test "re-authenticates on 403 and retries the original request", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "abc123def456abc123def456abc123def456abcd"
+      counter = :counters.new(2, [])
+
+      Bypass.stub(bypass, "POST", "/api/v2/auth/login", fn conn ->
+        :counters.add(counter, 1, 1)
+
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "SID=fresh-sid; HttpOnly")
+        |> Plug.Conn.resp(200, "Ok.")
+      end)
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        :counters.add(counter, 2, 1)
+        n = :counters.get(counter, 2)
+
+        if n == 1 do
+          Plug.Conn.resp(conn, 403, "Forbidden")
+        else
+          json_resp(conn, 200, [torrent_payload(hash)])
+        end
+      end)
+
+      assert {:ok, _status} = QBittorrent.get_status(config, hash)
+      # Two logins: one initial, one after the 403
+      assert :counters.get(counter, 1) == 2
+    end
+  end
+
+  describe "add_torrent/3 (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      {:ok, bypass: bypass, config: bypass_config(bypass)}
+    end
+
+    test "uploads .torrent files via multipart/form-data, not urlencoded", %{
+      bypass: bypass,
+      config: config
+    } do
+      torrent_binary = sample_torrent_file()
+      {:ok, hash} = Mydia.Downloads.TorrentHash.extract({:file, torrent_binary}, case: :lower)
+
+      stub_login(bypass)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/add", fn conn ->
+        # qBittorrent requires multipart/form-data when uploading a torrent file.
+        # If we send urlencoded, the binary is corrupted and the torrent is silently dropped.
+        [content_type | _] = Plug.Conn.get_req_header(conn, "content-type")
+        assert content_type =~ "multipart/form-data"
+
+        # Verify the body actually contains the torrent payload (the bencoded "d8:announce"
+        # marker is present in our sample fixture).
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "8:announce"
+
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      # Post-add verification: the adapter should poll info?hashes=<h> to confirm presence.
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash)])
+      end)
+
+      assert {:ok, returned_hash} = QBittorrent.add_torrent(config, {:file, torrent_binary})
+      assert returned_hash == hash
+    end
+
+    test "verifies the torrent was actually added before returning success", %{
+      bypass: bypass,
+      config: config
+    } do
+      magnet = "magnet:?xt=urn:btih:abc123def456abc123def456abc123def456abcd&dn=test"
+
+      stub_login(bypass)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/add", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      # qBittorrent says "Ok." but the torrent never appears in info — should error,
+      # not silently create a phantom DB record.
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [])
+      end)
+
+      assert {:error, error} = QBittorrent.add_torrent(config, {:magnet, magnet})
+      assert error.type == :api_error
+      assert error.message =~ "not present in qBittorrent" or error.message =~ "rejected"
+    end
+
+    test "tolerates qBittorrent indexing delay (eventually appears in info)", %{
+      bypass: bypass,
+      config: config
+    } do
+      magnet = "magnet:?xt=urn:btih:abc123def456abc123def456abc123def456abcd&dn=test"
+      hash = "abc123def456abc123def456abc123def456abcd"
+
+      stub_login(bypass)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/add", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      # First poll returns empty (still indexing), second returns the torrent.
+      counter = :counters.new(1, [])
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        :counters.add(counter, 1, 1)
+        n = :counters.get(counter, 1)
+
+        if n >= 2 do
+          json_resp(conn, 200, [torrent_payload(hash)])
+        else
+          json_resp(conn, 200, [])
+        end
+      end)
+
+      assert {:ok, ^hash} = QBittorrent.add_torrent(config, {:magnet, magnet})
+    end
+  end
+
+  describe "state mapping (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      stub_login(bypass)
+      {:ok, bypass: bypass, config: bypass_config(bypass)}
+    end
+
+    test "maps qBittorrent 5.x stoppedDL/stoppedUP to :paused", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "5xstop00000000000000000000000000stopped5"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "stoppedDL")])
+      end)
+
+      assert {:ok, %{state: :paused}} = QBittorrent.get_status(config, hash)
+    end
+
+    test "maps qBittorrent 5.x stoppedUP to :paused (post-completion)", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "5xstop00000000000000000000000000stoppedu"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "stoppedUP")])
+      end)
+
+      assert {:ok, %{state: :paused}} = QBittorrent.get_status(config, hash)
+    end
+
+    test "maps moving state to :checking (transient, not an error)", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "moving00000000000000000000000000000move0"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "moving")])
+      end)
+
+      assert {:ok, %{state: :checking}} = QBittorrent.get_status(config, hash)
+    end
+
+    test "maps unknown state to :checking (transient), not :error", %{
+      bypass: bypass,
+      config: config
+    } do
+      hash = "unknown00000000000000000000000000unknown"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "unknown")])
+      end)
+
+      assert {:ok, %{state: :checking}} = QBittorrent.get_status(config, hash)
+    end
+
+    test "maps unmapped/future state names to :checking, not :error", %{
+      bypass: bypass,
+      config: config
+    } do
+      # Defensive: a future qBittorrent state we don't know about should not
+      # cause DownloadMonitor to delete the row (which it does on :error).
+      hash = "future00000000000000000000000000future00"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "someBrandNewState")])
+      end)
+
+      assert {:ok, %{state: :checking}} = QBittorrent.get_status(config, hash)
+    end
+
+    test "preserves :error for real error states", %{bypass: bypass, config: config} do
+      hash = "error00000000000000000000000000000error0"
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash, state: "error")])
+      end)
+
+      assert {:ok, %{state: :error}} = QBittorrent.get_status(config, hash)
+    end
+  end
+
+  describe "pause/resume routing (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      stub_login(bypass)
+      {:ok, bypass: bypass, config: bypass_config(bypass)}
+    end
+
+    test "pause hits the legacy /pause endpoint by default", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/pause", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      assert :ok = QBittorrent.pause_torrent(config, "somehash")
+    end
+
+    test "resume hits the legacy /resume endpoint by default", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/resume", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      assert :ok = QBittorrent.resume_torrent(config, "somehash")
+    end
+
+    test "pause falls back to /stop on 404 (qBittorrent 5.x)", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/pause", fn conn ->
+        Plug.Conn.resp(conn, 404, "Not Found")
+      end)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/stop", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      assert :ok = QBittorrent.pause_torrent(config, "somehash")
+    end
+
+    test "resume falls back to /start on 404 (qBittorrent 5.x)", %{
+      bypass: bypass,
+      config: config
+    } do
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/resume", fn conn ->
+        Plug.Conn.resp(conn, 404, "Not Found")
+      end)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/start", fn conn ->
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      assert :ok = QBittorrent.resume_torrent(config, "somehash")
+    end
+  end
+
+  ## Helpers
+
+  defp bypass_config(bypass) do
+    %{
+      type: :qbittorrent,
+      host: "localhost",
+      port: bypass.port,
+      username: "admin",
+      password: "adminpass",
+      use_ssl: false,
+      options: %{timeout: 5_000, connect_timeout: 2_000, post_add_poll_attempts: 3}
+    }
+  end
+
+  defp stub_login(bypass) do
+    Bypass.stub(bypass, "POST", "/api/v2/auth/login", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("set-cookie", "SID=test-sid; HttpOnly")
+      |> Plug.Conn.resp(200, "Ok.")
+    end)
+  end
+
+  defp json_resp(conn, status, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.resp(status, Jason.encode!(body))
+  end
+
+  defp torrent_payload(hash, overrides \\ []) do
+    Map.merge(
+      %{
+        "hash" => hash,
+        "name" => "Test Torrent",
+        "state" => "downloading",
+        "progress" => 0.5,
+        "dlspeed" => 100_000,
+        "upspeed" => 0,
+        "downloaded" => 500,
+        "uploaded" => 0,
+        "size" => 1000,
+        "eta" => 60,
+        "ratio" => 0.0,
+        "save_path" => "/downloads",
+        "added_on" => 1_700_000_000,
+        "completion_on" => -1
+      },
+      Map.new(overrides, fn {k, v} -> {to_string(k), v} end)
+    )
+  end
+
+  # Minimal valid bencoded torrent metainfo for testing the upload path.
+  # The info dict only needs to be structurally valid bencode; the hash is
+  # computed by SHA1 of the bencoded info dict regardless of contents.
+  defp sample_torrent_file do
+    info_dict =
+      "d6:lengthi100e4:name8:test.bin12:piece lengthi16384e6:pieces20:" <>
+        :binary.copy(<<0>>, 20) <> "e"
+
+    "d8:announce20:http://tracker.test/4:info" <> info_dict <> "e"
+  end
 end

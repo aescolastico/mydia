@@ -14,193 +14,164 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   qBittorrent requires logging in via the `/api/v2/auth/login` endpoint to obtain
   a session cookie (`SID`). This cookie must be included in all subsequent requests.
 
-  ## Configuration
+  ## qBittorrent 5.x compatibility
 
-  The adapter expects the following configuration:
-
-      config = %{
-        type: :qbittorrent,
-        host: "localhost",
-        port: 8080,
-        username: "admin",
-        password: "adminpass",
-        use_ssl: false,
-        options: %{
-          timeout: 30_000,
-          connect_timeout: 5_000
-        }
-      }
+  qBittorrent 5.0 renamed the `pause`/`resume` endpoints to `stop`/`start` and
+  introduced new state names (`stoppedDL`, `stoppedUP`, `moving`). This adapter
+  tries the legacy endpoint first and falls back to the 5.x name on 404, and
+  maps the new state names to their equivalent internal states.
 
   ## State Mapping
 
   qBittorrent states are mapped to our internal states:
 
-    * `downloading` -> `:downloading`
+    * `downloading`, `stalledDL`, `metaDL`, `forcedDL` -> `:downloading`
     * `uploading`, `stalledUP`, `forcedUP` -> `:seeding`
-    * `pausedDL`, `pausedUP` -> `:paused`
+    * `pausedDL`, `pausedUP`, `stoppedDL`, `stoppedUP` -> `:paused`
     * `error`, `missingFiles` -> `:error`
-    * `checkingDL`, `checkingUP`, `checkingResumeData` -> `:checking`
-    * `queuedDL`, `queuedUP`, `allocating` -> `:downloading` (queued but counted as downloading)
+    * `checkingDL`, `checkingUP`, `checkingResumeData`, `moving`, `allocating`,
+      `queuedDL`, `queuedUP`, `unknown`, or anything we don't recognise -> `:checking`
+
+  Unrecognised states are treated as `:checking` (transient) rather than `:error`
+  because `DownloadMonitor` deletes rows for errored downloads, and we'd rather
+  leave a download alone than lose it on a state name we haven't seen before.
   """
 
   @behaviour Mydia.Downloads.Client
+
+  require Logger
 
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   alias Mydia.Downloads.TorrentHash
 
+  # How many times to poll /torrents/info after add_torrent before declaring
+  # the torrent was silently rejected by qBittorrent.
+  @default_post_add_poll_attempts 5
+  @post_add_poll_interval_ms 250
+
   @impl true
   def test_connection(config) do
-    with {:ok, req} <- authenticate(config),
-         {:ok, response} <- HTTP.get(req, "/api/v2/app/version") do
-      case response.status do
-        200 ->
-          {:ok, ClientInfo.new(version: response.body, api_version: "2.x")}
+    with_authenticated_session(config, fn req ->
+      with {:ok, response} <- HTTP.get(req, "/api/v2/app/version") do
+        case response.status do
+          200 ->
+            {:ok, ClientInfo.new(version: to_string(response.body), api_version: "2.x")}
 
-        _ ->
-          {:error, Error.api_error("Unexpected response status", %{status: response.status})}
+          _ ->
+            {:error, Error.api_error("Unexpected response status", %{status: response.status})}
+        end
       end
-    end
+    end)
   end
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
-    with {:ok, req} <- authenticate(config),
-         {:ok, body} <- build_add_torrent_body(torrent, opts),
-         {:ok, response} <- HTTP.post(req, "/api/v2/torrents/add", form: body) do
-      case response.status do
-        200 ->
-          # qBittorrent returns "Ok." on success but doesn't immediately return the hash
-          # We need to extract the hash from the torrent or wait for it to appear
-          extract_torrent_hash(torrent)
-
-        _ ->
-          {:error,
-           Error.api_error("Failed to add torrent", %{
-             status: response.status,
-             body: response.body
-           })}
-      end
+    with {:ok, hash} <- extract_torrent_hash(torrent) do
+      with_authenticated_session(config, fn req ->
+        with {:ok, response} <- post_add_torrent(req, torrent, opts),
+             :ok <- check_add_response(response),
+             :ok <- verify_torrent_present(req, config, hash) do
+          {:ok, hash}
+        end
+      end)
     end
   end
 
   @impl true
   def get_status(config, client_id) do
-    with {:ok, req} <- authenticate(config),
-         {:ok, response} <-
-           HTTP.get(req, "/api/v2/torrents/info", params: [hashes: client_id]) do
-      case response.status do
-        200 ->
-          case response.body do
-            [torrent | _] ->
-              {:ok, parse_torrent_status(torrent)}
-
-            [] ->
-              {:error, Error.not_found("Torrent not found")}
-          end
-
-        _ ->
-          {:error, Error.api_error("Failed to get torrent status", %{status: response.status})}
+    with_authenticated_session(config, fn req ->
+      with {:ok, response} <- get_info(req, hashes: client_id) do
+        case response.body do
+          [torrent | _] -> {:ok, parse_torrent_status(torrent)}
+          [] -> {:error, Error.not_found("Torrent not found")}
+          _other -> {:error, Error.parse_error("Unexpected response body")}
+        end
       end
-    end
+    end)
   end
 
   @impl true
   def list_torrents(config, opts \\ []) do
-    with {:ok, req} <- authenticate(config),
-         params <- build_list_params(opts),
-         {:ok, response} <- HTTP.get(req, "/api/v2/torrents/info", params: params) do
-      case response.status do
-        200 ->
-          torrents =
-            response.body
-            |> Enum.map(&parse_torrent_status/1)
+    params = build_list_params(opts)
 
-          {:ok, torrents}
-
-        _ ->
-          {:error, Error.api_error("Failed to list torrents", %{status: response.status})}
+    with_authenticated_session(config, fn req ->
+      with {:ok, response} <- get_info(req, params) do
+        if is_list(response.body) do
+          {:ok, Enum.map(response.body, &parse_torrent_status/1)}
+        else
+          {:error, Error.parse_error("Unexpected response body")}
+        end
       end
-    end
+    end)
   end
 
   @impl true
   def remove_torrent(config, client_id, opts \\ []) do
     delete_files = Keyword.get(opts, :delete_files, false)
+    body = %{hashes: client_id, deleteFiles: to_string(delete_files)}
 
-    with {:ok, req} <- authenticate(config),
-         body <- %{hashes: client_id, deleteFiles: delete_files},
-         {:ok, response} <- HTTP.post(req, "/api/v2/torrents/delete", form: body) do
-      case response.status do
-        200 ->
-          :ok
-
-        404 ->
-          {:error, Error.not_found("Torrent not found")}
-
-        _ ->
-          {:error, Error.api_error("Failed to remove torrent", %{status: response.status})}
+    with_authenticated_session(config, fn req ->
+      with {:ok, response} <- HTTP.post(req, "/api/v2/torrents/delete", form: body) do
+        case response.status do
+          200 -> :ok
+          404 -> {:error, Error.not_found("Torrent not found")}
+          _ -> {:error, Error.api_error("Failed to remove torrent", %{status: response.status})}
+        end
       end
-    end
+    end)
   end
 
   @impl true
   def pause_torrent(config, client_id) do
-    with {:ok, req} <- authenticate(config),
-         body <- %{hashes: client_id},
-         {:ok, response} <- HTTP.post(req, "/api/v2/torrents/pause", form: body) do
-      case response.status do
-        200 ->
-          :ok
-
-        _ ->
-          {:error, Error.api_error("Failed to pause torrent", %{status: response.status})}
-      end
-    end
+    toggle_torrent(config, client_id, "/api/v2/torrents/pause", "/api/v2/torrents/stop")
   end
 
   @impl true
   def resume_torrent(config, client_id) do
-    with {:ok, req} <- authenticate(config),
-         body <- %{hashes: client_id},
-         {:ok, response} <- HTTP.post(req, "/api/v2/torrents/resume", form: body) do
-      case response.status do
-        200 ->
-          :ok
-
-        _ ->
-          {:error, Error.api_error("Failed to resume torrent", %{status: response.status})}
-      end
-    end
+    toggle_torrent(config, client_id, "/api/v2/torrents/resume", "/api/v2/torrents/start")
   end
 
   ## Private Functions
 
+  # Authenticates, runs `fun` with the authenticated Req struct, and re-authenticates
+  # once if the inner call returns a 403 (stale/expired session). This matches the
+  # pattern used by the Transmission adapter for 409 session-id retries.
+  defp with_authenticated_session(config, fun) when is_function(fun, 1) do
+    with {:ok, req} <- authenticate(config) do
+      case fun.(req) do
+        {:error, %Error{type: :stale_session}} ->
+          # Session expired between authenticate() and the call — re-auth and retry once.
+          with {:ok, fresh_req} <- authenticate(config) do
+            fun.(fresh_req)
+          end
+
+        other ->
+          other
+      end
+    end
+  end
+
+  # Marker error indicating the caller should re-authenticate and retry.
+  defp stale_session, do: Error.new(:stale_session, "Session expired")
+
   defp authenticate(config) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for qBittorrent")}
-    else
+    if config[:username] && config[:password] do
       do_authenticate(config)
+    else
+      {:error, Error.invalid_config("Username and password are required for qBittorrent")}
     end
   end
 
   defp do_authenticate(config) do
     req = HTTP.new_request(config)
-
-    # qBittorrent uses form-encoded login
-    login_body = %{
-      username: config.username,
-      password: config.password
-    }
+    login_body = %{username: config.username, password: config.password}
 
     case HTTP.post(req, "/api/v2/auth/login", form: login_body) do
       {:ok, %{status: 200} = response} ->
-        # Extract SID cookie from response
         case extract_sid_cookie(response) do
           {:ok, sid} ->
-            # Add cookie to request for future calls
-            authenticated_req = Req.Request.put_header(req, "cookie", "SID=#{sid}")
-            {:ok, authenticated_req}
+            {:ok, Req.Request.put_header(req, "cookie", "SID=#{sid}")}
 
           :error ->
             {:error, Error.authentication_failed("Failed to extract session cookie")}
@@ -224,102 +195,205 @@ defmodule Mydia.Downloads.Client.QBittorrent do
     end
   end
 
+  # Find the Set-Cookie header value that actually contains "SID=".
+  # qBittorrent occasionally emits multiple cookies (e.g. CSRF) and we must not
+  # pick the wrong one.
   defp extract_sid_cookie(response) do
-    case Req.Response.get_header(response, "set-cookie") do
-      [cookie | _] ->
-        # Extract SID value from "SID=xxx; ..."
-        case Regex.run(~r/SID=([^;]+)/, cookie) do
-          [_, sid] -> {:ok, sid}
-          _ -> :error
-        end
+    response
+    |> Req.Response.get_header("set-cookie")
+    |> Enum.find_value(:error, fn cookie ->
+      case Regex.run(~r/SID=([^;]+)/, cookie) do
+        [_, sid] -> {:ok, sid}
+        _ -> nil
+      end
+    end)
+  end
 
-      [] ->
-        :error
+  # Wrap an HTTP call so that a 403 (expired/invalid session) surfaces as a
+  # marker error the outer `with_authenticated_session` can catch and retry
+  # with a fresh login. Without this, sessions that expire after the qBittorrent
+  # server's SessionTimeout cause every subsequent call to fail.
+  defp authed_request(req, method, path, opts) do
+    case do_request(req, method, path, opts) do
+      {:ok, %{status: 403}} -> {:error, stale_session()}
+      other -> other
     end
   end
 
-  defp build_add_torrent_body({:magnet, magnet_link}, opts) do
+  defp do_request(req, :get, path, opts), do: HTTP.get(req, path, opts)
+  defp do_request(req, :post, path, opts), do: HTTP.post(req, path, opts)
+
+  # Build POST body for add_torrent according to input type.
+  defp post_add_torrent(req, {:magnet, magnet_link}, opts) do
     body =
       %{urls: magnet_link}
-      |> add_optional_param(:category, opts[:category])
-      |> add_optional_param(:tags, opts[:tags], &Enum.join(&1, ","))
-      |> add_optional_param(:savepath, opts[:save_path])
-      |> add_optional_param(:paused, opts[:paused])
+      |> put_optional(:category, opts[:category])
+      |> put_optional(:tags, opts[:tags], &Enum.join(&1, ","))
+      |> put_optional(:savepath, opts[:save_path])
+      |> put_optional_bool(:paused, opts[:paused])
 
-    {:ok, body}
+    authed_request(req, :post, "/api/v2/torrents/add", form: body)
   end
 
-  defp build_add_torrent_body({:file, file_contents}, opts) do
-    # For file uploads, we need to use multipart
-    body =
-      %{torrents: file_contents}
-      |> add_optional_param(:category, opts[:category])
-      |> add_optional_param(:tags, opts[:tags], &Enum.join(&1, ","))
-      |> add_optional_param(:savepath, opts[:save_path])
-      |> add_optional_param(:paused, opts[:paused])
-
-    {:ok, body}
-  end
-
-  defp build_add_torrent_body({:url, url}, opts) do
+  defp post_add_torrent(req, {:url, url}, opts) do
     body =
       %{urls: url}
-      |> add_optional_param(:category, opts[:category])
-      |> add_optional_param(:tags, opts[:tags], &Enum.join(&1, ","))
-      |> add_optional_param(:savepath, opts[:save_path])
-      |> add_optional_param(:paused, opts[:paused])
+      |> put_optional(:category, opts[:category])
+      |> put_optional(:tags, opts[:tags], &Enum.join(&1, ","))
+      |> put_optional(:savepath, opts[:save_path])
+      |> put_optional_bool(:paused, opts[:paused])
 
-    {:ok, body}
+    authed_request(req, :post, "/api/v2/torrents/add", form: body)
   end
 
-  defp add_optional_param(body, _key, nil), do: body
+  defp post_add_torrent(req, {:file, file_contents}, opts) do
+    # qBittorrent's /torrents/add expects multipart/form-data when uploading a
+    # .torrent file. Passing the raw binary as a URL-encoded form silently
+    # corrupts the body and the torrent is dropped without any error response.
+    filename = opts[:title] |> sanitize_filename()
 
-  defp add_optional_param(body, key, value) do
-    Map.put(body, key, value)
+    fields =
+      [
+        torrents: {file_contents, filename: filename, content_type: "application/x-bittorrent"}
+      ]
+      |> put_optional_kv(:category, opts[:category])
+      |> put_optional_kv(:tags, opts[:tags], &Enum.join(&1, ","))
+      |> put_optional_kv(:savepath, opts[:save_path])
+      |> put_optional_kv(:paused, opts[:paused], &to_string/1)
+
+    authed_request(req, :post, "/api/v2/torrents/add", form_multipart: fields)
   end
 
-  defp add_optional_param(body, _key, nil, _transform), do: body
+  defp check_add_response(%{status: 200}), do: :ok
 
-  defp add_optional_param(body, key, value, transform) when is_function(transform, 1) do
-    Map.put(body, key, transform.(value))
+  defp check_add_response(%{status: status, body: body}) do
+    {:error, Error.api_error("Failed to add torrent", %{status: status, body: body})}
   end
 
-  defp extract_torrent_hash(torrent_input) do
-    # qBittorrent uses lowercase hashes
-    TorrentHash.extract(torrent_input, case: :lower)
+  # After "Ok." we don't know whether qBittorrent actually accepted the torrent
+  # (it returns "Ok." even when it silently drops bad input). Poll info?hashes=<h>
+  # so the caller knows whether the torrent landed.
+  defp verify_torrent_present(req, config, hash) do
+    attempts =
+      get_in(config, [:options, :post_add_poll_attempts]) ||
+        @default_post_add_poll_attempts
+
+    interval =
+      get_in(config, [:options, :post_add_poll_interval_ms]) || @post_add_poll_interval_ms
+
+    do_verify_torrent_present(req, hash, attempts, interval)
+  end
+
+  defp do_verify_torrent_present(_req, hash, 0, _interval) do
+    {:error,
+     Error.api_error(
+       "Torrent not present in qBittorrent after add (may have been silently rejected)",
+       %{hash: hash}
+     )}
+  end
+
+  defp do_verify_torrent_present(req, hash, attempts_left, interval) do
+    case get_info(req, hashes: hash) do
+      {:ok, %{body: [_ | _]}} ->
+        :ok
+
+      _other ->
+        if attempts_left > 1, do: Process.sleep(interval)
+        do_verify_torrent_present(req, hash, attempts_left - 1, interval)
+    end
+  end
+
+  defp get_info(req, params) do
+    authed_request(req, :get, "/api/v2/torrents/info", params: params)
+  end
+
+  # Hit the legacy endpoint first, fall back to qBittorrent 5.x's renamed
+  # endpoint if the server reports 404. Old clients respond 200 on both paths
+  # via backwards-compat aliases, but on a fresh 5.x install the legacy path
+  # returns 404 and we'd otherwise fail.
+  defp toggle_torrent(config, client_id, primary_path, fallback_path) do
+    body = %{hashes: client_id}
+
+    with_authenticated_session(config, fn req ->
+      case authed_request(req, :post, primary_path, form: body) do
+        {:ok, %{status: 200}} ->
+          :ok
+
+        {:ok, %{status: 404}} ->
+          case authed_request(req, :post, fallback_path, form: body) do
+            {:ok, %{status: 200}} -> :ok
+            {:ok, resp} -> toggle_error(resp)
+            {:error, _} = err -> err
+          end
+
+        {:ok, resp} ->
+          toggle_error(resp)
+
+        {:error, _} = err ->
+          err
+      end
+    end)
+  end
+
+  defp toggle_error(%{status: status}) do
+    {:error, Error.api_error("Failed to toggle torrent", %{status: status})}
   end
 
   defp build_list_params(opts) do
-    params = []
+    []
+    |> append_param(:filter, list_filter(opts[:filter]))
+    |> append_param(:category, opts[:category])
+    |> append_param(:tag, opts[:tag])
+    |> append_param(:hashes, opts[:hashes])
+  end
 
-    params =
-      case opts[:filter] do
-        nil -> params
-        :all -> params
-        :downloading -> [{:filter, "downloading"} | params]
-        :seeding -> [{:filter, "seeding"} | params]
-        :completed -> [{:filter, "completed"} | params]
-        :paused -> [{:filter, "paused"} | params]
-        :active -> [{:filter, "active"} | params]
-        :inactive -> [{:filter, "inactive"} | params]
-        _ -> params
-      end
+  defp list_filter(nil), do: nil
+  defp list_filter(:all), do: nil
+  defp list_filter(:downloading), do: "downloading"
+  defp list_filter(:seeding), do: "seeding"
+  defp list_filter(:completed), do: "completed"
+  defp list_filter(:paused), do: "paused"
+  defp list_filter(:active), do: "active"
+  defp list_filter(:inactive), do: "inactive"
+  defp list_filter(_), do: nil
 
-    params =
-      if opts[:category] do
-        [{:category, opts[:category]} | params]
-      else
-        params
-      end
+  defp append_param(params, _key, nil), do: params
+  defp append_param(params, key, value), do: [{key, value} | params]
 
-    params =
-      if opts[:tag] do
-        [{:tag, opts[:tag]} | params]
-      else
-        params
-      end
+  defp put_optional(body, _key, nil), do: body
+  defp put_optional(body, key, value), do: Map.put(body, key, value)
 
-    params
+  defp put_optional(body, _key, nil, _transform), do: body
+
+  defp put_optional(body, key, value, transform) when is_function(transform, 1) do
+    Map.put(body, key, transform.(value))
+  end
+
+  defp put_optional_bool(body, _key, nil), do: body
+  defp put_optional_bool(body, key, value), do: Map.put(body, key, to_string(value))
+
+  defp put_optional_kv(list, _key, nil), do: list
+  defp put_optional_kv(list, key, value), do: list ++ [{key, value}]
+
+  defp put_optional_kv(list, _key, nil, _transform), do: list
+  defp put_optional_kv(list, key, value, transform), do: list ++ [{key, transform.(value)}]
+
+  defp sanitize_filename(nil), do: "file.torrent"
+
+  defp sanitize_filename(title) when is_binary(title) do
+    base =
+      title
+      |> String.replace(~r/[^A-Za-z0-9._\- ]/, "_")
+      |> String.slice(0, 200)
+
+    if base == "", do: "file.torrent", else: base <> ".torrent"
+  end
+
+  defp sanitize_filename(_), do: "file.torrent"
+
+  defp extract_torrent_hash(torrent_input) do
+    # qBittorrent indexes torrents by lowercase hash.
+    TorrentHash.extract(torrent_input, case: :lower)
   end
 
   defp parse_torrent_status(torrent) do
@@ -327,7 +401,7 @@ defmodule Mydia.Downloads.Client.QBittorrent do
       id: torrent["hash"],
       name: torrent["name"],
       state: parse_state(torrent["state"]),
-      progress: torrent["progress"] * 100,
+      progress: (torrent["progress"] || 0) * 100,
       download_speed: torrent["dlspeed"] || 0,
       upload_speed: torrent["upspeed"] || 0,
       downloaded: torrent["downloaded"] || 0,
@@ -341,29 +415,31 @@ defmodule Mydia.Downloads.Client.QBittorrent do
     })
   end
 
-  defp parse_state(state) when is_binary(state) do
-    case state do
-      "downloading" -> :downloading
-      "stalledDL" -> :downloading
-      "metaDL" -> :downloading
-      "forcedDL" -> :downloading
-      "queuedDL" -> :downloading
-      "allocating" -> :downloading
-      "uploading" -> :seeding
-      "stalledUP" -> :seeding
-      "forcedUP" -> :seeding
-      "queuedUP" -> :seeding
-      "pausedDL" -> :paused
-      "pausedUP" -> :paused
-      "checkingDL" -> :checking
-      "checkingUP" -> :checking
-      "checkingResumeData" -> :checking
-      "error" -> :error
-      "missingFiles" -> :error
-      "unknown" -> :error
-      _ -> :error
-    end
-  end
+  # State mappings. Unknown / unrecognised states deliberately fall through to
+  # :checking (transient) rather than :error, because DownloadMonitor deletes
+  # records whose status is "failed" — a misclassification here means the user
+  # loses the download row.
+  defp parse_state("downloading"), do: :downloading
+  defp parse_state("stalledDL"), do: :downloading
+  defp parse_state("metaDL"), do: :downloading
+  defp parse_state("forcedDL"), do: :downloading
+  defp parse_state("queuedDL"), do: :downloading
+  defp parse_state("allocating"), do: :downloading
+  defp parse_state("uploading"), do: :seeding
+  defp parse_state("stalledUP"), do: :seeding
+  defp parse_state("forcedUP"), do: :seeding
+  defp parse_state("queuedUP"), do: :seeding
+  defp parse_state("pausedDL"), do: :paused
+  defp parse_state("pausedUP"), do: :paused
+  defp parse_state("stoppedDL"), do: :paused
+  defp parse_state("stoppedUP"), do: :paused
+  defp parse_state("checkingDL"), do: :checking
+  defp parse_state("checkingUP"), do: :checking
+  defp parse_state("checkingResumeData"), do: :checking
+  defp parse_state("moving"), do: :checking
+  defp parse_state("error"), do: :error
+  defp parse_state("missingFiles"), do: :error
+  defp parse_state(_other), do: :checking
 
   defp parse_eta(eta) when is_integer(eta) and eta > 0, do: eta
   defp parse_eta(_), do: nil
