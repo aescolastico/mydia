@@ -41,6 +41,20 @@ defmodule Mydia.Library.ReleaseParserTest do
       assert result.quality.source == "WEB-DL"
     end
 
+    test "verbose 'Season N Episode M' release name with trailing punctuation" do
+      # Regression for the Off Campus PrimeWire-style filenames: the parser
+      # must extract both season and episode (not nil) so MediaImport can
+      # match each file to its episode without crashing.
+      result =
+        ReleaseParser.parse("Off Campus (2026) Season 1 Episode 1- The Deal - PrimeWire.mp4")
+
+      assert result.type == :tv_show
+      assert result.title == "Off Campus"
+      assert result.year == 2026
+      assert result.season == 1
+      assert result.episodes == [1]
+    end
+
     test "exposes field_confidence as a non-empty map" do
       result = ReleaseParser.parse("Movie.Name.2020.1080p.BluRay.mkv")
 

@@ -938,7 +938,8 @@ defmodule Mydia.Jobs.MediaImport do
           end
 
         # TV show with parsed episode info - look up the episode
-        {%{type: "tv_show"} = media_item, _, :tv_show, _} when not is_nil(parsed.season) ->
+        {%{type: "tv_show"} = media_item, _, :tv_show, _}
+        when not is_nil(parsed.season) and not is_nil(parsed.episodes) ->
           episode_number = List.first(parsed.episodes) || 1
 
           episode =
@@ -975,6 +976,28 @@ defmodule Mydia.Jobs.MediaImport do
             dest_dir = build_destination_path(download, library_path)
             {download.episode, dest_dir}
           end
+
+        # TV show file where the parser found a season but no episode
+        # number (e.g. `Show.S01.mkv`, or season-pack files that don't
+        # carry an `SxxEyy` marker). Don't silently default to episode 1
+        # — return :unresolved so the file shows up in the issues queue
+        # for manual resolution.
+        {%{type: "tv_show"} = media_item, _, :tv_show, _}
+        when not is_nil(parsed.season) and is_nil(parsed.episodes) ->
+          Logger.warning("TV file has parseable season but no episode number — skipping",
+            file: file.name,
+            season: parsed.season,
+            media_item: media_item.title
+          )
+
+          {:unresolved,
+           %{
+             path: file.path,
+             name: file.name,
+             size: file.size,
+             parsed_season: parsed.season,
+             parsed_episode: nil
+           }}
 
         # TV show but no parsed info - use download episode
         {%{type: "tv_show"}, episode, _, _} when not is_nil(episode) ->

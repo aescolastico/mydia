@@ -367,9 +367,13 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
   end
 
   defp verbose_episode_extract([%Token{value: word} | [%Token{value: ep_str} | _]]) do
+    # The episode-number token may have trailing punctuation (e.g.
+    # "Episode 1- The Deal" leaves "1-" attached because the tokenizer
+    # only splits on whitespace / dot / underscore). Match the leading
+    # digit run instead of demanding a clean integer.
     if String.downcase(word) == "episode" do
-      case Integer.parse(ep_str) do
-        {ep, ""} -> {:ok, [ep]}
+      case Regex.run(~r/^(\d+)/, ep_str) do
+        [_, digits] -> {:ok, [String.to_integer(digits)]}
         _ -> :error
       end
     else
