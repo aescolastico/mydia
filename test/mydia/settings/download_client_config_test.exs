@@ -126,5 +126,37 @@ defmodule Mydia.Settings.DownloadClientConfigTest do
       assert config.category == "legacy-cat"
       assert config.categories == %{"movie" => "movies"}
     end
+
+    test "priority_profile with all 5 taxonomy keys is accepted" do
+      profile = %{
+        "verylow" => "-100",
+        "low" => "-1",
+        "normal" => "0",
+        "high" => "1",
+        "veryhigh" => "2"
+      }
+
+      attrs = Map.put(@valid_attrs, :priority_profile, profile)
+      assert {:ok, config} = Settings.create_download_client_config(attrs)
+      assert config.priority_profile == profile
+    end
+
+    test "priority_profile with unknown key is rejected" do
+      profile = %{"high" => "1", "turbo" => "9"}
+      attrs = Map.put(@valid_attrs, :priority_profile, profile)
+
+      changeset = DownloadClientConfig.changeset(%DownloadClientConfig{}, attrs)
+      refute changeset.valid?
+
+      [msg | _] = errors_on(changeset).priority_profile
+      assert msg =~ "unknown priority key"
+      assert msg =~ "turbo"
+    end
+
+    test "priority_profile that is not a map is rejected" do
+      attrs = Map.put(@valid_attrs, :priority_profile, "not-a-map")
+      changeset = DownloadClientConfig.changeset(%DownloadClientConfig{}, attrs)
+      refute changeset.valid?
+    end
   end
 end

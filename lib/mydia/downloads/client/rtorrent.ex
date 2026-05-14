@@ -50,11 +50,21 @@ defmodule Mydia.Downloads.Client.Rtorrent do
     * state=0, complete=0 -> `:paused`
     * state=0, complete=1 -> `:completed`
     * is_hash_checking=1 -> `:checking`
+
+  ## Priority
+
+  rTorrent supports per-torrent download priority via `d.priority.set`. Valid
+  native integer values are `0` (off), `1` (low), `2` (normal), and `3`
+  (high). When `priority_profile` is empty, this adapter passes no priority
+  command and rTorrent uses its own default (`2`). When the profile supplies
+  an override for an atom, the resolved value is appended as a
+  `d.priority.set=N` command on the `load.start` / `load.raw_start` call.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.{Error, HTTP}
+  alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   alias Mydia.Downloads.TorrentHash
 
@@ -81,7 +91,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
-    {:ok, {method, args}} = build_load_command(torrent, opts)
+    {:ok, {method, args}} = build_load_command(torrent, opts, config)
 
     case xmlrpc_call(config, method, args) do
       {:ok, 0} ->
@@ -203,25 +213,25 @@ defmodule Mydia.Downloads.Client.Rtorrent do
   ## Private Functions
 
   # Build the XML-RPC load command based on torrent type
-  defp build_load_command({:magnet, magnet_link}, opts) do
+  defp build_load_command({:magnet, magnet_link}, opts, config) do
     # load.start takes the magnet URL and optional commands
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.start", ["", magnet_link | commands]}}
   end
 
-  defp build_load_command({:file, file_contents}, opts) do
+  defp build_load_command({:file, file_contents}, opts, config) do
     # load.raw_start takes an empty target, binary data, and optional commands
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.raw_start", ["", {:base64, Base.encode64(file_contents)} | commands]}}
   end
 
-  defp build_load_command({:url, url}, opts) do
+  defp build_load_command({:url, url}, opts, config) do
     # load.start can also take HTTP URLs
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.start", ["", url | commands]}}
   end
 
-  defp build_load_options(opts) do
+  defp build_load_options(opts, config) do
     commands = []
 
     # Add save path if specified
@@ -249,7 +259,31 @@ defmodule Mydia.Downloads.Client.Rtorrent do
         commands
       end
 
+    # Add priority override when the profile resolves the atom to a value.
+    # Empty profile -> nil -> no command appended (rTorrent default applies).
+    commands =
+      case map_priority(opts[:priority], config) do
+        nil -> commands
+        value -> ["d.priority.set=" <> to_string(value) | commands]
+      end
+
     commands
+  end
+
+  # Resolves a Priority atom into rTorrent's `d.priority.set` integer.
+  # When `priority_profile` is empty (the default), returns nil so no
+  # priority command is appended and rTorrent's own default applies.
+  defp map_priority(nil, _config), do: nil
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = priority_profile(config)
+    Priority.resolve(atom, profile, nil)
+  end
+
+  defp map_priority(_other, _config), do: nil
+
+  defp priority_profile(config) do
+    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) || %{}
   end
 
   # Fields to query for torrent status

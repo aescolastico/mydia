@@ -61,13 +61,36 @@ defmodule Mydia.Downloads.Client.Nzbget do
         "result": "21.0",
         "id": 1
       }
+
+  ## Priority
+
+  NZBGet's `append` RPC accepts any integer priority. The default mapping when
+  `priority_profile` is empty:
+
+    * `:verylow`  -> `-100`
+    * `:low`      -> `-50`
+    * `:normal`   -> `0`
+    * `:high`     -> `50`
+    * `:veryhigh` -> `100`
+
+  `priority_profile` may provide per-atom overrides. Values are passed through
+  verbatim; integers are expected.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.{Error, HTTP}
+  alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   require Logger
+
+  @default_priority_map %{
+    verylow: -100,
+    low: -50,
+    normal: 0,
+    high: 50,
+    veryhigh: 100
+  }
 
   @impl true
   def test_connection(config) do
@@ -122,7 +145,7 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
     nzb_content_base64 = Base.encode64(file_contents)
     category = Keyword.get(opts, :category, "")
-    priority = map_priority(Keyword.get(opts, :priority))
+    priority = map_priority(Keyword.get(opts, :priority), config)
     add_paused = Keyword.get(opts, :paused, false)
 
     params = [
@@ -509,9 +532,22 @@ defmodule Mydia.Downloads.Client.Nzbget do
     end
   end
 
-  defp map_priority(nil), do: 0
-  defp map_priority(:low), do: -50
-  defp map_priority(:normal), do: 0
-  defp map_priority(:high), do: 50
-  defp map_priority(_), do: 0
+  # Resolves a Priority atom into NZBGet's native integer priority. Consults
+  # `config[:priority_profile]` first (per-client overrides); falls back to the
+  # hardcoded default mapping (see @moduledoc) when the profile is empty or
+  # doesn't contain the atom. Returns 0 (normal) when no priority is supplied
+  # to preserve historical behaviour.
+  defp map_priority(nil, _config), do: 0
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = priority_profile(config)
+    default = Map.fetch!(@default_priority_map, atom)
+    Priority.resolve(atom, profile, default)
+  end
+
+  defp map_priority(_other, _config), do: 0
+
+  defp priority_profile(config) do
+    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) || %{}
+  end
 end

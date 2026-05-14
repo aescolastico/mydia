@@ -201,6 +201,29 @@ defmodule Mydia.Downloads.Client.BlackholeTest do
       assert is_binary(hash)
       assert String.length(hash) == 40
     end
+
+    @tag :tmp_dir
+    test "silently ignores priority option (filesystem drop has no queue)",
+         %{tmp_dir: tmp_dir} do
+      watch_folder = Path.join(tmp_dir, "watch")
+      completed_folder = Path.join(tmp_dir, "completed")
+      File.mkdir_p!(watch_folder)
+      File.mkdir_p!(completed_folder)
+
+      config = %{
+        connection_settings: %{
+          "watch_folder" => watch_folder,
+          "completed_folder" => completed_folder
+        },
+        priority_profile: %{"high" => "this-would-error-if-blackhole-used-it"}
+      }
+
+      assert {:ok, _hash} =
+               Blackhole.add_torrent(config, {:file, @sample_torrent_file}, priority: :high)
+
+      # File still landed in the watch folder; no priority side effect.
+      assert length(File.ls!(watch_folder)) == 1
+    end
   end
 
   describe "get_status/2" do

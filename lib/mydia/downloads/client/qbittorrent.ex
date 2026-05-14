@@ -35,6 +35,18 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   Unrecognised states are treated as `:checking` (transient) rather than `:error`
   because `DownloadMonitor` deletes rows for errored downloads, and we'd rather
   leave a download alone than lose it on a state name we haven't seen before.
+
+  ## Priority
+
+  qBittorrent's `/api/v2/torrents/add` endpoint does not accept a priority
+  parameter directly — queue priority is managed via `topPrio` /
+  `bottomPrio` / `increasePrio` / `decreasePrio` on the live torrent. As a
+  result, this adapter's default behaviour is to **no-op** on priority: if
+  `priority_profile` is empty (the default), no priority is sent to
+  qBittorrent. When `priority_profile` supplies an override for the given
+  atom, the value is logged so operators can wire up a follow-on integration,
+  but is not yet applied. The 5-tier taxonomy is accepted so callers don't
+  need to special-case torrent clients.
   """
 
   @behaviour Mydia.Downloads.Client
@@ -42,6 +54,7 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   require Logger
 
   alias Mydia.Downloads.Client.{Error, HTTP}
+  alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   alias Mydia.Downloads.TorrentHash
 
@@ -67,6 +80,8 @@ defmodule Mydia.Downloads.Client.QBittorrent do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
+    _ = maybe_log_priority(config, opts[:priority])
+
     with {:ok, hash} <- extract_torrent_hash(torrent) do
       with_authenticated_session(config, fn req ->
         with {:ok, response} <- post_add_torrent(req, torrent, opts),
@@ -77,6 +92,33 @@ defmodule Mydia.Downloads.Client.QBittorrent do
       end)
     end
   end
+
+  # Priority is a no-op for qBittorrent's /torrents/add endpoint (see @moduledoc).
+  # When `priority_profile` resolves the atom to a non-nil value, log it so
+  # operators can confirm the look-up runs, then drop the value on the floor.
+  # Empty profile -> nil -> silent (preserves pre-wave-2 behaviour).
+  defp maybe_log_priority(_config, nil), do: :ok
+
+  defp maybe_log_priority(config, atom)
+       when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile])
+
+    case profile && Priority.resolve(atom, profile, nil) do
+      nil ->
+        :ok
+
+      value ->
+        Logger.debug(
+          "qBittorrent priority requested but not applied (no add-endpoint support)",
+          atom: atom,
+          resolved_value: value
+        )
+
+        :ok
+    end
+  end
+
+  defp maybe_log_priority(_config, _other), do: :ok
 
   @impl true
   def get_status(config, client_id) do

@@ -40,6 +40,14 @@ defmodule Mydia.Downloads.Client.Blackhole do
 
   Torrent files are matched to completed downloads by extracting the torrent name
   and looking for matching folders in the completed directory.
+
+  ## Priority
+
+  Priority is a **no-op** for blackhole clients: dropping a file into a
+  watched folder gives us no queue to manipulate. The `:priority` option (and
+  any `priority_profile` overrides on the client config) is silently ignored
+  without raising. This adapter accepts the option for behaviour-parity with
+  the other clients so callers don't need to special-case blackhole.
   """
 
   @behaviour Mydia.Downloads.Client
