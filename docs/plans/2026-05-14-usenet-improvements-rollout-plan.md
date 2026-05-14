@@ -1,7 +1,7 @@
 ---
 title: "feat: Usenet improvements rollout (issues #119–#129)"
 type: feat
-status: draft
+status: completed
 date: 2026-05-14
 origin: getmydia/mydia#119
 ---
