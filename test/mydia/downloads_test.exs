@@ -230,9 +230,15 @@ defmodule Mydia.DownloadsTest do
       end)
 
       Bypass.stub(bypass, "GET", "/file.torrent", fn conn ->
+        # Minimal valid torrent metainfo: announce + info dict with name/length.
+        # ContentType.detect/1 requires a structurally valid bencode metainfo
+        # (must contain an `info` dict), not just a `d8:announce…` prefix.
+        torrent_body =
+          "d8:announce0:4:infod6:lengthi42e4:name8:test.binee"
+
         conn
         |> Plug.Conn.put_resp_content_type("application/x-bittorrent")
-        |> Plug.Conn.resp(200, "d8:announce0:e")
+        |> Plug.Conn.resp(200, torrent_body)
       end)
 
       url_result = %{search_result | download_url: "http://localhost:#{bypass.port}/file.torrent"}
