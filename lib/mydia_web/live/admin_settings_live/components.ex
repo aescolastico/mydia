@@ -8,45 +8,6 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
   def general_settings_tab(assigns) do
     ~H"""
     <div class="p-4 sm:p-6 space-y-6 sm:space-y-8">
-      <%!-- Crash Reporting Stats --%>
-      <%= if @crash_report_stats.enabled do %>
-        <div class="stats stats-vertical sm:stats-horizontal shadow bg-base-200 w-full">
-          <div class="stat">
-            <div class="stat-figure text-warning">
-              <.icon name="hero-bug-ant" class="w-8 h-8" />
-            </div>
-            <div class="stat-title">Crash Reports</div>
-            <div class="stat-value text-warning">{@crash_report_stats.queued_reports}</div>
-            <div class="stat-desc">Queued for sending</div>
-          </div>
-          <div class="stat">
-            <div class="stat-figure text-success">
-              <.icon name="hero-check-circle" class="w-8 h-8" />
-            </div>
-            <div class="stat-title">Sent</div>
-            <div class="stat-value text-success">
-              {Map.get(@crash_report_stats, :sent_reports, 0)}
-            </div>
-            <div class="stat-desc">Successfully reported</div>
-          </div>
-          <%= if @crash_report_stats.queued_reports > 0 do %>
-            <div class="stat">
-              <div class="stat-figure">
-                <button
-                  class="btn btn-warning btn-outline btn-sm"
-                  phx-click="clear_crash_queue"
-                  data-confirm="Clear all pending crash reports?"
-                >
-                  <.icon name="hero-trash" class="w-4 h-4" /> Clear
-                </button>
-              </div>
-              <div class="stat-title">Actions</div>
-              <div class="stat-desc">Clear pending reports</div>
-            </div>
-          <% end %>
-        </div>
-      <% end %>
-
       <%!-- Settings Categories --%>
       <%= for {category, settings} <- @config_settings_with_sources do %>
         <div class="space-y-2">
@@ -70,13 +31,17 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
                     <.setting_value_control
                       setting={setting}
                       category={category}
-                      editable={setting.source != :env}
+                      editable={Map.get(setting, :editable, setting.source != :env)}
                     />
                   </div>
                 </div>
               </div>
             <% end %>
           </div>
+
+          <%= if category == "Crash Reporting" and @crash_report_stats.enabled do %>
+            <.crash_report_stats stats={@crash_report_stats} />
+          <% end %>
         </div>
       <% end %>
 
@@ -92,6 +57,50 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
           <span class="badge badge-ghost badge-xs">Default</span> Built-in value
         </span>
       </div>
+    </div>
+    """
+  end
+
+  attr :stats, :map, required: true
+
+  defp crash_report_stats(assigns) do
+    ~H"""
+    <div class="stats stats-vertical sm:stats-horizontal shadow bg-base-200 w-full mt-2">
+      <div class="stat">
+        <div class="stat-figure text-warning">
+          <.icon name="hero-bug-ant" class="w-8 h-8" />
+        </div>
+        <div class="stat-title">Crash Reports</div>
+        <div class="stat-value text-warning">{@stats.queued_reports}</div>
+        <div class="stat-desc">
+          Queued → <span class="font-mono">{@stats.metadata_relay_url}</span>
+        </div>
+      </div>
+      <div class="stat">
+        <div class="stat-figure text-success">
+          <.icon name="hero-check-circle" class="w-8 h-8" />
+        </div>
+        <div class="stat-title">Sent</div>
+        <div class="stat-value text-success">
+          {Map.get(@stats, :sent_reports, 0)}
+        </div>
+        <div class="stat-desc">Successfully reported</div>
+      </div>
+      <%= if @stats.queued_reports > 0 do %>
+        <div class="stat">
+          <div class="stat-figure">
+            <button
+              class="btn btn-warning btn-outline btn-sm"
+              phx-click="clear_crash_queue"
+              data-confirm="Clear all pending crash reports?"
+            >
+              <.icon name="hero-trash" class="w-4 h-4" /> Clear
+            </button>
+          </div>
+          <div class="stat-title">Actions</div>
+          <div class="stat-desc">Clear pending reports</div>
+        </div>
+      <% end %>
     </div>
     """
   end

@@ -144,7 +144,7 @@ defmodule Mydia.CrashReporter do
     %{
       enabled: enabled?(),
       queued_reports: Queue.count(),
-      metadata_relay_url: get_metadata_relay_url()
+      metadata_relay_url: Mydia.Metadata.metadata_relay_url()
     }
   end
 
@@ -324,8 +324,4 @@ defmodule Mydia.CrashReporter do
   defp parse_boolean("1"), do: true
   defp parse_boolean("yes"), do: true
   defp parse_boolean(_), do: false
-
-  defp get_metadata_relay_url do
-    Application.get_env(:mydia, :metadata_relay_url, "http://localhost:4001")
-  end
 end
