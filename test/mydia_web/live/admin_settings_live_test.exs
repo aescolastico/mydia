@@ -78,5 +78,47 @@ defmodule MydiaWeb.AdminSettingsLiveTest do
       assert setting.category == :crash_reporting
       assert setting.updated_by_id == user.id
     end
+
+    test "toggle persists a value the crash reporter recognises as enabled", %{conn: conn} do
+      case Settings.get_config_setting_by_key("crash_reporting.enabled") do
+        nil -> :ok
+        existing -> Settings.delete_config_setting(existing)
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/admin/config/settings")
+
+      view
+      |> element("input[type='checkbox'][phx-value-key='crash_reporting.enabled']")
+      |> render_click()
+
+      assert Mydia.CrashReporter.enabled?(),
+             "expected toggle click to leave CrashReporter.enabled?/0 returning true"
+    end
+
+    test "self-heals legacy 'on' value written by older versions", %{conn: conn, user: user} do
+      case Settings.get_config_setting_by_key("crash_reporting.enabled") do
+        nil -> :ok
+        existing -> Settings.delete_config_setting(existing)
+      end
+
+      {:ok, _} =
+        Settings.create_config_setting(%{
+          "key" => "crash_reporting.enabled",
+          "value" => "on",
+          "category" => "crash_reporting",
+          "updated_by_id" => user.id
+        })
+
+      assert Mydia.CrashReporter.enabled?(),
+             "legacy 'on' value should be interpreted as enabled"
+
+      {:ok, fresh_view, _html} = live(conn, ~p"/admin/config/settings")
+
+      assert has_element?(
+               fresh_view,
+               "input[type='checkbox'][phx-value-key='crash_reporting.enabled'][checked]"
+             ),
+             "toggle should render checked when DB holds the legacy 'on' value"
+    end
   end
 end

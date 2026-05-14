@@ -319,9 +319,12 @@ defmodule Mydia.CrashReporter do
     end
   end
 
+  # `"on"` is accepted because the admin toggle previously persisted the HTML
+  # checkbox default value, and existing config_settings rows may still hold it.
   defp parse_boolean(value) when is_boolean(value), do: value
   defp parse_boolean("true"), do: true
   defp parse_boolean("1"), do: true
   defp parse_boolean("yes"), do: true
+  defp parse_boolean("on"), do: true
   defp parse_boolean(_), do: false
 end

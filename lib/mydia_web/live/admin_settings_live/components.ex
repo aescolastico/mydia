@@ -148,11 +148,12 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
             <input
               type="checkbox"
               class="toggle toggle-primary toggle-sm"
+              value="true"
               checked={@setting.value}
               phx-click="toggle_setting"
               phx-value-key={@setting.key}
-              phx-value-value={to_string(!@setting.value)}
               phx-value-category={@category}
+              phx-value-next_value={to_string(!@setting.value)}
             />
           </label>
         <% else %>

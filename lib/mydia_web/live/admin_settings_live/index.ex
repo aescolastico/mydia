@@ -94,14 +94,17 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     category_atom = category_string_to_atom(category)
 
     new_value =
-      case Map.get(params, "value") do
-        nil ->
+      case {Map.get(params, "next_value"), Map.get(params, "value")} do
+        {next_value, _value} when is_binary(next_value) ->
+          next_value
+
+        {nil, nil} ->
           case Settings.get_config_setting_by_key(key) do
             nil -> "true"
             setting -> to_string(!parse_boolean_value(setting.value))
           end
 
-        value ->
+        {nil, value} ->
           to_string(value)
       end
 
@@ -468,10 +471,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     end
   end
 
+  # `"on"` is accepted because LiveView used to clobber phx-value-value with the
+  # checkbox's default `value="on"` for this toggle, and existing rows may
+  # still hold that string.
   defp parse_boolean_value(value) when is_boolean(value), do: value
   defp parse_boolean_value("true"), do: true
   defp parse_boolean_value("1"), do: true
   defp parse_boolean_value("yes"), do: true
+  defp parse_boolean_value("on"), do: true
   defp parse_boolean_value(_), do: false
 
   defp get_source(env_var_name, key, all_db_settings) do
