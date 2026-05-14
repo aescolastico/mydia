@@ -92,6 +92,7 @@ defmodule Mydia.Application do
             )
           end
       end
+
       # Reset any jobs stuck in executing state from previous runs
       reset_stale_jobs()
       # Attach Oban job broadcaster for real-time job status updates

@@ -78,7 +78,9 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
             class="font-mono truncate max-w-xs inline-block align-bottom"
             title={@stats.metadata_relay_url}
             aria-label={"Relay URL: #{@stats.metadata_relay_url}"}
-          >{@stats.metadata_relay_url}</span>
+          >
+            {@stats.metadata_relay_url}
+          </span>
         </div>
       </div>
       <div class="stat">
