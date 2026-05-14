@@ -24,6 +24,9 @@ defmodule Mydia.Indexers.SearchResult do
     * `:usenet_date` - When the release was originally posted to Usenet (optional, NZB only)
     * `:nzb_completion` - Article completion ratio (0.0..1.0) reported by Usenet indexer (optional)
     * `:nzb_grabs` - Number of times this release has been grabbed (NZB popularity indicator)
+    * `:guid` - Indexer-provided stable identifier for the release (optional).
+      Used by the release blacklist (issue #123) to match repeat failures. When
+      missing, the blacklist falls back to a SHA-256 of (indexer, title, size).
 
   ## Quality Information
 
@@ -75,7 +78,8 @@ defmodule Mydia.Indexers.SearchResult do
           download_protocol: :torrent | :nzb | nil,
           usenet_date: DateTime.t() | nil,
           nzb_completion: float() | nil,
-          nzb_grabs: non_neg_integer() | nil
+          nzb_grabs: non_neg_integer() | nil,
+          guid: String.t() | nil
         }
 
   @enforce_keys [:title, :size, :seeders, :leechers, :download_url, :indexer]
@@ -97,7 +101,8 @@ defmodule Mydia.Indexers.SearchResult do
     :download_protocol,
     :usenet_date,
     :nzb_completion,
-    :nzb_grabs
+    :nzb_grabs,
+    :guid
   ]
 
   @doc """

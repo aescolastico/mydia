@@ -787,6 +787,19 @@ defmodule Mydia.Downloads.Queue do
     # Create DownloadMetadata struct and convert to map for database storage
     metadata = metadata_attrs |> DownloadMetadata.new() |> DownloadMetadata.to_map()
 
+    # Plumb the release's stable indexer + guid through to the download record
+    # so failure handling (DownloadMonitor → Blacklists.add/4, #123) can key
+    # off the original search result. `DownloadMetadata.to_map/1` produces a
+    # plain map for JSON storage; adding the extra fields here is safe.
+    metadata =
+      metadata
+      |> Map.put(:indexer, search_result.indexer)
+      |> Map.put(
+        :guid,
+        search_result.guid ||
+          fallback_release_guid(search_result)
+      )
+
     attrs = %{
       indexer: search_result.indexer,
       title: search_result.title,
@@ -800,6 +813,18 @@ defmodule Mydia.Downloads.Queue do
     }
 
     History.create_download(attrs)
+  end
+
+  # Synthesizes a stable fallback identifier when the indexer didn't provide
+  # a `guid`. SHA-256 of `(indexer, title, size)` is deterministic across
+  # processes so the same release hashes to the same key — good enough for
+  # blacklist dedup.
+  defp fallback_release_guid(%SearchResult{} = sr) do
+    parts = [sr.indexer || "", sr.title || "", to_string(sr.size || 0)]
+    payload = Enum.join(parts, "|")
+
+    "sha256:" <>
+      (:crypto.hash(:sha256, payload) |> Base.encode16(case: :lower))
   end
 
   defp create_download_record_with_retry(search_result, client_config, client_id, opts) do

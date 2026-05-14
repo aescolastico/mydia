@@ -24,6 +24,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
   require Logger
   alias Mydia.Downloads
+  alias Mydia.Downloads.Blacklists
   alias Mydia.Downloads.StallDetector
   alias Mydia.Downloads.UntrackedMatcher
   alias Mydia.Events
@@ -171,6 +172,10 @@ defmodule Mydia.Jobs.DownloadMonitor do
     # Track failure event before deletion
     Events.download_failed(download, error_msg, media_item: download.media_item)
 
+    # Blacklist the release so the next search excludes it (issue #123).
+    # This MUST NOT block failure handling — wrap in try/rescue and log.
+    record_blacklist_entry(download, "client_reported_failure")
+
     # Delete the download record - downloads table is ephemeral
     case Downloads.delete_download(download) do
       {:ok, _deleted} ->
@@ -188,6 +193,71 @@ defmodule Mydia.Jobs.DownloadMonitor do
         )
 
         :ok
+    end
+  end
+
+  # --- Release blacklist (#123) ------------------------------------------
+
+  # Inserts a `release_blacklist` row keyed by the download's
+  # (indexer, guid) so future searches in `TvShowSearch` / `MovieSearch`
+  # filter the result out. Best-effort: rescue all errors so a failing
+  # blacklist write never blocks the rest of failure handling.
+  defp record_blacklist_entry(download, failure_reason) do
+    case extract_blacklist_key(download) do
+      {:ok, indexer, guid} ->
+        try do
+          case Blacklists.add(indexer, guid, download.title || "", failure_reason) do
+            {:ok, _row} ->
+              Logger.info("Release blacklisted after failure",
+                download_id: download.id,
+                indexer: indexer,
+                guid: guid,
+                failure_reason: failure_reason
+              )
+
+              :ok
+
+            {:error, reason} ->
+              Logger.warning("Failed to blacklist release",
+                download_id: download.id,
+                indexer: indexer,
+                guid: guid,
+                reason: inspect(reason)
+              )
+
+              :ok
+          end
+        rescue
+          error ->
+            Logger.warning("Exception while blacklisting release — continuing",
+              download_id: download.id,
+              error: inspect(error)
+            )
+
+            :ok
+        end
+
+      {:error, reason} ->
+        Logger.debug("Skipping blacklist write — no usable key",
+          download_id: download.id,
+          reason: reason
+        )
+
+        :ok
+    end
+  end
+
+  # Returns `{:ok, indexer, guid}` when both are present on the download.
+  # The `indexer` and `guid` should have been plumbed in at download
+  # creation time (see `Mydia.Downloads.Queue.create_download_record/4`).
+  defp extract_blacklist_key(download) do
+    indexer = download.indexer || get_in(download.metadata || %{}, ["indexer"])
+    guid = get_in(download.metadata || %{}, ["guid"])
+
+    cond do
+      is_nil(indexer) or indexer == "" -> {:error, :no_indexer}
+      is_nil(guid) or guid == "" -> {:error, :no_guid}
+      true -> {:ok, indexer, guid}
     end
   end
 
