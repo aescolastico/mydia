@@ -3,7 +3,7 @@ defmodule MydiaWeb.SearchLive.Index do
   alias Mydia.Indexers
   alias Mydia.Indexers.SearchResult
   alias Mydia.Indexers.CategoryMapping
-  alias Mydia.Library.FileParser.V2, as: FileParser
+  alias Mydia.Library.ReleaseParser, as: FileParser
   alias Mydia.Metadata
   alias Mydia.Media
   alias Mydia.Downloads

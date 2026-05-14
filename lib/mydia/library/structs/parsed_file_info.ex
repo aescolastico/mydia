@@ -35,7 +35,19 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
     # :filename | :folder | :duration | nil
     detection_method: nil,
     # The folder type if detected via folder (e.g., "Trailers", "Extras")
-    detected_folder: nil
+    detected_folder: nil,
+    # V3 release-parser additions. Optional / nil by default so V2 callers
+    # remain backward-compatible.
+    #
+    # `field_confidence` carries per-field parser confidence (0.0-1.0) used
+    # downstream for commit / suggest threshold gating.
+    #
+    # `engine_flags` carries sideband signals from the parser — currently
+    # `:binding_suspect`, `:parsed_title_unbound`, `:season_out_of_range`.
+    # The map value type is intentionally loose (`term()`) because these
+    # flags carry mixed shapes.
+    field_confidence: nil,
+    engine_flags: nil
   ]
 
   @type media_type :: :movie | :tv_show | :unknown
@@ -60,7 +72,9 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
           is_trailer: boolean(),
           is_extra: boolean(),
           detection_method: detection_method(),
-          detected_folder: String.t() | nil
+          detected_folder: String.t() | nil,
+          field_confidence: %{atom() => float()} | nil,
+          engine_flags: %{atom() => term()} | nil
         }
 
   @doc """
@@ -88,7 +102,9 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
       is_trailer: metadata[:is_trailer] || false,
       is_extra: metadata[:is_extra] || false,
       detection_method: metadata[:detection_method],
-      detected_folder: metadata[:detected_folder]
+      detected_folder: metadata[:detected_folder],
+      field_confidence: metadata[:field_confidence],
+      engine_flags: metadata[:engine_flags]
     }
   end
 

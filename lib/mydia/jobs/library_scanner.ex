@@ -31,7 +31,7 @@ defmodule Mydia.Jobs.LibraryScanner do
     SampleDetector
   }
 
-  alias Mydia.Library.FileParser.V2, as: FileParser
+  alias Mydia.Library.ReleaseParser, as: FileParser
 
   defmodule Args do
     @moduledoc false

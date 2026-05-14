@@ -11,8 +11,9 @@ defmodule Mydia.Library.MetadataMatcher do
 
   require Logger
   alias Mydia.{Media, Metadata}
-  alias Mydia.Library.FileParser.V2, as: FileParser
+  alias Mydia.Library.ReleaseParser, as: FileParser
   alias Mydia.Library.Structs.MatchResult
+  alias Mydia.Library.Text
   alias Mydia.Metadata.Structs.MediaMetadata
 
   @type match_result :: MatchResult.t()
@@ -867,89 +868,14 @@ defmodule Mydia.Library.MetadataMatcher do
   defp title_derivative_penalty(_result_title, _search_title), do: 0.0
 
   defp title_similarity(title1, title2) when is_binary(title1) and is_binary(title2) do
-    # Check for substring match on lightly normalized versions first
-    # (before removing articles, which can affect substring matching)
-    light_norm1 = String.downcase(title1) |> String.replace(~r/[^\w\s]/, "") |> String.trim()
-    light_norm2 = String.downcase(title2) |> String.replace(~r/[^\w\s]/, "") |> String.trim()
-
-    cond do
-      # Exact match on light normalization
-      light_norm1 == light_norm2 ->
-        1.0
-
-      # Substring match on light normalization
-      String.contains?(light_norm1, light_norm2) || String.contains?(light_norm2, light_norm1) ->
-        0.8
-
-      # Otherwise, do full normalization for fuzzy matching
-      true ->
-        # Normalize both titles with article removal and roman numeral conversion
-        norm1 = normalize_title(title1)
-        norm2 = normalize_title(title2)
-
-        cond do
-          # Exact match after full normalization
-          norm1 == norm2 ->
-            1.0
-
-          # Substring match after full normalization
-          String.contains?(norm1, norm2) || String.contains?(norm2, norm1) ->
-            0.9
-
-          # Jaro distance for fuzzy matching
-          true ->
-            jaro_similarity(norm1, norm2)
-        end
-    end
+    Text.title_similarity(title1, title2)
   end
 
   defp title_similarity(_title1, _title2), do: 0.0
 
-  defp normalize_title(title) do
-    title
-    |> String.downcase()
-    # Convert roman numerals to numbers (common in movie sequels)
-    |> convert_roman_numerals()
-    # Normalize "and" vs "&"
-    |> String.replace(~r/\s+&\s+/, " and ")
-    # Move leading articles to the end: "The Matrix" -> "Matrix The"
-    |> normalize_articles()
-    # Remove all punctuation
-    |> String.replace(~r/[^\w\s]/, "")
-    # Normalize whitespace
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-  end
-
-  # Convert common roman numerals to arabic numbers
-  defp convert_roman_numerals(title) do
-    # Match roman numerals at word boundaries (often used for sequels)
-    # Handle I through X (1-10), which covers most movie sequels
-    replacements = [
-      {~r/\bX\b/i, "10"},
-      {~r/\bIX\b/i, "9"},
-      {~r/\bVIII\b/i, "8"},
-      {~r/\bVII\b/i, "7"},
-      {~r/\bVI\b/i, "6"},
-      {~r/\bV\b/i, "5"},
-      {~r/\bIV\b/i, "4"},
-      {~r/\bIII\b/i, "3"},
-      {~r/\bII\b/i, "2"}
-      # Note: Don't replace single "I" as it's too ambiguous (could be "I" as in "me")
-    ]
-
-    Enum.reduce(replacements, title, fn {pattern, replacement}, acc ->
-      String.replace(acc, pattern, replacement)
-    end)
-  end
-
-  # Move leading articles (the, a, an) to the end: "The Matrix" -> "Matrix The"
-  defp normalize_articles(title) do
-    case Regex.run(~r/^(the|a|an)\s+(.+)$/i, title) do
-      [_, article, rest] -> "#{rest} #{article}"
-      _ -> title
-    end
-  end
+  # Delegates to `Mydia.Library.Text.normalize_title/1` — the shared
+  # title-normalization helper (promoted in V3 parser Unit 7).
+  defp normalize_title(title), do: Text.normalize_title(title)
 
   defp year_match?(result_year, nil), do: result_year != nil
   defp year_match?(nil, _parsed_year), do: false
@@ -960,81 +886,6 @@ defmodule Mydia.Library.MetadataMatcher do
   end
 
   defp year_match?(_result_year, _parsed_year), do: false
-
-  # Simple Jaro similarity implementation
-  # Returns a value between 0.0 (no match) and 1.0 (exact match)
-  defp jaro_similarity(s1, s2) do
-    len1 = String.length(s1)
-    len2 = String.length(s2)
-
-    # Empty strings
-    if len1 == 0 and len2 == 0, do: 1.0
-    if len1 == 0 or len2 == 0, do: 0.0
-
-    # Match window
-    match_distance = max(div(max(len1, len2), 2) - 1, 0)
-
-    s1_chars = String.graphemes(s1)
-    s2_chars = String.graphemes(s2)
-
-    {matches, transpositions} = calculate_matches(s1_chars, s2_chars, match_distance)
-
-    if matches == 0 do
-      0.0
-    else
-      (matches / len1 + matches / len2 + (matches - transpositions) / matches) / 3
-    end
-  end
-
-  defp calculate_matches(s1_chars, s2_chars, match_distance) do
-    len1 = length(s1_chars)
-    len2 = length(s2_chars)
-
-    s1_matches = List.duplicate(false, len1)
-    s2_matches = List.duplicate(false, len2)
-
-    # Find matches
-    {matches, s1_matches, s2_matches} =
-      Enum.reduce(0..(len1 - 1), {0, s1_matches, s2_matches}, fn i, {match_count, s1m, s2m} ->
-        char1 = Enum.at(s1_chars, i)
-        range_start = max(0, i - match_distance)
-        range_end = min(i + match_distance + 1, len2)
-
-        case find_match_in_range(char1, s2_chars, s2m, range_start, range_end) do
-          {:ok, j} ->
-            {match_count + 1, List.replace_at(s1m, i, true), List.replace_at(s2m, j, true)}
-
-          :not_found ->
-            {match_count, s1m, s2m}
-        end
-      end)
-
-    # Count transpositions
-    transpositions = count_transpositions(s1_chars, s2_chars, s1_matches, s2_matches)
-
-    {matches, div(transpositions, 2)}
-  end
-
-  defp find_match_in_range(char, chars, matches, range_start, range_end) do
-    Enum.reduce_while(range_start..(range_end - 1), :not_found, fn j, _acc ->
-      if !Enum.at(matches, j) and Enum.at(chars, j) == char do
-        {:halt, {:ok, j}}
-      else
-        {:cont, :not_found}
-      end
-    end)
-  end
-
-  defp count_transpositions(s1_chars, s2_chars, s1_matches, s2_matches) do
-    s1_matched =
-      Enum.zip(s1_chars, s1_matches) |> Enum.filter(&elem(&1, 1)) |> Enum.map(&elem(&1, 0))
-
-    s2_matched =
-      Enum.zip(s2_chars, s2_matches) |> Enum.filter(&elem(&1, 1)) |> Enum.map(&elem(&1, 0))
-
-    Enum.zip(s1_matched, s2_matched)
-    |> Enum.count(fn {c1, c2} -> c1 != c2 end)
-  end
 
   # Convert database metadata to MediaMetadata struct
   # If metadata is nil, create a minimal struct from the media item
