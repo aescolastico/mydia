@@ -186,8 +186,10 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2Test do
       assert %SearchResult{} = result
       assert result.title == "Test.Movie.2024.1080p.WEB-DL.x264-GROUP"
       assert result.size == 2_147_483_648
-      assert result.seeders == 150
-      assert result.leechers == 0
+      # NZB results have no seeders/leechers concept; grabs lives in nzb_grabs.
+      assert result.seeders == nil
+      assert result.leechers == nil
+      assert result.nzb_grabs == 150
       assert result.download_url == "https://nzbhydra2.local/nzb/abc123"
       assert result.info_url == "https://nzbhydra2.local/details/abc123"
       assert result.indexer == "NZBGeek"
@@ -200,7 +202,8 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2Test do
       result2 = Enum.at(results, 1)
       assert result2.title == "Another.Release.2024.720p.WEBRip.x265"
       assert result2.size == 1_073_741_824
-      assert result2.seeders == 50
+      assert result2.seeders == nil
+      assert result2.nzb_grabs == 50
       assert result2.category == 5000
       assert result2.download_protocol == :nzb
     end
@@ -414,6 +417,127 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2Test do
 
       assert result.quality != nil
       assert result.quality.resolution == "2160p"
+    end
+  end
+
+  describe "Usenet-specific fields (#120)" do
+    test "parses usenetdate into usenet_date" do
+      bypass = Bypass.open()
+
+      xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel>
+          <item>
+            <title>Test.NZB.Release</title>
+            <link>http://example.com/nzb</link>
+            <enclosure url="http://example.com/nzb" length="1000" type="application/x-nzb"/>
+            <newznab:attr name="usenetdate" value="Mon, 25 Nov 2024 10:30:00 +0000"/>
+            <newznab:attr name="grabs" value="42"/>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      Bypass.expect_once(bypass, "GET", "/api", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/xml")
+        |> Plug.Conn.resp(200, xml)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = NzbHydra2.search(config, "test")
+      assert %DateTime{} = result.usenet_date
+      assert result.usenet_date.year == 2024
+      assert result.usenet_date.month == 11
+      assert result.usenet_date.day == 25
+    end
+
+    test "parses grabs into nzb_grabs and leaves seeders/leechers as nil" do
+      bypass = Bypass.open()
+
+      xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel>
+          <item>
+            <title>Test.NZB.Release</title>
+            <link>http://example.com/nzb</link>
+            <enclosure url="http://example.com/nzb" length="1000" type="application/x-nzb"/>
+            <newznab:attr name="grabs" value="42"/>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      Bypass.expect_once(bypass, "GET", "/api", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/xml")
+        |> Plug.Conn.resp(200, xml)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = NzbHydra2.search(config, "test")
+      assert result.nzb_grabs == 42
+      assert result.seeders == nil
+      assert result.leechers == nil
+    end
+
+    test "parses completion attribute into nzb_completion as 0.0..1.0 float" do
+      bypass = Bypass.open()
+
+      xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel>
+          <item>
+            <title>Test.NZB.Release</title>
+            <link>http://example.com/nzb</link>
+            <enclosure url="http://example.com/nzb" length="1000" type="application/x-nzb"/>
+            <newznab:attr name="completion" value="95"/>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      Bypass.expect_once(bypass, "GET", "/api", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/xml")
+        |> Plug.Conn.resp(200, xml)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = NzbHydra2.search(config, "test")
+      assert result.nzb_completion == 0.95
+    end
+
+    test "leaves usenet_date and nzb_completion as nil when fields are absent" do
+      bypass = Bypass.open()
+
+      xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel>
+          <item>
+            <title>Test.NZB.Release</title>
+            <link>http://example.com/nzb</link>
+            <enclosure url="http://example.com/nzb" length="1000" type="application/x-nzb"/>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      Bypass.expect_once(bypass, "GET", "/api", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/xml")
+        |> Plug.Conn.resp(200, xml)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = NzbHydra2.search(config, "test")
+      assert result.usenet_date == nil
+      assert result.nzb_completion == nil
+      assert result.nzb_grabs == nil
     end
   end
 
