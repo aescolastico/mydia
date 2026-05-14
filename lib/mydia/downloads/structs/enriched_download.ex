@@ -47,7 +47,10 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     :import_retry_count,
     :import_last_error,
     :import_next_retry_at,
-    :import_failed_at
+    :import_failed_at,
+    # Stall-detection / progress tracking (mirrored from Download DB row)
+    :last_progress_at,
+    :last_known_bytes
   ]
 
   @type t :: %__MODULE__{
@@ -85,7 +88,9 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           import_retry_count: integer() | nil,
           import_last_error: String.t() | nil,
           import_next_retry_at: DateTime.t() | nil,
-          import_failed_at: DateTime.t() | nil
+          import_failed_at: DateTime.t() | nil,
+          last_progress_at: DateTime.t() | nil,
+          last_known_bytes: integer() | nil
         }
 
   @doc """

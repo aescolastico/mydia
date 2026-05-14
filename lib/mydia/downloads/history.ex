@@ -256,7 +256,9 @@ defmodule Mydia.Downloads.History do
       import_retry_count: download.import_retry_count,
       import_last_error: download.import_last_error,
       import_next_retry_at: download.import_next_retry_at,
-      import_failed_at: download.import_failed_at
+      import_failed_at: download.import_failed_at,
+      last_progress_at: download.last_progress_at,
+      last_known_bytes: download.last_known_bytes
     })
   end
 
@@ -297,7 +299,9 @@ defmodule Mydia.Downloads.History do
       import_retry_count: download.import_retry_count,
       import_last_error: download.import_last_error,
       import_next_retry_at: download.import_next_retry_at,
-      import_failed_at: download.import_failed_at
+      import_failed_at: download.import_failed_at,
+      last_progress_at: download.last_progress_at,
+      last_known_bytes: download.last_known_bytes
     })
   end
 
@@ -349,7 +353,9 @@ defmodule Mydia.Downloads.History do
       import_retry_count: download.import_retry_count,
       import_last_error: download.import_last_error,
       import_next_retry_at: download.import_next_retry_at,
-      import_failed_at: download.import_failed_at
+      import_failed_at: download.import_failed_at,
+      last_progress_at: download.last_progress_at,
+      last_known_bytes: download.last_known_bytes
     })
   end
 
