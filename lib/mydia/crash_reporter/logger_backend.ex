@@ -97,12 +97,8 @@ defmodule Mydia.CrashReporter.LoggerBackend do
   # Private functions
 
   defp should_report?(_msg, metadata, state) do
-    # Don't report if we've hit the rate limit
-    # Don't report test-related errors
-    # Don't report errors from tests
-    not rate_limited?(state) and
-      not test_error?(metadata) and
-      not in_test_env?()
+    not Application.get_env(:mydia, :crash_reporter_disabled?, false) and
+      not rate_limited?(state) and not test_error?(metadata)
   end
 
   defp rate_limited?(state) do
@@ -126,11 +122,6 @@ defmodule Mydia.CrashReporter.LoggerBackend do
       _ ->
         false
     end
-  end
-
-  defp in_test_env? do
-    Application.get_env(:mydia, :environment) == :test or
-      (Code.ensure_loaded?(Mix) and Mix.env() == :test)
   end
 
   defp extract_error_info(msg, metadata) do

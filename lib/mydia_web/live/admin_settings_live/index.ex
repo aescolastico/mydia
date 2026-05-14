@@ -342,8 +342,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Share Crashes with Developers",
           type: :boolean,
           value: get_crash_reporting_enabled(all_db_settings),
-          source:
-            get_source("CRASH_REPORTING_ENABLED", "crash_reporting.enabled", all_db_settings)
+          # Unlike other settings where env wins, Mydia.CrashReporter.enabled?/0
+          # gives the UI/DB setting priority over CRASH_REPORTING_ENABLED, so the
+          # toggle must remain interactive even when the env var is set.
+          editable: true,
+          source: crash_reporting_source(all_db_settings)
         }
       ],
       "Library" => [
@@ -404,6 +407,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         }
       ]
     }
+  end
+
+  defp crash_reporting_source(all_db_settings) do
+    cond do
+      Map.has_key?(all_db_settings, "crash_reporting.enabled") -> :database
+      System.get_env("CRASH_REPORTING_ENABLED") != nil -> :env
+      true -> :default
+    end
   end
 
   defp get_crash_reporting_enabled(all_db_settings) do
