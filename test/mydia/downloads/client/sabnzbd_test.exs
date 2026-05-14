@@ -2,6 +2,7 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
   use ExUnit.Case, async: true
 
   alias Mydia.Downloads.Client.Sabnzbd
+  alias Mydia.Downloads.Structs.DownloadStatus
 
   @config %{
     type: :sabnzbd,
@@ -159,9 +160,10 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
   end
 
   describe "state mapping" do
-    # These tests verify the state parsing logic works correctly
-    # We can't easily test this without mocking, so we'll add integration tests instead
-    # The state mapping is tested indirectly through integration tests
+    # See "state taxonomy (Bypass + table-driven)" and "fixture-based parsing
+    # (Bypass)" below for the full coverage. `parse_state/1` is private, so
+    # mapping is asserted through the public `list_torrents/2` path with a
+    # one-slot fixture per status string.
   end
 
   describe "URL base handling" do
@@ -461,6 +463,253 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
 
       assert {:ok, _} =
                Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"})
+    end
+  end
+
+  describe "fixture-based parsing (Bypass)" do
+    # Path: test/mydia/downloads/client -> ../../../support/fixtures
+    @queue_fixture Path.expand("../../../support/fixtures/sabnzbd/queue.json", __DIR__)
+    @history_fixture Path.expand("../../../support/fixtures/sabnzbd/history.json", __DIR__)
+
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+
+      queue_body = File.read!(@queue_fixture)
+      history_body = File.read!(@history_fixture)
+
+      {:ok, bypass: bypass, config: config, queue_body: queue_body, history_body: history_body}
+    end
+
+    # Routes the canonical queue + history Bypass response based on the
+    # `mode` query param so list_torrents/2 sees a realistic two-step fetch.
+    defp expect_queue_and_history(bypass, queue_body, history_body) do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        body = if conn.query_params["mode"] == "history", do: history_body, else: queue_body
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, body)
+      end)
+    end
+
+    test "list_torrents parses every queue + history fixture slot into DownloadStatus",
+         %{bypass: bypass, config: config, queue_body: queue_body, history_body: history_body} do
+      expect_queue_and_history(bypass, queue_body, history_body)
+
+      assert {:ok, statuses} = Sabnzbd.list_torrents(config)
+      assert length(statuses) == 9
+
+      assert Enum.all?(statuses, &match?(%DownloadStatus{}, &1))
+
+      # Sanity-check the first downloading slot: fields drawn straight from
+      # the queue fixture survive the parse intact.
+      dl = Enum.find(statuses, &(&1.id == "SABnzbd_nzo_dl001"))
+      assert dl.name == "Show.S01E01.1080p.WEB-DL.x264-GROUP"
+      assert dl.state == :downloading
+      assert_in_delta dl.progress, 50.0, 0.5
+      # 2048 MiB total, 1024 MiB left -> 1024 MiB downloaded
+      assert dl.size == 2_048 * 1_048_576
+      assert dl.downloaded == 1_024 * 1_048_576
+      # kbpersec 7680.0 -> bytes per second
+      assert dl.download_speed == round(7680.0 * 1024)
+      # 0:02:15
+      assert dl.eta == 135
+      assert dl.save_path == "/downloads/incomplete"
+      assert dl.added_at == ~U[2023-11-14 22:13:20Z]
+      assert dl.completed_at == nil
+    end
+
+    test "queue status strings map onto the canonical state taxonomy",
+         %{bypass: bypass, config: config, queue_body: queue_body, history_body: history_body} do
+      expect_queue_and_history(bypass, queue_body, history_body)
+
+      assert {:ok, statuses} = Sabnzbd.list_torrents(config)
+      by_id = Map.new(statuses, &{&1.id, &1.state})
+
+      # The 2026-04-08 fix moved Extracting/Moving from :error to :checking so
+      # the DownloadMonitor doesn't prematurely flag in-flight post-processing
+      # as missing. Pin both here so a regression is caught at this layer.
+      assert by_id["SABnzbd_nzo_dl001"] == :downloading
+      assert by_id["SABnzbd_nzo_ps002"] == :paused
+      # Queued is folded into :downloading per the SABnzbd adapter docstring.
+      assert by_id["SABnzbd_nzo_q0003"] == :downloading
+      assert by_id["SABnzbd_nzo_vf004"] == :checking
+      assert by_id["SABnzbd_nzo_ex005"] == :checking
+      assert by_id["SABnzbd_nzo_mv006"] == :checking
+    end
+
+    test "history Completed/Failed slots produce :completed/:error states",
+         %{bypass: bypass, config: config, queue_body: queue_body, history_body: history_body} do
+      expect_queue_and_history(bypass, queue_body, history_body)
+
+      assert {:ok, statuses} = Sabnzbd.list_torrents(config)
+      by_id = Map.new(statuses, &{&1.id, &1})
+
+      done = by_id["SABnzbd_nzo_done01"]
+      assert done.state == :completed
+      # SABnzbd history slots expose the title as `name`, not `filename`. The
+      # adapter currently only reads `filename`, so the name field is empty
+      # for history items. Pinning the actual behaviour here so a future fix
+      # that also picks up `name` is caught.
+      assert done.name == ""
+      # History reports size in bytes under `size`, not MiB
+      assert done.size == 2_147_483_648
+      assert done.save_path == "/downloads/complete/tv/Completed.Show"
+      assert done.completed_at == ~U[2023-11-15 12:06:40Z]
+
+      failed = by_id["SABnzbd_nzo_fail02"]
+      assert failed.state == :error
+      assert failed.size == 8_589_934_592
+      # Non-completed history slots: completed_at is left nil
+      assert failed.completed_at == nil
+    end
+
+    test "list_torrents filter: :downloading keeps Downloading/Fetching/Queued only",
+         %{bypass: bypass, config: config, queue_body: queue_body, history_body: history_body} do
+      expect_queue_and_history(bypass, queue_body, history_body)
+
+      assert {:ok, statuses} = Sabnzbd.list_torrents(config, filter: :downloading)
+      ids = Enum.map(statuses, & &1.id) |> MapSet.new()
+
+      assert MapSet.equal?(ids, MapSet.new(["SABnzbd_nzo_dl001", "SABnzbd_nzo_q0003"]))
+    end
+
+    test "list_torrents filter: :completed keeps history Completed slots",
+         %{bypass: bypass, config: config, queue_body: queue_body, history_body: history_body} do
+      expect_queue_and_history(bypass, queue_body, history_body)
+
+      assert {:ok, statuses} = Sabnzbd.list_torrents(config, filter: :completed)
+      ids = Enum.map(statuses, & &1.id) |> MapSet.new()
+
+      assert MapSet.equal?(ids, MapSet.new(["SABnzbd_nzo_done01", "SABnzbd_nzo_done03"]))
+    end
+  end
+
+  describe "state taxonomy (Bypass + table-driven)" do
+    # Every SABnzbd queue status that the adapter recognises. Drives
+    # parse_state/1 (private) through list_torrents/2 with a synthetic
+    # single-slot queue per row. Covers the 2026-04-08 fix that re-routed
+    # Extracting and Moving from :error to :checking.
+    @state_table [
+      {"Downloading", :downloading},
+      {"Fetching", :downloading},
+      {"Queued", :downloading},
+      {"Paused", :paused},
+      {"Completed", :completed},
+      {"Failed", :error},
+      {"Verifying", :checking},
+      {"Repairing", :checking},
+      {"Extracting", :checking},
+      {"Moving", :checking},
+      {"UnknownState", :error}
+    ]
+
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+      {:ok, bypass: bypass, config: config}
+    end
+
+    for {sabnzbd_state, expected_state} <- @state_table do
+      test "maps SABnzbd status #{inspect(sabnzbd_state)} to #{inspect(expected_state)}",
+           %{bypass: bypass, config: config} do
+        sabnzbd_state = unquote(sabnzbd_state)
+        expected_state = unquote(expected_state)
+
+        queue_body =
+          Jason.encode!(%{
+            "queue" => %{
+              "slots" => [
+                %{
+                  "nzo_id" => "SABnzbd_nzo_state",
+                  "filename" => "Probe",
+                  "status" => sabnzbd_state,
+                  "mb" => "100.0",
+                  "mbleft" => "50.0",
+                  "kbpersec" => "0.0",
+                  "timeleft" => "0:00:00",
+                  "storage" => "/tmp"
+                }
+              ]
+            }
+          })
+
+        history_body = Jason.encode!(%{"history" => %{"slots" => []}})
+
+        Bypass.expect(bypass, "GET", "/api", fn conn ->
+          conn = Plug.Conn.fetch_query_params(conn)
+          body = if conn.query_params["mode"] == "history", do: history_body, else: queue_body
+
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, body)
+        end)
+
+        assert {:ok, [%{state: ^expected_state}]} = Sabnzbd.list_torrents(config)
+      end
+    end
+  end
+
+  describe "ETA parsing edge cases (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+      {:ok, bypass: bypass, config: config}
+    end
+
+    # Drives the adapter's private parse_eta/1 through list_torrents/2. SABnzbd
+    # returns ETA as HH:MM:SS strings; anything malformed must degrade to nil
+    # rather than crash the parse pipeline.
+    @eta_cases [
+      {"0:00:00", 0},
+      {"0:02:15", 135},
+      {"99:59:59", 359_999},
+      # Malformed / sentinel values: parse_eta is permissive and returns nil.
+      {"", nil},
+      {"-", nil},
+      {"unknown", nil},
+      {"not:a:time", nil}
+    ]
+
+    for {timeleft, expected_eta} <- @eta_cases do
+      test "parses timeleft #{inspect(timeleft)} as eta=#{inspect(expected_eta)}",
+           %{bypass: bypass, config: config} do
+        timeleft = unquote(timeleft)
+        expected_eta = unquote(expected_eta)
+
+        queue_body =
+          Jason.encode!(%{
+            "queue" => %{
+              "slots" => [
+                %{
+                  "nzo_id" => "SABnzbd_nzo_eta",
+                  "filename" => "EtaProbe",
+                  "status" => "Downloading",
+                  "mb" => "100.0",
+                  "mbleft" => "50.0",
+                  "kbpersec" => "1024.0",
+                  "timeleft" => timeleft,
+                  "storage" => "/tmp"
+                }
+              ]
+            }
+          })
+
+        history_body = Jason.encode!(%{"history" => %{"slots" => []}})
+
+        Bypass.expect(bypass, "GET", "/api", fn conn ->
+          conn = Plug.Conn.fetch_query_params(conn)
+          body = if conn.query_params["mode"] == "history", do: history_body, else: queue_body
+
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, body)
+        end)
+
+        assert {:ok, [%{eta: ^expected_eta}]} = Sabnzbd.list_torrents(config)
+      end
     end
   end
 end

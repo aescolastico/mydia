@@ -1,0 +1,46 @@
+[
+  {
+    "guid": "prowlarr-nzb-001",
+    "title": "Show.S01E01.1080p.WEB-DL.x264-GROUP",
+    "size": 2147483648,
+    "downloadUrl": "https://indexer.example.com/api/v1/getnzb/abc123",
+    "infoUrl": "https://indexer.example.com/details/abc123",
+    "downloadProtocol": "usenet",
+    "publishDate": "2024-11-25T10:30:00Z",
+    "grabs": 42,
+    "files": 23,
+    "completion": 100,
+    "indexer": "Newshosting",
+    "categoryId": 5040,
+    "categories": [{"id": 5040, "name": "TV/HD"}]
+  },
+  {
+    "guid": "prowlarr-nzb-002",
+    "title": "Movie.2024.2160p.UHD.BluRay.x265-GROUP",
+    "size": 34359738368,
+    "downloadUrl": "https://indexer.example.com/api/v1/getnzb/def456",
+    "infoUrl": "https://indexer.example.com/details/def456",
+    "downloadProtocol": "usenet",
+    "publishDate": "2024-11-20T14:15:00Z",
+    "grabs": 128,
+    "files": 184,
+    "completion": 99.7,
+    "indexer": "DOGnzb",
+    "categoryId": 2045,
+    "categories": [{"id": 2045, "name": "Movies/UHD"}]
+  },
+  {
+    "guid": "prowlarr-nzb-003",
+    "title": "Documentary.2023.1080p.WEB-DL-GROUP",
+    "size": 4294967296,
+    "downloadUrl": "https://indexer.example.com/api/v1/getnzb/ghi789",
+    "infoUrl": "https://indexer.example.com/details/ghi789",
+    "downloadProtocol": "usenet",
+    "publishDate": "2024-10-12T08:00:00Z",
+    "grabs": 7,
+    "files": 32,
+    "indexer": "NZBgeek",
+    "categoryId": 2040,
+    "categories": [{"id": 2040, "name": "Movies/HD"}]
+  }
+]
