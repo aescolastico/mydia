@@ -295,9 +295,12 @@ defmodule Mydia.Jobs.MovieSearch do
 
   defp process_search_results_with_count(movie, results, args, query) do
     # Filter blacklisted releases out before ranking (#123).
+    # NB: too-fresh NZB filtering (#121) happens upstream inside
+    # `Indexers.search_all/2` where the originating indexer config is in
+    # scope — relay-style indexers (Prowlarr, Jackett) tag results with
+    # their *upstream* indexer label, which would not match the configured
+    # Mydia indexer name in a post-merge lookup.
     results = reject_blacklisted(results, movie: movie)
-    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
-    results = Indexers.reject_too_fresh_nzbs(results)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -456,9 +459,12 @@ defmodule Mydia.Jobs.MovieSearch do
 
   defp process_search_results(movie, results, args, query) do
     # Filter blacklisted releases out before ranking (#123).
+    # NB: too-fresh NZB filtering (#121) happens upstream inside
+    # `Indexers.search_all/2` where the originating indexer config is in
+    # scope — relay-style indexers (Prowlarr, Jackett) tag results with
+    # their *upstream* indexer label, which would not match the configured
+    # Mydia indexer name in a post-merge lookup.
     results = reject_blacklisted(results, movie: movie)
-    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
-    results = Indexers.reject_too_fresh_nzbs(results)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do

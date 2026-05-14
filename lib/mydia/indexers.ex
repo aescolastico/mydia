@@ -403,7 +403,16 @@ defmodule Mydia.Indexers do
     result =
       case search(config, query, opts) do
         {:ok, results} ->
-          {true, results, nil}
+          # Per-indexer-config NZB min-post-age filter (#121). Applied here
+          # rather than post-merge because `SearchResult.indexer` is the
+          # *upstream* label for relay-style indexers (Prowlarr, Jackett) —
+          # one Mydia config like "Prowlarr" can fan out to many upstream
+          # indexers ("DOGnzb", "altHUB", etc.) so a post-merge lookup
+          # keyed by `result.indexer` would never match the configured
+          # name. Doing it here, with the originating config in scope,
+          # sidesteps that gap entirely.
+          filtered = reject_too_fresh_nzbs_for_config(results, config)
+          {true, filtered, nil}
 
         {:error, error} ->
           Logger.warning("Indexer search failed for #{config.name}: #{inspect(error)}")
@@ -432,6 +441,43 @@ defmodule Mydia.Indexers do
     {metrics, results}
   end
 
+  # Drops NZB results younger than `config.min_post_age_minutes`. No-op when
+  # the config has no setting (nil/0) or the value isn't a positive integer,
+  # so Cardigann definitions and indexer configs that left the field blank
+  # both pass through unchanged. Torrent results and NZB results without a
+  # parsed `usenet_date` are always kept — the filter is opt-in per indexer.
+  defp reject_too_fresh_nzbs_for_config(results, config) do
+    case Map.get(config, :min_post_age_minutes) do
+      minutes when is_integer(minutes) and minutes > 0 ->
+        now = DateTime.utc_now()
+        cutoff_seconds = minutes * 60
+
+        Enum.reject(results, fn r ->
+          case {Map.get(r, :download_protocol), Map.get(r, :usenet_date)} do
+            {:nzb, %DateTime{} = posted} ->
+              if DateTime.diff(now, posted, :second) < cutoff_seconds do
+                Logger.debug(
+                  "Filtered too-fresh NZB",
+                  indexer_config: config.name,
+                  title: Map.get(r, :title),
+                  usenet_date: posted
+                )
+
+                true
+              else
+                false
+              end
+
+            _ ->
+              false
+          end
+        end)
+
+      _ ->
+        results
+    end
+  end
+
   defp format_indexer_error(%{message: message}) when is_binary(message), do: message
   defp format_indexer_error(error) when is_binary(error), do: error
   defp format_indexer_error(error), do: inspect(error)
@@ -442,73 +488,6 @@ defmodule Mydia.Indexers do
   end
 
   defp filter_by_seeders(results, _min_seeders), do: results
-
-  @doc """
-  Drops NZB results whose `usenet_date` is more recent than the per-indexer
-  `min_post_age_minutes` setting (#121). Torrent results and NZB results
-  whose indexer does not configure the setting pass through unchanged.
-
-  This is a separate concern from `ReleaseRanker.filter_acceptable/2`'s
-  single-value `:min_post_age_minutes` option: the setting lives on
-  `IndexerConfig` per-indexer, so we resolve per-result here rather than
-  forcing the caller to pick a single global value.
-
-  ## Options
-
-    * `:now` — `DateTime` used as "now" for the comparison. Defaults to
-      `DateTime.utc_now/0`. Tests inject this for determinism.
-  """
-  @spec reject_too_fresh_nzbs([Mydia.Indexers.SearchResult.t()], keyword()) ::
-          [Mydia.Indexers.SearchResult.t()]
-  def reject_too_fresh_nzbs(results, opts \\ []) when is_list(results) do
-    now = Keyword.get(opts, :now, DateTime.utc_now())
-    configs_by_name = list_min_post_age_by_indexer_name()
-
-    {kept, rejected} =
-      Enum.split_with(results, fn result ->
-        not nzb_too_fresh?(result, configs_by_name, now)
-      end)
-
-    if rejected != [] do
-      Enum.each(rejected, fn r ->
-        Logger.debug(
-          "Filtered too-fresh NZB",
-          indexer: r.indexer,
-          title: r.title,
-          usenet_date: r.usenet_date
-        )
-      end)
-    end
-
-    kept
-  end
-
-  defp nzb_too_fresh?(
-         %{download_protocol: :nzb, indexer: indexer, usenet_date: %DateTime{} = posted},
-         configs_by_name,
-         now
-       )
-       when is_binary(indexer) do
-    case Map.get(configs_by_name, indexer) do
-      minutes when is_integer(minutes) and minutes > 0 ->
-        DateTime.diff(now, posted, :second) < minutes * 60
-
-      _ ->
-        false
-    end
-  end
-
-  defp nzb_too_fresh?(_result, _configs_by_name, _now), do: false
-
-  defp list_min_post_age_by_indexer_name do
-    Settings.list_indexer_configs()
-    |> Enum.reduce(%{}, fn config, acc ->
-      case config.min_post_age_minutes do
-        nil -> acc
-        minutes -> Map.put(acc, config.name, minutes)
-      end
-    end)
-  end
 
   defp deduplicate_results(results) do
     # Group results by normalized title and hash
