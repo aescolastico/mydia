@@ -721,34 +721,11 @@ defmodule Mydia.Jobs.MovieSearch do
 
   # Drops results matching an active `(indexer, guid)` row in the
   # release_blacklist table (#123). The "filter, don't rank" convention
-  # keeps this distinct from `ReleaseRanker`; rejections are logged at
-  # :info with the identifying pair for debuggability.
+  # keeps this distinct from `ReleaseRanker`. See `Mydia.Downloads.Blacklists`
+  # for the batched implementation that issues one DB query regardless of
+  # result count.
   defp reject_blacklisted(results, ctx) do
-    {kept, rejected} =
-      Enum.split_with(results, fn r ->
-        not blacklisted?(r)
-      end)
-
-    if rejected != [] do
-      movie_id = Keyword.get(ctx, :movie) && Keyword.get(ctx, :movie).id
-
-      Enum.each(rejected, fn r ->
-        Logger.info("Rejected blacklisted release",
-          indexer: r.indexer,
-          guid: r.guid,
-          title: r.title,
-          movie_id: movie_id
-        )
-      end)
-    end
-
-    kept
+    movie_id = Keyword.get(ctx, :movie) && Keyword.get(ctx, :movie).id
+    Blacklists.reject_blacklisted(results, movie_id: movie_id)
   end
-
-  defp blacklisted?(%{indexer: indexer, guid: guid})
-       when is_binary(indexer) and is_binary(guid) and guid != "" do
-    Blacklists.blacklisted?(indexer, guid)
-  end
-
-  defp blacklisted?(_), do: false
 end

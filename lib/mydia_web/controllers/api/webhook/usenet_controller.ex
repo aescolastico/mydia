@@ -145,18 +145,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetController do
   defp enqueue_media_import(download) do
     changeset = MediaImport.new(%{"download_id" => download.id})
 
-    # Use Oban.insert/1 in production. In test mode the test suite disables
-    # the Oban engine entirely (`engine: false`) to avoid pool conflicts with
-    # the SQL sandbox, so fall back to a plain Repo.insert which still
-    # respects the Oban unique index and is visible to assert_enqueued/1.
-    result =
-      try do
-        Oban.insert(changeset)
-      rescue
-        RuntimeError -> Mydia.Repo.insert(changeset)
-      end
-
-    case result do
+    case Oban.insert(changeset) do
       {:ok, job} ->
         Logger.info("Webhook: enqueued MediaImport",
           download_id: download.id,

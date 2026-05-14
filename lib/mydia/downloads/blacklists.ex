@@ -114,6 +114,88 @@ defmodule Mydia.Downloads.Blacklists do
   def blacklisted?(_, _), do: false
 
   @doc """
+  Filters out results whose `(indexer, guid)` is currently blacklisted, in
+  one DB roundtrip regardless of result-list size.
+
+  Each search result is expected to expose `:indexer` and `:guid` keys.
+  Results missing either are kept (no blacklist key to compare). Rejected
+  rows are logged at `:info` along with the supplied `log_context` keyword
+  list so callers can attach episode/movie ids for traceability.
+
+  ## Examples
+
+      iex> Mydia.Downloads.Blacklists.reject_blacklisted(results, episode_id: ep.id)
+      [...]
+  """
+  @spec reject_blacklisted([map()], Keyword.t()) :: [map()]
+  def reject_blacklisted(results, log_context \\ []) when is_list(results) do
+    blacklisted = batch_blacklisted(results)
+
+    Enum.filter(results, fn result ->
+      pair = blacklist_key(result)
+
+      if pair && MapSet.member?(blacklisted, pair) do
+        Logger.info(
+          "Rejected blacklisted release",
+          [indexer: result.indexer, guid: result.guid, title: Map.get(result, :title)] ++
+            log_context
+        )
+
+        false
+      else
+        true
+      end
+    end)
+  end
+
+  defp batch_blacklisted(results) do
+    pairs =
+      results
+      |> Enum.map(&blacklist_key/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    case pairs do
+      [] ->
+        MapSet.new()
+
+      pairs ->
+        now = DateTime.utc_now()
+        # Normalize once so the DB compares against the canonical form.
+        normalized_pairs =
+          Enum.map(pairs, fn {indexer, guid} ->
+            {ReleaseBlacklist.normalize_indexer(indexer), guid}
+          end)
+
+        # SQLite's Ecto adapter doesn't support tuple `IN` predicates, so we
+        # fetch by `indexer IN (...)` + `guid IN (...)` and intersect with the
+        # candidate pair set in Elixir. The set of pairs in a single search is
+        # bounded (~50), so the over-fetch is negligible.
+        indexers = normalized_pairs |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+        guids = normalized_pairs |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+
+        query =
+          from b in ReleaseBlacklist,
+            where: b.indexer in ^indexers and b.guid in ^guids,
+            where: is_nil(b.expires_at) or b.expires_at > ^now,
+            select: {b.indexer, b.guid}
+
+        candidate = MapSet.new(normalized_pairs)
+
+        Repo.all(query)
+        |> MapSet.new()
+        |> MapSet.intersection(candidate)
+    end
+  end
+
+  defp blacklist_key(%{indexer: indexer, guid: guid})
+       when is_binary(indexer) and is_binary(guid) and guid != "" do
+    {ReleaseBlacklist.normalize_indexer(indexer), guid}
+  end
+
+  defp blacklist_key(_), do: nil
+
+  @doc """
   Lists blacklist rows, newest first.
 
   Options:

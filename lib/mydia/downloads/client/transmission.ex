@@ -386,15 +386,11 @@ defmodule Mydia.Downloads.Client.Transmission do
   defp map_priority(nil, _config), do: nil
 
   defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
-    profile = priority_profile(config)
+    profile = Helpers.priority_profile(config)
     Priority.resolve(atom, profile, nil)
   end
 
   defp map_priority(_other, _config), do: nil
-
-  defp priority_profile(config) do
-    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) || %{}
-  end
 
   defp add_optional_arg(arguments, _key, nil), do: arguments
 

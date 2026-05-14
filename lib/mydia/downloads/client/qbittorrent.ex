@@ -102,9 +102,9 @@ defmodule Mydia.Downloads.Client.QBittorrent do
 
   defp maybe_log_priority(config, atom)
        when atom in [:verylow, :low, :normal, :high, :veryhigh] do
-    profile = Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile])
+    profile = Helpers.priority_profile(config)
 
-    case profile && Priority.resolve(atom, profile, nil) do
+    case Priority.resolve(atom, profile, nil) do
       nil ->
         :ok
 

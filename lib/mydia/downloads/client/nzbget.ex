@@ -542,14 +542,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
   defp map_priority(nil, _config), do: 0
 
   defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
-    profile = priority_profile(config)
+    profile = Helpers.priority_profile(config)
     default = Map.fetch!(@default_priority_map, atom)
     Priority.resolve(atom, profile, default)
   end
 
   defp map_priority(_other, _config), do: 0
-
-  defp priority_profile(config) do
-    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) || %{}
-  end
 end

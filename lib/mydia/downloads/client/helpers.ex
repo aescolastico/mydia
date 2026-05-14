@@ -111,6 +111,20 @@ defmodule Mydia.Downloads.Client.Helpers do
 
   def parse_timestamp_unix(_), do: nil
 
+  @doc """
+  Extracts the per-client `priority_profile` map from a client config map.
+
+  Looks at the top-level `:priority_profile` key first, then falls back to
+  `[:options, :priority_profile]` for the legacy nested shape. Returns an
+  empty map when neither is set, so callers can pass the result straight
+  into `Mydia.Downloads.Priority.resolve/3`.
+  """
+  @spec priority_profile(map()) :: map()
+  def priority_profile(config) do
+    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) ||
+      %{}
+  end
+
   # Floors strings/numbers to a float; defaults unparseable input to 0.0.
   defp coerce_float(value) when is_float(value), do: value
   defp coerce_float(value) when is_integer(value), do: value * 1.0

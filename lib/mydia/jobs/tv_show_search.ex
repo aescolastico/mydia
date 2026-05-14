@@ -1113,31 +1113,10 @@ defmodule Mydia.Jobs.TVShowSearch do
   # release_blacklist table. Logs each rejection at :info with the
   # identifying pair so operators can debug why a result vanished.
   defp reject_blacklisted(results, ctx) do
-    {kept, rejected} =
-      Enum.split_with(results, fn r ->
-        not blacklisted?(r)
-      end)
-
-    if rejected != [] do
-      Enum.each(rejected, fn r ->
-        Logger.info("Rejected blacklisted release",
-          indexer: r.indexer,
-          guid: r.guid,
-          title: r.title,
-          episode_id: Keyword.get(ctx, :episode) && Keyword.get(ctx, :episode).id
-        )
-      end)
-    end
-
-    kept
+    episode_id = Keyword.get(ctx, :episode) && Keyword.get(ctx, :episode).id
+    media_item_id = Keyword.get(ctx, :media_item) && Keyword.get(ctx, :media_item).id
+    Blacklists.reject_blacklisted(results, episode_id: episode_id, media_item_id: media_item_id)
   end
-
-  defp blacklisted?(%{indexer: indexer, guid: guid})
-       when is_binary(indexer) and is_binary(guid) and guid != "" do
-    Blacklists.blacklisted?(indexer, guid)
-  end
-
-  defp blacklisted?(_), do: false
 
   defp process_ranked_episode_results(episode, results, args, query) do
     ranking_opts = build_ranking_options(episode, args)

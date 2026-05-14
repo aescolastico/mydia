@@ -30,8 +30,7 @@ defmodule Mydia.Downloads.Queue do
 
     # Use protocol from search result
     download_type = search_result.download_protocol
-    Logger.info("Download protocol: #{inspect(download_type)} for #{search_result.title}")
-    Logger.info("Full search_result struct: #{inspect(search_result, limit: :infinity)}")
+    Logger.debug("Download protocol: #{inspect(download_type)} for #{search_result.title}")
 
     opts = Keyword.put(opts, :download_type, download_type)
 
