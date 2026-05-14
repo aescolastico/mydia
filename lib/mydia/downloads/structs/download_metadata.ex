@@ -18,6 +18,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
     :quality,
     :season_pack,
     :season_number,
+    :episode_count,
+    :episode_ids,
     :download_protocol
   ]
 
@@ -28,6 +30,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
           quality: QualityInfo.t() | nil,
           season_pack: boolean() | nil,
           season_number: integer() | nil,
+          episode_count: integer() | nil,
+          episode_ids: [String.t()] | nil,
           download_protocol: :torrent | :nzb | nil
         }
 
@@ -88,6 +92,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
       quality: quality,
       season_pack: metadata.season_pack,
       season_number: metadata.season_number,
+      episode_count: metadata.episode_count,
+      episode_ids: metadata.episode_ids,
       download_protocol: metadata.download_protocol
     }
   end
@@ -128,6 +134,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
       quality: quality,
       season_pack: map["season_pack"] || map[:season_pack],
       season_number: map["season_number"] || map[:season_number],
+      episode_count: map["episode_count"] || map[:episode_count],
+      episode_ids: map["episode_ids"] || map[:episode_ids],
       download_protocol: map["download_protocol"] || map[:download_protocol]
     })
   end

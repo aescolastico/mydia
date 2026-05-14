@@ -86,6 +86,18 @@ defmodule Mydia.Jobs.MovieSearch do
     Application.get_env(:mydia, :auto_search, [])[:min_seeders] || 0
   end
 
+  # Merge user-supplied job-arg blocked_tags with the globally configured
+  # blocked_release_tokens so language/dub tokens applied via config flow
+  # into every auto-search without callers having to pass them.
+  defp merged_blocked_tags(args_blocked) do
+    config_tokens = Application.get_env(:mydia, :auto_search, [])[:blocked_release_tokens] || []
+
+    case (args_blocked || []) ++ config_tokens do
+      [] -> nil
+      tags -> Enum.uniq(tags)
+    end
+  end
+
   @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"mode" => "all_monitored"} = raw_args}) do
@@ -522,9 +534,9 @@ defmodule Mydia.Jobs.MovieSearch do
           |> Keyword.merge(build_quality_options(quality_profile, :movie))
       end
 
-    # Add any custom blocked/preferred tags from args
+    # Add any custom blocked/preferred tags from args (merged with config tokens)
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
     |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 

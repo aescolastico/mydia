@@ -45,6 +45,91 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
   end
 
+  describe "detect_partial_pack/2" do
+    test "returns 'partial_pack' when fewer episodes are imported than promised" do
+      episode_id = Ecto.UUID.generate()
+
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01.Pack",
+        metadata: %{"episode_count" => 3}
+      }
+
+      # Only 1 distinct episode imported, but 3 were promised
+      imported_files = [%{episode_id: episode_id}]
+
+      assert "partial_pack" == MediaImport.detect_partial_pack(download, imported_files)
+    end
+
+    test "returns nil when all promised episodes are delivered" do
+      ids = Enum.map(1..3, fn _ -> Ecto.UUID.generate() end)
+
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01.Pack",
+        metadata: %{"episode_count" => 3}
+      }
+
+      imported_files = Enum.map(ids, fn id -> %{episode_id: id} end)
+
+      assert nil == MediaImport.detect_partial_pack(download, imported_files)
+    end
+
+    test "returns nil when metadata has no episode_count" do
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01E01",
+        metadata: %{}
+      }
+
+      imported_files = [%{episode_id: Ecto.UUID.generate()}]
+
+      assert nil == MediaImport.detect_partial_pack(download, imported_files)
+    end
+
+    test "returns nil when download has no metadata" do
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01E01",
+        metadata: nil
+      }
+
+      imported_files = [%{episode_id: Ecto.UUID.generate()}]
+
+      assert nil == MediaImport.detect_partial_pack(download, imported_files)
+    end
+
+    test "deduplicates episode_ids before comparing counts" do
+      episode_id = Ecto.UUID.generate()
+
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01.Pack",
+        metadata: %{"episode_count" => 1}
+      }
+
+      # Two files pointing to the same episode — should count as 1 distinct episode
+      imported_files = [%{episode_id: episode_id}, %{episode_id: episode_id}]
+
+      assert nil == MediaImport.detect_partial_pack(download, imported_files)
+    end
+
+    test "ignores imported files without an episode_id (e.g. extras)" do
+      episode_id = Ecto.UUID.generate()
+
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Test.Show.S01.Pack",
+        metadata: %{"episode_count" => 2}
+      }
+
+      # One real episode + one file with no episode_id (extra/featurette)
+      imported_files = [%{episode_id: episode_id}, %{episode_id: nil}]
+
+      assert "partial_pack" == MediaImport.detect_partial_pack(download, imported_files)
+    end
+  end
+
   describe "perform/1" do
     test "schedules retry when download is not completed (first snooze)" do
       media_item = media_item_fixture()

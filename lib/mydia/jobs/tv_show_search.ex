@@ -55,6 +55,7 @@ defmodule Mydia.Jobs.TVShowSearch do
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
   alias Mydia.Indexers.ReleaseRanker
+  alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Media.{MediaItem, Episode}
   alias Mydia.Library.MediaFile
   alias Phoenix.PubSub
@@ -141,6 +142,18 @@ defmodule Mydia.Jobs.TVShowSearch do
   # Get min_seeders from config (defaults to 0 for Usenet compatibility)
   defp get_min_seeders do
     Application.get_env(:mydia, :auto_search, [])[:min_seeders] || 0
+  end
+
+  # Merge user-supplied job-arg blocked_tags with the globally configured
+  # blocked_release_tokens so language/dub tokens applied via config flow
+  # into every auto-search without callers having to pass them.
+  defp merged_blocked_tags(args_blocked) do
+    config_tokens = Application.get_env(:mydia, :auto_search, [])[:blocked_release_tokens] || []
+
+    case (args_blocked || []) ++ config_tokens do
+      [] -> nil
+      tags -> Enum.uniq(tags)
+    end
   end
 
   @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
@@ -1193,9 +1206,9 @@ defmodule Mydia.Jobs.TVShowSearch do
           |> Keyword.merge(build_quality_options(quality_profile, :episode))
       end
 
-    # Add any custom blocked/preferred tags from args
+    # Add any custom blocked/preferred tags from args (merged with config tokens)
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
     |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 
@@ -1235,9 +1248,9 @@ defmodule Mydia.Jobs.TVShowSearch do
           end
       end
 
-    # Add any custom blocked/preferred tags from args
+    # Add any custom blocked/preferred tags from args (merged with config tokens)
     opts_with_quality
-    |> maybe_add_option(:blocked_tags, args.blocked_tags)
+    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
     |> maybe_add_option(:preferred_tags, args.preferred_tags)
   end
 
@@ -1347,15 +1360,15 @@ defmodule Mydia.Jobs.TVShowSearch do
     # The download will include metadata about the season pack
     # The import job will later match files to individual episodes
 
-    # Build metadata with season pack information
-    metadata = %{
-      season_pack: true,
-      season_number: season_number,
-      episode_count: length(episodes),
-      episode_ids: Enum.map(episodes, & &1.id)
-    }
+    # Build season pack metadata struct so dedup pattern matches in
+    # Mydia.Downloads.Queue and persistence in DownloadMetadata work correctly.
+    metadata =
+      SearchResultMetadata.season_pack(
+        season_number,
+        length(episodes),
+        Enum.map(episodes, & &1.id)
+      )
 
-    # Add metadata to the result
     result_with_metadata = Map.put(result, :metadata, metadata)
 
     case Downloads.initiate_download(result_with_metadata, media_item_id: media_item.id) do
