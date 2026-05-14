@@ -468,10 +468,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     end
   end
 
+  # `"on"` is accepted because LiveView used to clobber phx-value-value with the
+  # checkbox's default `value="on"` for this toggle, and existing rows may
+  # still hold that string.
   defp parse_boolean_value(value) when is_boolean(value), do: value
   defp parse_boolean_value("true"), do: true
   defp parse_boolean_value("1"), do: true
   defp parse_boolean_value("yes"), do: true
+  defp parse_boolean_value("on"), do: true
   defp parse_boolean_value(_), do: false
 
   defp get_source(env_var_name, key, all_db_settings) do

@@ -145,13 +145,19 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
             <span class="label-text text-xs">
               {if @setting.value, do: "On", else: "Off"}
             </span>
+            <%!--
+              `value="true"` is required: LiveView's extractMeta overrides
+              phx-value-value with the input's `el.value`, which defaults to
+              "on" for a bare checkbox. That string is not parsed as truthy
+              and the toggle silently reverts.
+            --%>
             <input
               type="checkbox"
               class="toggle toggle-primary toggle-sm"
+              value="true"
               checked={@setting.value}
               phx-click="toggle_setting"
               phx-value-key={@setting.key}
-              phx-value-value={to_string(!@setting.value)}
               phx-value-category={@category}
             />
           </label>
