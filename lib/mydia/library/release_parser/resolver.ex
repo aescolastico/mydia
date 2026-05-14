@@ -372,7 +372,7 @@ defmodule Mydia.Library.ReleaseParser.Resolver do
     # only splits on whitespace / dot / underscore). Match the leading
     # digit run instead of demanding a clean integer.
     if String.downcase(word) == "episode" do
-      case Regex.run(~r/^(\d+)/, ep_str) do
+      case Regex.run(~r/^(\d+)(?![a-zA-Z\d])/, ep_str) do
         [_, digits] -> {:ok, [String.to_integer(digits)]}
         _ -> :error
       end
