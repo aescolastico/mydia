@@ -339,10 +339,13 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       usenet_date = if download_protocol == :nzb, do: published_at, else: nil
 
       # Some Newznab indexers expose article completion percentage. Prowlarr
-      # passes Newznab attrs through transparently, so check the typical keys.
+      # passes Newznab attrs through transparently. Do NOT fall back to
+      # `item["files"]` — that is a file count (e.g. 32 files), not a
+      # completion percent, and would silently corrupt the NZB availability
+      # score for releases whose indexer omits `completion`.
       nzb_completion =
         if download_protocol == :nzb,
-          do: parse_completion(item["completion"] || item["files"]),
+          do: parse_completion(item["completion"]),
           else: nil
 
       # Stable release identifier used by the release blacklist (#123).

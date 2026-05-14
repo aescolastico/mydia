@@ -866,6 +866,8 @@ defmodule Mydia.Jobs.TVShowSearch do
   defp process_season_pack_results(media_item, season_number, episodes, results, args, query) do
     # Filter blacklisted releases out before ranking (#123).
     results = reject_blacklisted(results, media_item: media_item, season_number: season_number)
+    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
+    results = Indexers.reject_too_fresh_nzbs(results)
 
     # Build ranking options from the first episode (they all share the same show)
     ranking_opts = build_ranking_options_for_season(media_item, season_number, episodes, args)
@@ -1090,6 +1092,8 @@ defmodule Mydia.Jobs.TVShowSearch do
     # Filter blacklisted releases out before ranking (#123). The "filter,
     # don't rank" convention keeps this distinct from `ReleaseRanker`.
     episode_results = reject_blacklisted(episode_results, episode: episode)
+    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
+    episode_results = Indexers.reject_too_fresh_nzbs(episode_results)
 
     if episode_results == [] do
       Logger.warning("All results were season packs, no episode-specific results",

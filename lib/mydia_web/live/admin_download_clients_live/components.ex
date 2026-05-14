@@ -285,7 +285,7 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
 
     webhook_url =
       if (show_webhook? and webhook_secret) && client_id && assigns[:webhook_base_url] != "" do
-        "#{assigns.webhook_base_url}/api/webhooks/usenet/#{client_id}?secret=#{webhook_secret}"
+        "#{assigns.webhook_base_url}/api/webhooks/v1/usenet/#{client_id}?secret=#{webhook_secret}"
       else
         nil
       end
@@ -637,7 +637,9 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                         type="button"
                         class="btn btn-sm btn-ghost"
                         title="Copy URL"
-                        onclick={"navigator.clipboard.writeText('#{@webhook_url}')"}
+                        id="download-client-webhook-url-copy"
+                        phx-hook="CopyToClipboard"
+                        data-clipboard-text={@webhook_url}
                       >
                         <.icon name="hero-clipboard-document" class="w-4 h-4" />
                       </button>
@@ -679,7 +681,8 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                       class="btn btn-sm btn-ghost gap-1"
                       title="Copy script"
                       id="download-client-webhook-script-copy"
-                      onclick={"navigator.clipboard.writeText(document.getElementById('download-client-webhook-snippet-#{@selected_type}').innerText)"}
+                      phx-hook="CopyToClipboard"
+                      data-clipboard-source={"#download-client-webhook-snippet-#{@selected_type}"}
                     >
                       <.icon name="hero-clipboard-document" class="w-4 h-4" /> Copy script
                     </button>

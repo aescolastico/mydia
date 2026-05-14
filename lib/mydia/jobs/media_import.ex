@@ -23,7 +23,14 @@ defmodule Mydia.Jobs.MediaImport do
     unique: [
       period: 600,
       keys: [:download_id],
-      states: [:available, :scheduled, :executing, :retryable]
+      # NB: :executing is intentionally excluded. schedule_snooze_retry/2
+      # inserts a new MediaImport job from inside perform/1 while the
+      # parent is still :executing — Oban would treat that as a unique
+      # collision and discard the snooze (returning the executing parent
+      # with conflict?: true). The early-return guard on `imported_at`
+      # at the top of perform/1 handles the duplicate-already-done case
+      # so dropping :executing here doesn't reopen the dedup gap.
+      states: [:available, :scheduled, :retryable]
     ]
 
   require Logger

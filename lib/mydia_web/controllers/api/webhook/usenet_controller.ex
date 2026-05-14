@@ -6,7 +6,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetController do
   the user pastes into the client's post-processing script configuration.
   When a download finishes, the client POSTs to:
 
-      POST /api/webhooks/usenet/:client_id?secret=<webhook_secret>
+      POST /api/webhooks/v1/usenet/:client_id?secret=<webhook_secret>
 
   The matching `MediaImport` Oban job is enqueued immediately. Combined with
   the `unique:` constraint on `MediaImport`, this means the user no longer

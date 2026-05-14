@@ -883,13 +883,15 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       assert Mydia.Downloads.Blacklists.list() == []
     end
 
-    test "completes failure handling even if blacklist write would fail" do
-      # Pre-create a row that we'll upsert over to prove insert errors
-      # would still let the rest of `handle_failure` proceed. We're not
-      # injecting a forced failure here; the goal is to assert
-      # `handle_failure` returns :ok and deletes the failed download
-      # regardless of blacklist outcomes — which is exercised by the
-      # successful path above plus the upsert behavior of `Blacklists.add/4`.
+    test "upserts an existing blacklist row when a release fails again" do
+      # The try/rescue in `record_blacklist_entry/2` is the safety net for
+      # *unexpected* DB exceptions; testing the exception path requires a
+      # mocking library this repo doesn't use (Mox / :meck). The realistic
+      # repeat-failure case is covered by `Blacklists.add/4`'s upsert
+      # behaviour: when the same `(indexer, guid)` row already exists,
+      # the second insert merges via `on_conflict: [set: ...]` rather
+      # than raising. This test asserts that path completes cleanly and
+      # the failed download is still removed.
       {bypass, client_config} = start_sabnzbd_bypass()
 
       mock_sabnzbd_queue(bypass, [],

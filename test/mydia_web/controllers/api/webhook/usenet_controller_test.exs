@@ -7,7 +7,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
 
   import Mydia.DownloadsFixtures
 
-  describe "POST /api/webhooks/usenet/:client_id (SABnzbd)" do
+  describe "POST /api/webhooks/v1/usenet/:client_id (SABnzbd)" do
     test "enqueues MediaImport on valid secret + sabnzbd payload", %{conn: conn} do
       {client, download} = setup_client_and_download(:sabnzbd, "sab-nzo-abc-123")
       url = webhook_url(client.id, client.webhook_secret)
@@ -26,7 +26,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
     test "accepts secret via X-Mydia-Webhook-Secret header", %{conn: conn} do
       {client, download} = setup_client_and_download(:sabnzbd, "sab-header-1")
 
-      url = "/api/webhooks/usenet/#{client.id}"
+      url = "/api/webhooks/v1/usenet/#{client.id}"
       payload = sabnzbd_payload(download.download_client_id)
 
       conn =
@@ -43,7 +43,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
       # `?client=sabnzbd` to force the parser. Verify that explicit query
       # parameter is the highest-priority signal.
       {client, download} = setup_client_and_download(:qbittorrent, "qb-1")
-      url = "/api/webhooks/usenet/#{client.id}?secret=#{client.webhook_secret}&client=sabnzbd"
+      url = "/api/webhooks/v1/usenet/#{client.id}?secret=#{client.webhook_secret}&client=sabnzbd"
       payload = sabnzbd_payload(download.download_client_id)
 
       conn = post(conn, url, payload)
@@ -52,7 +52,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
     end
   end
 
-  describe "POST /api/webhooks/usenet/:client_id (NZBGet)" do
+  describe "POST /api/webhooks/v1/usenet/:client_id (NZBGet)" do
     test "enqueues MediaImport on valid secret + nzbget payload", %{conn: conn} do
       {client, download} = setup_client_and_download(:nzbget, "12345")
       url = webhook_url(client.id, client.webhook_secret)
@@ -88,7 +88,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
   describe "auth failures" do
     test "rejects request with invalid secret", %{conn: conn} do
       {client, _download} = setup_client_and_download(:sabnzbd, "sab-1")
-      url = "/api/webhooks/usenet/#{client.id}?secret=this-is-wrong"
+      url = "/api/webhooks/v1/usenet/#{client.id}?secret=this-is-wrong"
 
       conn = post(conn, url, sabnzbd_payload("sab-1"))
 
@@ -98,7 +98,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
 
     test "rejects request with missing secret", %{conn: conn} do
       {client, _download} = setup_client_and_download(:sabnzbd, "sab-1")
-      url = "/api/webhooks/usenet/#{client.id}"
+      url = "/api/webhooks/v1/usenet/#{client.id}"
 
       conn = post(conn, url, sabnzbd_payload("sab-1"))
 
@@ -108,7 +108,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
 
     test "rejects request with empty secret query param", %{conn: conn} do
       {client, _download} = setup_client_and_download(:sabnzbd, "sab-1")
-      url = "/api/webhooks/usenet/#{client.id}?secret="
+      url = "/api/webhooks/v1/usenet/#{client.id}?secret="
 
       conn = post(conn, url, sabnzbd_payload("sab-1"))
 
@@ -127,7 +127,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
       <<first::utf8, rest::binary>> = client.webhook_secret
       wrong_start = <<first + 1::utf8>> <> rest
 
-      url = "/api/webhooks/usenet/#{client.id}?secret=#{URI.encode_www_form(wrong_start)}"
+      url = "/api/webhooks/v1/usenet/#{client.id}?secret=#{URI.encode_www_form(wrong_start)}"
       conn = post(conn, url, sabnzbd_payload("sab-ct"))
 
       assert response(conn, 401) == ""
@@ -137,7 +137,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
   describe "unknown client" do
     test "returns 404 when client_id does not resolve to a DownloadClientConfig", %{conn: conn} do
       bogus_id = Ecto.UUID.generate()
-      url = "/api/webhooks/usenet/#{bogus_id}?secret=anything"
+      url = "/api/webhooks/v1/usenet/#{bogus_id}?secret=anything"
 
       conn = post(conn, url, sabnzbd_payload("nope"))
 
@@ -146,7 +146,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
     end
 
     test "returns 404 when client_id is not a valid UUID", %{conn: conn} do
-      url = "/api/webhooks/usenet/not-a-uuid?secret=whatever"
+      url = "/api/webhooks/v1/usenet/not-a-uuid?secret=whatever"
 
       conn = post(conn, url, sabnzbd_payload("nope"))
 
@@ -311,7 +311,7 @@ defmodule MydiaWeb.Api.Webhook.UsenetControllerTest do
   end
 
   defp webhook_url(client_id, secret) do
-    "/api/webhooks/usenet/#{client_id}?secret=#{URI.encode_www_form(secret)}"
+    "/api/webhooks/v1/usenet/#{client_id}?secret=#{URI.encode_www_form(secret)}"
   end
 
   defp sabnzbd_payload(nzo_id) do

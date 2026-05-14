@@ -349,7 +349,7 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       refute has_element?(view, "#download-client-webhook-snippet-nzbget")
 
       html = render(view)
-      assert html =~ "/api/webhooks/usenet/#{sab_client.id}"
+      assert html =~ "/api/webhooks/v1/usenet/#{sab_client.id}"
       assert html =~ "secret=#{sab_client.webhook_secret}"
     end
 

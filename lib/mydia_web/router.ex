@@ -72,7 +72,7 @@ defmodule MydiaWeb.Router do
   # Webhooks from external download clients (SABnzbd notification-scripts,
   # NZBGet pp-scripts). Authentication uses a per-client signed secret
   # verified by MydiaWeb.Plugs.WebhookSecretAuth — never chain :api_auth.
-  scope "/api/webhooks", MydiaWeb.Api.Webhook do
+  scope "/api/webhooks/v1", MydiaWeb.Api.Webhook do
     pipe_through [:api, MydiaWeb.Plugs.WebhookSecretAuth]
 
     post "/usenet/:client_id", UsenetController, :completed

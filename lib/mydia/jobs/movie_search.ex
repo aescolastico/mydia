@@ -296,6 +296,8 @@ defmodule Mydia.Jobs.MovieSearch do
   defp process_search_results_with_count(movie, results, args, query) do
     # Filter blacklisted releases out before ranking (#123).
     results = reject_blacklisted(results, movie: movie)
+    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
+    results = Indexers.reject_too_fresh_nzbs(results)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -455,6 +457,8 @@ defmodule Mydia.Jobs.MovieSearch do
   defp process_search_results(movie, results, args, query) do
     # Filter blacklisted releases out before ranking (#123).
     results = reject_blacklisted(results, movie: movie)
+    # Drop NZB releases younger than each indexer's min_post_age_minutes (#121).
+    results = Indexers.reject_too_fresh_nzbs(results)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do

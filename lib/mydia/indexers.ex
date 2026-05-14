@@ -443,6 +443,73 @@ defmodule Mydia.Indexers do
 
   defp filter_by_seeders(results, _min_seeders), do: results
 
+  @doc """
+  Drops NZB results whose `usenet_date` is more recent than the per-indexer
+  `min_post_age_minutes` setting (#121). Torrent results and NZB results
+  whose indexer does not configure the setting pass through unchanged.
+
+  This is a separate concern from `ReleaseRanker.filter_acceptable/2`'s
+  single-value `:min_post_age_minutes` option: the setting lives on
+  `IndexerConfig` per-indexer, so we resolve per-result here rather than
+  forcing the caller to pick a single global value.
+
+  ## Options
+
+    * `:now` — `DateTime` used as "now" for the comparison. Defaults to
+      `DateTime.utc_now/0`. Tests inject this for determinism.
+  """
+  @spec reject_too_fresh_nzbs([Mydia.Indexers.SearchResult.t()], keyword()) ::
+          [Mydia.Indexers.SearchResult.t()]
+  def reject_too_fresh_nzbs(results, opts \\ []) when is_list(results) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    configs_by_name = list_min_post_age_by_indexer_name()
+
+    {kept, rejected} =
+      Enum.split_with(results, fn result ->
+        not nzb_too_fresh?(result, configs_by_name, now)
+      end)
+
+    if rejected != [] do
+      Enum.each(rejected, fn r ->
+        Logger.debug(
+          "Filtered too-fresh NZB",
+          indexer: r.indexer,
+          title: r.title,
+          usenet_date: r.usenet_date
+        )
+      end)
+    end
+
+    kept
+  end
+
+  defp nzb_too_fresh?(
+         %{download_protocol: :nzb, indexer: indexer, usenet_date: %DateTime{} = posted},
+         configs_by_name,
+         now
+       )
+       when is_binary(indexer) do
+    case Map.get(configs_by_name, indexer) do
+      minutes when is_integer(minutes) and minutes > 0 ->
+        DateTime.diff(now, posted, :second) < minutes * 60
+
+      _ ->
+        false
+    end
+  end
+
+  defp nzb_too_fresh?(_result, _configs_by_name, _now), do: false
+
+  defp list_min_post_age_by_indexer_name do
+    Settings.list_indexer_configs()
+    |> Enum.reduce(%{}, fn config, acc ->
+      case config.min_post_age_minutes do
+        nil -> acc
+        minutes -> Map.put(acc, config.name, minutes)
+      end
+    end)
+  end
+
   defp deduplicate_results(results) do
     # Group results by normalized title and hash
     results
