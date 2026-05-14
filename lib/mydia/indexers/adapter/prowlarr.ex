@@ -345,6 +345,11 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
           do: parse_completion(item["completion"] || item["files"]),
           else: nil
 
+      # Stable release identifier used by the release blacklist (#123).
+      # Prowlarr exposes a per-result `guid`; fall back to the info URL for
+      # legacy responses.
+      guid = item["guid"] || item["infoUrl"]
+
       SearchResult.new(
         title: title,
         size: size,
@@ -362,7 +367,8 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         download_protocol: download_protocol,
         usenet_date: usenet_date,
         nzb_completion: nzb_completion,
-        nzb_grabs: nzb_grabs
+        nzb_grabs: nzb_grabs,
+        guid: guid
       )
     rescue
       error ->

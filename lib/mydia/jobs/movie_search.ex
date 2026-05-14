@@ -34,6 +34,7 @@ defmodule Mydia.Jobs.MovieSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
+  alias Mydia.Downloads.Blacklists
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
@@ -293,6 +294,8 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp process_search_results_with_count(movie, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123).
+    results = reject_blacklisted(results, movie: movie)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -450,6 +453,8 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp process_search_results(movie, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123).
+    results = reject_blacklisted(results, movie: movie)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -713,4 +718,37 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp stringify_keys(other), do: other
+
+  # Drops results matching an active `(indexer, guid)` row in the
+  # release_blacklist table (#123). The "filter, don't rank" convention
+  # keeps this distinct from `ReleaseRanker`; rejections are logged at
+  # :info with the identifying pair for debuggability.
+  defp reject_blacklisted(results, ctx) do
+    {kept, rejected} =
+      Enum.split_with(results, fn r ->
+        not blacklisted?(r)
+      end)
+
+    if rejected != [] do
+      movie_id = Keyword.get(ctx, :movie) && Keyword.get(ctx, :movie).id
+
+      Enum.each(rejected, fn r ->
+        Logger.info("Rejected blacklisted release",
+          indexer: r.indexer,
+          guid: r.guid,
+          title: r.title,
+          movie_id: movie_id
+        )
+      end)
+    end
+
+    kept
+  end
+
+  defp blacklisted?(%{indexer: indexer, guid: guid})
+       when is_binary(indexer) and is_binary(guid) and guid != "" do
+    Blacklists.blacklisted?(indexer, guid)
+  end
+
+  defp blacklisted?(_), do: false
 end

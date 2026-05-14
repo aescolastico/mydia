@@ -80,6 +80,10 @@ defmodule Mydia.Config.Schema do
 
     embeds_one :downloads, Downloads, on_replace: :update, primary_key: false do
       field :monitor_interval_minutes, :integer, default: 2
+      # Default TTL (in days) applied when a `release_blacklist` row is
+      # inserted without an explicit `expires_at`. See `Mydia.Downloads.Blacklists`
+      # (#123).
+      field :release_blacklist_default_ttl_days, :integer, default: 30
     end
 
     embeds_one :logging, Logging, on_replace: :update, primary_key: false do
@@ -261,8 +265,9 @@ defmodule Mydia.Config.Schema do
 
   defp downloads_changeset(schema, attrs) do
     schema
-    |> cast(attrs, [:monitor_interval_minutes])
+    |> cast(attrs, [:monitor_interval_minutes, :release_blacklist_default_ttl_days])
     |> validate_number(:monitor_interval_minutes, greater_than: 0)
+    |> validate_number(:release_blacklist_default_ttl_days, greater_than: 0)
   end
 
   defp logging_changeset(schema, attrs) do

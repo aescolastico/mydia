@@ -208,6 +208,7 @@ defmodule MydiaWeb.Router do
       live "/requests", AdminRequestsLive.Index, :index
       live "/users", AdminUsersLive.Index, :index
       live "/devices", AdminDevicesLive.Index, :index
+      live "/release-blacklist", AdminReleaseBlacklistLive.Index, :index
     end
   end
 

@@ -377,6 +377,14 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
         Logger.debug("Skipping result without download URL: #{title}")
         nil
       else
+        # Stable release identifier used by the release blacklist (#123).
+        guid =
+          cond do
+            item.guid != "" -> item.guid
+            item.comments != "" -> item.comments
+            true -> nil
+          end
+
         SearchResult.new(
           title: title,
           size: size,
@@ -398,7 +406,8 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
           download_protocol: :nzb,
           usenet_date: usenet_date,
           nzb_completion: nzb_completion,
-          nzb_grabs: nzb_grabs
+          nzb_grabs: nzb_grabs,
+          guid: guid
         )
       end
     rescue

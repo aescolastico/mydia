@@ -262,6 +262,14 @@ defmodule MydiaWeb.Layouts do
                 </li>
                 <li>
                   <.link
+                    navigate="/admin/release-blacklist"
+                    class={nav_active?(@current_path, "/admin/release-blacklist", false) && "active"}
+                  >
+                    <.icon name="hero-no-symbol" class="w-5 h-5" /> Release Blacklist
+                  </.link>
+                </li>
+                <li>
+                  <.link
                     navigate="/admin/requests"
                     class={nav_active?(@current_path, "/admin/requests", false) && "active"}
                   >

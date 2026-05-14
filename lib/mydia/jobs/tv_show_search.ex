@@ -54,6 +54,7 @@ defmodule Mydia.Jobs.TVShowSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
+  alias Mydia.Downloads.Blacklists
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Media.{MediaItem, Episode}
@@ -863,6 +864,9 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   defp process_season_pack_results(media_item, season_number, episodes, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123).
+    results = reject_blacklisted(results, media_item: media_item, season_number: season_number)
+
     # Build ranking options from the first episode (they all share the same show)
     ranking_opts = build_ranking_options_for_season(media_item, season_number, episodes, args)
 
@@ -1083,6 +1087,10 @@ defmodule Mydia.Jobs.TVShowSearch do
     # Filter out season packs — individual episode searches should not grab full season downloads
     episode_results = reject_season_packs(results, episode.season_number)
 
+    # Filter blacklisted releases out before ranking (#123). The "filter,
+    # don't rank" convention keeps this distinct from `ReleaseRanker`.
+    episode_results = reject_blacklisted(episode_results, episode: episode)
+
     if episode_results == [] do
       Logger.warning("All results were season packs, no episode-specific results",
         episode_id: episode.id,
@@ -1100,6 +1108,36 @@ defmodule Mydia.Jobs.TVShowSearch do
       process_ranked_episode_results(episode, episode_results, args, query)
     end
   end
+
+  # Drops results matching an active `(indexer, guid)` row in the
+  # release_blacklist table. Logs each rejection at :info with the
+  # identifying pair so operators can debug why a result vanished.
+  defp reject_blacklisted(results, ctx) do
+    {kept, rejected} =
+      Enum.split_with(results, fn r ->
+        not blacklisted?(r)
+      end)
+
+    if rejected != [] do
+      Enum.each(rejected, fn r ->
+        Logger.info("Rejected blacklisted release",
+          indexer: r.indexer,
+          guid: r.guid,
+          title: r.title,
+          episode_id: Keyword.get(ctx, :episode) && Keyword.get(ctx, :episode).id
+        )
+      end)
+    end
+
+    kept
+  end
+
+  defp blacklisted?(%{indexer: indexer, guid: guid})
+       when is_binary(indexer) and is_binary(guid) and guid != "" do
+    Blacklists.blacklisted?(indexer, guid)
+  end
+
+  defp blacklisted?(_), do: false
 
   defp process_ranked_episode_results(episode, results, args, query) do
     ranking_opts = build_ranking_options(episode, args)

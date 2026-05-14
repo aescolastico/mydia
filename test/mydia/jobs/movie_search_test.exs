@@ -274,4 +274,41 @@ defmodule Mydia.Jobs.MovieSearchTest do
       assert result == :ok
     end
   end
+
+  describe "release blacklist (#123)" do
+    test "filters out blacklisted releases before ranking", %{bypass: bypass} do
+      # The default `setup` block mocks Prowlarr with a fixed result set —
+      # override it here so the only result has a known guid we can blacklist.
+      IndexerMock.mock_prowlarr_all(bypass,
+        results: [
+          IndexerMock.movie_result(%{
+            title: "The Matrix",
+            year: 1999,
+            seeders: 100,
+            guid: "blacklisted-matrix-guid"
+          })
+        ]
+      )
+
+      # Blacklist that guid before the search runs.
+      {:ok, _} =
+        Mydia.Downloads.Blacklists.add(
+          "Test Indexer",
+          "blacklisted-matrix-guid",
+          "The Matrix.1999",
+          "par2_failed"
+        )
+
+      movie = media_item_fixture(%{type: "movie", title: "The Matrix", year: 1999})
+
+      assert :ok =
+               perform_job(MovieSearch, %{
+                 "mode" => "specific",
+                 "media_item_id" => movie.id
+               })
+
+      # No download was initiated for the blacklisted release.
+      assert Mydia.Downloads.list_downloads() == []
+    end
+  end
 end

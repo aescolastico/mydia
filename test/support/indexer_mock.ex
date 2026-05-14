@@ -86,6 +86,7 @@ defmodule Mydia.IndexerMock do
       "magnetUrl" => Map.get(result, :magnet_url, build_magnet_url()),
       "downloadUrl" => Map.get(result, :download_url),
       "infoUrl" => Map.get(result, :info_url, "https://example.com"),
+      "guid" => Map.get(result, :guid),
       "indexer" => Map.get(result, :indexer, "Test Indexer"),
       "categoryId" => Map.get(result, :category, 2000),
       "publishDate" =>
@@ -147,7 +148,8 @@ defmodule Mydia.IndexerMock do
       category: 2000,
       tmdb_id: Map.get(attrs, :tmdb_id),
       imdb_id: Map.get(attrs, :imdb_id),
-      protocol: "torrent"
+      protocol: "torrent",
+      guid: Map.get(attrs, :guid)
     }
   end
 

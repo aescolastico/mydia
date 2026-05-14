@@ -370,6 +370,14 @@ defmodule Mydia.Indexers.Adapter.Jackett do
           id_str -> normalize_imdb_id(id_str)
         end
 
+      # Stable release identifier used by the release blacklist (#123).
+      guid =
+        cond do
+          item.guid != "" -> item.guid
+          item.comments != "" -> item.comments
+          true -> nil
+        end
+
       # Skip results without download URL
       if download_url == "" do
         Logger.debug("Skipping result without download URL: #{title}")
@@ -388,7 +396,8 @@ defmodule Mydia.Indexers.Adapter.Jackett do
           quality: quality,
           tmdb_id: tmdb_id,
           tvdb_id: tvdb_id,
-          imdb_id: imdb_id
+          imdb_id: imdb_id,
+          guid: guid
         )
       end
     rescue
