@@ -29,21 +29,6 @@ defmodule Mydia.Library.Text do
   matcher's `same_title?/2` keeps using 0.70).
   """
 
-  # Roman numerals at word boundaries, ordered longest-first so `IX`
-  # doesn't match before `IX` is tried.
-  @roman_replacements [
-    {~r/\bX\b/i, "10"},
-    {~r/\bIX\b/i, "9"},
-    {~r/\bVIII\b/i, "8"},
-    {~r/\bVII\b/i, "7"},
-    {~r/\bVI\b/i, "6"},
-    {~r/\bV\b/i, "5"},
-    {~r/\bIV\b/i, "4"},
-    {~r/\bIII\b/i, "3"},
-    {~r/\bII\b/i, "2"}
-    # Single "I" is too ambiguous ("I" as pronoun) — leave it alone.
-  ]
-
   @doc """
   Normalize a title for comparison.
 
@@ -131,9 +116,26 @@ defmodule Mydia.Library.Text do
   end
 
   defp convert_roman_numerals(title) do
-    Enum.reduce(@roman_replacements, title, fn {pattern, replacement}, acc ->
+    Enum.reduce(roman_replacements(), title, fn {pattern, replacement}, acc ->
       String.replace(acc, pattern, replacement)
     end)
+  end
+
+  # Roman numerals at word boundaries, ordered longest-first so `IX`
+  # doesn't match before `IX` is tried.
+  defp roman_replacements do
+    [
+      {~r/\bX\b/i, "10"},
+      {~r/\bIX\b/i, "9"},
+      {~r/\bVIII\b/i, "8"},
+      {~r/\bVII\b/i, "7"},
+      {~r/\bVI\b/i, "6"},
+      {~r/\bV\b/i, "5"},
+      {~r/\bIV\b/i, "4"},
+      {~r/\bIII\b/i, "3"},
+      {~r/\bII\b/i, "2"}
+      # Single "I" is too ambiguous ("I" as pronoun) — leave it alone.
+    ]
   end
 
   # NFKD-normalize so composed and decomposed forms compare equal
