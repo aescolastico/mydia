@@ -368,6 +368,14 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
     is_prowlarr = indexer_type == "prowlarr" or indexer_type == :prowlarr
     assigns = assign(assigns, :is_prowlarr, is_prowlarr)
 
+    # NZB-capable indexer types support a minimum post-age filter.
+    # Prowlarr aggregates both protocols, NZBHydra2 is NZB-only, Jackett
+    # historically passes Newznab attrs through for NZB definitions.
+    is_nzb_capable =
+      indexer_type in ["prowlarr", :prowlarr, "nzbhydra2", :nzbhydra2, "jackett", :jackett]
+
+    assigns = assign(assigns, :is_nzb_capable, is_nzb_capable)
+
     # Ensure selected_prowlarr_indexer_ids is a MapSet
     selected_ids = assigns.selected_prowlarr_indexer_ids || MapSet.new()
     assigns = assign(assigns, :selected_prowlarr_indexer_ids, selected_ids)
@@ -495,6 +503,32 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
                 </div>
               <% end %>
             </div>
+
+            <%!-- NZB / Usenet Options (only shown for NZB-capable indexers) --%>
+            <%= if @is_nzb_capable do %>
+              <div class="divider my-2"></div>
+              <div class="space-y-3">
+                <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
+                  <.icon name="hero-clock" class="w-4 h-4" />
+                  <span>Usenet Options</span>
+                </div>
+                <div class="grid grid-cols-3 gap-3">
+                  <div class="col-span-3 md:col-span-1">
+                    <.input
+                      field={@indexer_form[:min_post_age_minutes]}
+                      type="number"
+                      label="Min post age (minutes)"
+                      placeholder="0"
+                      min="0"
+                    />
+                  </div>
+                  <div class="col-span-3 md:col-span-2 text-xs text-base-content/60 self-end pb-2">
+                    Filters out NZB results posted within this many minutes. Useful for letting
+                    indexers complete article propagation. Leave blank to disable.
+                  </div>
+                </div>
+              </div>
+            <% end %>
 
             <%!-- Prowlarr Indexer Selection (only shown for Prowlarr type) --%>
             <%= if @is_prowlarr do %>

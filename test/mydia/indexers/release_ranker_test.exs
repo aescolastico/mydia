@@ -384,6 +384,100 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
+  # NZB min-post-age filter (#120)
+
+  describe "filter_acceptable/2 min_post_age_minutes (NZB-only)" do
+    defp build_nzb(usenet_date) do
+      %SearchResult{
+        title: "Show.S01E01.1080p.WEB-DL",
+        size: 1_073_741_824,
+        seeders: nil,
+        leechers: nil,
+        download_url: "http://example.com/release.nzb",
+        indexer: "TestIndexer",
+        download_protocol: :nzb,
+        usenet_date: usenet_date,
+        nzb_grabs: 42
+      }
+    end
+
+    defp build_torrent(opts \\ []) do
+      %SearchResult{
+        title: Keyword.get(opts, :title, "Torrent.Release.1080p"),
+        size: 1_073_741_824,
+        seeders: Keyword.get(opts, :seeders, 50),
+        leechers: 5,
+        download_url: "magnet:?xt=urn:btih:abc",
+        indexer: "TestIndexer",
+        download_protocol: :torrent,
+        published_at: DateTime.utc_now()
+      }
+    end
+
+    test "filters NZB results posted within min_post_age_minutes" do
+      now = ~U[2024-11-25 12:00:00Z]
+      too_recent = ~U[2024-11-25 11:55:00Z]
+      old_enough = ~U[2024-11-25 11:00:00Z]
+
+      results = [build_nzb(too_recent), build_nzb(old_enough)]
+
+      filtered = ReleaseRanker.filter_acceptable(results, min_post_age_minutes: 30, now: now)
+
+      assert length(filtered) == 1
+      assert hd(filtered).usenet_date == old_enough
+    end
+
+    test "keeps NZB result posted exactly at the cutoff (strict comparison)" do
+      now = ~U[2024-11-25 12:00:00Z]
+      exact_cutoff = ~U[2024-11-25 11:30:00Z]
+
+      results = [build_nzb(exact_cutoff)]
+
+      filtered = ReleaseRanker.filter_acceptable(results, min_post_age_minutes: 30, now: now)
+      assert length(filtered) == 1
+    end
+
+    test "passes through NZB results with no usenet_date (fail-open)" do
+      results = [build_nzb(nil)]
+
+      filtered =
+        ReleaseRanker.filter_acceptable(results,
+          min_post_age_minutes: 30,
+          now: DateTime.utc_now()
+        )
+
+      assert length(filtered) == 1
+    end
+
+    test "min_post_age_minutes = nil disables the filter even for fresh NZBs" do
+      now = ~U[2024-11-25 12:00:00Z]
+      very_fresh = ~U[2024-11-25 11:59:00Z]
+
+      results = [build_nzb(very_fresh)]
+      filtered = ReleaseRanker.filter_acceptable(results, min_post_age_minutes: nil, now: now)
+      assert length(filtered) == 1
+    end
+
+    test "does not filter torrent results regardless of age" do
+      now = ~U[2024-11-25 12:00:00Z]
+
+      results = [build_torrent(), build_torrent(title: "Another.1080p")]
+
+      filtered = ReleaseRanker.filter_acceptable(results, min_post_age_minutes: 30, now: now)
+      # Both torrents pass through.
+      assert length(filtered) == 2
+    end
+
+    test "leaves NZB results without seeders unaffected by min_seeders" do
+      # Regression guard: min_seeders applies only to torrents now.
+      results = [build_nzb(nil)]
+
+      filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 10)
+
+      assert length(filtered) == 1
+    end
+  end
+
   # Tests for scoring functions (via breakdown)
 
   describe "quality scoring" do
@@ -1658,6 +1752,60 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       # Only the correct Fallout result should remain, even though Claws had more seeders
       assert length(ranked) == 1
       assert String.contains?(List.first(ranked).result.title, "Fallout.S01E04")
+    end
+  end
+
+  # NZB-aware scoring branch (#121)
+
+  describe "scoring branches by download_protocol" do
+    defp build_nzb_result(attrs) do
+      defaults = %{
+        title: "Show.S01E01.1080p.WEB-DL",
+        size: 1_073_741_824,
+        seeders: nil,
+        leechers: nil,
+        download_url: "http://example.com/release.nzb",
+        indexer: "TestIndexer",
+        download_protocol: :nzb,
+        quality: QualityParser.parse("Show.S01E01.1080p.WEB-DL"),
+        published_at: DateTime.utc_now()
+      }
+
+      Map.merge(defaults, attrs) |> then(&struct!(SearchResult, &1))
+    end
+
+    test "NZB with high completion outranks NZB with low completion regardless of grabs" do
+      high_completion =
+        build_nzb_result(%{nzb_completion: 1.0, nzb_grabs: 5, title: "Show.S01E01.1080p.A"})
+
+      low_completion =
+        build_nzb_result(%{nzb_completion: 0.6, nzb_grabs: 500, title: "Show.S01E01.1080p.B"})
+
+      ranked = ReleaseRanker.rank_all([low_completion, high_completion], min_seeders: 0)
+
+      assert length(ranked) == 2
+      assert hd(ranked).result.title == "Show.S01E01.1080p.A"
+    end
+
+    test "NZB with unknown completion defaults to 1.0 (does not penalize)" do
+      unknown = build_nzb_result(%{nzb_completion: nil, nzb_grabs: nil, title: "Unknown.1080p"})
+      half = build_nzb_result(%{nzb_completion: 0.5, nzb_grabs: nil, title: "Half.1080p"})
+
+      ranked = ReleaseRanker.rank_all([half, unknown], min_seeders: 0)
+      assert hd(ranked).result.title == "Unknown.1080p"
+    end
+
+    test "torrent scoring is unchanged (regression)" do
+      # With no quality profile, seeder count dominates the score for torrents
+      # (since quality_score also falls back to seeders when no profile is set).
+      high_seeders =
+        build_result(%{title: "Movie.1080p.HighSeed", seeders: 500, leechers: 5})
+
+      low_seeders =
+        build_result(%{title: "Movie.1080p.LowSeed", seeders: 5, leechers: 5})
+
+      ranked = ReleaseRanker.rank_all([low_seeders, high_seeders], min_seeders: 0)
+      assert hd(ranked).result.title == "Movie.1080p.HighSeed"
     end
   end
 end

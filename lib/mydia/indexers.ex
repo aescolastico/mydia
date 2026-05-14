@@ -437,7 +437,8 @@ defmodule Mydia.Indexers do
   defp format_indexer_error(error), do: inspect(error)
 
   defp filter_by_seeders(results, min_seeders) when min_seeders > 0 do
-    Enum.filter(results, fn result -> result.seeders >= min_seeders end)
+    # NZB results have nil seeders; the min-seeders setting is torrent-only.
+    Enum.filter(results, fn result -> is_nil(result.seeders) or result.seeders >= min_seeders end)
   end
 
   defp filter_by_seeders(results, _min_seeders), do: results
@@ -481,7 +482,8 @@ defmodule Mydia.Indexers do
     # 2. Results from more reliable sources (if we had source ranking)
     # 3. Results with complete metadata
     Enum.max_by(duplicates, fn result ->
-      {result.seeders, has_complete_metadata?(result)}
+      # NZB results have nil seeders; treat as 0 for ordering only.
+      {result.seeders || 0, has_complete_metadata?(result)}
     end)
   end
 

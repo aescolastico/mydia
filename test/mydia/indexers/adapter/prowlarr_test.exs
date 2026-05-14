@@ -1,10 +1,24 @@
 defmodule Mydia.Indexers.Adapter.ProwlarrTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Mydia.Indexers.Adapter.Prowlarr
   alias Mydia.Indexers.Adapter.Error
 
   @moduletag :external
+
+  defp build_config(bypass) do
+    %{
+      type: :prowlarr,
+      name: "Test Prowlarr",
+      host: "localhost",
+      port: bypass.port,
+      api_key: "test-api-key",
+      use_ssl: false,
+      options: %{timeout: 5_000}
+    }
+  end
 
   describe "test_connection/1" do
     @tag :skip
@@ -179,6 +193,121 @@ defmodule Mydia.Indexers.Adapter.ProwlarrTest do
       assert function_exported?(Prowlarr, :search, 3)
       assert function_exported?(Prowlarr, :test_connection, 1)
       assert function_exported?(Prowlarr, :get_capabilities, 1)
+    end
+  end
+
+  describe "Usenet-aware parsing (#121, #125)" do
+    @moduletag :indexers
+    @describetag external: false
+
+    test "NZB results carry usenet_date from publishDate and grabs into nzb_grabs" do
+      bypass = Bypass.open()
+
+      body =
+        Jason.encode!([
+          %{
+            "title" => "Show.S01E01.1080p.WEB-DL",
+            "size" => 1_073_741_824,
+            "downloadUrl" => "http://example.com/release.nzb",
+            "downloadProtocol" => "usenet",
+            "publishDate" => "2024-11-25T10:30:00Z",
+            "grabs" => 42,
+            "indexer" => "Prowlarr"
+          }
+        ])
+
+      Bypass.expect_once(bypass, "GET", "/api/v1/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, body)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = Prowlarr.search(config, "test")
+
+      assert result.download_protocol == :nzb
+      assert result.seeders == nil
+      assert result.leechers == nil
+      assert result.nzb_grabs == 42
+      assert %DateTime{year: 2024, month: 11, day: 25} = result.usenet_date
+    end
+
+    test "torrent results keep seeders/leechers and have nil NZB fields" do
+      bypass = Bypass.open()
+
+      body =
+        Jason.encode!([
+          %{
+            "title" => "Movie.2024.1080p.BluRay.x264",
+            "size" => 5_368_709_120,
+            "downloadUrl" => "http://example.com/release.torrent",
+            "downloadProtocol" => "torrent",
+            "publishDate" => "2024-11-25T10:30:00Z",
+            "seeders" => 120,
+            "leechers" => 10,
+            "indexer" => "Prowlarr"
+          }
+        ])
+
+      Bypass.expect_once(bypass, "GET", "/api/v1/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, body)
+      end)
+
+      config = build_config(bypass)
+      assert {:ok, [result]} = Prowlarr.search(config, "test")
+
+      assert result.download_protocol == :torrent
+      assert result.seeders == 120
+      assert result.leechers == 10
+      assert result.nzb_grabs == nil
+      assert result.usenet_date == nil
+    end
+
+    test "emits zero info-level log lines for routine result parsing (#125)" do
+      bypass = Bypass.open()
+
+      body =
+        Jason.encode!([
+          %{
+            "title" => "Show.S01E01.1080p.WEB-DL",
+            "size" => 1_073_741_824,
+            "downloadUrl" => "http://example.com/release.nzb",
+            "downloadProtocol" => "usenet",
+            "publishDate" => "2024-11-25T10:30:00Z",
+            "grabs" => 42,
+            "indexer" => "Prowlarr"
+          },
+          %{
+            "title" => "Movie.2024.1080p.BluRay.x264",
+            "size" => 5_368_709_120,
+            "downloadUrl" => "http://example.com/release.torrent",
+            "downloadProtocol" => "torrent",
+            "seeders" => 50,
+            "leechers" => 5,
+            "indexer" => "Prowlarr"
+          }
+        ])
+
+      Bypass.expect_once(bypass, "GET", "/api/v1/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, body)
+      end)
+
+      config = build_config(bypass)
+
+      log =
+        capture_log([level: :info], fn ->
+          assert {:ok, _results} = Prowlarr.search(config, "test")
+        end)
+
+      # The four previously info-level lines about protocol detection and item
+      # keys must no longer fire at :info level.
+      refute log =~ "Prowlarr item keys"
+      refute log =~ "Protocol field value"
+      refute log =~ "Detected protocol"
     end
   end
 
