@@ -34,7 +34,7 @@ defmodule Mydia.Jobs.MovieSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
-  alias Mydia.Downloads.Blacklists
+  alias Mydia.Downloads.{Blacklists, Download}
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
@@ -373,17 +373,32 @@ defmodule Mydia.Jobs.MovieSearch do
     enabled_count + cardigann_count
   end
 
-  defp load_monitored_movies_without_files do
+  @doc false
+  # Public for direct testing of the search-selection filter.
+  def load_monitored_movies_without_files do
     movies =
       MediaItem
       |> where([m], m.type == "movie")
       |> where([m], m.monitored == true)
+      |> where([m], m.id not in subquery(active_download_media_item_ids()))
       |> join(:left, [m], mf in MediaFile, on: mf.media_item_id == m.id and is_nil(mf.trashed_at))
       |> group_by([m], m.id)
       |> having([m, mf], count(mf.id) == 0)
       |> Repo.all()
 
     filter_movies_in_backoff(movies)
+  end
+
+  # media_item_ids with an in-flight download (still in client, not failed).
+  # Matches Mydia.Downloads.Queue.check_for_active_download/3 so we skip
+  # indexer calls for items the queue would reject anyway.
+  defp active_download_media_item_ids do
+    from(d in Download,
+      where: is_nil(d.completed_at) and is_nil(d.error_message),
+      where: not is_nil(d.media_item_id),
+      select: d.media_item_id,
+      distinct: true
+    )
   end
 
   defp filter_movies_in_backoff(movies) do

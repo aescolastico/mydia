@@ -12,6 +12,9 @@ defmodule Mydia.Jobs.MovieSearchTest do
   import Mydia.MediaFixtures
   import Mydia.SettingsFixtures
   import Mydia.AccountsFixtures
+  import Mydia.DownloadsFixtures
+
+  alias Mydia.Repo
 
   # Mock download client adapter for testing
   defmodule MockDownloadAdapter do
@@ -257,6 +260,53 @@ defmodule Mydia.Jobs.MovieSearchTest do
 
       # Job should process all movies with mocked indexer
       assert :ok = perform_job(MovieSearch, %{"mode" => "all_monitored"})
+    end
+  end
+
+  describe "load_monitored_movies_without_files/0" do
+    test "skips movies with an active download" do
+      queued = media_item_fixture(%{type: "movie", title: "Already Queued", monitored: true})
+      _ = download_fixture(%{media_item_id: queued.id, title: "Already.Queued.2024.1080p"})
+
+      needs_search = media_item_fixture(%{type: "movie", title: "Needs Search", monitored: true})
+
+      ids = Enum.map(MovieSearch.load_monitored_movies_without_files(), & &1.id)
+
+      refute queued.id in ids
+      assert needs_search.id in ids
+    end
+
+    test "still selects a movie when its prior download failed" do
+      movie = media_item_fixture(%{type: "movie", title: "Failed Once", monitored: true})
+
+      download = download_fixture(%{media_item_id: movie.id, title: "Failed.Once.2024.1080p"})
+
+      {:ok, _} =
+        download
+        |> Ecto.Changeset.change(error_message: "client reported failure")
+        |> Repo.update()
+
+      ids = Enum.map(MovieSearch.load_monitored_movies_without_files(), & &1.id)
+
+      assert movie.id in ids
+    end
+
+    test "still selects a movie when its prior download completed" do
+      # Edge case: completed_at set but no media_file yet. Search may run again;
+      # the queue layer will dedup if appropriate. We mirror queue.ex semantics:
+      # only `completed_at IS NULL AND error_message IS NULL` counts as in-flight.
+      movie = media_item_fixture(%{type: "movie", title: "Completed", monitored: true})
+
+      download = download_fixture(%{media_item_id: movie.id, title: "Completed.2024.1080p"})
+
+      {:ok, _} =
+        download
+        |> Ecto.Changeset.change(completed_at: DateTime.utc_now() |> DateTime.truncate(:second))
+        |> Repo.update()
+
+      ids = Enum.map(MovieSearch.load_monitored_movies_without_files(), & &1.id)
+
+      assert movie.id in ids
     end
   end
 

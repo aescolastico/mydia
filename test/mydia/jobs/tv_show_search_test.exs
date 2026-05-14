@@ -12,6 +12,7 @@ defmodule Mydia.Jobs.TVShowSearchTest do
   import Mydia.MediaFixtures
   import Mydia.SettingsFixtures
   import Mydia.AccountsFixtures
+  import Mydia.DownloadsFixtures
 
   # Mock download client adapter for testing
   defmodule MockDownloadAdapter do
@@ -623,6 +624,116 @@ defmodule Mydia.Jobs.TVShowSearchTest do
 
       # Applies smart logic per season with mocked indexer
       assert :ok = perform_job(TVShowSearch, %{"mode" => "all_monitored"})
+    end
+  end
+
+  describe "load_monitored_episodes_without_files/0" do
+    test "skips an episode with an active episode-level download" do
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Mixed Show", monitored: true})
+
+      queued =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: ~D[2020-01-01]
+        })
+
+      needs_search =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: ~D[2020-01-08]
+        })
+
+      _download =
+        download_fixture(%{
+          media_item_id: tv_show.id,
+          episode_id: queued.id,
+          title: "Mixed.Show.S01E01.1080p"
+        })
+
+      ids = Enum.map(TVShowSearch.load_monitored_episodes_without_files(), & &1.id)
+
+      refute queued.id in ids
+      assert needs_search.id in ids
+    end
+
+    test "skips every episode covered by an active season-pack download" do
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Pack Show", monitored: true})
+
+      s1e1 =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: ~D[2020-01-01]
+        })
+
+      s1e2 =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: ~D[2020-01-08]
+        })
+
+      s2e1 =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 2,
+          episode_number: 1,
+          air_date: ~D[2021-01-01]
+        })
+
+      _season_pack =
+        download_fixture(%{
+          media_item_id: tv_show.id,
+          title: "Pack.Show.S01.1080p",
+          metadata: %{"season_pack" => true, "season_number" => 1}
+        })
+
+      ids = Enum.map(TVShowSearch.load_monitored_episodes_without_files(), & &1.id)
+
+      refute s1e1.id in ids
+      refute s1e2.id in ids
+      assert s2e1.id in ids
+    end
+
+    test "does not treat a non-season-pack download as covering other episodes" do
+      # A download with season_pack=false (or missing) on the same season must not
+      # skip sibling episodes — only an explicit season pack does.
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Single Ep Show", monitored: true})
+
+      ep1 =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: ~D[2020-01-01]
+        })
+
+      ep2 =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: ~D[2020-01-08]
+        })
+
+      _download =
+        download_fixture(%{
+          media_item_id: tv_show.id,
+          episode_id: ep1.id,
+          title: "Single.Ep.Show.S01E01.1080p",
+          metadata: %{"season_pack" => false, "season_number" => 1}
+        })
+
+      ids = Enum.map(TVShowSearch.load_monitored_episodes_without_files(), & &1.id)
+
+      refute ep1.id in ids
+      assert ep2.id in ids
     end
   end
 

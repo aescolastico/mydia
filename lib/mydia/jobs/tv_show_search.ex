@@ -54,7 +54,7 @@ defmodule Mydia.Jobs.TVShowSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
-  alias Mydia.Downloads.Blacklists
+  alias Mydia.Downloads.{Blacklists, Download}
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Media.{MediaItem, Episode}
@@ -460,7 +460,9 @@ defmodule Mydia.Jobs.TVShowSearch do
     |> Repo.one()
   end
 
-  defp load_monitored_episodes_without_files do
+  @doc false
+  # Public for direct testing of the search-selection filter.
+  def load_monitored_episodes_without_files do
     today = Date.utc_today()
 
     episodes =
@@ -468,6 +470,7 @@ defmodule Mydia.Jobs.TVShowSearch do
       |> join(:inner, [e], m in assoc(e, :media_item))
       |> where([e, m], e.monitored == true and m.monitored == true)
       |> where([e], e.air_date <= ^today)
+      |> where([e], e.id not in subquery(active_episode_download_ids()))
       |> join(:left, [e], mf in MediaFile, on: mf.episode_id == e.id and is_nil(mf.trashed_at))
       |> group_by([e], e.id)
       |> having([_e, _m, mf], count(mf.id) == 0)
@@ -476,8 +479,52 @@ defmodule Mydia.Jobs.TVShowSearch do
 
     # Filter out special episodes (S00) unless configured to monitor them
     episodes
+    |> reject_episodes_in_active_season_packs()
     |> filter_special_episodes()
     |> filter_episodes_in_backoff()
+  end
+
+  # Episodes with an active episode-level download (still in client, not failed).
+  defp active_episode_download_ids do
+    from(d in Download,
+      where: is_nil(d.completed_at) and is_nil(d.error_message),
+      where: not is_nil(d.episode_id),
+      select: d.episode_id,
+      distinct: true
+    )
+  end
+
+  # Drop episodes covered by an active season-pack download. Mirrors the
+  # season-pack arm of Mydia.Downloads.Queue.check_for_active_download/3:
+  # matched by (media_item_id, season_number) on downloads whose metadata
+  # has season_pack=true.
+  defp reject_episodes_in_active_season_packs([]), do: []
+
+  defp reject_episodes_in_active_season_packs(episodes) do
+    media_item_ids =
+      episodes
+      |> Enum.map(& &1.media_item_id)
+      |> Enum.uniq()
+
+    covered =
+      from(d in Download,
+        where: is_nil(d.completed_at) and is_nil(d.error_message),
+        where: d.media_item_id in ^media_item_ids,
+        where: ^Mydia.DB.json_is_true(:metadata, "$.season_pack"),
+        select: %{media_item_id: d.media_item_id, metadata: d.metadata}
+      )
+      |> Repo.all()
+      |> Enum.reduce(MapSet.new(), fn
+        %{media_item_id: mid, metadata: %{"season_number" => sn}}, acc when is_integer(sn) ->
+          MapSet.put(acc, {mid, sn})
+
+        _, acc ->
+          acc
+      end)
+
+    Enum.reject(episodes, fn e ->
+      MapSet.member?(covered, {e.media_item_id, e.season_number})
+    end)
   end
 
   defp load_episodes_for_show(media_item_id) do
