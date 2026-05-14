@@ -50,7 +50,12 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     :import_failed_at,
     # Stall-detection / progress tracking (mirrored from Download DB row)
     :last_progress_at,
-    :last_known_bytes
+    :last_known_bytes,
+    # Whether the torrent is currently present in its download client.
+    # true  = client confirmed the torrent is there
+    # false = client confirmed the torrent is gone
+    # nil   = client unreachable; presence unknown
+    :in_client?
   ]
 
   @type t :: %__MODULE__{
@@ -90,7 +95,8 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           import_next_retry_at: DateTime.t() | nil,
           import_failed_at: DateTime.t() | nil,
           last_progress_at: DateTime.t() | nil,
-          last_known_bytes: integer() | nil
+          last_known_bytes: integer() | nil,
+          in_client?: boolean() | nil
         }
 
   @doc """

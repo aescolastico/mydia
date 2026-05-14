@@ -379,6 +379,98 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
     end
   end
 
+  describe "unmatched orphan self-healing" do
+    test "deletes an unmatched download that is no longer in any client" do
+      setup_runtime_config([])
+
+      orphan =
+        download_fixture(%{
+          match_status: "unmatched",
+          download_client: "test-client",
+          download_client_id: "gone-1"
+        })
+
+      {:ok, _} =
+        orphan
+        |> Ecto.Changeset.change(media_item_id: nil)
+        |> Mydia.Repo.update()
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+    end
+
+    test "deletes an unmatched + completed download that is no longer in any client" do
+      # The actual production bug: completed_at set, no media_item, no
+      # library_path, sitting in DB forever while MediaImport retries.
+      setup_runtime_config([])
+
+      orphan =
+        download_fixture(%{
+          match_status: "unmatched",
+          completed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          download_client: "test-client",
+          download_client_id: "gone-completed-1"
+        })
+
+      {:ok, _} =
+        orphan
+        |> Ecto.Changeset.change(media_item_id: nil, library_path_id: nil)
+        |> Mydia.Repo.update()
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+    end
+
+    test "preserves a matched download that goes missing (regression guard)" do
+      # Matched downloads still go through the `missing` handler — the user
+      # may want to investigate why their tracked torrent disappeared.
+      setup_runtime_config([])
+      media_item = media_item_fixture()
+
+      # match_status is nil for normally-matched downloads (the enum is
+      # ["unmatched", "unresolved_files", "partial_pack"]).
+      tracked =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "test-client",
+          download_client_id: "tracked-1"
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      preserved = Mydia.Repo.get(Mydia.Downloads.Download, tracked.id)
+      assert preserved
+      assert preserved.error_message =~ "Removed from download client"
+    end
+
+    test "does not delete unmatched downloads while their client is unreachable" do
+      # When client.list_torrents/2 errors out, presence is unknown and we
+      # MUST NOT treat the row as orphaned. The runtime config below points
+      # at a non-running client, which yields a connection error (not "not
+      # found"), and `enrich_download_with_unknown_status` produces
+      # in_client?=nil.
+      setup_runtime_config([build_test_client_config()])
+
+      orphan =
+        download_fixture(%{
+          match_status: "unmatched",
+          download_client: "TestClient",
+          download_client_id: "unreachable-1"
+        })
+
+      {:ok, _} =
+        orphan
+        |> Ecto.Changeset.change(media_item_id: nil)
+        |> Mydia.Repo.update()
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      assert Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+    end
+  end
+
   describe "stuck download detection" do
     test "detects and flags downloads that completed but never imported" do
       setup_runtime_config([])

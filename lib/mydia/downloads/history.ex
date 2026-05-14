@@ -258,7 +258,8 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      in_client?: true
     })
   end
 
@@ -301,7 +302,9 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      # Client unreachable — presence indeterminate.
+      in_client?: nil
     })
   end
 
@@ -355,7 +358,8 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      in_client?: false
     })
   end
 
