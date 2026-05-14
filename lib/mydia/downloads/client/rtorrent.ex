@@ -50,12 +50,23 @@ defmodule Mydia.Downloads.Client.Rtorrent do
     * state=0, complete=0 -> `:paused`
     * state=0, complete=1 -> `:completed`
     * is_hash_checking=1 -> `:checking`
+
+  ## Priority
+
+  rTorrent supports per-torrent download priority via `d.priority.set`. Valid
+  native integer values are `0` (off), `1` (low), `2` (normal), and `3`
+  (high). When `priority_profile` is empty, this adapter passes no priority
+  command and rTorrent uses its own default (`2`). When the profile supplies
+  an override for an atom, the resolved value is appended as a
+  `d.priority.set=N` command on the `load.start` / `load.raw_start` call.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.{Error, HTTP}
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Priority
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   alias Mydia.Downloads.TorrentHash
 
   @impl true
@@ -81,7 +92,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
-    {:ok, {method, args}} = build_load_command(torrent, opts)
+    {:ok, {method, args}} = build_load_command(torrent, opts, config)
 
     case xmlrpc_call(config, method, args) do
       {:ok, 0} ->
@@ -203,25 +214,25 @@ defmodule Mydia.Downloads.Client.Rtorrent do
   ## Private Functions
 
   # Build the XML-RPC load command based on torrent type
-  defp build_load_command({:magnet, magnet_link}, opts) do
+  defp build_load_command({:magnet, magnet_link}, opts, config) do
     # load.start takes the magnet URL and optional commands
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.start", ["", magnet_link | commands]}}
   end
 
-  defp build_load_command({:file, file_contents}, opts) do
+  defp build_load_command({:file, file_contents}, opts, config) do
     # load.raw_start takes an empty target, binary data, and optional commands
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.raw_start", ["", {:base64, Base.encode64(file_contents)} | commands]}}
   end
 
-  defp build_load_command({:url, url}, opts) do
+  defp build_load_command({:url, url}, opts, config) do
     # load.start can also take HTTP URLs
-    commands = build_load_options(opts)
+    commands = build_load_options(opts, config)
     {:ok, {"load.start", ["", url | commands]}}
   end
 
-  defp build_load_options(opts) do
+  defp build_load_options(opts, config) do
     commands = []
 
     # Add save path if specified
@@ -249,8 +260,28 @@ defmodule Mydia.Downloads.Client.Rtorrent do
         commands
       end
 
+    # Add priority override when the profile resolves the atom to a value.
+    # Empty profile -> nil -> no command appended (rTorrent default applies).
+    commands =
+      case map_priority(opts[:priority], config) do
+        nil -> commands
+        value -> ["d.priority.set=" <> to_string(value) | commands]
+      end
+
     commands
   end
+
+  # Resolves a Priority atom into rTorrent's `d.priority.set` integer.
+  # When `priority_profile` is empty (the default), returns nil so no
+  # priority command is appended and rTorrent's own default applies.
+  defp map_priority(nil, _config), do: nil
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = Helpers.priority_profile(config)
+    Priority.resolve(atom, profile, nil)
+  end
+
+  defp map_priority(_other, _config), do: nil
 
   # Fields to query for torrent status
   defp torrent_fields do
@@ -289,7 +320,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
     bytes_done = field_map["bytes_done"] || 0
     progress = if size > 0, do: bytes_done / size * 100.0, else: 0.0
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: field_map["hash"],
       name: field_map["name"] || "",
       state: state,
@@ -302,8 +333,8 @@ defmodule Mydia.Downloads.Client.Rtorrent do
       eta: calculate_eta(size, bytes_done, field_map["down.rate"] || 0),
       ratio: parse_ratio(field_map["ratio"]),
       save_path: field_map["directory"] || "",
-      added_at: parse_timestamp(field_map["timestamp.started"]),
-      completed_at: parse_timestamp(field_map["timestamp.finished"])
+      added_at: Helpers.parse_timestamp_unix(field_map["timestamp.started"]),
+      completed_at: Helpers.parse_timestamp_unix(field_map["timestamp.finished"])
     })
   end
 
@@ -350,15 +381,6 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   defp parse_ratio(ratio) when is_float(ratio), do: ratio
   defp parse_ratio(_), do: 0.0
-
-  defp parse_timestamp(0), do: nil
-  defp parse_timestamp(nil), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 
   defp get_view_for_filter(nil), do: "main"
   defp get_view_for_filter(:all), do: "main"

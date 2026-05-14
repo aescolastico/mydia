@@ -21,6 +21,7 @@ defmodule Mydia.Settings.IndexerConfig do
           rate_limit: integer() | nil,
           connection_settings: map() | nil,
           env_name: String.t() | nil,
+          min_post_age_minutes: integer() | nil,
           updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
           updated_by_id: binary() | nil,
           inserted_at: DateTime.t(),
@@ -41,6 +42,7 @@ defmodule Mydia.Settings.IndexerConfig do
     field :rate_limit, :integer
     field :connection_settings, Mydia.Settings.JsonMapType
     field :env_name, :string
+    field :min_post_age_minutes, :integer
 
     belongs_to :updated_by, Mydia.Accounts.User
 
@@ -64,13 +66,15 @@ defmodule Mydia.Settings.IndexerConfig do
       :rate_limit,
       :connection_settings,
       :updated_by_id,
-      :env_name
+      :env_name,
+      :min_post_age_minutes
     ])
     |> validate_required([:name, :type])
     |> validate_base_url_or_env_name()
     |> validate_inclusion(:type, @indexer_types)
     |> validate_number(:priority, greater_than: 0)
     |> validate_number(:rate_limit, greater_than: 0)
+    |> validate_number(:min_post_age_minutes, greater_than_or_equal_to: 0)
     |> normalize_base_url()
     |> validate_base_url()
     |> unique_constraint(:name)

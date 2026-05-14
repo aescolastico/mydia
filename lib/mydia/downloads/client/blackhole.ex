@@ -40,12 +40,21 @@ defmodule Mydia.Downloads.Client.Blackhole do
 
   Torrent files are matched to completed downloads by extracting the torrent name
   and looking for matching folders in the completed directory.
+
+  ## Priority
+
+  Priority is a **no-op** for blackhole clients: dropping a file into a
+  watched folder gives us no queue to manipulate. The `:priority` option (and
+  any `priority_profile` overrides on the client config) is silently ignored
+  without raising. This adapter accepts the option for behaviour-parity with
+  the other clients so callers don't need to special-case blackhole.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.Error
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   alias Mydia.Downloads.TorrentHash
 
   @torrent_extension ".torrent"
@@ -350,15 +359,13 @@ defmodule Mydia.Downloads.Client.Blackhole do
   end
 
   defp build_pending_status(hash, file_path) do
-    stat = File.stat(file_path, time: :posix)
-
     added_at =
-      case stat do
-        {:ok, %{ctime: ctime}} when is_integer(ctime) -> DateTime.from_unix!(ctime)
+      case File.stat(file_path, time: :posix) do
+        {:ok, %{ctime: ctime}} -> Helpers.parse_timestamp_unix(ctime)
         _ -> nil
       end
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: hash,
       name: Path.basename(file_path, Path.extname(file_path)),
       state: :downloading,
@@ -377,19 +384,18 @@ defmodule Mydia.Downloads.Client.Blackhole do
   end
 
   defp build_completed_status(id, folder_path) do
-    stat = File.stat(folder_path, time: :posix)
     size = calculate_folder_size(folder_path)
 
     {added_at, completed_at} =
-      case stat do
-        {:ok, %{ctime: ctime, mtime: mtime}} when is_integer(ctime) and is_integer(mtime) ->
-          {DateTime.from_unix!(ctime), DateTime.from_unix!(mtime)}
+      case File.stat(folder_path, time: :posix) do
+        {:ok, %{ctime: ctime, mtime: mtime}} ->
+          {Helpers.parse_timestamp_unix(ctime), Helpers.parse_timestamp_unix(mtime)}
 
         _ ->
           {nil, nil}
       end
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: id,
       name: Path.basename(folder_path),
       state: :completed,

@@ -54,6 +54,7 @@ defmodule Mydia.Jobs.TVShowSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
+  alias Mydia.Downloads.Blacklists
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Media.{MediaItem, Episode}
@@ -863,6 +864,11 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   defp process_season_pack_results(media_item, season_number, episodes, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123). Too-fresh NZB
+    # filtering (#121) already happened upstream in `Indexers.search_all/2`
+    # — see the call site in MovieSearch for the rationale.
+    results = reject_blacklisted(results, media_item: media_item, season_number: season_number)
+
     # Build ranking options from the first episode (they all share the same show)
     ranking_opts = build_ranking_options_for_season(media_item, season_number, episodes, args)
 
@@ -1083,6 +1089,12 @@ defmodule Mydia.Jobs.TVShowSearch do
     # Filter out season packs — individual episode searches should not grab full season downloads
     episode_results = reject_season_packs(results, episode.season_number)
 
+    # Filter blacklisted releases out before ranking (#123). The "filter,
+    # don't rank" convention keeps this distinct from `ReleaseRanker`.
+    # Too-fresh NZB filtering (#121) already happened upstream in
+    # `Indexers.search_all/2`.
+    episode_results = reject_blacklisted(episode_results, episode: episode)
+
     if episode_results == [] do
       Logger.warning("All results were season packs, no episode-specific results",
         episode_id: episode.id,
@@ -1099,6 +1111,15 @@ defmodule Mydia.Jobs.TVShowSearch do
     else
       process_ranked_episode_results(episode, episode_results, args, query)
     end
+  end
+
+  # Drops results matching an active `(indexer, guid)` row in the
+  # release_blacklist table. Logs each rejection at :info with the
+  # identifying pair so operators can debug why a result vanished.
+  defp reject_blacklisted(results, ctx) do
+    episode_id = Keyword.get(ctx, :episode) && Keyword.get(ctx, :episode).id
+    media_item_id = Keyword.get(ctx, :media_item) && Keyword.get(ctx, :media_item).id
+    Blacklists.reject_blacklisted(results, episode_id: episode_id, media_item_id: media_item_id)
   end
 
   defp process_ranked_episode_results(episode, results, args, query) do

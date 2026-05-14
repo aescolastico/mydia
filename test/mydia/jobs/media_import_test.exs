@@ -612,4 +612,34 @@ defmodule Mydia.Jobs.MediaImportTest do
       use_ssl: false
     }
   end
+
+  describe "idempotency" do
+    test "short-circuits with :ok when download.imported_at is already set" do
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "AlreadyImportedClient",
+          download_client_id: "imported-1"
+        })
+
+      {:ok, _} =
+        Mydia.Downloads.update_download(download, %{
+          completed_at: DateTime.utc_now(),
+          imported_at: DateTime.utc_now()
+        })
+
+      # No client config exists; if we fell through to import_download/2 we
+      # would hit {:error, :no_client}. The fact that we still return :ok
+      # proves the short-circuit triggered first.
+      assert :ok == perform_job(MediaImport, %{"download_id" => download.id})
+    end
+
+    # NB: the `unique:` constraint itself is enforced at production Oban
+    # insert time; the test environment runs with `engine: false` so
+    # `Oban.insert/1` cannot exercise it directly. The `imported_at`
+    # short-circuit above is the user-visible safety net regardless of
+    # whether duplicate jobs slip past the unique gate.
+  end
 end

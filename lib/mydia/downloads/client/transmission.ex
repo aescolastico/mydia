@@ -55,6 +55,16 @@ defmodule Mydia.Downloads.Client.Transmission do
         "arguments": {"ids": [1], "fields": ["id", "name", "status"]},
         "tag": 1
       }
+
+  ## Priority
+
+  Transmission supports per-torrent bandwidth priority via the
+  `bandwidthPriority` argument on `torrent-add`. Valid native values are the
+  integers `-1` (low), `0` (normal), and `1` (high). When `priority_profile`
+  is empty, this adapter passes nothing (server uses its own default — usually
+  `0`). When the profile supplies an integer override for an atom, the value
+  is forwarded verbatim; tiers without overrides are silently skipped to
+  preserve historical behaviour.
   """
 
   @behaviour Mydia.Downloads.Client
@@ -62,7 +72,9 @@ defmodule Mydia.Downloads.Client.Transmission do
   require Logger
 
   alias Mydia.Downloads.Client.{Error, HTTP}
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Priority
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
 
   # Sequential counter for RPC request tags
   @agent_name __MODULE__.TagCounter
@@ -89,7 +101,7 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
-    arguments = build_add_torrent_arguments(torrent, opts)
+    arguments = build_add_torrent_arguments(torrent, opts, config)
 
     rpc_call(config, "torrent-add", arguments)
     |> case do
@@ -338,30 +350,47 @@ defmodule Mydia.Downloads.Client.Transmission do
     end
   end
 
-  defp build_add_torrent_arguments({:magnet, magnet_link}, opts) do
+  defp build_add_torrent_arguments({:magnet, magnet_link}, opts, config) do
     %{"filename" => magnet_link}
-    |> add_common_torrent_opts(opts)
+    |> add_common_torrent_opts(opts, config)
   end
 
-  defp build_add_torrent_arguments({:file, file_contents}, opts) do
+  defp build_add_torrent_arguments({:file, file_contents}, opts, config) do
     # Transmission expects base64-encoded metainfo
     metainfo = Base.encode64(file_contents)
 
     %{"metainfo" => metainfo}
-    |> add_common_torrent_opts(opts)
+    |> add_common_torrent_opts(opts, config)
   end
 
-  defp build_add_torrent_arguments({:url, url}, opts) do
+  defp build_add_torrent_arguments({:url, url}, opts, config) do
     %{"filename" => url}
-    |> add_common_torrent_opts(opts)
+    |> add_common_torrent_opts(opts, config)
   end
 
-  defp add_common_torrent_opts(arguments, opts) do
+  defp add_common_torrent_opts(arguments, opts, config) do
     arguments
     |> add_optional_arg("download-dir", opts[:save_path])
     |> add_optional_arg("paused", opts[:paused])
     |> add_optional_arg("labels", opts[:tags])
+    |> add_optional_arg("bandwidthPriority", map_priority(opts[:priority], config))
   end
+
+  # Resolves a Priority atom into Transmission's `bandwidthPriority` value.
+  # When `priority_profile` is empty (the default), returns nil so the field
+  # is omitted from the RPC call and Transmission falls back to its own
+  # server-side default. The profile is the only source of values for
+  # Transmission: there is no hardcoded fallback because Transmission's native
+  # range (`-1`, `0`, `1`) is narrower than the 5-tier taxonomy and there is
+  # no obvious one-to-one mapping that wouldn't surprise existing operators.
+  defp map_priority(nil, _config), do: nil
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = Helpers.priority_profile(config)
+    Priority.resolve(atom, profile, nil)
+  end
+
+  defp map_priority(_other, _config), do: nil
 
   defp add_optional_arg(arguments, _key, nil), do: arguments
 
@@ -382,7 +411,7 @@ defmodule Mydia.Downloads.Client.Transmission do
         download_dir
       end
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: torrent["hashString"],
       name: torrent_name,
       state: parse_state(torrent["status"]),
@@ -395,8 +424,8 @@ defmodule Mydia.Downloads.Client.Transmission do
       eta: parse_eta(torrent["eta"]),
       ratio: torrent["uploadRatio"] || 0.0,
       save_path: save_path,
-      added_at: parse_timestamp(torrent["addedDate"]),
-      completed_at: parse_timestamp(torrent["doneDate"])
+      added_at: Helpers.parse_timestamp_unix(torrent["addedDate"]),
+      completed_at: Helpers.parse_timestamp_unix(torrent["doneDate"])
     })
   end
 
@@ -415,12 +444,6 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   defp parse_eta(eta) when is_integer(eta) and eta >= 0, do: eta
   defp parse_eta(_), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 
   defp apply_filters(torrents, opts) do
     torrents

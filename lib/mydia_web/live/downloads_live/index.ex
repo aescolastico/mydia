@@ -768,8 +768,27 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "downloading" -> "badge-primary"
       "checking" -> "badge-info"
       "paused" -> "badge-warning"
+      "stalled" -> "badge-warning"
       _ -> "badge-ghost"
     end
+  end
+
+  @doc false
+  # Returns `{class, label}` for the download's status badge.
+  # When the download has been flagged stalled by `DownloadMonitor` (see #126),
+  # we override the underlying client status with a yellow "Stalled" badge so
+  # the user can tell at a glance that progress has stopped.
+  defp status_badge(download) do
+    if stalled?(download) do
+      {status_badge_class("stalled"), "Stalled"}
+    else
+      {status_badge_class(download.status), String.capitalize(download.status)}
+    end
+  end
+
+  defp stalled?(download) do
+    not is_nil(download.import_failed_at) and
+      Mydia.Downloads.StallDetector.stalled?(download.import_last_error)
   end
 
   defp format_ratio(nil), do: "0.00"

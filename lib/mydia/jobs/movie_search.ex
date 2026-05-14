@@ -34,6 +34,7 @@ defmodule Mydia.Jobs.MovieSearch do
   import Ecto.Query, warn: false
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
+  alias Mydia.Downloads.Blacklists
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
@@ -293,6 +294,13 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp process_search_results_with_count(movie, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123).
+    # NB: too-fresh NZB filtering (#121) happens upstream inside
+    # `Indexers.search_all/2` where the originating indexer config is in
+    # scope — relay-style indexers (Prowlarr, Jackett) tag results with
+    # their *upstream* indexer label, which would not match the configured
+    # Mydia indexer name in a post-merge lookup.
+    results = reject_blacklisted(results, movie: movie)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -450,6 +458,13 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp process_search_results(movie, results, args, query) do
+    # Filter blacklisted releases out before ranking (#123).
+    # NB: too-fresh NZB filtering (#121) happens upstream inside
+    # `Indexers.search_all/2` where the originating indexer config is in
+    # scope — relay-style indexers (Prowlarr, Jackett) tag results with
+    # their *upstream* indexer label, which would not match the configured
+    # Mydia indexer name in a post-merge lookup.
+    results = reject_blacklisted(results, movie: movie)
     ranking_opts = build_ranking_options(movie, args)
 
     case ReleaseRanker.select_best_result(results, ranking_opts) do
@@ -693,7 +708,8 @@ defmodule Mydia.Jobs.MovieSearch do
   defp build_filter_stats(results, ranking_opts) do
     min_seeders = Keyword.get(ranking_opts, :min_seeders, get_min_seeders())
 
-    low_seeders = Enum.count(results, fn r -> r.seeders < min_seeders end)
+    # NZB results have no seeder concept; treat nil as not-low-seeders.
+    low_seeders = Enum.count(results, fn r -> r.seeders != nil and r.seeders < min_seeders end)
 
     %{
       "total_results" => length(results),
@@ -712,4 +728,14 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp stringify_keys(other), do: other
+
+  # Drops results matching an active `(indexer, guid)` row in the
+  # release_blacklist table (#123). The "filter, don't rank" convention
+  # keeps this distinct from `ReleaseRanker`. See `Mydia.Downloads.Blacklists`
+  # for the batched implementation that issues one DB query regardless of
+  # result count.
+  defp reject_blacklisted(results, ctx) do
+    movie_id = Keyword.get(ctx, :movie) && Keyword.get(ctx, :movie).id
+    Blacklists.reject_blacklisted(results, movie_id: movie_id)
+  end
 end

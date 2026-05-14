@@ -1,6 +1,21 @@
 defmodule Mydia.Settings.DownloadClientConfig do
   @moduledoc """
-  Schema for download client configurations (qBittorrent, Transmission, rTorrent, Blackhole, HTTP).
+  Schema for download client configurations (qBittorrent, Transmission, rTorrent,
+  Blackhole, HTTP, SABnzbd, NZBGet).
+
+  ## Field notes
+
+  - `category` (string) — **deprecated** in favour of `categories` (map). Kept
+    for backwards compatibility; `categories` takes precedence when populated.
+    New code should prefer `categories` keyed by `Download.content_type`.
+  - `categories` — map keyed by content type (`"movie"`, `"tv"`, `"music"`) to a
+    client-native category string. Falls back to `category` when the key is
+    missing or the map is empty.
+  - `priority_profile` — map from a 5-tier priority atom string (`"verylow"`,
+    `"low"`, `"normal"`, `"high"`, `"veryhigh"`) to the client-native priority
+    value (integer or string, varies per adapter). Empty map means adapters
+    fall back to their hardcoded default mapping.
+  - `incomplete_grace_minutes` — stall detection grace window; defaults to 60.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -22,6 +37,9 @@ defmodule Mydia.Settings.DownloadClientConfig do
           password: String.t() | nil,
           api_key: String.t() | nil,
           category: String.t() | nil,
+          categories: map(),
+          priority_profile: map(),
+          incomplete_grace_minutes: integer(),
           download_directory: String.t() | nil,
           connection_settings: map() | nil,
           remove_completed: boolean(),
@@ -46,6 +64,9 @@ defmodule Mydia.Settings.DownloadClientConfig do
     field :password, :string
     field :api_key, :string
     field :category, :string
+    field :categories, :map, default: %{}
+    field :priority_profile, :map, default: %{}
+    field :incomplete_grace_minutes, :integer, default: 60
     field :download_directory, :string
     field :connection_settings, Mydia.Settings.JsonMapType
     field :remove_completed, :boolean, default: false
@@ -73,6 +94,9 @@ defmodule Mydia.Settings.DownloadClientConfig do
       :password,
       :api_key,
       :category,
+      :categories,
+      :priority_profile,
+      :incomplete_grace_minutes,
       :download_directory,
       :connection_settings,
       :remove_completed,
@@ -82,7 +106,43 @@ defmodule Mydia.Settings.DownloadClientConfig do
     |> validate_inclusion(:type, @client_types)
     |> validate_by_type()
     |> validate_number(:priority, greater_than: 0)
+    |> validate_number(:incomplete_grace_minutes, greater_than: 0)
+    |> validate_priority_profile()
     |> unique_constraint(:name)
+  end
+
+  @valid_priority_keys ~w(verylow low normal high veryhigh)
+
+  # Validates that any keys in `priority_profile` are one of the 5-tier
+  # taxonomy atom names. Values are not range-checked here because their
+  # native domain varies per adapter (SABnzbd: -100..2, NZBGet: any integer,
+  # Transmission: -1..1, rTorrent: 0..3); range validation belongs in the
+  # adapter, not the changeset. Empty map and nil are both accepted.
+  defp validate_priority_profile(changeset) do
+    case get_field(changeset, :priority_profile) do
+      nil ->
+        changeset
+
+      profile when is_map(profile) ->
+        invalid =
+          profile
+          |> Map.keys()
+          |> Enum.reject(&(to_string(&1) in @valid_priority_keys))
+
+        if invalid == [] do
+          changeset
+        else
+          add_error(
+            changeset,
+            :priority_profile,
+            "contains unknown priority key(s): #{Enum.join(invalid, ", ")} " <>
+              "(must be one of: #{Enum.join(@valid_priority_keys, ", ")})"
+          )
+        end
+
+      _other ->
+        add_error(changeset, :priority_profile, "must be a map")
+    end
   end
 
   # Blackhole clients use filesystem paths instead of network config

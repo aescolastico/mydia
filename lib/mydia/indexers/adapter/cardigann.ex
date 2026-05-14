@@ -527,7 +527,8 @@ defmodule Mydia.Indexers.Adapter.Cardigann do
   end
 
   defp filter_by_min_seeders(results, min_seeders) when min_seeders > 0 do
-    Enum.filter(results, fn result -> result.seeders >= min_seeders end)
+    # NZB results have nil seeders; the min-seeders setting is torrent-only.
+    Enum.filter(results, fn result -> is_nil(result.seeders) or result.seeders >= min_seeders end)
   end
 
   defp filter_by_min_seeders(results, _), do: results

@@ -20,18 +20,47 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
   use Oban.Worker,
     queue: :default,
-    max_attempts: 5
+    max_attempts: 5,
+    # Prevent two DownloadMonitor passes from running back-to-back — the cron
+    # plugin and the adaptive fast-followup chain (see end of `perform/1`)
+    # could otherwise stack up if a tick is slower than the followup
+    # interval. The period covers ~one cron interval.
+    unique: [period: 120, states: [:available, :scheduled]]
 
   require Logger
   alias Mydia.Downloads
+  alias Mydia.Downloads.Blacklists
+  alias Mydia.Downloads.StallDetector
   alias Mydia.Downloads.UntrackedMatcher
   alias Mydia.Events
+  alias Mydia.Settings
+
+  # Fallback grace window (minutes) when a download has no resolvable client
+  # config. The DB schema's default is also 60; this just guards against a nil.
+  @default_grace_minutes 60
+
+  # Adaptive polling: when downloads are actively running, the cron plugin's
+  # 2-minute interval is too slow — completed downloads land in the library
+  # 0–120s after the client says so. To shorten that gap without configuring
+  # tighter cron (and without asking the operator to wire up webhooks from
+  # their downloader, which would require them to know what URL their Mydia
+  # is reachable at from the downloader's network), each cron-triggered
+  # perform/1 seeds a chain of `@fast_followup_steps` follow-up jobs spaced
+  # `@fast_followup_interval_seconds` apart. The chain length × interval
+  # roughly equals the cron interval so adaptive polling fills the gap with
+  # no overlap. The chain self-terminates the moment no active downloads
+  # remain, returning the worker to pure cron cadence.
+  @fast_followup_interval_seconds 15
+  @fast_followup_steps 7
 
   @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
     start_time = System.monotonic_time(:millisecond)
     Logger.info("Starting download completion monitoring", args: args)
+
+    # Allow tests to inject a deterministic clock via job args (`"now" => iso8601`).
+    now = resolve_now(args)
 
     # Get all downloads with their real-time status from clients
     downloads = Downloads.list_downloads_with_status(filter: :all)
@@ -57,8 +86,19 @@ defmodule Mydia.Jobs.DownloadMonitor do
         d.status == "missing" and is_nil(d.db_completed_at) and is_nil(d.error_message)
       end)
 
+    # Active downloads we should track for stall detection. Skip terminal
+    # states (completed/seeding/failed/missing/imported) and anything already
+    # flagged as import_failed_at — the latter prevents stomping a previous
+    # stall annotation on every subsequent poll.
+    active_for_stall_check =
+      Enum.filter(downloads, fn d ->
+        d.status in ["downloading", "checking"] and
+          is_nil(d.import_failed_at) and
+          is_nil(d.imported_at)
+      end)
+
     Logger.info(
-      "Found #{length(completed)} newly completed, #{length(failed)} newly failed, #{length(missing)} missing downloads"
+      "Found #{length(completed)} newly completed, #{length(failed)} newly failed, #{length(missing)} missing downloads, #{length(active_for_stall_check)} active for stall check"
     )
 
     # Handle completions
@@ -69,6 +109,11 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
     # Handle missing downloads
     Enum.each(missing, &handle_missing/1)
+
+    # Track progress / flag stalled downloads. Grace minutes are read from each
+    # download's configured client (DB or runtime config) — cached per poll.
+    grace_map = build_grace_map()
+    stalled_count = check_progress(active_for_stall_check, grace_map, now)
 
     # Find and match untracked torrents (manually added to clients)
     untracked_downloads = UntrackedMatcher.find_and_match_untracked()
@@ -86,11 +131,42 @@ defmodule Mydia.Jobs.DownloadMonitor do
       completed_count: length(completed),
       failed_count: length(failed),
       missing_count: length(missing),
+      stalled_count: stalled_count,
       stuck_count: length(stuck),
       untracked_matched: length(untracked_downloads)
     )
 
+    maybe_schedule_fast_followup(active_for_stall_check, args)
+
     :ok
+  end
+
+  # Schedules the next link in the adaptive fast-followup chain if there's
+  # still active work and we haven't exhausted the chain. The chain bounds
+  # itself by `chain_position`; the cron-seeded run starts at 0.
+  defp maybe_schedule_fast_followup([], _args), do: :ok
+
+  defp maybe_schedule_fast_followup(_active, args) do
+    position = Map.get(args, "fast_chain_position", 0)
+
+    if position < @fast_followup_steps do
+      try do
+        %{"fast_chain_position" => position + 1}
+        |> __MODULE__.new(schedule_in: @fast_followup_interval_seconds)
+        |> Oban.insert()
+      rescue
+        # Oban isn't running (test mode with `engine: false`, or supervisor
+        # not yet up). Adaptive polling is opportunistic — the next cron
+        # tick will pick up the work even if a follow-up couldn't be queued.
+        RuntimeError -> :ok
+      else
+        # Conflict via the unique constraint means a follow-up is already
+        # queued; not a failure.
+        _result -> :ok
+      end
+    else
+      :ok
+    end
   end
 
   ## Private Functions
@@ -145,6 +221,10 @@ defmodule Mydia.Jobs.DownloadMonitor do
     # Track failure event before deletion
     Events.download_failed(download, error_msg, media_item: download.media_item)
 
+    # Blacklist the release so the next search excludes it (issue #123).
+    # This MUST NOT block failure handling — wrap in try/rescue and log.
+    record_blacklist_entry(download, "client_reported_failure")
+
     # Delete the download record - downloads table is ephemeral
     case Downloads.delete_download(download) do
       {:ok, _deleted} ->
@@ -162,6 +242,71 @@ defmodule Mydia.Jobs.DownloadMonitor do
         )
 
         :ok
+    end
+  end
+
+  # --- Release blacklist (#123) ------------------------------------------
+
+  # Inserts a `release_blacklist` row keyed by the download's
+  # (indexer, guid) so future searches in `TvShowSearch` / `MovieSearch`
+  # filter the result out. Best-effort: rescue all errors so a failing
+  # blacklist write never blocks the rest of failure handling.
+  defp record_blacklist_entry(download, failure_reason) do
+    case extract_blacklist_key(download) do
+      {:ok, indexer, guid} ->
+        try do
+          case Blacklists.add(indexer, guid, download.title || "", failure_reason) do
+            {:ok, _row} ->
+              Logger.info("Release blacklisted after failure",
+                download_id: download.id,
+                indexer: indexer,
+                guid: guid,
+                failure_reason: failure_reason
+              )
+
+              :ok
+
+            {:error, reason} ->
+              Logger.warning("Failed to blacklist release",
+                download_id: download.id,
+                indexer: indexer,
+                guid: guid,
+                reason: inspect(reason)
+              )
+
+              :ok
+          end
+        rescue
+          error ->
+            Logger.warning("Exception while blacklisting release — continuing",
+              download_id: download.id,
+              error: inspect(error)
+            )
+
+            :ok
+        end
+
+      {:error, reason} ->
+        Logger.debug("Skipping blacklist write — no usable key",
+          download_id: download.id,
+          reason: reason
+        )
+
+        :ok
+    end
+  end
+
+  # Returns `{:ok, indexer, guid}` when both are present on the download.
+  # The `indexer` and `guid` should have been plumbed in at download
+  # creation time (see `Mydia.Downloads.Queue.create_download_record/4`).
+  defp extract_blacklist_key(download) do
+    indexer = download.indexer || get_in(download.metadata || %{}, ["indexer"])
+    guid = get_in(download.metadata || %{}, ["guid"])
+
+    cond do
+      is_nil(indexer) or indexer == "" -> {:error, :no_indexer}
+      is_nil(guid) or guid == "" -> {:error, :no_guid}
+      true -> {:ok, indexer, guid}
     end
   end
 
@@ -245,6 +390,140 @@ defmodule Mydia.Jobs.DownloadMonitor do
         )
     end
   end
+
+  # --- Stall detection ----------------------------------------------------
+
+  # Build a `%{client_name => grace_minutes}` map once per poll. Both DB-backed
+  # and runtime-config clients flow through `Settings.list_download_client_configs/0`,
+  # so a single source is enough.
+  defp build_grace_map do
+    Settings.list_download_client_configs()
+    |> Enum.into(%{}, fn config ->
+      {config.name, config.incomplete_grace_minutes || @default_grace_minutes}
+    end)
+  end
+
+  defp grace_minutes_for(client_name, grace_map) do
+    Map.get(grace_map, client_name, @default_grace_minutes)
+  end
+
+  # Iterate active downloads and apply the StallDetector decision. Returns the
+  # number of downloads newly flagged as stalled.
+  defp check_progress(active_downloads, grace_map, now) do
+    Enum.reduce(active_downloads, 0, fn download, stalled_acc ->
+      grace = grace_minutes_for(download.download_client, grace_map)
+
+      decision =
+        StallDetector.evaluate(
+          download.last_progress_at,
+          download.last_known_bytes,
+          download.downloaded || 0,
+          grace,
+          now
+        )
+
+      apply_progress_decision(download, decision) + stalled_acc
+    end)
+  end
+
+  defp apply_progress_decision(_download, :no_change), do: 0
+
+  defp apply_progress_decision(download, {:initialize, now}) do
+    update_progress(download, %{
+      last_progress_at: now,
+      last_known_bytes: download.downloaded || 0
+    })
+
+    0
+  end
+
+  defp apply_progress_decision(download, {:progress, new_bytes, now}) do
+    update_progress(download, %{
+      last_progress_at: now,
+      last_known_bytes: new_bytes
+    })
+
+    0
+  end
+
+  defp apply_progress_decision(download, {:stalled, error_message, now}) do
+    Logger.warning("Download stalled — no progress within grace window",
+      download_id: download.id,
+      download_client: download.download_client,
+      last_progress_at: download.last_progress_at,
+      last_known_bytes: download.last_known_bytes,
+      downloaded: download.downloaded,
+      error: error_message
+    )
+
+    # IMPORTANT: do NOT cast `:status` here — `Download.changeset/2` silently
+    # drops it (known bug, tracked separately). Use `import_failed_at` +
+    # `import_last_error` as the stalled signal.
+    db_download = Downloads.get_download!(download.id, preload: [:media_item])
+
+    case Downloads.update_download(db_download, %{
+           import_failed_at: now,
+           import_last_error: error_message
+         }) do
+      {:ok, updated} ->
+        Events.download_failed(updated, error_message, media_item: updated.media_item)
+        1
+
+      {:error, changeset} ->
+        Logger.error("Failed to flag stalled download",
+          download_id: download.id,
+          errors: inspect(changeset.errors)
+        )
+
+        0
+    end
+  end
+
+  defp update_progress(download, attrs) do
+    db_download = Downloads.get_download!(download.id)
+
+    case Downloads.update_download(db_download, attrs) do
+      {:ok, _} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning("Failed to update download progress tracking",
+          download_id: download.id,
+          errors: inspect(changeset.errors)
+        )
+
+        :ok
+    end
+  end
+
+  # Resolve the current time from job args (test injection) or fall back to
+  # `DateTime.utc_now/0`. Accepts ISO8601 strings or `DateTime` structs.
+  defp resolve_now(args) when is_map(args) do
+    case Map.get(args, "now") do
+      nil ->
+        DateTime.utc_now()
+
+      %DateTime{} = dt ->
+        dt
+
+      iso when is_binary(iso) ->
+        case DateTime.from_iso8601(iso) do
+          {:ok, dt, _offset} ->
+            dt
+
+          {:error, _} ->
+            Logger.warning("Invalid 'now' arg passed to DownloadMonitor, falling back to utc_now",
+              value: iso
+            )
+
+            DateTime.utc_now()
+        end
+    end
+  end
+
+  defp resolve_now(_), do: DateTime.utc_now()
+
+  # --- Import job helpers -------------------------------------------------
 
   # Enqueue import job with save_path from client status (normal completion flow)
   defp enqueue_import_job(download, download_map) do

@@ -267,8 +267,6 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       # Extract required fields
       title = item["title"]
       size = item["size"] || 0
-      seeders = item["seeders"] || 0
-      leechers = item["leechers"] || item["peers"] || 0
 
       # Extract download URL with preference order:
       # 1. magnetUrl (direct magnet link from indexer)
@@ -301,8 +299,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
       imdb_id = extract_imdb_id(item)
 
       # Extract download protocol (torrent vs usenet)
-      # Log all available fields to see what Prowlarr returns
-      Logger.info("Prowlarr item keys: #{inspect(Map.keys(item))}")
+      Logger.debug("Prowlarr item keys: #{inspect(Map.keys(item))}")
 
       download_protocol =
         case item["downloadProtocol"] || item["protocol"] do
@@ -313,7 +310,7 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
             :nzb
 
           other ->
-            Logger.info(
+            Logger.debug(
               "Protocol field value: #{inspect(other)}, magnetUrl: #{inspect(item["magnetUrl"])}, downloadUrl has .nzb: #{item["downloadUrl"] && String.contains?(item["downloadUrl"], ".nzb")}"
             )
 
@@ -325,7 +322,36 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
             end
         end
 
-      Logger.info("Detected protocol: #{inspect(download_protocol)} for #{title}")
+      Logger.debug("Detected protocol: #{inspect(download_protocol)} for #{title}")
+
+      # Protocol-aware seeders/leechers/grabs. Torrents expose seeders+leechers;
+      # NZBs expose "grabs" as a popularity metric. Prowlarr returns the same
+      # JSON shape for both, so branch on protocol to avoid misrepresenting
+      # grabs as seeders.
+      {seeders, leechers, nzb_grabs} =
+        case download_protocol do
+          :nzb -> {nil, nil, parse_int(item["grabs"])}
+          :torrent -> {item["seeders"] || 0, item["leechers"] || item["peers"] || 0, nil}
+          _ -> {item["seeders"] || 0, item["leechers"] || item["peers"] || 0, nil}
+        end
+
+      # For NZB results, Prowlarr's publishDate is the Usenet post date.
+      usenet_date = if download_protocol == :nzb, do: published_at, else: nil
+
+      # Some Newznab indexers expose article completion percentage. Prowlarr
+      # passes Newznab attrs through transparently. Do NOT fall back to
+      # `item["files"]` — that is a file count (e.g. 32 files), not a
+      # completion percent, and would silently corrupt the NZB availability
+      # score for releases whose indexer omits `completion`.
+      nzb_completion =
+        if download_protocol == :nzb,
+          do: parse_completion(item["completion"]),
+          else: nil
+
+      # Stable release identifier used by the release blacklist (#123).
+      # Prowlarr exposes a per-result `guid`; fall back to the info URL for
+      # legacy responses.
+      guid = item["guid"] || item["infoUrl"]
 
       SearchResult.new(
         title: title,
@@ -341,7 +367,11 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         tmdb_id: tmdb_id,
         tvdb_id: tvdb_id,
         imdb_id: imdb_id,
-        download_protocol: download_protocol
+        download_protocol: download_protocol,
+        usenet_date: usenet_date,
+        nzb_completion: nzb_completion,
+        nzb_grabs: nzb_grabs,
+        guid: guid
       )
     rescue
       error ->
@@ -350,6 +380,40 @@ defmodule Mydia.Indexers.Adapter.Prowlarr do
         nil
     end
   end
+
+  defp parse_int(nil), do: nil
+  defp parse_int(value) when is_integer(value), do: value
+
+  defp parse_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
+
+  defp parse_int(_), do: nil
+
+  # Normalize Newznab completion attribute to a 0.0..1.0 float.
+  # Some indexers report percent (0..100), others a ratio (0.0..1.0).
+  defp parse_completion(nil), do: nil
+  defp parse_completion(value) when is_integer(value), do: parse_completion(value * 1.0)
+
+  defp parse_completion(value) when is_float(value) do
+    cond do
+      value > 1.0 -> Float.round(value / 100.0, 4)
+      value >= 0.0 -> Float.round(value, 4)
+      true -> nil
+    end
+  end
+
+  defp parse_completion(value) when is_binary(value) do
+    case Float.parse(value) do
+      {n, _} -> parse_completion(n)
+      :error -> nil
+    end
+  end
+
+  defp parse_completion(_), do: nil
 
   defp parse_datetime(date_string) do
     case DateTime.from_iso8601(date_string) do

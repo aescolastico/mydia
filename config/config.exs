@@ -291,7 +291,9 @@ config :mydia, Oban,
        # Permanently delete trashed media files past retention period daily at 5 AM
        {"0 5 * * *", Mydia.Jobs.TrashCleanup},
        # Sync watched status with media servers every 30 minutes
-       {"*/30 * * * *", Mydia.Jobs.MediaServerWatchedSync, args: %{"mode" => "all_enabled"}}
+       {"*/30 * * * *", Mydia.Jobs.MediaServerWatchedSync, args: %{"mode" => "all_enabled"}},
+       # Purge expired release-blacklist rows daily at 5:30 AM (#123)
+       {"30 5 * * *", Mydia.Jobs.BlacklistCleanup}
      ]}
   ]
 

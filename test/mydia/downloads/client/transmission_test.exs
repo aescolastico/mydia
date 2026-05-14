@@ -237,6 +237,97 @@ defmodule Mydia.Downloads.Client.TransmissionTest do
     end
   end
 
+  describe "priority profile resolution (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        @config
+        | host: "localhost",
+          port: bypass.port
+      }
+
+      {:ok, bypass: bypass, config: config}
+    end
+
+    # Transmission's RPC requires us to first hit a session-id endpoint, then
+    # the actual call. Bypass handles both within the same expect block.
+    defp transmission_handler(body, args_assertion) do
+      decoded = Jason.decode!(body)
+      assert decoded["method"] == "torrent-add"
+      args_assertion.(decoded["arguments"])
+    end
+
+    test "empty profile passes no bandwidthPriority (Transmission uses its default)",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/transmission/rpc", fn conn ->
+        case Plug.Conn.get_req_header(conn, "x-transmission-session-id") do
+          [] ->
+            # First call: respond with 409 + session id
+            conn
+            |> Plug.Conn.put_resp_header("x-transmission-session-id", "test-session-id")
+            |> Plug.Conn.resp(409, "")
+
+          ["test-session-id"] ->
+            {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+
+            transmission_handler(body, fn args ->
+              refute Map.has_key?(args, "bandwidthPriority")
+            end)
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              ~s({"result":"success","arguments":{"torrent-added":{"hashString":"abc"}}})
+            )
+        end
+      end)
+
+      assert {:ok, "abc"} =
+               Transmission.add_torrent(
+                 config,
+                 {:magnet, "magnet:?xt=urn:btih:abc"},
+                 priority: :high
+               )
+    end
+
+    test "profile override is forwarded as bandwidthPriority",
+         %{bypass: bypass, config: config} do
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => 1})
+
+      Bypass.expect(bypass, "POST", "/transmission/rpc", fn conn ->
+        case Plug.Conn.get_req_header(conn, "x-transmission-session-id") do
+          [] ->
+            conn
+            |> Plug.Conn.put_resp_header("x-transmission-session-id", "session-2")
+            |> Plug.Conn.resp(409, "")
+
+          ["session-2"] ->
+            {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+
+            transmission_handler(body, fn args ->
+              assert args["bandwidthPriority"] == 1
+            end)
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              ~s({"result":"success","arguments":{"torrent-added":{"hashString":"def"}}})
+            )
+        end
+      end)
+
+      assert {:ok, "def"} =
+               Transmission.add_torrent(
+                 config_with_profile,
+                 {:magnet, "magnet:?xt=urn:btih:def"},
+                 priority: :high
+               )
+    end
+  end
+
   # Note: Full integration tests would require either:
   # 1. A real Transmission instance (can be configured via environment variables)
   # 2. HTTP mocking library like Bypass or Mox to simulate Transmission RPC responses

@@ -403,7 +403,16 @@ defmodule Mydia.Indexers do
     result =
       case search(config, query, opts) do
         {:ok, results} ->
-          {true, results, nil}
+          # Per-indexer-config NZB min-post-age filter (#121). Applied here
+          # rather than post-merge because `SearchResult.indexer` is the
+          # *upstream* label for relay-style indexers (Prowlarr, Jackett) —
+          # one Mydia config like "Prowlarr" can fan out to many upstream
+          # indexers ("DOGnzb", "altHUB", etc.) so a post-merge lookup
+          # keyed by `result.indexer` would never match the configured
+          # name. Doing it here, with the originating config in scope,
+          # sidesteps that gap entirely.
+          filtered = reject_too_fresh_nzbs_for_config(results, config)
+          {true, filtered, nil}
 
         {:error, error} ->
           Logger.warning("Indexer search failed for #{config.name}: #{inspect(error)}")
@@ -432,12 +441,50 @@ defmodule Mydia.Indexers do
     {metrics, results}
   end
 
+  # Drops NZB results younger than `config.min_post_age_minutes`. No-op when
+  # the config has no setting (nil/0) or the value isn't a positive integer,
+  # so Cardigann definitions and indexer configs that left the field blank
+  # both pass through unchanged. Torrent results and NZB results without a
+  # parsed `usenet_date` are always kept — the filter is opt-in per indexer.
+  defp reject_too_fresh_nzbs_for_config(results, config) do
+    case Map.get(config, :min_post_age_minutes) do
+      minutes when is_integer(minutes) and minutes > 0 ->
+        now = DateTime.utc_now()
+        cutoff_seconds = minutes * 60
+
+        Enum.reject(results, fn r ->
+          case {Map.get(r, :download_protocol), Map.get(r, :usenet_date)} do
+            {:nzb, %DateTime{} = posted} ->
+              if DateTime.diff(now, posted, :second) < cutoff_seconds do
+                Logger.debug(
+                  "Filtered too-fresh NZB",
+                  indexer_config: config.name,
+                  title: Map.get(r, :title),
+                  usenet_date: posted
+                )
+
+                true
+              else
+                false
+              end
+
+            _ ->
+              false
+          end
+        end)
+
+      _ ->
+        results
+    end
+  end
+
   defp format_indexer_error(%{message: message}) when is_binary(message), do: message
   defp format_indexer_error(error) when is_binary(error), do: error
   defp format_indexer_error(error), do: inspect(error)
 
   defp filter_by_seeders(results, min_seeders) when min_seeders > 0 do
-    Enum.filter(results, fn result -> result.seeders >= min_seeders end)
+    # NZB results have nil seeders; the min-seeders setting is torrent-only.
+    Enum.filter(results, fn result -> is_nil(result.seeders) or result.seeders >= min_seeders end)
   end
 
   defp filter_by_seeders(results, _min_seeders), do: results
@@ -481,7 +528,8 @@ defmodule Mydia.Indexers do
     # 2. Results from more reliable sources (if we had source ranking)
     # 3. Results with complete metadata
     Enum.max_by(duplicates, fn result ->
-      {result.seeders, has_complete_metadata?(result)}
+      # NZB results have nil seeders; treat as 0 for ordering only.
+      {result.seeders || 0, has_complete_metadata?(result)}
     end)
   end
 

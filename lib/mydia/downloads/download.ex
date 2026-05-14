@@ -24,6 +24,8 @@ defmodule Mydia.Downloads.Download do
           import_last_error: String.t() | nil,
           import_next_retry_at: DateTime.t() | nil,
           import_failed_at: DateTime.t() | nil,
+          last_progress_at: DateTime.t() | nil,
+          last_known_bytes: integer(),
           media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
           episode: Mydia.Media.Episode.t() | nil | Ecto.Association.NotLoaded.t(),
           library_path: Mydia.Settings.LibraryPath.t() | nil | Ecto.Association.NotLoaded.t(),
@@ -48,6 +50,13 @@ defmodule Mydia.Downloads.Download do
     field :import_last_error, :string
     field :import_next_retry_at, :utc_datetime
     field :import_failed_at, :utc_datetime
+
+    # Stall-detection / progress tracking fields. `last_progress_at` is the
+    # timestamp of the last observed bytes-downloaded increment; `last_known_bytes`
+    # is the byte count at that moment. Used by the stall-detection circuit
+    # breaker to avoid polling stuck downloads forever.
+    field :last_progress_at, :utc_datetime_usec
+    field :last_known_bytes, :integer, default: 0
 
     belongs_to :media_item, Mydia.Media.MediaItem
     belongs_to :episode, Mydia.Media.Episode
@@ -81,7 +90,9 @@ defmodule Mydia.Downloads.Download do
       :import_retry_count,
       :import_last_error,
       :import_next_retry_at,
-      :import_failed_at
+      :import_failed_at,
+      :last_progress_at,
+      :last_known_bytes
     ])
     |> validate_required([:title])
     |> validate_inclusion(:match_status, ["unmatched", "unresolved_files", "partial_pack"])

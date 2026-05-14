@@ -53,14 +53,38 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     * `mode=pause` - Pause a download
     * `mode=resume` - Resume a download
     * `mode=queue&name=delete` - Remove from queue
+
+  ## Priority
+
+  SABnzbd accepts integer priorities in the range `-100..2` (passed as strings
+  via the API). The default mapping when `priority_profile` is empty:
+
+    * `:verylow`  -> `"-100"` (paused / forced low)
+    * `:low`      -> `"-1"`
+    * `:normal`   -> `"0"`
+    * `:high`     -> `"1"`
+    * `:veryhigh` -> `"2"` (force)
+
+  Overrides supplied via `priority_profile` take precedence for the atom they
+  define and otherwise fall back to the defaults above.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.{Error, HTTP}
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Priority
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   require Logger
   @invalid_filename_chars ~r{[<>:"/\\|?*]}
+
+  @default_priority_map %{
+    verylow: "-100",
+    low: "-1",
+    normal: "0",
+    high: "1",
+    veryhigh: "2"
+  }
 
   @impl true
   def test_connection(config) do
@@ -120,7 +144,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
         name: url
       ]
       |> add_optional_param(:cat, opts[:category])
-      |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:priority, map_priority(opts[:priority], config))
       |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
@@ -161,7 +185,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
         mode: "addfile"
       ]
       |> add_optional_param(:cat, opts[:category])
-      |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:priority, map_priority(opts[:priority], config))
       |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
@@ -498,15 +522,16 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     filename = get_in(item, ["filename"]) || ""
     status = get_in(item, ["status"]) || "Unknown"
 
-    # SABnzbd returns sizes in different formats depending on queue/history
-    # Queue: mb, mb_left as floats or strings
-    # History: bytes as integer
-    size_mb = parse_size(get_in(item, ["mb"]) || get_in(item, ["size"]))
-    size_bytes = round(size_mb * 1024 * 1024)
-
-    mb_left = parse_float(get_in(item, ["mbleft"])) || 0.0
+    # SABnzbd returns sizes in different formats depending on queue/history.
+    # Queue uses `mb`/`mb_left` (float mebibytes or string); history uses
+    # `size` (integer bytes). Normalise everything to MiB first so the
+    # arithmetic stays in a single unit, then convert to bytes via Helpers.
+    size_mb = parse_size_mb(get_in(item, ["mb"]) || get_in(item, ["size"]))
+    mb_left = parse_size_mb(get_in(item, ["mbleft"]))
     downloaded_mb = size_mb - mb_left
-    downloaded_bytes = round(downloaded_mb * 1024 * 1024)
+
+    size_bytes = Helpers.parse_size_mb_to_bytes(size_mb)
+    downloaded_bytes = Helpers.parse_size_mb_to_bytes(downloaded_mb)
 
     # Calculate progress
     progress = if size_mb > 0, do: downloaded_mb / size_mb * 100, else: 0.0
@@ -522,12 +547,14 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     storage = get_in(item, ["storage"]) || get_in(item, ["path"]) || ""
 
     # Parse timestamps
-    added_at = parse_timestamp(get_in(item, ["added"]))
+    added_at = Helpers.parse_timestamp_unix(get_in(item, ["added"]))
 
     completed_at =
-      if status == "Completed", do: parse_timestamp(get_in(item, ["completed"])), else: nil
+      if status == "Completed",
+        do: Helpers.parse_timestamp_unix(get_in(item, ["completed"])),
+        else: nil
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: nzo_id,
       name: filename,
       state: parse_state(status),
@@ -564,18 +591,21 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     end
   end
 
-  defp parse_size(size) when is_float(size), do: size
-  # bytes to MB
-  defp parse_size(size) when is_integer(size), do: size / 1024 / 1024
+  # SABnzbd quirk: queue items use float MiB (`mb`, `mb_left`), but history
+  # items use integer bytes under the `size` key. Floats and strings are
+  # treated as already-in-MiB; integers are reinterpreted as bytes and
+  # converted back to MiB.
+  defp parse_size_mb(value) when is_float(value), do: value
+  defp parse_size_mb(value) when is_integer(value), do: value / 1024 / 1024
 
-  defp parse_size(size) when is_binary(size) do
-    case Float.parse(size) do
+  defp parse_size_mb(value) when is_binary(value) do
+    case Float.parse(value) do
       {float, _} -> float
       :error -> 0.0
     end
   end
 
-  defp parse_size(_), do: 0.0
+  defp parse_size_mb(_), do: 0.0
 
   defp parse_float(value) when is_float(value), do: value
   defp parse_float(value) when is_integer(value), do: value * 1.0
@@ -607,12 +637,6 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   defp parse_eta(_), do: nil
 
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
-
   # Normalize config to ensure :api_key is available at the top-level.
   # Some callers construct the client config with the API key inside `:options`.
   # This helper will prefer an explicit top-level `:api_key` but fall back to
@@ -630,11 +654,20 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     params ++ [{key, value}]
   end
 
-  defp map_priority(nil), do: nil
-  defp map_priority(:low), do: "-1"
-  defp map_priority(:normal), do: "0"
-  defp map_priority(:high), do: "1"
-  defp map_priority(_), do: nil
+  # Resolves a Priority atom into SABnzbd's native string representation.
+  # Consults `config[:priority_profile]` first (per-client overrides); falls back
+  # to the hardcoded default mapping (see @moduledoc) when the profile is empty
+  # or doesn't contain the atom. Returns nil when no priority is supplied so
+  # SABnzbd uses its server-side default.
+  defp map_priority(nil, _config), do: nil
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = Helpers.priority_profile(config)
+    default = Map.fetch!(@default_priority_map, atom)
+    Priority.resolve(atom, profile, default)
+  end
+
+  defp map_priority(_other, _config), do: nil
 
   defp nzb_filename(title) do
     case sanitize_filename_title(title) do

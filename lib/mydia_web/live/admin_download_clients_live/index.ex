@@ -33,6 +33,7 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
      |> assign(:show_download_client_modal, true)
      |> assign(:download_client_form, to_form(changeset))
      |> assign(:download_client_mode, :new)
+     |> assign(:editing_download_client, nil)
      |> assign(:testing_download_client_connection, false)}
   end
 
@@ -70,7 +71,7 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
 
     changeset =
       client
-      |> DownloadClientConfig.changeset(params)
+      |> DownloadClientConfig.changeset(normalize_client_params(params))
       |> Map.put(:action, :validate)
 
     {:noreply, assign(socket, :download_client_form, to_form(changeset))}
@@ -78,15 +79,17 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
 
   @impl true
   def handle_event("save_download_client", %{"download_client_config" => params}, socket) do
+    normalized = normalize_client_params(params)
+
     result =
       case socket.assigns.download_client_mode do
         :new ->
-          Settings.create_download_client_config(params)
+          Settings.create_download_client_config(normalized)
 
         :edit ->
           Settings.update_download_client_config(
             socket.assigns.editing_download_client,
-            params
+            normalized
           )
       end
 
@@ -303,6 +306,34 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
       {:ok, result}
     else
       {:error, _} = error -> error
+    end
+  end
+
+  # Drops empty-string values from the nested `categories` and
+  # `priority_profile` maps before passing through to the changeset.
+  # Browsers submit every text input even when blank, so without this
+  # the database would accumulate `%{"movie" => "", "tv" => ""}` entries
+  # that defeat the "fall back to legacy category" precedence rule in
+  # `Mydia.Downloads.Queue.resolve_category/3`.
+  defp normalize_client_params(params) when is_map(params) do
+    params
+    |> normalize_map_field("categories")
+    |> normalize_map_field("priority_profile")
+  end
+
+  defp normalize_map_field(params, key) do
+    case Map.get(params, key) do
+      map when is_map(map) ->
+        cleaned =
+          for {k, v} <- map,
+              is_binary(v) and String.trim(v) != "",
+              into: %{},
+              do: {k, String.trim(v)}
+
+        Map.put(params, key, cleaned)
+
+      _ ->
+        params
     end
   end
 end

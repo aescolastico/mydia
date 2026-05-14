@@ -21,6 +21,12 @@ defmodule Mydia.Indexers.SearchResult do
     * `:metadata` - Additional metadata (e.g., season pack info) (optional)
     * `:tmdb_id` - TMDB ID from indexer (optional, for ID-based matching)
     * `:imdb_id` - IMDB ID from indexer (optional, for ID-based matching)
+    * `:usenet_date` - When the release was originally posted to Usenet (optional, NZB only)
+    * `:nzb_completion` - Article completion ratio (0.0..1.0) reported by Usenet indexer (optional)
+    * `:nzb_grabs` - Number of times this release has been grabbed (NZB popularity indicator)
+    * `:guid` - Indexer-provided stable identifier for the release (optional).
+      Used by the release blacklist (issue #123) to match repeat failures. When
+      missing, the blacklist falls back to a SHA-256 of (indexer, title, size).
 
   ## Quality Information
 
@@ -57,8 +63,8 @@ defmodule Mydia.Indexers.SearchResult do
   @type t :: %__MODULE__{
           title: String.t(),
           size: non_neg_integer(),
-          seeders: non_neg_integer(),
-          leechers: non_neg_integer(),
+          seeders: non_neg_integer() | nil,
+          leechers: non_neg_integer() | nil,
           download_url: String.t(),
           info_url: String.t() | nil,
           indexer: String.t(),
@@ -69,7 +75,11 @@ defmodule Mydia.Indexers.SearchResult do
           tmdb_id: integer() | nil,
           tvdb_id: integer() | nil,
           imdb_id: String.t() | nil,
-          download_protocol: :torrent | :nzb | nil
+          download_protocol: :torrent | :nzb | nil,
+          usenet_date: DateTime.t() | nil,
+          nzb_completion: float() | nil,
+          nzb_grabs: non_neg_integer() | nil,
+          guid: String.t() | nil
         }
 
   @enforce_keys [:title, :size, :seeders, :leechers, :download_url, :indexer]
@@ -88,7 +98,11 @@ defmodule Mydia.Indexers.SearchResult do
     :tmdb_id,
     :tvdb_id,
     :imdb_id,
-    :download_protocol
+    :download_protocol,
+    :usenet_date,
+    :nzb_completion,
+    :nzb_grabs,
+    :guid
   ]
 
   @doc """
@@ -127,7 +141,10 @@ defmodule Mydia.Indexers.SearchResult do
       0.0
   """
   @spec health_score(t()) :: float()
+  def health_score(%__MODULE__{seeders: nil}), do: 0.0
+
   def health_score(%__MODULE__{seeders: seeders, leechers: leechers}) do
+    leechers = leechers || 0
     total = seeders + leechers
 
     cond do

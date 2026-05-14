@@ -163,8 +163,9 @@
               </div>
             <% end %>
             <div class="text-xs opacity-60 flex flex-wrap items-center gap-1.5">
-              <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
-                {String.capitalize(download.status)}
+              <% {badge_class, badge_label} = status_badge(download) %>
+              <span class={"badge badge-xs #{badge_class}"}>
+                {badge_label}
               </span>
               <%= if download.indexer do %>
                 <span>{download.indexer}</span>
@@ -384,8 +385,9 @@
                 <% end %>
                 <%!-- Status --%>
                 <div class="text-xs opacity-60 flex items-center gap-1.5 mt-0.5">
-                  <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
-                    {String.capitalize(download.status)}
+                  <% {badge_class, badge_label} = status_badge(download) %>
+                  <span class={"badge badge-xs #{badge_class}"}>
+                    {badge_label}
                   </span>
                   <span>{download.download_client}</span>
                   <%= if download.status in ["downloading", "seeding"] do %>
@@ -610,8 +612,9 @@
                   </div>
                 <% end %>
                 <div class="text-xs opacity-60 flex flex-wrap items-center gap-1.5">
-                  <span class={"badge badge-xs #{status_badge_class(download.status)}"}>
-                    {String.capitalize(download.status)}
+                  <% {badge_class, badge_label} = status_badge(download) %>
+                  <span class={"badge badge-xs #{badge_class}"}>
+                    {badge_label}
                   </span>
                   <%= cond do %>
                     <% download.import_last_error -> %>

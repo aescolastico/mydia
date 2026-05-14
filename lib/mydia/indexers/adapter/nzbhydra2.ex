@@ -266,6 +266,9 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
             ~x"./newznab:attr[@name='indexer']/@value"s |> add_namespace("newznab", @newznab_ns),
           usenetdate:
             ~x"./newznab:attr[@name='usenetdate']/@value"s
+            |> add_namespace("newznab", @newznab_ns),
+          completion:
+            ~x"./newznab:attr[@name='completion']/@value"s
             |> add_namespace("newznab", @newznab_ns)
         )
         |> Enum.map(fn item ->
@@ -294,12 +297,22 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
           true -> 0
         end
 
-      # Grabs count (similar to seeders for NZB - indicates popularity)
-      grabs =
+      # Grabs count (NZB popularity indicator - not a seeder analogue)
+      nzb_grabs =
         case item.grabs do
-          "" -> 0
+          "" -> nil
           grabs_str -> String.to_integer(grabs_str)
         end
+
+      # Usenet posting date (some Usenet indexers expose this distinctly from pubDate)
+      usenet_date =
+        case item.usenetdate do
+          "" -> nil
+          date_string -> parse_datetime(date_string)
+        end
+
+      # Article completion ratio (0.0..1.0) when reported
+      nzb_completion = parse_completion(item.completion)
 
       # Download URL - prefer enclosure, fall back to link
       download_url =
@@ -364,13 +377,22 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
         Logger.debug("Skipping result without download URL: #{title}")
         nil
       else
+        # Stable release identifier used by the release blacklist (#123).
+        guid =
+          cond do
+            item.guid != "" -> item.guid
+            item.comments != "" -> item.comments
+            true -> nil
+          end
+
         SearchResult.new(
           title: title,
           size: size,
-          # Use grabs as proxy for seeders (NZB popularity indicator)
-          seeders: grabs,
-          # NZB doesn't have leechers concept
-          leechers: 0,
+          # NZB results have no seeders/leechers concept - keep nil so consumers
+          # don't conflate Usenet "grabs" with torrent seeders. NZB-specific
+          # popularity lives in :nzb_grabs.
+          seeders: nil,
+          leechers: nil,
           download_url: download_url,
           info_url: info_url,
           indexer: indexer,
@@ -381,7 +403,11 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
           tvdb_id: tvdb_id,
           imdb_id: imdb_id,
           # Always NZB protocol for NZBHydra2
-          download_protocol: :nzb
+          download_protocol: :nzb,
+          usenet_date: usenet_date,
+          nzb_completion: nzb_completion,
+          nzb_grabs: nzb_grabs,
+          guid: guid
         )
       end
     rescue
@@ -396,8 +422,39 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2 do
     # Newznab uses RFC 2822 date format (like RSS)
     # Example: "Mon, 02 Jan 2006 15:04:05 -0700"
     case Timex.parse(date_string, "{RFC1123}") do
-      {:ok, datetime} -> datetime
-      {:error, _reason} -> nil
+      {:ok, datetime} ->
+        datetime
+
+      {:error, _reason} ->
+        # Some Usenet indexers expose usenetdate as a Unix timestamp.
+        parse_unix_timestamp(date_string)
+    end
+  end
+
+  defp parse_unix_timestamp(""), do: nil
+
+  defp parse_unix_timestamp(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {seconds, ""} ->
+        case DateTime.from_unix(seconds) do
+          {:ok, datetime} -> datetime
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # Newznab "completion" attribute is typically an integer 0..100 (percent) but
+  # some indexers expose it as 0.0..1.0. Normalize to a 0.0..1.0 float.
+  defp parse_completion(""), do: nil
+
+  defp parse_completion(value) when is_binary(value) do
+    case Float.parse(value) do
+      {n, _} when n > 1.0 -> Float.round(n / 100.0, 4)
+      {n, _} when n >= 0.0 -> Float.round(n, 4)
+      _ -> nil
     end
   end
 

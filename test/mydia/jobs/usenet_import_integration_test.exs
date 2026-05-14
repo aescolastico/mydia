@@ -2,7 +2,7 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
   use Mydia.DataCase, async: true
   use Oban.Testing, repo: Mydia.Repo
 
-  alias Mydia.Jobs.MediaImport
+  alias Mydia.Jobs.{DownloadMonitor, MediaImport}
   alias Mydia.{Downloads, Library, Settings}
   import Mydia.MediaFixtures
   import Mydia.DownloadsFixtures
@@ -247,6 +247,168 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
                  "download_id" => download.id,
                  "save_path" => "/nonexistent/path/that/does/not/exist"
                })
+    end
+  end
+
+  describe "stalled NZB pipeline (DownloadMonitor + StallDetector)" do
+    setup do
+      bypass = Bypass.open()
+
+      {:ok, client_config} =
+        Settings.create_download_client_config(%{
+          name: "SABnzbd-Stalled-#{System.unique_integer([:positive])}",
+          type: :sabnzbd,
+          host: "localhost",
+          port: bypass.port,
+          api_key: "test-api-key",
+          enabled: true,
+          priority: 1,
+          incomplete_grace_minutes: 15
+        })
+
+      {:ok, bypass: bypass, client_config: client_config}
+    end
+
+    test "DownloadMonitor flags an NZB whose bytes haven't moved past the grace window",
+         %{bypass: bypass, client_config: client_config} do
+      nzo_id = "SABnzbd_nzo_stalled001"
+
+      # The client keeps reporting the same byte count poll after poll —
+      # exactly the scenario described in #126. Both queue and history are
+      # consulted by `list_torrents`, so we serve both.
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+
+        case conn.query_params["mode"] do
+          "queue" ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              Jason.encode!(%{
+                "queue" => %{
+                  "slots" => [
+                    %{
+                      "nzo_id" => nzo_id,
+                      "filename" => "Stalled.Show.S01E01.mkv",
+                      "status" => "Downloading",
+                      "mb" => 100.0,
+                      "mbleft" => 75.0,
+                      "kbpersec" => 0.0,
+                      "timeleft" => "0:00:00",
+                      "storage" => "/downloads",
+                      "added" => System.system_time(:second)
+                    }
+                  ]
+                }
+              })
+            )
+
+          "history" ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(200, Jason.encode!(%{"history" => %{"slots" => []}}))
+
+          _ ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(200, "{}")
+        end
+      end)
+
+      media_item = media_item_fixture(%{type: "movie"})
+      first_seen = ~U[2026-05-14 10:00:00.000000Z]
+      same_bytes = round(25.0 * 1024 * 1024)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: nzo_id,
+          last_progress_at: first_seen,
+          last_known_bytes: same_bytes
+        })
+
+      # 16 minutes after `first_seen` — past the 15-minute grace window.
+      now = ~U[2026-05-14 10:16:00.000000Z]
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert updated.import_failed_at != nil
+      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
+      assert updated.import_last_error == "stalled after 15m without progress"
+    end
+
+    test "DownloadMonitor clears no progress when bytes finally move past the grace window",
+         %{bypass: bypass, client_config: client_config} do
+      nzo_id = "SABnzbd_nzo_recovers001"
+
+      # The mocked queue reports bytes that have moved up by 5MB since the
+      # previous observation — even though more than the grace window has
+      # elapsed, this is forward progress, not a stall.
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+
+        case conn.query_params["mode"] do
+          "queue" ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              Jason.encode!(%{
+                "queue" => %{
+                  "slots" => [
+                    %{
+                      "nzo_id" => nzo_id,
+                      "filename" => "Recovers.Show.S01E01.mkv",
+                      "status" => "Downloading",
+                      "mb" => 100.0,
+                      "mbleft" => 70.0,
+                      "kbpersec" => 50.0,
+                      "timeleft" => "0:30:00",
+                      "storage" => "/downloads",
+                      "added" => System.system_time(:second)
+                    }
+                  ]
+                }
+              })
+            )
+
+          "history" ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(200, Jason.encode!(%{"history" => %{"slots" => []}}))
+
+          _ ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(200, "{}")
+        end
+      end)
+
+      media_item = media_item_fixture(%{type: "movie"})
+      first_seen = ~U[2026-05-14 10:00:00.000000Z]
+      previous_bytes = round(25.0 * 1024 * 1024)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: nzo_id,
+          last_progress_at: first_seen,
+          last_known_bytes: previous_bytes
+        })
+
+      # 20 minutes later — past the 15-min grace, but bytes increased.
+      now = ~U[2026-05-14 10:20:00.000000Z]
+
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert is_nil(updated.import_failed_at)
+      assert updated.last_progress_at != first_seen
+      assert updated.last_known_bytes > previous_bytes
     end
   end
 

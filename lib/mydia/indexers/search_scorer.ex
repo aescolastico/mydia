@@ -76,30 +76,28 @@ defmodule Mydia.Indexers.SearchScorer do
     {quality_score, quality_breakdown, violations} =
       score_quality(result, quality_profile, media_type)
 
-    seeder_score = score_seeders(result.seeders)
     title_bonus = score_title_match(result.title, search_query)
 
-    # Zero-seeder penalty: reduce score by 30% for dead torrents
-    zero_seeder_penalty = if result.seeders == 0, do: 0.7, else: 1.0
+    # Branch on download protocol so NZB results aren't scored on torrent
+    # seeders (which are always nil for Usenet).
+    {availability_score, availability_penalty, availability_violations} =
+      score_availability(result)
 
-    # Combined score: quality (60%) + seeders (30%) + title (10%)
-    combined_score = (quality_score * 0.6 + seeder_score + title_bonus) * zero_seeder_penalty
+    # Combined score: quality (60%) + availability (~30%) + title (10%)
+    combined_score =
+      (quality_score * 0.6 + availability_score + title_bonus) * availability_penalty
 
-    # Build full breakdown
+    # Build full breakdown. Keep the historical key name :seeder_score for
+    # downstream compatibility; for NZB it represents the equivalent
+    # availability score derived from completion + grabs.
     breakdown =
       quality_breakdown
       |> Map.put(:quality_score, Float.round(quality_score, 1))
-      |> Map.put(:seeder_score, Float.round(seeder_score, 1))
+      |> Map.put(:seeder_score, Float.round(availability_score, 1))
       |> Map.put(:title_bonus, Float.round(title_bonus, 1))
-      |> Map.put(:zero_seeder_penalty, zero_seeder_penalty)
+      |> Map.put(:zero_seeder_penalty, availability_penalty)
 
-    # Add violation for zero seeders
-    violations =
-      if result.seeders == 0 do
-        violations ++ ["No seeders (30% penalty applied)"]
-      else
-        violations
-      end
+    violations = violations ++ availability_violations
 
     %{
       score: Float.round(combined_score, 1),
@@ -108,6 +106,48 @@ defmodule Mydia.Indexers.SearchScorer do
       detected: extract_detected_quality(result)
     }
   end
+
+  # Returns {score, penalty_multiplier, violations} for the availability
+  # dimension. Torrents use seeders; NZB uses completion + grabs.
+  @spec score_availability(SearchResult.t()) :: {float(), float(), [String.t()]}
+  defp score_availability(%SearchResult{download_protocol: :nzb} = result) do
+    score = score_nzb_availability(result.nzb_completion, result.nzb_grabs)
+
+    # NZB results don't suffer the "dead torrent" penalty: completion is the
+    # quality signal, and missing completion is normalized to 1.0 (we trust
+    # the indexer rather than penalizing it).
+    {score, 1.0, []}
+  end
+
+  defp score_availability(%SearchResult{seeders: nil}) do
+    # Unknown protocol with no seeders info - treat as no availability data.
+    {0.0, 0.7, ["No seeders (30% penalty applied)"]}
+  end
+
+  defp score_availability(%SearchResult{seeders: seeders}) do
+    score = score_seeders(seeders)
+    penalty = if seeders == 0, do: 0.7, else: 1.0
+    violations = if seeders == 0, do: ["No seeders (30% penalty applied)"], else: []
+    {score, penalty, violations}
+  end
+
+  # NZB availability blends completion (most important - articles present)
+  # with grabs (a tiebreaker hinting at general health). Defaults completion
+  # to 1.0 when unknown to avoid penalizing indexers that don't report it.
+  defp score_nzb_availability(completion, grabs) do
+    completion =
+      if is_float(completion) or is_integer(completion), do: completion * 1.0, else: 1.0
+
+    # Map completion 0.0..1.0 → 0..30 to mirror torrent seeder scale.
+    completion_score = completion * 30.0
+    # Grabs tiebreaker on a log10 scale, capped well below completion.
+    grabs_score = score_grabs(grabs)
+    completion_score + grabs_score
+  end
+
+  defp score_grabs(nil), do: 0.0
+  defp score_grabs(grabs) when grabs <= 0, do: 0.0
+  defp score_grabs(grabs), do: min(5.0, :math.log10(grabs + 1) * 2)
 
   @doc """
   Calculate quality score for a search result.
@@ -120,10 +160,22 @@ defmodule Mydia.Indexers.SearchScorer do
   @spec score_quality(SearchResult.t(), QualityProfile.t() | nil, :movie | :episode) ::
           {float(), map(), [String.t()]}
   def score_quality(%SearchResult{} = result, nil, _media_type) do
-    # No profile set - use seeders as the primary quality indicator.
+    # No profile set - use availability as the primary quality indicator.
     # Without a quality profile, users haven't expressed quality preferences,
-    # so we prioritize availability (more seeders = more reliable download).
-    quality_score = min(result.seeders * 1.0, 100.0)
+    # so we prioritize availability (seeders for torrents, completion for NZB).
+    quality_score =
+      case result do
+        %SearchResult{download_protocol: :nzb} ->
+          # NZB: 100 * completion. Default completion to 1.0 when unknown.
+          completion = result.nzb_completion || 1.0
+          min(completion * 100.0, 100.0)
+
+        %SearchResult{seeders: nil} ->
+          0.0
+
+        %SearchResult{seeders: seeders} ->
+          min(seeders * 1.0, 100.0)
+      end
 
     {quality_score, %{raw_quality_score: quality_score}, []}
   end

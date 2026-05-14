@@ -35,6 +35,18 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   Unrecognised states are treated as `:checking` (transient) rather than `:error`
   because `DownloadMonitor` deletes rows for errored downloads, and we'd rather
   leave a download alone than lose it on a state name we haven't seen before.
+
+  ## Priority
+
+  qBittorrent's `/api/v2/torrents/add` endpoint does not accept a priority
+  parameter directly — queue priority is managed via `topPrio` /
+  `bottomPrio` / `increasePrio` / `decreasePrio` on the live torrent. As a
+  result, this adapter's default behaviour is to **no-op** on priority: if
+  `priority_profile` is empty (the default), no priority is sent to
+  qBittorrent. When `priority_profile` supplies an override for the given
+  atom, the value is logged so operators can wire up a follow-on integration,
+  but is not yet applied. The 5-tier taxonomy is accepted so callers don't
+  need to special-case torrent clients.
   """
 
   @behaviour Mydia.Downloads.Client
@@ -42,7 +54,9 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   require Logger
 
   alias Mydia.Downloads.Client.{Error, HTTP}
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Priority
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   alias Mydia.Downloads.TorrentHash
 
   # How many times to poll /torrents/info after add_torrent before declaring
@@ -67,6 +81,8 @@ defmodule Mydia.Downloads.Client.QBittorrent do
 
   @impl true
   def add_torrent(config, torrent, opts \\ []) do
+    _ = maybe_log_priority(config, opts[:priority])
+
     with {:ok, hash} <- extract_torrent_hash(torrent) do
       with_authenticated_session(config, fn req ->
         with {:ok, response} <- post_add_torrent(req, torrent, opts),
@@ -77,6 +93,33 @@ defmodule Mydia.Downloads.Client.QBittorrent do
       end)
     end
   end
+
+  # Priority is a no-op for qBittorrent's /torrents/add endpoint (see @moduledoc).
+  # When `priority_profile` resolves the atom to a non-nil value, log it so
+  # operators can confirm the look-up runs, then drop the value on the floor.
+  # Empty profile -> nil -> silent (preserves pre-wave-2 behaviour).
+  defp maybe_log_priority(_config, nil), do: :ok
+
+  defp maybe_log_priority(config, atom)
+       when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = Helpers.priority_profile(config)
+
+    case Priority.resolve(atom, profile, nil) do
+      nil ->
+        :ok
+
+      value ->
+        Logger.debug(
+          "qBittorrent priority requested but not applied (no add-endpoint support)",
+          atom: atom,
+          resolved_value: value
+        )
+
+        :ok
+    end
+  end
+
+  defp maybe_log_priority(_config, _other), do: :ok
 
   @impl true
   def get_status(config, client_id) do
@@ -397,7 +440,7 @@ defmodule Mydia.Downloads.Client.QBittorrent do
   end
 
   defp parse_torrent_status(torrent) do
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: torrent["hash"],
       name: torrent["name"],
       state: parse_state(torrent["state"]),
@@ -410,8 +453,8 @@ defmodule Mydia.Downloads.Client.QBittorrent do
       eta: parse_eta(torrent["eta"]),
       ratio: torrent["ratio"] || 0.0,
       save_path: torrent["save_path"] || "",
-      added_at: parse_timestamp(torrent["added_on"]),
-      completed_at: parse_timestamp(torrent["completion_on"])
+      added_at: Helpers.parse_timestamp_unix(torrent["added_on"]),
+      completed_at: Helpers.parse_timestamp_unix(torrent["completion_on"])
     })
   end
 
@@ -443,10 +486,4 @@ defmodule Mydia.Downloads.Client.QBittorrent do
 
   defp parse_eta(eta) when is_integer(eta) and eta > 0, do: eta
   defp parse_eta(_), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 end

@@ -49,6 +49,7 @@ defmodule Mydia.Downloads.Structs.ClientInfo do
         rpc_version: 16
       }
   """
+  @spec new(map() | keyword()) :: t()
   def new(attrs) when is_map(attrs) or is_list(attrs) do
     struct(__MODULE__, attrs)
   end

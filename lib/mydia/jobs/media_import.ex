@@ -19,7 +19,19 @@ defmodule Mydia.Jobs.MediaImport do
 
   use Oban.Worker,
     queue: :default,
-    max_attempts: 1000
+    max_attempts: 1000,
+    unique: [
+      period: 600,
+      keys: [:download_id],
+      # NB: :executing is intentionally excluded. schedule_snooze_retry/2
+      # inserts a new MediaImport job from inside perform/1 while the
+      # parent is still :executing — Oban would treat that as a unique
+      # collision and discard the snooze (returning the executing parent
+      # with conflict?: true). The early-return guard on `imported_at`
+      # at the top of perform/1 handles the duplicate-already-done case
+      # so dropping :executing here doesn't reopen the dedup gap.
+      states: [:available, :scheduled, :retryable]
+    ]
 
   require Logger
   alias Mydia.{Downloads, Library, Media, Settings}
@@ -95,45 +107,62 @@ defmodule Mydia.Jobs.MediaImport do
         preload: [{:media_item, :episodes}, :episode, :library_path]
       )
 
-    if is_nil(download.completed_at) do
-      # Download not yet completed - use snooze mechanism instead of returning ok
-      snooze_count = args.snooze_count
-
-      if snooze_count >= @max_snooze_count do
-        # Hit max snooze count - mark as failed so it appears in Issues tab
-        Logger.warning(
-          "Download not completed after #{snooze_count} snoozes (~1 hour), marking as failed",
+    cond do
+      not is_nil(download.imported_at) ->
+        # Idempotency guard: download already imported. Duplicate enqueues
+        # from polling, retries, or snooze races land here harmlessly. Do
+        # NOT fall into the snooze loop or re-import below.
+        Logger.debug("Media import short-circuit: download already imported",
           download_id: download_id,
-          snooze_count: snooze_count
+          imported_at: download.imported_at
         )
 
-        handle_import_failure(download, :download_not_completed, attempt)
-        {:error, :download_not_completed}
-      else
-        Logger.info("Download not completed, scheduling retry import job",
-          download_id: download_id,
-          snooze_count: snooze_count + 1,
-          max_snooze_count: @max_snooze_count,
-          next_check_in_seconds: @snooze_interval_seconds
-        )
+        :ok
 
-        # Schedule a new job with incremented snooze count
-        # We can't use {:snooze, seconds} because it doesn't update args
-        schedule_snooze_retry(download_id, snooze_count + 1, raw_args)
-        {:ok, :waiting_for_completion}
-      end
+      is_nil(download.completed_at) ->
+        handle_incomplete_download(download, args, attempt, raw_args)
+
+      true ->
+        case import_download(download, args) do
+          {:ok, result} ->
+            # Success - clear any retry metadata
+            clear_retry_metadata(download)
+            {:ok, result}
+
+          {:error, reason} = error ->
+            # Failure - update retry metadata and schedule next retry
+            handle_import_failure(download, reason, attempt)
+            error
+        end
+    end
+  end
+
+  defp handle_incomplete_download(download, args, attempt, raw_args) do
+    download_id = download.id
+    snooze_count = args.snooze_count
+
+    if snooze_count >= @max_snooze_count do
+      # Hit max snooze count - mark as failed so it appears in Issues tab
+      Logger.warning(
+        "Download not completed after #{snooze_count} snoozes (~1 hour), marking as failed",
+        download_id: download_id,
+        snooze_count: snooze_count
+      )
+
+      handle_import_failure(download, :download_not_completed, attempt)
+      {:error, :download_not_completed}
     else
-      case import_download(download, args) do
-        {:ok, result} ->
-          # Success - clear any retry metadata
-          clear_retry_metadata(download)
-          {:ok, result}
+      Logger.info("Download not completed, scheduling retry import job",
+        download_id: download_id,
+        snooze_count: snooze_count + 1,
+        max_snooze_count: @max_snooze_count,
+        next_check_in_seconds: @snooze_interval_seconds
+      )
 
-        {:error, reason} = error ->
-          # Failure - update retry metadata and schedule next retry
-          handle_import_failure(download, reason, attempt)
-          error
-      end
+      # Schedule a new job with incremented snooze count
+      # We can't use {:snooze, seconds} because it doesn't update args
+      schedule_snooze_retry(download_id, snooze_count + 1, raw_args)
+      {:ok, :waiting_for_completion}
     end
   end
 

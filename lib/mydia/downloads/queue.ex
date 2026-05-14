@@ -9,12 +9,14 @@ defmodule Mydia.Downloads.Queue do
   alias Mydia.Downloads.Client
   alias Mydia.Downloads.Client.Registry
   alias Mydia.Downloads.History
+  alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Structs.DownloadMetadata
   alias Mydia.Indexers.SearchResult
   alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Settings
   alias Mydia.Library.MediaFile
   alias Mydia.Media.Episode
+  alias Mydia.Media.MediaItem
   alias Mydia.Events
   require Logger
 
@@ -28,8 +30,7 @@ defmodule Mydia.Downloads.Queue do
 
     # Use protocol from search result
     download_type = search_result.download_protocol
-    Logger.info("Download protocol: #{inspect(download_type)} for #{search_result.title}")
-    Logger.info("Full search_result struct: #{inspect(search_result, limit: :infinity)}")
+    Logger.debug("Download protocol: #{inspect(download_type)} for #{search_result.title}")
 
     opts = Keyword.put(opts, :download_type, download_type)
 
@@ -570,11 +571,17 @@ defmodule Mydia.Downloads.Queue do
         "File type detection: original=#{inspect(download_type)}, detected=#{inspect(detected_type)}, final=#{inspect(final_download_type)}"
       )
 
+      # Resolve a content type (e.g. "tv", "movie") so per-content-type
+      # routing in the client config can pick the right category. See
+      # `resolve_content_type/1` for the precedence rules.
+      content_type = resolve_content_type(opts)
+
       # Update opts with the final download type and title
       opts_with_type =
         opts
         |> Keyword.put(:download_type, final_download_type)
         |> Keyword.put(:title, search_result.title)
+        |> Keyword.put(:content_type, content_type)
 
       # Now select the appropriate client based on the final type
       with {:ok, client_config} <- select_download_client(opts_with_type),
@@ -606,13 +613,16 @@ defmodule Mydia.Downloads.Queue do
   # Version of add_torrent_to_client that accepts pre-downloaded input
   defp add_torrent_to_client_with_input(adapter, client_config, torrent_input, opts) do
     client_map_config = config_to_map(client_config)
-    category = Keyword.get(opts, :category, client_config.category)
+    content_type = Keyword.get(opts, :content_type)
+    category = resolve_category(client_config, content_type, opts)
     title = Keyword.get(opts, :title)
+    priority = Keyword.get(opts, :priority, Priority.default())
 
     torrent_opts =
       []
       |> maybe_add_opt(:category, category)
       |> maybe_add_opt(:title, title)
+      |> maybe_add_opt(:priority, priority)
 
     case Client.add_torrent(adapter, client_map_config, torrent_input, torrent_opts) do
       {:ok, client_id} ->
@@ -622,6 +632,63 @@ defmodule Mydia.Downloads.Queue do
         {:error, {:client_error, error}}
     end
   end
+
+  @doc false
+  # Resolves the per-content-type category from the client config, falling back
+  # to the legacy single-value `:category` field for backwards compatibility.
+  # Order of precedence:
+  #   1. explicit `opts[:category]` (manual override, rare)
+  #   2. `client_config.categories[content_type]`
+  #   3. `client_config.category` (legacy field)
+  #   4. nil
+  # Public-but-undocumented so tests can exercise it without round-tripping
+  # through `initiate_download/2`.
+  def resolve_category(client_config, content_type, opts) do
+    cond do
+      Keyword.has_key?(opts, :category) ->
+        Keyword.get(opts, :category)
+
+      is_binary(content_type) ->
+        categories = client_config.categories || %{}
+
+        case Map.get(categories, content_type) do
+          nil -> client_config.category
+          "" -> client_config.category
+          value -> value
+        end
+
+      true ->
+        client_config.category
+    end
+  end
+
+  @doc false
+  # Derives a content_type string from the download options + media context.
+  # Centralised here so new content types (e.g. "music") can be added in one
+  # place. Returns a string ("tv", "movie") or nil when the type cannot be
+  # determined from the available context.
+  # Public-but-undocumented for testability.
+  def resolve_content_type(opts) do
+    cond do
+      Keyword.get(opts, :episode_id) ->
+        "tv"
+
+      media_item_id = Keyword.get(opts, :media_item_id) ->
+        case Repo.get(MediaItem, media_item_id) do
+          %MediaItem{type: "movie"} -> "movie"
+          %MediaItem{type: "tv_show"} -> "tv"
+          _ -> content_type_from_download_type(Keyword.get(opts, :download_type))
+        end
+
+      true ->
+        content_type_from_download_type(Keyword.get(opts, :download_type))
+    end
+  end
+
+  # Best-effort fallback when we can't resolve from media_item / episode.
+  # Returns nil when the protocol gives us nothing useful, so the caller will
+  # fall back to the legacy single `category` field via `resolve_category/3`.
+  defp content_type_from_download_type(_), do: nil
 
   defp select_download_client(opts) do
     client_name = Keyword.get(opts, :client_name)
@@ -719,6 +786,19 @@ defmodule Mydia.Downloads.Queue do
     # Create DownloadMetadata struct and convert to map for database storage
     metadata = metadata_attrs |> DownloadMetadata.new() |> DownloadMetadata.to_map()
 
+    # Plumb the release's stable indexer + guid through to the download record
+    # so failure handling (DownloadMonitor → Blacklists.add/4, #123) can key
+    # off the original search result. `DownloadMetadata.to_map/1` produces a
+    # plain map for JSON storage; adding the extra fields here is safe.
+    metadata =
+      metadata
+      |> Map.put(:indexer, search_result.indexer)
+      |> Map.put(
+        :guid,
+        search_result.guid ||
+          fallback_release_guid(search_result)
+      )
+
     attrs = %{
       indexer: search_result.indexer,
       title: search_result.title,
@@ -732,6 +812,18 @@ defmodule Mydia.Downloads.Queue do
     }
 
     History.create_download(attrs)
+  end
+
+  # Synthesizes a stable fallback identifier when the indexer didn't provide
+  # a `guid`. SHA-256 of `(indexer, title, size)` is deterministic across
+  # processes so the same release hashes to the same key — good enough for
+  # blacklist dedup.
+  defp fallback_release_guid(%SearchResult{} = sr) do
+    parts = [sr.indexer || "", sr.title || "", to_string(sr.size || 0)]
+    payload = Enum.join(parts, "|")
+
+    "sha256:" <>
+      (:crypto.hash(:sha256, payload) |> Base.encode16(case: :lower))
   end
 
   defp create_download_record_with_retry(search_result, client_config, client_id, opts) do
@@ -801,7 +893,13 @@ defmodule Mydia.Downloads.Queue do
       url_base: config.url_base,
       api_key: config.api_key,
       connection_settings: config.connection_settings || %{},
-      options: config.connection_settings || %{}
+      options: config.connection_settings || %{},
+      # Surfaced for adapters that need per-client policy (priority routing,
+      # per-content-type categories, stall grace). Adapters that don't care
+      # about these fields simply ignore them.
+      categories: Map.get(config, :categories) || %{},
+      priority_profile: Map.get(config, :priority_profile) || %{},
+      incomplete_grace_minutes: Map.get(config, :incomplete_grace_minutes)
     }
   end
 
