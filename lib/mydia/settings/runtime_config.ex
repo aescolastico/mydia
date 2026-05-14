@@ -96,6 +96,13 @@ defmodule Mydia.Settings.RuntimeConfig do
     get_runtime_config().media
   end
 
+  def get_metadata_config do
+    case get_runtime_config() do
+      %{metadata: %_{} = metadata} -> metadata
+      _ -> %Mydia.Config.Schema.Metadata{}
+    end
+  end
+
   def get_downloads_config do
     get_runtime_config().downloads
   end

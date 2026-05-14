@@ -35,6 +35,7 @@ defmodule Mydia.Config.LoaderTest do
         "OIDC_CLIENT_SECRET",
         "MOVIES_PATH",
         "TV_PATH",
+        "METADATA_LANGUAGE",
         "LOG_LEVEL",
         "OBAN_POLL_INTERVAL"
       ] ++ download_client_vars
@@ -213,6 +214,15 @@ defmodule Mydia.Config.LoaderTest do
       assert config.server.port == 5000
       assert config.database.pool_size == 15
       assert config.oban.poll_interval == 2000
+    end
+
+    test "metadata language defaults to en-US and is overridden by METADATA_LANGUAGE env var" do
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+      assert config.metadata.language == "en-US"
+
+      System.put_env("METADATA_LANGUAGE", "pt-BR")
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+      assert config.metadata.language == "pt-BR"
     end
 
     test "returns error for invalid configuration" do

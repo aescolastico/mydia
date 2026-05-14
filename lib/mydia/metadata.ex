@@ -342,13 +342,38 @@ defmodule Mydia.Metadata do
   end
 
   @doc """
+  Gets the configured metadata language.
+
+  The language is sent to TMDB/TVDB through the metadata-relay so titles,
+  descriptions, and image translations come back in the user's preferred locale.
+  Resolved through the standard 4-layer config precedence:
+  `METADATA_LANGUAGE` env var → admin DB setting (`metadata.language`) → YAML
+  config (`metadata.language`) → schema default (`"en-US"`).
+
+  Accepts any value the underlying provider understands — typically an ISO 639-1
+  code (`"de"`) or BCP 47 language tag (`"de-DE"`, `"pt-BR"`).
+
+  ## Examples
+
+      iex> Mydia.Metadata.metadata_language()
+      "en-US"
+  """
+  def metadata_language do
+    case Mydia.Settings.get_metadata_config() do
+      %{language: lang} when is_binary(lang) and lang != "" -> lang
+      _ -> "en-US"
+    end
+  end
+
+  @doc """
   Gets the default metadata relay configuration.
 
   This provides a ready-to-use configuration for the metadata-relay service
   that doesn't require an API key.
 
   The base URL can be configured via the METADATA_RELAY_URL environment variable,
-  defaulting to the self-hosted relay on Fly.io if not set.
+  defaulting to the self-hosted relay on Fly.io if not set. The metadata language
+  can be configured via the METADATA_LANGUAGE environment variable.
 
   ## Examples
 
@@ -364,7 +389,7 @@ defmodule Mydia.Metadata do
       type: :metadata_relay,
       base_url: metadata_relay_url(),
       options: %{
-        language: "en-US",
+        language: metadata_language(),
         include_adult: false,
         timeout: 30_000
       }
@@ -375,7 +400,8 @@ defmodule Mydia.Metadata do
   Gets the default TVDB relay configuration.
 
   The base URL can be configured via the METADATA_RELAY_URL environment variable,
-  defaulting to the self-hosted relay on Fly.io if not set.
+  defaulting to the self-hosted relay on Fly.io if not set. The metadata language
+  can be configured via the METADATA_LANGUAGE environment variable.
 
   ## Examples
 
@@ -391,7 +417,7 @@ defmodule Mydia.Metadata do
       type: :metadata_relay,
       base_url: metadata_relay_url(),
       options: %{
-        language: "en-US",
+        language: metadata_language(),
         timeout: 30_000
       }
     }

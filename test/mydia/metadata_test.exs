@@ -385,4 +385,39 @@ defmodule Mydia.MetadataTest do
       assert config.base_url == "https://relay.mydia.dev"
     end
   end
+
+  describe "metadata_language/0" do
+    setup do
+      original = Application.get_env(:mydia, :runtime_config)
+      on_exit(fn -> Application.put_env(:mydia, :runtime_config, original) end)
+      :ok
+    end
+
+    test "reads the language from the merged runtime config" do
+      Application.put_env(
+        :mydia,
+        :runtime_config,
+        %Mydia.Config.Schema{metadata: %Mydia.Config.Schema.Metadata{language: "de-DE"}}
+      )
+
+      assert Metadata.metadata_language() == "de-DE"
+      assert Metadata.default_relay_config().options.language == "de-DE"
+      assert Metadata.default_tvdb_relay_config().options.language == "de-DE"
+    end
+
+    test "falls back to en-US when no language is configured" do
+      Application.put_env(
+        :mydia,
+        :runtime_config,
+        %Mydia.Config.Schema{metadata: %Mydia.Config.Schema.Metadata{language: nil}}
+      )
+
+      assert Metadata.metadata_language() == "en-US"
+    end
+
+    test "falls back to en-US when runtime_config is unset" do
+      Application.delete_env(:mydia, :runtime_config)
+      assert Metadata.metadata_language() == "en-US"
+    end
+  end
 end

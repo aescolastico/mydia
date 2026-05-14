@@ -78,6 +78,20 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   @default_language "en-US"
 
+  # Resolves the language to use for a request: explicit per-call opt wins,
+  # then the language configured on the provider config (typically populated
+  # from `Mydia.Metadata.metadata_language/0`), then the module default.
+  defp config_language(config) do
+    case config do
+      %{options: %{language: lang}} when is_binary(lang) and lang != "" -> lang
+      _ -> @default_language
+    end
+  end
+
+  defp resolve_language(config, opts) do
+    Keyword.get(opts, :language, config_language(config))
+  end
+
   @impl true
   def test_connection(config) do
     req = HTTP.new_request(config)
@@ -110,7 +124,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   defp search_tmdb(config, query, opts) do
     media_type = Keyword.get(opts, :media_type)
     year = Keyword.get(opts, :year)
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
     include_adult = Keyword.get(opts, :include_adult, false)
     page = Keyword.get(opts, :page, 1)
 
@@ -201,7 +215,7 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   # Perform the actual TMDB fetch after validation
   defp perform_tmdb_fetch(config, provider_id, media_type, opts) do
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
     append = Keyword.get(opts, :append_to_response, ["credits", "alternative_titles", "videos"])
 
     endpoint = build_details_endpoint(media_type, provider_id)
@@ -583,7 +597,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   defp fetch_season_tmdb(config, provider_id, season_number, opts) do
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
 
     endpoint = "/tmdb/tv/shows/#{provider_id}/#{season_number}"
     params = [language: language]
@@ -677,7 +691,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   @impl true
   def fetch_trending(config, opts \\ []) do
     media_type = Keyword.get(opts, :media_type)
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
     page = Keyword.get(opts, :page, 1)
 
     endpoint = build_trending_endpoint(media_type)
@@ -709,7 +723,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   """
   def fetch_curated(config, list_type, opts \\ []) do
     media_type = Keyword.get(opts, :media_type, :movie)
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
     page = Keyword.get(opts, :page, 1)
 
     endpoint = build_curated_endpoint(list_type, media_type)
@@ -743,7 +757,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   Returns `{:ok, %{results: [SearchResult], page: int, total_pages: int}}`.
   """
   def fetch_discover(config, media_type, opts \\ []) do
-    language = Keyword.get(opts, :language, @default_language)
+    language = resolve_language(config, opts)
     page = Keyword.get(opts, :page, 1)
     genres = Keyword.get(opts, :genres)
     original_language = Keyword.get(opts, :original_language)

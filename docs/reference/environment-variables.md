@@ -156,8 +156,11 @@ For PostgreSQL deployments (using `latest-pg` image):
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `METADATA_RELAY_URL` | URL for the metadata relay service | `https://relay.mydia.dev` |
+| `METADATA_LANGUAGE` | Language sent to TMDB/TVDB for titles, descriptions, and posters. Accepts ISO 639-1 codes (`de`) or BCP 47 tags (`de-DE`, `pt-BR`). | `en-US` |
 
 The metadata relay proxies requests to TVDB/TMDB and handles remote access relay connections. See [Architecture](../development/architecture.md) for details.
+
+`METADATA_LANGUAGE` can also be set per-instance from **Settings → Configuration → Metadata** in the admin UI; the env var overrides the database value when both are set.
 
 ## FlareSolverr
 

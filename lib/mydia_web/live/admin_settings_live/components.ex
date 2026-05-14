@@ -196,6 +196,7 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
   defp category_icon("Database"), do: "hero-circle-stack"
   defp category_icon("Authentication"), do: "hero-finger-print"
   defp category_icon("Media"), do: "hero-film"
+  defp category_icon("Metadata"), do: "hero-language"
   defp category_icon("Downloads"), do: "hero-arrow-down-tray"
   defp category_icon("Crash Reporting"), do: "hero-bug-ant"
   defp category_icon("Notifications"), do: "hero-bell"
