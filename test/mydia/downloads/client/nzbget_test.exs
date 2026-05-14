@@ -214,4 +214,115 @@ defmodule Mydia.Downloads.Client.NzbgetTest do
       assert error.type in [:connection_failed, :network_error, :timeout]
     end
   end
+
+  describe "priority profile resolution (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+      {:ok, bypass: bypass, config: config}
+    end
+
+    # Pull the JSON-RPC params from the request body so we can assert on the
+    # priority argument NZBGet's `append` RPC receives.
+    defp read_append_priority(conn) do
+      {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+      decoded = Jason.decode!(body)
+      assert decoded["method"] == "append"
+      # append params: [filename, content_b64, category, priority, ...]
+      priority = Enum.at(decoded["params"], 3)
+      {priority, conn}
+    end
+
+    test "empty profile falls back to hardcoded :high -> 50",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == 50
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":42,"id":1}))
+      end)
+
+      assert {:ok, "42"} = Nzbget.add_torrent(config, {:file, "fake-nzb"}, priority: :high)
+    end
+
+    test "empty profile maps :verylow -> -100 and :veryhigh -> 100",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == -100
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":1,"id":1}))
+      end)
+
+      assert {:ok, _} = Nzbget.add_torrent(config, {:file, "fake-nzb"}, priority: :verylow)
+
+      bypass2 = Bypass.open()
+      config2 = %{config | port: bypass2.port}
+
+      Bypass.expect(bypass2, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == 100
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":2,"id":2}))
+      end)
+
+      assert {:ok, _} = Nzbget.add_torrent(config2, {:file, "fake-nzb"}, priority: :veryhigh)
+    end
+
+    test "profile override wins over hardcoded default",
+         %{bypass: bypass, config: config} do
+      # NZBGet expects integers; the schema stores integer-valued maps fine.
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => 75})
+
+      Bypass.expect(bypass, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == 75
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":7,"id":1}))
+      end)
+
+      assert {:ok, _} =
+               Nzbget.add_torrent(config_with_profile, {:file, "fake-nzb"}, priority: :high)
+    end
+
+    test "tier not present in profile falls back to its hardcoded default",
+         %{bypass: bypass, config: config} do
+      # Override :high but leave :low alone — :low must still be -50.
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => 75})
+
+      Bypass.expect(bypass, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == -50
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":8,"id":1}))
+      end)
+
+      assert {:ok, _} =
+               Nzbget.add_torrent(config_with_profile, {:file, "fake-nzb"}, priority: :low)
+    end
+
+    test "nil priority sends 0 (NZBGet's normal default)",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/jsonrpc", fn conn ->
+        {priority, conn} = read_append_priority(conn)
+        assert priority == 0
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"jsonrpc":"2.0","result":9,"id":1}))
+      end)
+
+      assert {:ok, _} = Nzbget.add_torrent(config, {:file, "fake-nzb"})
+    end
+  end
 end

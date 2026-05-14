@@ -53,14 +53,37 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     * `mode=pause` - Pause a download
     * `mode=resume` - Resume a download
     * `mode=queue&name=delete` - Remove from queue
+
+  ## Priority
+
+  SABnzbd accepts integer priorities in the range `-100..2` (passed as strings
+  via the API). The default mapping when `priority_profile` is empty:
+
+    * `:verylow`  -> `"-100"` (paused / forced low)
+    * `:low`      -> `"-1"`
+    * `:normal`   -> `"0"`
+    * `:high`     -> `"1"`
+    * `:veryhigh` -> `"2"` (force)
+
+  Overrides supplied via `priority_profile` take precedence for the atom they
+  define and otherwise fall back to the defaults above.
   """
 
   @behaviour Mydia.Downloads.Client
 
   alias Mydia.Downloads.Client.{Error, HTTP}
+  alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
   require Logger
   @invalid_filename_chars ~r{[<>:"/\\|?*]}
+
+  @default_priority_map %{
+    verylow: "-100",
+    low: "-1",
+    normal: "0",
+    high: "1",
+    veryhigh: "2"
+  }
 
   @impl true
   def test_connection(config) do
@@ -120,7 +143,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
         name: url
       ]
       |> add_optional_param(:cat, opts[:category])
-      |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:priority, map_priority(opts[:priority], config))
       |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
@@ -161,7 +184,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
         mode: "addfile"
       ]
       |> add_optional_param(:cat, opts[:category])
-      |> add_optional_param(:priority, map_priority(opts[:priority]))
+      |> add_optional_param(:priority, map_priority(opts[:priority], config))
       |> add_optional_param(:nzbname, title)
 
     api_path = build_api_path(config)
@@ -630,11 +653,24 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     params ++ [{key, value}]
   end
 
-  defp map_priority(nil), do: nil
-  defp map_priority(:low), do: "-1"
-  defp map_priority(:normal), do: "0"
-  defp map_priority(:high), do: "1"
-  defp map_priority(_), do: nil
+  # Resolves a Priority atom into SABnzbd's native string representation.
+  # Consults `config[:priority_profile]` first (per-client overrides); falls back
+  # to the hardcoded default mapping (see @moduledoc) when the profile is empty
+  # or doesn't contain the atom. Returns nil when no priority is supplied so
+  # SABnzbd uses its server-side default.
+  defp map_priority(nil, _config), do: nil
+
+  defp map_priority(atom, config) when atom in [:verylow, :low, :normal, :high, :veryhigh] do
+    profile = priority_profile(config)
+    default = Map.fetch!(@default_priority_map, atom)
+    Priority.resolve(atom, profile, default)
+  end
+
+  defp map_priority(_other, _config), do: nil
+
+  defp priority_profile(config) do
+    Map.get(config, :priority_profile) || get_in(config, [:options, :priority_profile]) || %{}
+  end
 
   defp nzb_filename(title) do
     case sanitize_filename_title(title) do

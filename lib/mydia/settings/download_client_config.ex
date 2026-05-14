@@ -117,8 +117,43 @@ defmodule Mydia.Settings.DownloadClientConfig do
     |> validate_by_type()
     |> validate_number(:priority, greater_than: 0)
     |> validate_number(:incomplete_grace_minutes, greater_than: 0)
+    |> validate_priority_profile()
     |> maybe_generate_webhook_secret()
     |> unique_constraint(:name)
+  end
+
+  @valid_priority_keys ~w(verylow low normal high veryhigh)
+
+  # Validates that any keys in `priority_profile` are one of the 5-tier
+  # taxonomy atom names. Values are not range-checked here because their
+  # native domain varies per adapter (SABnzbd: -100..2, NZBGet: any integer,
+  # Transmission: -1..1, rTorrent: 0..3); range validation belongs in the
+  # adapter, not the changeset. Empty map and nil are both accepted.
+  defp validate_priority_profile(changeset) do
+    case get_field(changeset, :priority_profile) do
+      nil ->
+        changeset
+
+      profile when is_map(profile) ->
+        invalid =
+          profile
+          |> Map.keys()
+          |> Enum.reject(&(to_string(&1) in @valid_priority_keys))
+
+        if invalid == [] do
+          changeset
+        else
+          add_error(
+            changeset,
+            :priority_profile,
+            "contains unknown priority key(s): #{Enum.join(invalid, ", ")} " <>
+              "(must be one of: #{Enum.join(@valid_priority_keys, ", ")})"
+          )
+        end
+
+      _other ->
+        add_error(changeset, :priority_profile, "must be a map")
+    end
   end
 
   # Auto-generate webhook_secret server-side whenever the current value is nil.

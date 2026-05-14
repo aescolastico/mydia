@@ -442,6 +442,71 @@ defmodule Mydia.Downloads.Client.QBittorrentTest do
     end
   end
 
+  describe "priority profile resolution (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      {:ok, bypass: bypass, config: bypass_config(bypass)}
+    end
+
+    # qBittorrent's `/api/v2/torrents/add` endpoint has no priority field, so
+    # the adapter's documented behaviour is to silently accept the option
+    # without forwarding it. Both branches (empty profile + override) should
+    # succeed and not surface any priority key in the form body.
+    test "empty profile: :priority is accepted but not forwarded",
+         %{bypass: bypass, config: config} do
+      torrent_binary = sample_torrent_file()
+      {:ok, hash} = Mydia.Downloads.TorrentHash.extract({:file, torrent_binary}, case: :lower)
+
+      stub_login(bypass)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/add", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        # No qBittorrent priority parameter is supported on add — verify we
+        # didn't accidentally inject one.
+        refute body =~ "bandwidthPriority"
+        refute body =~ ~r/name="priority"/
+
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash)])
+      end)
+
+      assert {:ok, ^hash} =
+               QBittorrent.add_torrent(config, {:file, torrent_binary},
+                 priority: :high,
+                 title: "Test"
+               )
+    end
+
+    test "profile override: :priority is accepted, logged, but not forwarded",
+         %{bypass: bypass, config: config} do
+      torrent_binary = sample_torrent_file()
+      {:ok, hash} = Mydia.Downloads.TorrentHash.extract({:file, torrent_binary}, case: :lower)
+
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => 7})
+
+      stub_login(bypass)
+
+      Bypass.expect(bypass, "POST", "/api/v2/torrents/add", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        refute body =~ "bandwidthPriority"
+        Plug.Conn.resp(conn, 200, "Ok.")
+      end)
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [torrent_payload(hash)])
+      end)
+
+      assert {:ok, ^hash} =
+               QBittorrent.add_torrent(config_with_profile, {:file, torrent_binary},
+                 priority: :high,
+                 title: "Test"
+               )
+    end
+  end
+
   ## Helpers
 
   defp bypass_config(bypass) do

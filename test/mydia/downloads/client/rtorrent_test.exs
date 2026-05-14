@@ -196,17 +196,74 @@ defmodule Mydia.Downloads.Client.RtorrentTest do
     end
   end
 
-  # Note: Full integration tests would require either:
-  # 1. A real rTorrent instance (can be configured via environment variables)
-  # 2. HTTP mocking library like Bypass or Mox to simulate rTorrent XML-RPC responses
-  #
-  # Integration tests should verify:
-  # - XML-RPC request format
-  # - Adding torrents (magnet links, file uploads, URLs) with various options
-  # - Retrieving torrent status with all fields parsed correctly
-  # - Listing torrents with various views/filters
-  # - Removing torrents with/without file deletion
-  # - Pausing and resuming torrents
-  # - State mapping (d.state, d.is_active, d.complete combinations)
-  # - Error handling for various failure scenarios
+  describe "priority profile resolution (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        @config
+        | host: "localhost",
+          port: bypass.port,
+          username: nil,
+          password: nil
+      }
+
+      {:ok, bypass: bypass, config: config}
+    end
+
+    # XML-RPC success response indicating load.start succeeded (returned 0).
+    @load_ok_response """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <methodResponse><params><param><value><i4>0</i4></value></param></params></methodResponse>
+    """
+
+    test "empty profile omits the d.priority.set command",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/RPC2", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        refute body =~ "d.priority.set"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/xml")
+        |> Plug.Conn.resp(200, @load_ok_response)
+      end)
+
+      magnet = "magnet:?xt=urn:btih:ABC123DEF456789012345678901234567890ABCD&dn=test"
+      assert {:ok, _hash} = Rtorrent.add_torrent(config, {:magnet, magnet}, priority: :high)
+    end
+
+    test "profile override is appended as d.priority.set=N",
+         %{bypass: bypass, config: config} do
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => 3})
+
+      Bypass.expect(bypass, "POST", "/RPC2", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        assert body =~ "d.priority.set=3"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/xml")
+        |> Plug.Conn.resp(200, @load_ok_response)
+      end)
+
+      magnet = "magnet:?xt=urn:btih:ABC123DEF456789012345678901234567890ABCD&dn=test"
+
+      assert {:ok, _hash} =
+               Rtorrent.add_torrent(config_with_profile, {:magnet, magnet}, priority: :high)
+    end
+
+    test "no priority option omits the d.priority.set command",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/RPC2", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn, length: 1_000_000)
+        refute body =~ "d.priority.set"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/xml")
+        |> Plug.Conn.resp(200, @load_ok_response)
+      end)
+
+      magnet = "magnet:?xt=urn:btih:ABC123DEF456789012345678901234567890ABCD&dn=test"
+      assert {:ok, _hash} = Rtorrent.add_torrent(config, {:magnet, magnet})
+    end
+  end
 end

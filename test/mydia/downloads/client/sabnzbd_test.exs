@@ -334,4 +334,133 @@ defmodule Mydia.Downloads.Client.SabnzbdTest do
                Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"}, title: "")
     end
   end
+
+  describe "priority profile resolution (Bypass)" do
+    setup do
+      bypass = Bypass.open()
+      config = %{@config | host: "localhost", port: bypass.port}
+      {:ok, bypass: bypass, config: config}
+    end
+
+    test "empty profile falls back to hardcoded :high -> \"1\"",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["priority"] == "1"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_p"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_p"} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"},
+                 priority: :high
+               )
+    end
+
+    test "empty profile falls back to hardcoded :low -> \"-1\"",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["priority"] == "-1"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_low"]}))
+      end)
+
+      assert {:ok, "SABnzbd_nzo_low"} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"}, priority: :low)
+    end
+
+    test "empty profile maps the new tier :verylow -> \"-100\"",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["priority"] == "-100"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_vl"]}))
+      end)
+
+      assert {:ok, _} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"},
+                 priority: :verylow
+               )
+    end
+
+    test "empty profile maps the new tier :veryhigh -> \"2\"",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["priority"] == "2"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_vh"]}))
+      end)
+
+      assert {:ok, _} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"},
+                 priority: :veryhigh
+               )
+    end
+
+    test "profile override wins over hardcoded default",
+         %{bypass: bypass, config: config} do
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => "2"})
+
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        # :high resolves to "2" via the profile, not the hardcoded "1"
+        assert conn.query_params["priority"] == "2"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_o"]}))
+      end)
+
+      assert {:ok, _} =
+               Sabnzbd.add_torrent(config_with_profile, {:url, "https://example.com/test.nzb"},
+                 priority: :high
+               )
+    end
+
+    test "tier not present in profile falls back to its hardcoded default",
+         %{bypass: bypass, config: config} do
+      # Profile only overrides :high; :low must still resolve to "-1".
+      config_with_profile = Map.put(config, :priority_profile, %{"high" => "2"})
+
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        assert conn.query_params["priority"] == "-1"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_fb"]}))
+      end)
+
+      assert {:ok, _} =
+               Sabnzbd.add_torrent(config_with_profile, {:url, "https://example.com/test.nzb"},
+                 priority: :low
+               )
+    end
+
+    test "nil priority omits the priority param entirely",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/api", fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+        refute Map.has_key?(conn.query_params, "priority")
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": true, "nzo_ids": ["SABnzbd_nzo_npr"]}))
+      end)
+
+      assert {:ok, _} =
+               Sabnzbd.add_torrent(config, {:url, "https://example.com/test.nzb"})
+    end
+  end
 end
