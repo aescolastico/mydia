@@ -48,14 +48,6 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
 
   @resolution_re ~r/(?<![0-9a-zA-Z])(?:(?:480|540|576|720|1080|1440|2160|4320)[pi]|4K|8K|UHD)(?![a-zA-Z])/i
 
-  @episode_markers [
-    # S01E01 / S01-E01 / S01 E01 / S01.E01, with optional multi-episode tails.
-    ~r/(?<![a-zA-Z])S\d{1,3}[-\s.]?E\d{1,4}(?:[-\s.]?E?\d{1,4})*(?![a-zA-Z])/i,
-    ~r/(?<![a-zA-Z])\d{1,3}x\d{1,4}(?![a-zA-Z0-9])/i,
-    ~r/(?<![a-zA-Z])S\d{1,3}(?![0-9a-zA-Z])/i,
-    ~r/\b[Ss]eason[\s._]+\d{1,3}\b/
-  ]
-
   @type anchors :: %{
           year: non_neg_integer() | nil,
           resolution: non_neg_integer() | nil,
@@ -86,7 +78,7 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
   def anchor_positions(input) when is_binary(input) do
     stripped = drop_extension(input)
 
-    episode = first_match_pos(stripped, @episode_markers)
+    episode = first_match_pos(stripped, episode_markers())
     primary_year = first_capture_pos(stripped, @year_re_primary)
 
     year =
@@ -151,6 +143,16 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
   end
 
   # ---- Internals ----
+
+  defp episode_markers do
+    [
+      # S01E01 / S01-E01 / S01 E01 / S01.E01, with optional multi-episode tails.
+      ~r/(?<![a-zA-Z])S\d{1,3}[-\s.]?E\d{1,4}(?:[-\s.]?E?\d{1,4})*(?![a-zA-Z])/i,
+      ~r/(?<![a-zA-Z])\d{1,3}x\d{1,4}(?![a-zA-Z0-9])/i,
+      ~r/(?<![a-zA-Z])S\d{1,3}(?![0-9a-zA-Z])/i,
+      ~r/\b[Ss]eason[\s._]+\d{1,3}\b/
+    ]
+  end
 
   # State: (remaining, full_input, current_byte_pos, token_start_or_nil, bracket_or_nil, acc)
   # acc is a list of finished %Token{} values in reverse order.
