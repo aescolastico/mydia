@@ -462,9 +462,9 @@ defmodule Mydia.Jobs.MediaImportTest do
 
       assert {:error, :client_error} =
                perform_job(MediaImport, %{
-                  "download_id" => download.id,
-                  "save_path" => ""
-                })
+                 "download_id" => download.id,
+                 "save_path" => ""
+               })
     end
 
     @tag :tmp_dir
@@ -495,9 +495,9 @@ defmodule Mydia.Jobs.MediaImportTest do
 
       assert {:error, {:path_not_found, "/no/such/path/exists"}} =
                perform_job(MediaImport, %{
-                  "download_id" => download.id,
-                  "save_path" => "/no/such/path/exists"
-                })
+                 "download_id" => download.id,
+                 "save_path" => "/no/such/path/exists"
+               })
 
       updated = Mydia.Downloads.get_download!(download.id)
       assert updated.import_last_error =~ "Download path not found"
