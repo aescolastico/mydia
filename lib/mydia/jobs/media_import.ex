@@ -102,10 +102,24 @@ defmodule Mydia.Jobs.MediaImport do
       attempt: attempt
     )
 
-    download =
-      Downloads.get_download!(download_id,
-        preload: [{:media_item, :episodes}, :episode, :library_path]
-      )
+    case fetch_download(download_id) do
+      :not_found ->
+        # Self-heal: the row was deleted (likely by DownloadMonitor cleaning up
+        # an unmatched orphan, or by failure handling). No work to do — mark
+        # the job done so Oban stops retrying.
+        Logger.info("Media import short-circuit: download row no longer exists",
+          download_id: download_id
+        )
+
+        :ok
+
+      {:ok, download} ->
+        perform_with_download(download, args, attempt, raw_args)
+    end
+  end
+
+  defp perform_with_download(download, args, attempt, raw_args) do
+    download_id = download.id
 
     cond do
       not is_nil(download.imported_at) ->
@@ -118,6 +132,18 @@ defmodule Mydia.Jobs.MediaImport do
         )
 
         :ok
+
+      orphaned_unmatched?(download) ->
+        # Self-heal: the download has no media_item, no library_path, and is
+        # tagged unmatched. There is no path to a successful import — discard
+        # so Oban stops retrying. The row stays so the user can still match
+        # it manually from the Issues tab while the torrent is in the client.
+        Logger.info("Media import discarded: unmatched download with no destination",
+          download_id: download_id,
+          attempt: attempt
+        )
+
+        {:cancel, :unmatched_no_destination}
 
       is_nil(download.completed_at) ->
         handle_incomplete_download(download, args, attempt, raw_args)
@@ -136,6 +162,21 @@ defmodule Mydia.Jobs.MediaImport do
         end
     end
   end
+
+  defp fetch_download(download_id) do
+    {:ok,
+     Downloads.get_download!(download_id,
+       preload: [{:media_item, :episodes}, :episode, :library_path]
+     )}
+  rescue
+    Ecto.NoResultsError -> :not_found
+  end
+
+  defp orphaned_unmatched?(%{match_status: "unmatched"} = download) do
+    is_nil(download.media_item_id) and is_nil(download.library_path_id)
+  end
+
+  defp orphaned_unmatched?(_download), do: false
 
   defp handle_incomplete_download(download, args, attempt, raw_args) do
     download_id = download.id

@@ -201,7 +201,7 @@ defmodule Mydia.Downloads.History do
         case Map.get(torrents_map, download.download_client_id) do
           nil ->
             # Client confirmed it doesn't have this torrent — genuinely missing.
-            enrich_download_with_empty_status(download)
+            enrich_download_with_empty_status(download, false)
 
           torrent_status ->
             enrich_download_with_torrent_status(download, torrent_status)
@@ -258,7 +258,8 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      in_client?: true
     })
   end
 
@@ -301,11 +302,13 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      # Client unreachable — presence indeterminate.
+      in_client?: nil
     })
   end
 
-  defp enrich_download_with_empty_status(download) do
+  defp enrich_download_with_empty_status(download, in_client? \\ nil) do
     # Download exists in DB but not in client
     # Could be completed and removed, or manually deleted from client
     status =
@@ -355,7 +358,8 @@ defmodule Mydia.Downloads.History do
       import_next_retry_at: download.import_next_retry_at,
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
-      last_known_bytes: download.last_known_bytes
+      last_known_bytes: download.last_known_bytes,
+      in_client?: in_client?
     })
   end
 
