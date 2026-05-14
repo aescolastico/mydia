@@ -65,7 +65,8 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   alias Mydia.Downloads.TorrentHash
 
   @impl true
@@ -323,7 +324,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
     bytes_done = field_map["bytes_done"] || 0
     progress = if size > 0, do: bytes_done / size * 100.0, else: 0.0
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: field_map["hash"],
       name: field_map["name"] || "",
       state: state,
@@ -336,8 +337,8 @@ defmodule Mydia.Downloads.Client.Rtorrent do
       eta: calculate_eta(size, bytes_done, field_map["down.rate"] || 0),
       ratio: parse_ratio(field_map["ratio"]),
       save_path: field_map["directory"] || "",
-      added_at: parse_timestamp(field_map["timestamp.started"]),
-      completed_at: parse_timestamp(field_map["timestamp.finished"])
+      added_at: Helpers.parse_timestamp_unix(field_map["timestamp.started"]),
+      completed_at: Helpers.parse_timestamp_unix(field_map["timestamp.finished"])
     })
   end
 
@@ -384,15 +385,6 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   defp parse_ratio(ratio) when is_float(ratio), do: ratio
   defp parse_ratio(_), do: 0.0
-
-  defp parse_timestamp(0), do: nil
-  defp parse_timestamp(nil), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 
   defp get_view_for_filter(nil), do: "main"
   defp get_view_for_filter(:all), do: "main"

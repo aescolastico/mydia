@@ -96,7 +96,7 @@ defmodule Mydia.Downloads.Client do
   """
 
   alias Mydia.Downloads.Client.Error
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
 
   @type config :: %{
           type: atom(),
@@ -112,7 +112,7 @@ defmodule Mydia.Downloads.Client do
 
   @type torrent_state :: :downloading | :seeding | :paused | :error | :completed | :checking
 
-  @type status_map :: TorrentStatus.t()
+  @type status_map :: DownloadStatus.t()
 
   @type add_torrent_opts :: [
           category: String.t(),

@@ -81,7 +81,8 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   require Logger
 
   @default_priority_map %{
@@ -438,38 +439,39 @@ defmodule Mydia.Downloads.Client.Nzbget do
     nzb_name = get_in(item, ["NZBName"]) || get_in(item, ["Name"]) || ""
     status = get_in(item, ["Status"]) || "UNKNOWN"
 
-    # Sizes in bytes
-    file_size_mb = (get_in(item, ["FileSizeMB"]) || 0) * 1024 * 1024
-    remaining_size_mb = (get_in(item, ["RemainingSizeMB"]) || 0) * 1024 * 1024
-    downloaded_size_mb = file_size_mb - remaining_size_mb
+    # NZBGet reports sizes as MiB integers under FileSizeMB / RemainingSizeMB;
+    # convert via the shared helper to keep arithmetic consistent across
+    # adapters. Helpers.parse_size_mb_to_bytes coerces nil to 0.
+    file_size_bytes = Helpers.parse_size_mb_to_bytes(get_in(item, ["FileSizeMB"]))
+    remaining_size_bytes = Helpers.parse_size_mb_to_bytes(get_in(item, ["RemainingSizeMB"]))
+    downloaded_size_bytes = file_size_bytes - remaining_size_bytes
 
     # Calculate progress
-    progress = if file_size_mb > 0, do: downloaded_size_mb / file_size_mb * 100, else: 0.0
+    progress =
+      if file_size_bytes > 0, do: downloaded_size_bytes / file_size_bytes * 100, else: 0.0
 
     # Download speed (bytes per second)
     download_speed = get_in(item, ["DownloadRate"]) || 0
 
     # ETA is not directly provided, calculate from remaining size and speed
-    eta_seconds = if download_speed > 0, do: div(remaining_size_mb, download_speed), else: nil
+    eta_seconds =
+      if download_speed > 0, do: div(remaining_size_bytes, download_speed), else: nil
 
     # Get destination path
     dest_dir = get_in(item, ["DestDir"]) || ""
 
     # Parse timestamps (NZBGet uses Unix timestamps)
-    min_time = get_in(item, ["MinPostTime"]) || 0
-    added_at = if min_time > 0, do: DateTime.from_unix!(min_time), else: nil
+    added_at = Helpers.parse_timestamp_unix(get_in(item, ["MinPostTime"]))
 
     # For history items, use the completion time
-    completed_time = get_in(item, ["HistoryTime"]) || 0
-
     completed_at =
-      if status in ["SUCCESS", "DELETED"] && completed_time > 0 do
-        DateTime.from_unix!(completed_time)
+      if status in ["SUCCESS", "DELETED"] do
+        Helpers.parse_timestamp_unix(get_in(item, ["HistoryTime"]))
       else
         nil
       end
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: Integer.to_string(nzb_id),
       name: nzb_name,
       state: parse_state(status),
@@ -477,10 +479,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
       download_speed: download_speed,
       # Usenet doesn't upload
       upload_speed: 0,
-      downloaded: round(downloaded_size_mb),
+      downloaded: downloaded_size_bytes,
       # Usenet doesn't upload
       uploaded: 0,
-      size: round(file_size_mb),
+      size: file_size_bytes,
       eta: eta_seconds,
       # Usenet doesn't have ratios
       ratio: 0.0,
