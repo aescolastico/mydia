@@ -102,6 +102,8 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
     end
 
     test "submitting per-content-type categories saves them as a map", %{view: view} do
+      name = "qbittorrent_cats_#{System.unique_integer([:positive])}"
+
       view
       |> element(~s{button[phx-click="new_download_client"]})
       |> render_click()
@@ -109,7 +111,7 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       view
       |> form("#download-client-form", %{
         "download_client_config" => %{
-          "name" => "qbittorrent_cats_#{System.unique_integer([:positive])}",
+          "name" => name,
           "type" => "qbittorrent",
           "host" => "localhost",
           "port" => "8080",
@@ -126,7 +128,8 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
 
       refute has_element?(view, ~s{div[class*="modal-open"]})
 
-      saved = List.last(Settings.list_download_client_configs())
+      saved = Enum.find(Settings.list_download_client_configs(), &(&1.name == name))
+      assert saved, "expected to find saved client #{name}"
       assert saved.categories["movie"] == "movies"
       assert saved.categories["tv"] == "tv"
       refute Map.has_key?(saved.categories, "music")
@@ -187,6 +190,8 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
     end
 
     test "priority profile values round-trip through the form", %{view: view} do
+      name = "sab_prio_#{System.unique_integer([:positive])}"
+
       view
       |> element(~s{button[phx-click="new_download_client"]})
       |> render_click()
@@ -194,7 +199,7 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       view
       |> form("#download-client-form", %{
         "download_client_config" => %{
-          "name" => "sab_prio_#{System.unique_integer([:positive])}",
+          "name" => name,
           "type" => "sabnzbd",
           "host" => "localhost",
           "port" => "8080",
@@ -213,7 +218,8 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
 
       refute has_element?(view, ~s{div[class*="modal-open"]})
 
-      saved = List.last(Settings.list_download_client_configs())
+      saved = Enum.find(Settings.list_download_client_configs(), &(&1.name == name))
+      assert saved, "expected to find saved client #{name}"
       assert saved.priority_profile["verylow"] == "-100"
       assert saved.priority_profile["normal"] == "0"
       assert saved.priority_profile["veryhigh"] == "2"
