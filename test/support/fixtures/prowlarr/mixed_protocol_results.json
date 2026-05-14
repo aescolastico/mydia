@@ -1,0 +1,77 @@
+[
+  {
+    "guid": "prowlarr-mixed-001",
+    "title": "Show.S01E01.1080p.WEB-DL.x264-USENET",
+    "size": 2147483648,
+    "downloadUrl": "https://indexer.example.com/api/v1/getnzb/aaa111",
+    "infoUrl": "https://indexer.example.com/details/aaa111",
+    "downloadProtocol": "usenet",
+    "publishDate": "2024-11-25T10:30:00Z",
+    "grabs": 50,
+    "completion": 100,
+    "indexer": "Newshosting",
+    "categoryId": 5040
+  },
+  {
+    "guid": "prowlarr-mixed-002",
+    "title": "Show.S01E01.1080p.WEB-DL.x264-PUBLIC",
+    "size": 2147483648,
+    "downloadUrl": "https://indexer.example.com/torrent/bbb222.torrent",
+    "infoUrl": "https://indexer.example.com/details/bbb222",
+    "downloadProtocol": "torrent",
+    "publishDate": "2024-11-25T11:45:00Z",
+    "seeders": 120,
+    "leechers": 10,
+    "indexer": "RARBG",
+    "categoryId": 5040
+  },
+  {
+    "guid": "prowlarr-mixed-003",
+    "title": "Movie.2024.2160p.UHD.BluRay-USENET",
+    "size": 34359738368,
+    "downloadUrl": "https://indexer.example.com/api/v1/getnzb/ccc333",
+    "infoUrl": "https://indexer.example.com/details/ccc333",
+    "downloadProtocol": "usenet",
+    "publishDate": "2024-11-20T14:15:00Z",
+    "grabs": 200,
+    "indexer": "DOGnzb",
+    "categoryId": 2045
+  },
+  {
+    "guid": "prowlarr-mixed-004",
+    "title": "Movie.2024.2160p.UHD.BluRay-PUBLIC",
+    "size": 34359738368,
+    "downloadUrl": "https://indexer.example.com/torrent/ddd444.torrent",
+    "magnetUrl": "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=Movie.2024.2160p.UHD.BluRay-PUBLIC",
+    "infoUrl": "https://indexer.example.com/details/ddd444",
+    "downloadProtocol": "torrent",
+    "publishDate": "2024-11-21T09:00:00Z",
+    "seeders": 80,
+    "leechers": 5,
+    "indexer": "RARBG",
+    "categoryId": 2045
+  },
+  {
+    "guid": "prowlarr-mixed-005",
+    "title": "Conflict.Case.S02E04.URL-Says-NZB-But-Protocol-Torrent",
+    "size": 1073741824,
+    "downloadUrl": "https://indexer.example.com/getnzb/eee555.nzb",
+    "infoUrl": "https://indexer.example.com/details/eee555",
+    "downloadProtocol": "torrent",
+    "publishDate": "2024-11-22T13:30:00Z",
+    "seeders": 45,
+    "leechers": 8,
+    "indexer": "MixedIndexer",
+    "categoryId": 5040
+  },
+  {
+    "guid": "prowlarr-mixed-006",
+    "title": "Fallback.Case.Show.S05E01-No-Protocol-Field",
+    "size": 1073741824,
+    "downloadUrl": "https://indexer.example.com/getnzb/fff666.nzb",
+    "infoUrl": "https://indexer.example.com/details/fff666",
+    "publishDate": "2024-11-23T16:00:00Z",
+    "indexer": "LegacyIndexer",
+    "categoryId": 5040
+  }
+]
