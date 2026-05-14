@@ -69,15 +69,6 @@ defmodule MydiaWeb.Router do
     get "/health", HealthController, :check
   end
 
-  # Webhooks from external download clients (SABnzbd notification-scripts,
-  # NZBGet pp-scripts). Authentication uses a per-client signed secret
-  # verified by MydiaWeb.Plugs.WebhookSecretAuth — never chain :api_auth.
-  scope "/api/webhooks/v1", MydiaWeb.Api.Webhook do
-    pipe_through [:api, MydiaWeb.Plugs.WebhookSecretAuth]
-
-    post "/usenet/:client_id", UsenetController, :completed
-  end
-
   # First-time setup (no authentication required)
   scope "/", MydiaWeb do
     pipe_through :browser

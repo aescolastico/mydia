@@ -14,7 +14,6 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
      socket
      |> assign(:page_title, "Configuration - Download Clients")
      |> assign(:active_tab, :clients)
-     |> assign(:webhook_base_url, MydiaWeb.Endpoint.url())
      |> load_data()}
   end
 

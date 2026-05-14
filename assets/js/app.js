@@ -28,7 +28,6 @@ import VideoPlayer from "./hooks/video_player";
 import MusicPlayer from "./hooks/music_player";
 import PlexOAuth from "./hooks/plex_oauth";
 import DockNav from "./hooks/dock_nav";
-import CopyToClipboard from "./hooks/copy_to_clipboard";
 // Alpine.js for reactive UI components
 import Alpine from "alpinejs";
 import { videoPlayer } from "./alpine_components/video_player";
@@ -445,7 +444,6 @@ const liveSocket = new LiveSocket("/live", Socket, {
     DockNav,
     AddDirectUrl,
     BatchSelect,
-    CopyToClipboard,
   },
   // Preserve Alpine.js state and selection across LiveView DOM patches
   dom: {

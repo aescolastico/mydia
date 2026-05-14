@@ -109,18 +109,6 @@ defmodule Mydia.Downloads do
   defdelegate get_download!(id, opts \\ []), to: Mydia.Downloads.History
 
   @doc """
-  Fetches a download by the download client's name and the client-side remote
-  identifier (e.g. SABnzbd's `nzo_id` or NZBGet's `NZBID`).
-
-  Returns `nil` when no matching download is found. The lookup is backed by the
-  unique index on `(:download_client, :download_client_id)`.
-  """
-  @spec get_download_by_client_and_remote_id(String.t() | nil, String.t() | nil) ::
-          Download.t() | nil
-  defdelegate get_download_by_client_and_remote_id(client_name, remote_id),
-    to: Mydia.Downloads.History
-
-  @doc """
   Creates a download.
   """
   @spec create_download(map()) :: {:ok, Download.t()} | {:error, Ecto.Changeset.t()}

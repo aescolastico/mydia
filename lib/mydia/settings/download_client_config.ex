@@ -16,10 +16,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
     value (integer or string, varies per adapter). Empty map means adapters
     fall back to their hardcoded default mapping.
   - `incomplete_grace_minutes` — stall detection grace window; defaults to 60.
-  - `webhook_secret` — auto-generated server-side on first save (and on any
-    subsequent save where the existing value is still `nil`). Used to
-    authenticate post-processing webhooks from SABnzbd/NZBGet. Never cast from
-    user input.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -44,7 +40,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
           categories: map(),
           priority_profile: map(),
           incomplete_grace_minutes: integer(),
-          webhook_secret: String.t() | nil,
           download_directory: String.t() | nil,
           connection_settings: map() | nil,
           remove_completed: boolean(),
@@ -72,7 +67,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
     field :categories, :map, default: %{}
     field :priority_profile, :map, default: %{}
     field :incomplete_grace_minutes, :integer, default: 60
-    field :webhook_secret, :string
     field :download_directory, :string
     field :connection_settings, Mydia.Settings.JsonMapType
     field :remove_completed, :boolean, default: false
@@ -84,10 +78,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
 
   @doc """
   Changeset for creating or updating a download client config.
-
-  `webhook_secret` is intentionally never cast from user input — it is generated
-  server-side on first save (or any subsequent save where the existing value is
-  still `nil`) via `:crypto.strong_rand_bytes/1`.
   """
   def changeset(download_client_config, attrs) do
     download_client_config
@@ -118,7 +108,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
     |> validate_number(:priority, greater_than: 0)
     |> validate_number(:incomplete_grace_minutes, greater_than: 0)
     |> validate_priority_profile()
-    |> maybe_generate_webhook_secret()
     |> unique_constraint(:name)
   end
 
@@ -154,20 +143,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
       _other ->
         add_error(changeset, :priority_profile, "must be a map")
     end
-  end
-
-  # Auto-generate webhook_secret server-side whenever the current value is nil.
-  # This covers both first insert and updates to pre-existing rows that predate
-  # the column. Uses crypto-strong randomness; >= 32 bytes Base64-url encoded.
-  defp maybe_generate_webhook_secret(changeset) do
-    case get_field(changeset, :webhook_secret) do
-      nil -> put_change(changeset, :webhook_secret, generate_secret())
-      _existing -> changeset
-    end
-  end
-
-  defp generate_secret do
-    :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
   end
 
   # Blackhole clients use filesystem paths instead of network config

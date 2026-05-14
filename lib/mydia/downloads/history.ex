@@ -59,13 +59,6 @@ defmodule Mydia.Downloads.History do
     |> Repo.get!(id)
   end
 
-  def get_download_by_client_and_remote_id(client_name, remote_id)
-      when is_binary(client_name) and is_binary(remote_id) do
-    Repo.get_by(Download, download_client: client_name, download_client_id: remote_id)
-  end
-
-  def get_download_by_client_and_remote_id(_client_name, _remote_id), do: nil
-
   def create_download(attrs \\ %{}) do
     result =
       %Download{}

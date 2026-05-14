@@ -109,9 +109,9 @@ defmodule Mydia.Jobs.MediaImport do
 
     cond do
       not is_nil(download.imported_at) ->
-        # Idempotency guard: download already imported. Polling and webhook
-        # racing both land here harmlessly. Do NOT fall into the snooze loop
-        # or re-import below.
+        # Idempotency guard: download already imported. Duplicate enqueues
+        # from polling, retries, or snooze races land here harmlessly. Do
+        # NOT fall into the snooze loop or re-import below.
         Logger.debug("Media import short-circuit: download already imported",
           download_id: download_id,
           imported_at: download.imported_at

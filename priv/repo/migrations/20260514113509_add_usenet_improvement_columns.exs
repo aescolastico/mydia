@@ -7,9 +7,6 @@ defmodule Mydia.Repo.Migrations.AddUsenetImprovementColumns do
   Additive only. No NOT NULL constraints on existing rows.
 
   download_client_configs:
-    - webhook_secret: server-generated secret used to authenticate post-processing
-      webhooks (SABnzbd/NZBGet). Nullable; populated on next save via the schema
-      changeset auto-generate path. Never cast from user input.
     - categories: JSON map keyed by content_type ("movie", "tv", "music") -> client
       native category string. Replaces the single `:category` column eventually;
       kept alongside for backwards compatibility.
@@ -26,7 +23,6 @@ defmodule Mydia.Repo.Migrations.AddUsenetImprovementColumns do
 
   def change do
     alter table(:download_client_configs) do
-      add :webhook_secret, :string
       add :categories, :map, default: %{}
       add :priority_profile, :map, default: %{}
       add :incomplete_grace_minutes, :integer, default: 60

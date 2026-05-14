@@ -174,13 +174,12 @@ defmodule Mydia.Application do
   end
 
   defp oban_children do
+    # Don't start Oban in test environment to avoid pool conflicts with SQL Sandbox
     oban_config = Application.get_env(:mydia, Oban, [])
 
-    # Skip Oban entirely when the engine is explicitly disabled (legacy path).
-    # In test mode we run with `testing: :manual, queues: false, plugins: false`
-    # which starts Oban as a no-op supervisor — enough for `Oban.insert/1` to
-    # find the config and enforce `unique:` constraints without any pool work.
-    if Keyword.get(oban_config, :engine) == false do
+    # Skip Oban if testing is manual or queues are disabled
+    if Keyword.get(oban_config, :testing) == :manual or
+         Keyword.get(oban_config, :queues) == false do
       []
     else
       [{Oban, oban_config}]

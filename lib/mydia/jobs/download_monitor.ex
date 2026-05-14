@@ -20,7 +20,12 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
   use Oban.Worker,
     queue: :default,
-    max_attempts: 5
+    max_attempts: 5,
+    # Prevent two DownloadMonitor passes from running back-to-back — the cron
+    # plugin and the adaptive fast-followup chain (see end of `perform/1`)
+    # could otherwise stack up if a tick is slower than the followup
+    # interval. The period covers ~one cron interval.
+    unique: [period: 120, states: [:available, :scheduled]]
 
   require Logger
   alias Mydia.Downloads
@@ -33,6 +38,20 @@ defmodule Mydia.Jobs.DownloadMonitor do
   # Fallback grace window (minutes) when a download has no resolvable client
   # config. The DB schema's default is also 60; this just guards against a nil.
   @default_grace_minutes 60
+
+  # Adaptive polling: when downloads are actively running, the cron plugin's
+  # 2-minute interval is too slow — completed downloads land in the library
+  # 0–120s after the client says so. To shorten that gap without configuring
+  # tighter cron (and without asking the operator to wire up webhooks from
+  # their downloader, which would require them to know what URL their Mydia
+  # is reachable at from the downloader's network), each cron-triggered
+  # perform/1 seeds a chain of `@fast_followup_steps` follow-up jobs spaced
+  # `@fast_followup_interval_seconds` apart. The chain length × interval
+  # roughly equals the cron interval so adaptive polling fills the gap with
+  # no overlap. The chain self-terminates the moment no active downloads
+  # remain, returning the worker to pure cron cadence.
+  @fast_followup_interval_seconds 15
+  @fast_followup_steps 7
 
   @spec perform(Oban.Job.t()) :: :ok | {:ok, term()} | {:error, term()} | {:snooze, pos_integer()}
   @impl Oban.Worker
@@ -117,7 +136,37 @@ defmodule Mydia.Jobs.DownloadMonitor do
       untracked_matched: length(untracked_downloads)
     )
 
+    maybe_schedule_fast_followup(active_for_stall_check, args)
+
     :ok
+  end
+
+  # Schedules the next link in the adaptive fast-followup chain if there's
+  # still active work and we haven't exhausted the chain. The chain bounds
+  # itself by `chain_position`; the cron-seeded run starts at 0.
+  defp maybe_schedule_fast_followup([], _args), do: :ok
+
+  defp maybe_schedule_fast_followup(_active, args) do
+    position = Map.get(args, "fast_chain_position", 0)
+
+    if position < @fast_followup_steps do
+      try do
+        %{"fast_chain_position" => position + 1}
+        |> __MODULE__.new(schedule_in: @fast_followup_interval_seconds)
+        |> Oban.insert()
+      rescue
+        # Oban isn't running (test mode with `engine: false`, or supervisor
+        # not yet up). Adaptive polling is opportunistic — the next cron
+        # tick will pick up the work even if a follow-up couldn't be queued.
+        RuntimeError -> :ok
+      else
+        # Conflict via the unique constraint means a follow-up is already
+        # queued; not a failure.
+        _result -> :ok
+      end
+    else
+      :ok
+    end
   end
 
   ## Private Functions
