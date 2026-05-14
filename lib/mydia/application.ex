@@ -77,7 +77,21 @@ defmodule Mydia.Application do
       # gen_event backends require the :logger_backends package and must be
       # added at runtime; the old `config :logger, backends: [...]` path is
       # deprecated and silently does nothing.
-      LoggerBackends.add(Mydia.CrashReporter.LoggerBackend)
+      case LoggerBackends.add(Mydia.CrashReporter.LoggerBackend) do
+        {:ok, _} ->
+          :ok
+
+        {:error, :already_present} ->
+          :ok
+
+        {:error, reason} ->
+          if not cli_mode?() do
+            Logger.warning(
+              "[CrashReporter] Failed to install Logger backend: #{inspect(reason)}. " <>
+                "Crash reporting will not capture errors via Logger."
+            )
+          end
+      end
       # Reset any jobs stuck in executing state from previous runs
       reset_stale_jobs()
       # Attach Oban job broadcaster for real-time job status updates

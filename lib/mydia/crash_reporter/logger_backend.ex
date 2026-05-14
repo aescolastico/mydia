@@ -97,7 +97,8 @@ defmodule Mydia.CrashReporter.LoggerBackend do
   # Private functions
 
   defp should_report?(_msg, metadata, state) do
-    not rate_limited?(state) and not test_error?(metadata)
+    not Application.get_env(:mydia, :crash_reporter_disabled?, false) and
+      not rate_limited?(state) and not test_error?(metadata)
   end
 
   defp rate_limited?(state) do

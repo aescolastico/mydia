@@ -6,6 +6,10 @@ defmodule Mydia.CrashReporter.LoggerBackendTest do
   alias Mydia.CrashReporter.{LoggerBackend, Queue}
 
   setup do
+    # Re-enable the backend for this module; config/test.exs sets
+    # :crash_reporter_disabled? to true to protect other test files.
+    # This module is async: false so no other test file is affected.
+    Application.put_env(:mydia, :crash_reporter_disabled?, false)
     System.put_env("CRASH_REPORTING_ENABLED", "true")
     original_relay = System.get_env("METADATA_RELAY_URL")
     # Point at an unreachable address so the Sender fails fast and reports
@@ -16,6 +20,7 @@ defmodule Mydia.CrashReporter.LoggerBackendTest do
     Queue.clear_all()
 
     on_exit(fn ->
+      Application.put_env(:mydia, :crash_reporter_disabled?, true)
       Queue.clear_all()
       System.delete_env("CRASH_REPORTING_ENABLED")
 
