@@ -73,7 +73,8 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
 
   # Sequential counter for RPC request tags
   @agent_name __MODULE__.TagCounter
@@ -414,7 +415,7 @@ defmodule Mydia.Downloads.Client.Transmission do
         download_dir
       end
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: torrent["hashString"],
       name: torrent_name,
       state: parse_state(torrent["status"]),
@@ -427,8 +428,8 @@ defmodule Mydia.Downloads.Client.Transmission do
       eta: parse_eta(torrent["eta"]),
       ratio: torrent["uploadRatio"] || 0.0,
       save_path: save_path,
-      added_at: parse_timestamp(torrent["addedDate"]),
-      completed_at: parse_timestamp(torrent["doneDate"])
+      added_at: Helpers.parse_timestamp_unix(torrent["addedDate"]),
+      completed_at: Helpers.parse_timestamp_unix(torrent["doneDate"])
     })
   end
 
@@ -447,12 +448,6 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   defp parse_eta(eta) when is_integer(eta) and eta >= 0, do: eta
   defp parse_eta(_), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 
   defp apply_filters(torrents, opts) do
     torrents

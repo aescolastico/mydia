@@ -73,7 +73,8 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
-  alias Mydia.Downloads.Structs.{ClientInfo, TorrentStatus}
+  alias Mydia.Downloads.Client.Helpers
+  alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}
   require Logger
   @invalid_filename_chars ~r{[<>:"/\\|?*]}
 
@@ -521,15 +522,16 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     filename = get_in(item, ["filename"]) || ""
     status = get_in(item, ["status"]) || "Unknown"
 
-    # SABnzbd returns sizes in different formats depending on queue/history
-    # Queue: mb, mb_left as floats or strings
-    # History: bytes as integer
-    size_mb = parse_size(get_in(item, ["mb"]) || get_in(item, ["size"]))
-    size_bytes = round(size_mb * 1024 * 1024)
-
-    mb_left = parse_float(get_in(item, ["mbleft"])) || 0.0
+    # SABnzbd returns sizes in different formats depending on queue/history.
+    # Queue uses `mb`/`mb_left` (float mebibytes or string); history uses
+    # `size` (integer bytes). Normalise everything to MiB first so the
+    # arithmetic stays in a single unit, then convert to bytes via Helpers.
+    size_mb = parse_size_mb(get_in(item, ["mb"]) || get_in(item, ["size"]))
+    mb_left = parse_size_mb(get_in(item, ["mbleft"]))
     downloaded_mb = size_mb - mb_left
-    downloaded_bytes = round(downloaded_mb * 1024 * 1024)
+
+    size_bytes = Helpers.parse_size_mb_to_bytes(size_mb)
+    downloaded_bytes = Helpers.parse_size_mb_to_bytes(downloaded_mb)
 
     # Calculate progress
     progress = if size_mb > 0, do: downloaded_mb / size_mb * 100, else: 0.0
@@ -545,12 +547,14 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     storage = get_in(item, ["storage"]) || get_in(item, ["path"]) || ""
 
     # Parse timestamps
-    added_at = parse_timestamp(get_in(item, ["added"]))
+    added_at = Helpers.parse_timestamp_unix(get_in(item, ["added"]))
 
     completed_at =
-      if status == "Completed", do: parse_timestamp(get_in(item, ["completed"])), else: nil
+      if status == "Completed",
+        do: Helpers.parse_timestamp_unix(get_in(item, ["completed"])),
+        else: nil
 
-    TorrentStatus.new(%{
+    DownloadStatus.new(%{
       id: nzo_id,
       name: filename,
       state: parse_state(status),
@@ -587,18 +591,21 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     end
   end
 
-  defp parse_size(size) when is_float(size), do: size
-  # bytes to MB
-  defp parse_size(size) when is_integer(size), do: size / 1024 / 1024
+  # SABnzbd quirk: queue items use float MiB (`mb`, `mb_left`), but history
+  # items use integer bytes under the `size` key. Floats and strings are
+  # treated as already-in-MiB; integers are reinterpreted as bytes and
+  # converted back to MiB.
+  defp parse_size_mb(value) when is_float(value), do: value
+  defp parse_size_mb(value) when is_integer(value), do: value / 1024 / 1024
 
-  defp parse_size(size) when is_binary(size) do
-    case Float.parse(size) do
+  defp parse_size_mb(value) when is_binary(value) do
+    case Float.parse(value) do
       {float, _} -> float
       :error -> 0.0
     end
   end
 
-  defp parse_size(_), do: 0.0
+  defp parse_size_mb(_), do: 0.0
 
   defp parse_float(value) when is_float(value), do: value
   defp parse_float(value) when is_integer(value), do: value * 1.0
@@ -629,12 +636,6 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
   end
 
   defp parse_eta(_), do: nil
-
-  defp parse_timestamp(timestamp) when is_integer(timestamp) and timestamp > 0 do
-    DateTime.from_unix!(timestamp)
-  end
-
-  defp parse_timestamp(_), do: nil
 
   # Normalize config to ensure :api_key is available at the top-level.
   # Some callers construct the client config with the API key inside `:options`.
