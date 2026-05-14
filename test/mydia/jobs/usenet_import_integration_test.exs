@@ -242,7 +242,7 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
           download_client_id: "777"
         })
 
-      assert {:error, :client_error} =
+      assert {:error, {:path_not_found, "/nonexistent/path/that/does/not/exist"}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => "/nonexistent/path/that/does/not/exist"
