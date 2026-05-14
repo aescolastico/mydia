@@ -380,7 +380,68 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
   end
 
   describe "unmatched orphan self-healing" do
-    test "deletes an unmatched download that is no longer in any client" do
+    test "deletes an unmatched download when client confirms torrent is gone" do
+      # The client must be reachable and return an empty torrent list to confirm
+      # the torrent is absent (in_client?: false). Only then is the orphan deleted.
+      bypass = Bypass.open()
+      stub_qbit_login(bypass)
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [])
+      end)
+
+      setup_runtime_config([build_test_client_config(%{port: bypass.port})])
+
+      orphan =
+        download_fixture(%{
+          match_status: "unmatched",
+          download_client: "TestClient",
+          download_client_id: "gone-1"
+        })
+
+      {:ok, _} =
+        orphan
+        |> Ecto.Changeset.change(media_item_id: nil)
+        |> Mydia.Repo.update()
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+    end
+
+    test "deletes an unmatched + completed download when client confirms torrent is gone" do
+      # The actual production bug: completed_at set, no media_item, no
+      # library_path, sitting in DB forever while MediaImport retries.
+      bypass = Bypass.open()
+      stub_qbit_login(bypass)
+
+      Bypass.stub(bypass, "GET", "/api/v2/torrents/info", fn conn ->
+        json_resp(conn, 200, [])
+      end)
+
+      setup_runtime_config([build_test_client_config(%{port: bypass.port})])
+
+      orphan =
+        download_fixture(%{
+          match_status: "unmatched",
+          completed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          download_client: "TestClient",
+          download_client_id: "gone-completed-1"
+        })
+
+      {:ok, _} =
+        orphan
+        |> Ecto.Changeset.change(media_item_id: nil, library_path_id: nil)
+        |> Mydia.Repo.update()
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+    end
+
+    test "does not delete unmatched download when no clients are configured" do
+      # No clients means presence is indeterminate (in_client?: nil).
+      # The orphan must survive so the user can still manually handle it.
       setup_runtime_config([])
 
       orphan =
@@ -397,30 +458,7 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
 
       assert :ok = perform_job(DownloadMonitor, %{})
 
-      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
-    end
-
-    test "deletes an unmatched + completed download that is no longer in any client" do
-      # The actual production bug: completed_at set, no media_item, no
-      # library_path, sitting in DB forever while MediaImport retries.
-      setup_runtime_config([])
-
-      orphan =
-        download_fixture(%{
-          match_status: "unmatched",
-          completed_at: DateTime.utc_now() |> DateTime.truncate(:second),
-          download_client: "test-client",
-          download_client_id: "gone-completed-1"
-        })
-
-      {:ok, _} =
-        orphan
-        |> Ecto.Changeset.change(media_item_id: nil, library_path_id: nil)
-        |> Mydia.Repo.update()
-
-      assert :ok = perform_job(DownloadMonitor, %{})
-
-      refute Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
+      assert Mydia.Repo.get(Mydia.Downloads.Download, orphan.id)
     end
 
     test "preserves a matched download that goes missing (regression guard)" do
@@ -1135,5 +1173,19 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
     }
 
     struct!(Mydia.Config.Schema.DownloadClient, Map.merge(defaults, overrides))
+  end
+
+  defp stub_qbit_login(bypass) do
+    Bypass.stub(bypass, "POST", "/api/v2/auth/login", fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("set-cookie", "SID=test-sid; HttpOnly")
+      |> Plug.Conn.resp(200, "Ok.")
+    end)
+  end
+
+  defp json_resp(conn, status, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.resp(status, Jason.encode!(body))
   end
 end

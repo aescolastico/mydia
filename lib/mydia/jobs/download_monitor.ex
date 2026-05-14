@@ -83,7 +83,8 @@ defmodule Mydia.Jobs.DownloadMonitor do
     # Status is "missing" when download exists in DB but not in any client
     missing =
       Enum.filter(downloads, fn d ->
-        d.status == "missing" and is_nil(d.db_completed_at) and is_nil(d.error_message)
+        d.status == "missing" and is_nil(d.db_completed_at) and is_nil(d.error_message) and
+          d.match_status != "unmatched"
       end)
 
     # Self-heal: unmatched downloads whose torrent is no longer in any client
