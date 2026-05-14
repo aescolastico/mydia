@@ -3,12 +3,12 @@
 //! This crate provides the core P2P functionality using iroh for
 //! NAT traversal and QUIC-based connections.
 
+use futures::StreamExt;
 use iroh::{
     defaults::prod as default_relays,
     dns::DnsResolver,
-    endpoint::{Connection, SendStream},
+    endpoint::{presets, Connection, PathEvent, SendStream},
     Endpoint, EndpointAddr, EndpointId, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey,
-    Watcher,
 };
 use iroh_relay::RelayQuicConfig;
 use std::collections::HashMap;
@@ -234,13 +234,12 @@ pub enum PeerConnectionType {
 impl PeerConnectionType {
     /// Determine connection type from a Connection's paths
     pub fn from_connection(conn: &Connection) -> Self {
-        let mut paths = conn.paths();
-        let paths_list = paths.get();
-        if paths_list.is_empty() {
+        let paths = conn.paths();
+        if paths.is_empty() {
             return PeerConnectionType::None;
         }
-        let has_relay = paths_list.iter().any(|p| p.is_relay());
-        let has_direct = paths_list.iter().any(|p| p.is_ip());
+        let has_relay = paths.iter().any(|p| p.is_relay());
+        let has_direct = paths.iter().any(|p| p.is_ip());
         match (has_direct, has_relay) {
             (true, true) => PeerConnectionType::Mixed,
             (true, false) => PeerConnectionType::Direct,
@@ -324,7 +323,7 @@ fn init_tracing(event_tx: mpsc::Sender<Event>) {
 
     // Set up tracing with env filter (default to info, but can be overridden with RUST_LOG)
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,iroh=info,quinn=warn,rustls=warn"));
+        .unwrap_or_else(|_| EnvFilter::new("info,iroh=info,noq=warn,rustls=warn"));
 
     let _ = tracing_subscriber::registry()
         .with(filter)
@@ -374,7 +373,7 @@ fn load_or_generate_keypair(path: Option<&str>) -> SecretKey {
     }
 
     // Generate new
-    let secret_key = SecretKey::generate(&mut rand::rng());
+    let secret_key = SecretKey::generate();
 
     // Save if path provided
     if let Some(path) = path {
@@ -669,8 +668,9 @@ async fn run_event_loop(
     // Initialize tracing to forward logs to Elixir
     init_tracing(event_tx.clone());
 
-    // Build the endpoint
-    let mut builder = Endpoint::builder()
+    // Build the endpoint with the N0 production preset (DNS + default relay fallbacks).
+    // When a custom relay is configured below, RelayMode::Custom overrides the preset's relays.
+    let mut builder = Endpoint::builder(presets::N0)
         .secret_key(secret_key)
         .alpns(vec![ALPN.to_vec()])
         .dns_resolver(create_dns_resolver());
@@ -679,10 +679,7 @@ async fn run_event_loop(
     if let Some(relay_url) = &config.relay_url {
         if let Ok(url) = relay_url.parse::<RelayUrl>() {
             // Custom relay with QUIC enabled
-            let custom = RelayConfig {
-                url,
-                quic: Some(RelayQuicConfig::default()),
-            };
+            let custom = RelayConfig::new(url, Some(RelayQuicConfig::default()));
             // Combine with iroh's default production relays for fallback
             let relay_map = RelayMap::from_iter([
                 custom,
@@ -961,7 +958,10 @@ async fn run_event_loop(
         }
     }
 
-    tracing::info!("Event loop terminated");
+    // 1.0 removed best-effort cleanup on Endpoint drop; close explicitly so peers see proper close frames.
+    tracing::info!("Event loop terminated, closing endpoint gracefully");
+    endpoint.close().await;
+    tracing::info!("Endpoint closed");
 }
 
 /// Handle dialing a peer
@@ -1011,20 +1011,44 @@ async fn handle_dial(
 }
 
 /// Monitor a peer connection for type changes (e.g. relay -> direct after hole-punching).
-/// Checks every 5 seconds for up to 2 minutes, then stops.
+/// Awaits PathEvent notifications from iroh and emits ConnectionTypeChanged on transitions.
+/// Stops after 2 minutes (hole-punching window) or when Direct is reached.
 async fn monitor_connection_type(
     conn: Connection,
     peer_id: String,
     event_tx: mpsc::Sender<Event>,
 ) {
     let mut current_type = PeerConnectionType::from_connection(&conn);
+    let mut events = conn.path_events();
 
-    // Check for connection type changes for up to 2 minutes
-    // (hole-punching typically completes within this window)
-    for _ in 0..24 {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let new_type = PeerConnectionType::from_connection(&conn);
-        if new_type != current_type {
+    let monitor = async {
+        while let Some(event) = events.next().await {
+            // Decide whether this event warrants a recompute. PathEvent is #[non_exhaustive],
+            // so the wildcard arm safely ignores future variants.
+            let should_recheck = match event {
+                PathEvent::Opened { .. }
+                | PathEvent::Closed { .. }
+                | PathEvent::Selected { .. } => true,
+                PathEvent::Lagged { missed } => {
+                    tracing::warn!(
+                        "PathEvent stream lagged for {} (missed {}), resyncing from snapshot",
+                        peer_id,
+                        missed
+                    );
+                    true
+                }
+                _ => false,
+            };
+
+            if !should_recheck {
+                continue;
+            }
+
+            let new_type = PeerConnectionType::from_connection(&conn);
+            if new_type == current_type {
+                continue;
+            }
+
             tracing::info!(
                 "Connection type changed for {}: {:?} -> {:?}",
                 peer_id,
@@ -1039,11 +1063,22 @@ async fn monitor_connection_type(
                 .await;
             current_type = new_type;
 
-            // If we reached Direct, no need to keep monitoring
             if new_type == PeerConnectionType::Direct {
                 break;
             }
         }
+    };
+
+    // Cap the watcher at 2 minutes so it doesn't leak for long-lived connections.
+    if tokio::time::timeout(std::time::Duration::from_secs(120), monitor)
+        .await
+        .is_err()
+    {
+        tracing::debug!(
+            "monitor_connection_type for {} hit 2-minute cap; current type: {:?}",
+            peer_id,
+            current_type
+        );
     }
 }
 
