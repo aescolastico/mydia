@@ -389,15 +389,25 @@ defmodule Mydia.MetadataTest do
   describe "metadata_language/0" do
     setup do
       original = Application.get_env(:mydia, :runtime_config)
-      on_exit(fn -> Application.put_env(:mydia, :runtime_config, original) end)
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :runtime_config, original)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
+      end)
+
       :ok
     end
 
     test "reads the language from the merged runtime config" do
+      base = Mydia.Config.Schema.defaults()
+
       Application.put_env(
         :mydia,
         :runtime_config,
-        %Mydia.Config.Schema{metadata: %Mydia.Config.Schema.Metadata{language: "de-DE"}}
+        %{base | metadata: %Mydia.Config.Schema.Metadata{language: "de-DE"}}
       )
 
       assert Metadata.metadata_language() == "de-DE"
@@ -406,10 +416,12 @@ defmodule Mydia.MetadataTest do
     end
 
     test "falls back to en-US when no language is configured" do
+      base = Mydia.Config.Schema.defaults()
+
       Application.put_env(
         :mydia,
         :runtime_config,
-        %Mydia.Config.Schema{metadata: %Mydia.Config.Schema.Metadata{language: nil}}
+        %{base | metadata: %Mydia.Config.Schema.Metadata{language: nil}}
       )
 
       assert Metadata.metadata_language() == "en-US"
