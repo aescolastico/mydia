@@ -1,8 +1,17 @@
 name: Release
 
+# Release procedure (Immutable Releases enabled on this repo):
+#
+#   1. gh release create vX.Y.Z --target master --draft --prerelease \
+#        --notes-file notes.md
+#   2. gh workflow run release.yml -f version=vX.Y.Z
+#
+# The workflow uploads assets to the draft and publishes it. The `release`
+# event is not used because GitHub Actions silently drops `release: created`
+# for drafts (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+# and asset uploads to a published immutable release are blocked.
+
 on:
-  release:
-    types: [created]
   workflow_dispatch:
     inputs:
       version:
@@ -10,7 +19,7 @@ on:
         required: true
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || github.event.inputs.version || github.ref }}
+  group: release-${{ github.event.inputs.version }}
   cancel-in-progress: false
 
 env:
@@ -36,11 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.version }}"
-          else
-            TAG="${{ github.event.release.tag_name }}"
-          fi
+          TAG="${{ github.event.inputs.version }}"
 
           # Enforce draft-first authoring. This repo has Immutable Releases
           # enabled, so assets can only be uploaded while the release is a
@@ -51,14 +56,15 @@ jobs:
             exit 1
           fi
 
-          # Remove 'v' prefix for version number
+          # Remove 'v' prefix for marketing version (CFBundleShortVersionString / versionName)
           VERSION_NUM="${TAG#v}"
 
-          # Convert version to version code (e.g., 1.2.3 -> 10203)
-          # Handle pre-release suffixes by stripping them first
-          BASE_VERSION=$(echo "$VERSION_NUM" | sed 's/-.*$//')
-          IFS='.' read -ra PARTS <<< "$BASE_VERSION"
-          VERSION_CODE=$((${PARTS[0]:-0} * 10000 + ${PARTS[1]:-0} * 100 + ${PARTS[2]:-0}))
+          # Build number (CFBundleVersion / Android versionCode) — globally
+          # monotonic via github.run_number, with an offset to clear the
+          # historical high-water mark of 1000 from earlier failed uploads.
+          # Re-runs of the same workflow run preserve run_number; new dispatches
+          # increment it, which is exactly what TestFlight/Play Store require.
+          VERSION_CODE=$(( ${{ github.run_number }} + 10000 ))
 
           # Check if this is a prerelease
           if [[ "$TAG" =~ -beta|-rc|-alpha ]]; then
