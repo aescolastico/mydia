@@ -296,12 +296,12 @@ let
 
     dialyxir = buildMix rec {
       name = "dialyxir";
-      version = "1.4.6";
+      version = "1.4.7";
 
       src = fetchHex {
         pkg = "dialyxir";
         version = "${version}";
-        sha256 = "8cf5615c5cd4c2da6c501faae642839c8405b49f8aa057ad4ae401cb808ef64d";
+        sha256 = "b34527202e6eb8cee198efec110996c25c5898f43a4094df157f8d28f27d9efe";
       };
 
       beamDeps = [ erlex ];
@@ -372,8 +372,6 @@ let
       beamDeps = [];
     };
 
-
-
     eqrcode = buildMix rec {
       name = "eqrcode";
       version = "0.2.1";
@@ -389,12 +387,12 @@ let
 
     erlex = buildMix rec {
       name = "erlex";
-      version = "0.2.7";
+      version = "0.2.8";
 
       src = fetchHex {
         pkg = "erlex";
         version = "${version}";
-        sha256 = "3ed95f79d1a844c3f6bf0cea61e0d5612a42ce56da9c03f01df538685365efb0";
+        sha256 = "9d66ff9fedf69e49dc3fd12831e12a8a37b76f8651dd21cd45fcf5561a8a7590";
       };
 
       beamDeps = [];
@@ -632,6 +630,19 @@ let
       };
 
       beamDeps = [ cc_precompiler elixir_make fine ];
+    };
+
+    logger_backends = buildMix rec {
+      name = "logger_backends";
+      version = "1.0.0";
+
+      src = fetchHex {
+        pkg = "logger_backends";
+        version = "${version}";
+        sha256 = "1faceb3e7ec3ef66a8f5746c5afd020e63996df6fd4eb8cdb789e5665ae6c9ce";
+      };
+
+      beamDeps = [];
     };
 
     luerl = buildRebar3 rec {
