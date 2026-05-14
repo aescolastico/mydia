@@ -65,7 +65,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
           search_query: String.t() | nil,
           quality_profile: QualityProfile.t() | nil,
           media_type: :movie | :episode | nil,
-          expected_title: String.t() | nil
+          expected_title: String.t() | nil,
+          min_post_age_minutes: non_neg_integer() | nil,
+          now: DateTime.t() | nil
         ]
 
   @default_min_seeders 0
@@ -173,19 +175,23 @@ defmodule Mydia.Indexers.ReleaseRanker do
     min_ratio = Keyword.get(opts, :min_ratio)
     size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
+    min_post_age_minutes = Keyword.get(opts, :min_post_age_minutes)
+    now = Keyword.get(opts, :now) || DateTime.utc_now()
 
     Enum.filter(results, fn result ->
       cond do
         not meets_seeder_minimum?(result, min_seeders) ->
           Logger.info(
-            "[ReleaseRanker] Filtered out (seeders #{result.seeders} < #{min_seeders}): #{result.title}"
+            "[ReleaseRanker] Filtered out (seeders #{inspect(result.seeders)} < #{min_seeders}): #{result.title}"
           )
 
           false
 
         min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-          total = result.seeders + result.leechers
-          ratio = if total > 0, do: Float.round(result.seeders / total * 100, 1), else: 0.0
+          seeders = result.seeders || 0
+          leechers = result.leechers || 0
+          total = seeders + leechers
+          ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
 
           Logger.info(
             "[ReleaseRanker] Filtered out (ratio #{ratio}% < #{Float.round(min_ratio * 100, 1)}%): #{result.title}"
@@ -208,6 +214,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
           Logger.info("[ReleaseRanker] Filtered out (blocked tag): #{result.title}")
           false
 
+        not meets_post_age_minimum?(result, min_post_age_minutes, now) ->
+          Logger.info(
+            "[ReleaseRanker] Filtered out (NZB posted < #{min_post_age_minutes} min ago): #{result.title}"
+          )
+
+          false
+
         true ->
           true
       end
@@ -216,13 +229,21 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   ## Private Functions - Filtering
 
+  # NZB results have no seeders concept - the seeder minimum applies only to
+  # torrents. nil seeders pass through.
+  defp meets_seeder_minimum?(%SearchResult{seeders: nil}, _min_seeders), do: true
+
   defp meets_seeder_minimum?(%SearchResult{seeders: seeders}, min_seeders) do
     seeders >= min_seeders
   end
 
   defp meets_ratio_minimum?(_result, nil), do: true
 
+  # NZB results have no ratio concept - skip the ratio check for them.
+  defp meets_ratio_minimum?(%SearchResult{seeders: nil}, _min_ratio), do: true
+
   defp meets_ratio_minimum?(%SearchResult{seeders: seeders, leechers: leechers}, min_ratio) do
+    leechers = leechers || 0
     total_peers = seeders + leechers
 
     if total_peers == 0 do
@@ -233,6 +254,26 @@ defmodule Mydia.Indexers.ReleaseRanker do
       seeder_ratio >= min_ratio
     end
   end
+
+  # NZB minimum post-age filter. NZB results posted within `min_post_age_minutes`
+  # of `now` are excluded. Torrents and NZB results without a `usenet_date`
+  # pass through. nil/0 setting disables the filter.
+  defp meets_post_age_minimum?(_result, nil, _now), do: true
+  defp meets_post_age_minimum?(_result, 0, _now), do: true
+
+  defp meets_post_age_minimum?(
+         %SearchResult{download_protocol: :nzb, usenet_date: %DateTime{} = posted},
+         minutes,
+         now
+       )
+       when is_integer(minutes) and minutes > 0 do
+    cutoff = DateTime.add(now, -minutes * 60, :second)
+    # A result is "too recent" when it was posted strictly after the cutoff.
+    # A result exactly at the cutoff (posted == cutoff) is kept.
+    DateTime.compare(posted, cutoff) != :gt
+  end
+
+  defp meets_post_age_minimum?(_result, _minutes, _now), do: true
 
   # nil size_range disables size filtering
   defp within_size_range?(_result, nil), do: true
@@ -304,8 +345,10 @@ defmodule Mydia.Indexers.ReleaseRanker do
     tag_bonus = calculate_tag_bonus(result.title, preferred_tags)
 
     size_mb = bytes_to_mb(result.size)
-    total_peers = result.seeders + result.leechers
-    seeder_ratio = if total_peers > 0, do: result.seeders / total_peers, else: 0.0
+    seeders = result.seeders || 0
+    leechers = result.leechers || 0
+    total_peers = seeders + leechers
+    seeder_ratio = if total_peers > 0, do: seeders / total_peers, else: 0.0
 
     # Add tag_bonus to total score
     total_score = score_result.score + tag_bonus
@@ -314,7 +357,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
     [ReleaseRanker] Score breakdown for: #{result.title}
       Raw values:
         - Size: #{Float.round(size_mb, 1)} MB
-        - Seeders: #{result.seeders}, Leechers: #{result.leechers}
+        - Seeders: #{inspect(result.seeders)}, Leechers: #{inspect(result.leechers)}
         - Seeder ratio: #{Float.round(seeder_ratio * 100, 1)}%
         - Quality: #{inspect(result.quality)}
       Component scores:
@@ -599,8 +642,10 @@ defmodule Mydia.Indexers.ReleaseRanker do
         "low_seeders: #{result.seeders} < #{min_seeders}"
 
       min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-        total = result.seeders + result.leechers
-        ratio = if total > 0, do: Float.round(result.seeders / total * 100, 1), else: 0.0
+        seeders = result.seeders || 0
+        leechers = result.leechers || 0
+        total = seeders + leechers
+        ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
         "low_ratio: #{ratio}% < #{Float.round(min_ratio * 100, 1)}%"
 
       size_range != nil and not within_size_range?(result, size_range) ->
