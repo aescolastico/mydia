@@ -188,6 +188,33 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
 
       assert :ok = perform_job(DownloadMonitor, %{})
     end
+
+    test "does NOT mark downloads missing when their client is unreachable" do
+      # Client is configured by name but unreachable on the network. This is the
+      # exact failure mode behind the recurring "qBittorrent downloads vanish"
+      # reports: a brief client restart used to flag every active download as
+      # missing within a single monitor cycle.
+      setup_runtime_config([
+        build_test_client_config(%{name: "qBit-down", host: "127.0.0.1", port: 1})
+      ])
+
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "qBit-down",
+          download_client_id: "abc123def456abc123def456abc123def456abcd"
+        })
+
+      assert :ok = perform_job(DownloadMonitor, %{})
+
+      # The download must NOT be marked missing — we can't tell from an
+      # unreachable client whether the torrent is gone or not.
+      updated = Downloads.get_download!(download.id)
+      assert is_nil(updated.error_message)
+      assert is_nil(updated.completed_at)
+    end
   end
 
   describe "missing download detection" do

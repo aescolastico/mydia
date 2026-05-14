@@ -154,7 +154,15 @@ defmodule Mydia.Downloads.History do
   end
 
   defp fetch_all_client_statuses(clients) do
-    # Fetch torrents from all clients concurrently
+    # Fetch torrents from all clients concurrently. We deliberately distinguish
+    # between two outcomes that previously collapsed into "empty list":
+    #
+    #   - {:reachable, torrents_map} — the client answered, here are its torrents
+    #   - :unreachable                — the client errored; we don't know its state
+    #
+    # The downstream classifier MUST NOT mark a download "missing" just because
+    # its client was unreachable, otherwise a brief client restart flags every
+    # active download as failed.
     clients
     |> Task.async_stream(
       fn client_config ->
@@ -163,87 +171,134 @@ defmodule Mydia.Downloads.History do
 
         case Client.list_torrents(adapter, config, []) do
           {:ok, torrents} ->
-            {client_config.name, torrents}
+            torrents_map =
+              torrents
+              |> Enum.map(fn torrent -> {torrent.id, torrent} end)
+              |> Map.new()
+
+            {client_config.name, {:reachable, torrents_map}}
 
           {:error, error} ->
             Logger.warning(
               "Failed to fetch torrents from #{client_config.name}: #{inspect(error)}"
             )
 
-            {client_config.name, []}
+            {client_config.name, :unreachable}
         end
       end,
       timeout: :infinity,
       max_concurrency: 10
     )
     |> Enum.reduce(%{}, fn
-      {:ok, {client_name, torrents}}, acc ->
-        # Index torrents by client_id for fast lookup
-        torrents_map =
-          torrents
-          |> Enum.map(fn torrent -> {torrent.id, torrent} end)
-          |> Map.new()
-
-        Map.put(acc, client_name, torrents_map)
-
-      _, acc ->
-        acc
+      {:ok, {client_name, result}}, acc -> Map.put(acc, client_name, result)
+      _, acc -> acc
     end)
   end
 
   defp enrich_download_with_status(download, client_statuses) do
-    # Find the torrent status from the appropriate client
-    torrent_status =
-      client_statuses
-      |> Map.get(download.download_client, %{})
-      |> Map.get(download.download_client_id)
+    case Map.get(client_statuses, download.download_client) do
+      {:reachable, torrents_map} ->
+        case Map.get(torrents_map, download.download_client_id) do
+          nil ->
+            # Client confirmed it doesn't have this torrent — genuinely missing.
+            enrich_download_with_empty_status(download)
 
-    if torrent_status do
-      # Convert metadata map to struct for type-safe access
-      metadata = DownloadMetadata.from_map(download.metadata)
+          torrent_status ->
+            enrich_download_with_torrent_status(download, torrent_status)
+        end
 
-      # Merge download DB record with real-time client status
-      EnrichedDownload.new(%{
-        id: download.id,
-        media_item_id: download.media_item_id,
-        episode_id: download.episode_id,
-        media_item: download.media_item,
-        episode: download.episode,
-        title: download.title,
-        indexer: download.indexer,
-        download_url: download.download_url,
-        download_client: download.download_client,
-        download_client_id: download.download_client_id,
-        metadata: download.metadata,
-        match_status: download.match_status,
-        inserted_at: download.inserted_at,
-        # Real-time fields from client
-        status: status_from_torrent_state(torrent_status.state),
-        progress: torrent_status.progress,
-        download_speed: torrent_status.download_speed,
-        upload_speed: torrent_status.upload_speed,
-        eta: torrent_status.eta,
-        size: torrent_status.size,
-        downloaded: torrent_status.downloaded,
-        uploaded: torrent_status.uploaded,
-        ratio: torrent_status.ratio,
-        seeders: if(metadata, do: metadata.seeders, else: nil),
-        leechers: if(metadata, do: metadata.leechers, else: nil),
-        save_path: torrent_status.save_path,
-        completed_at: download.completed_at || torrent_status.completed_at,
-        error_message: download.error_message,
-        # Preserve database completed_at for tracking if we've already processed it
-        db_completed_at: download.completed_at,
-        imported_at: download.imported_at,
-        import_retry_count: download.import_retry_count,
-        import_last_error: download.import_last_error,
-        import_next_retry_at: download.import_next_retry_at,
-        import_failed_at: download.import_failed_at
-      })
-    else
-      # Download not found in client - might be removed or completed
-      enrich_download_with_empty_status(download)
+      :unreachable ->
+        # Client is misbehaving (down, restarting, network blip). We can't tell
+        # whether the torrent is there — DO NOT mark missing. Surface status as
+        # "unknown" so DownloadMonitor's missing-handler skips it this cycle.
+        enrich_download_with_unknown_status(download)
+
+      nil ->
+        # The client referenced by the download isn't configured at all (deleted,
+        # renamed, or never existed) — treat as genuinely missing.
+        enrich_download_with_empty_status(download)
     end
+  end
+
+  defp enrich_download_with_torrent_status(download, torrent_status) do
+    metadata = DownloadMetadata.from_map(download.metadata)
+
+    EnrichedDownload.new(%{
+      id: download.id,
+      media_item_id: download.media_item_id,
+      episode_id: download.episode_id,
+      media_item: download.media_item,
+      episode: download.episode,
+      title: download.title,
+      indexer: download.indexer,
+      download_url: download.download_url,
+      download_client: download.download_client,
+      download_client_id: download.download_client_id,
+      metadata: download.metadata,
+      match_status: download.match_status,
+      inserted_at: download.inserted_at,
+      status: status_from_torrent_state(torrent_status.state),
+      progress: torrent_status.progress,
+      download_speed: torrent_status.download_speed,
+      upload_speed: torrent_status.upload_speed,
+      eta: torrent_status.eta,
+      size: torrent_status.size,
+      downloaded: torrent_status.downloaded,
+      uploaded: torrent_status.uploaded,
+      ratio: torrent_status.ratio,
+      seeders: if(metadata, do: metadata.seeders, else: nil),
+      leechers: if(metadata, do: metadata.leechers, else: nil),
+      save_path: torrent_status.save_path,
+      completed_at: download.completed_at || torrent_status.completed_at,
+      error_message: download.error_message,
+      db_completed_at: download.completed_at,
+      imported_at: download.imported_at,
+      import_retry_count: download.import_retry_count,
+      import_last_error: download.import_last_error,
+      import_next_retry_at: download.import_next_retry_at,
+      import_failed_at: download.import_failed_at
+    })
+  end
+
+  defp enrich_download_with_unknown_status(download) do
+    metadata = DownloadMetadata.from_map(download.metadata)
+
+    EnrichedDownload.new(%{
+      id: download.id,
+      media_item_id: download.media_item_id,
+      episode_id: download.episode_id,
+      media_item: download.media_item,
+      episode: download.episode,
+      title: download.title,
+      indexer: download.indexer,
+      download_url: download.download_url,
+      download_client: download.download_client,
+      download_client_id: download.download_client_id,
+      metadata: download.metadata,
+      match_status: download.match_status,
+      inserted_at: download.inserted_at,
+      # "unknown" intentionally avoids the "missing" / "failed" classifications.
+      status: "unknown",
+      progress: if(download.completed_at, do: 100.0, else: 0.0),
+      download_speed: 0,
+      upload_speed: 0,
+      eta: nil,
+      size: if(metadata, do: metadata.size, else: 0),
+      downloaded: 0,
+      uploaded: 0,
+      ratio: 0.0,
+      seeders: nil,
+      leechers: nil,
+      save_path: nil,
+      completed_at: download.completed_at,
+      error_message: download.error_message,
+      db_completed_at: download.completed_at,
+      imported_at: download.imported_at,
+      import_retry_count: download.import_retry_count,
+      import_last_error: download.import_last_error,
+      import_next_retry_at: download.import_next_retry_at,
+      import_failed_at: download.import_failed_at
+    })
   end
 
   defp enrich_download_with_empty_status(download) do
