@@ -4,6 +4,7 @@ defmodule Mydia.Downloads.Queue do
   import Ecto.Query, warn: false
 
   alias Mydia.Repo
+  alias Mydia.Downloads.ContentType
   alias Mydia.Downloads.Download
   alias Mydia.Downloads.Client
   alias Mydia.Downloads.Client.Registry
@@ -866,44 +867,7 @@ defmodule Mydia.Downloads.Queue do
               "Content preview (first 500 chars): #{inspect(String.slice(body, 0, 500))}"
             )
 
-            # Check if it looks like an NZB file
-            is_nzb = String.contains?(body, "<?xml") and String.contains?(body, "nzb")
-
-            is_torrent =
-              String.starts_with?(body, "d8:announce") or
-                (byte_size(body) > 11 and :binary.part(body, 0, 11) == "d8:announce")
-
-            # Determine file type
-            detected_type =
-              cond do
-                is_nzb -> :nzb
-                is_torrent -> :torrent
-                true -> nil
-              end
-
-            Logger.info(
-              "File type detection: is_nzb=#{is_nzb}, is_torrent=#{is_torrent}, detected_type=#{inspect(detected_type)}"
-            )
-
-            # If we got HTML content (detected_type=nil), try to extract magnet link
-            if detected_type == nil do
-              case extract_magnet_from_html(body) do
-                {:ok, magnet_url} ->
-                  Logger.info("Extracted magnet link from HTML page")
-                  {:ok, {:magnet, magnet_url}}
-
-                {:error, :no_magnet_found} ->
-                  Logger.error(
-                    "Downloaded HTML content but no magnet link found. Page may require further navigation."
-                  )
-
-                  {:error,
-                   {:download_failed,
-                    "Downloaded page is HTML, not a torrent file. No magnet link found on page."}}
-              end
-            else
-              {:ok, {:file, body, detected_type}}
-            end
+            classify_body(body)
 
           {:ok, %{status: status, body: body}} ->
             # Log the response body for debugging - it often contains error details
@@ -969,49 +933,7 @@ defmodule Mydia.Downloads.Queue do
 
           if is_binary(body) and byte_size(body) > 0 do
             Logger.info("FlareSolverr downloaded file (#{byte_size(body)} bytes)")
-
-            # Check if response is a magnet link redirect
-            if String.starts_with?(body, "magnet:") do
-              {:ok, {:magnet, String.trim(body)}}
-            else
-              # Detect file type
-              is_nzb = String.contains?(body, "<?xml") and String.contains?(body, "nzb")
-
-              is_torrent =
-                String.starts_with?(body, "d8:announce") or
-                  (byte_size(body) > 11 and :binary.part(body, 0, 11) == "d8:announce")
-
-              detected_type =
-                cond do
-                  is_nzb -> :nzb
-                  is_torrent -> :torrent
-                  true -> nil
-                end
-
-              Logger.info(
-                "FlareSolverr file type detection: detected_type=#{inspect(detected_type)}"
-              )
-
-              # If we got HTML content (detected_type=nil), try to extract magnet link
-              if detected_type == nil do
-                case extract_magnet_from_html(body) do
-                  {:ok, magnet_url} ->
-                    Logger.info("Extracted magnet link from HTML page")
-                    {:ok, {:magnet, magnet_url}}
-
-                  {:error, :no_magnet_found} ->
-                    Logger.error(
-                      "FlareSolverr returned HTML content but no magnet link found. Page may require further navigation."
-                    )
-
-                    {:error,
-                     {:download_failed,
-                      "Downloaded page is HTML, not a torrent file. No magnet link found on page."}}
-                end
-              else
-                {:ok, {:file, body, detected_type}}
-              end
-            end
+            classify_body(body)
           else
             Logger.error("FlareSolverr returned empty response for: #{url}")
             {:error, {:download_failed, "Empty response from FlareSolverr"}}
@@ -1192,6 +1114,40 @@ defmodule Mydia.Downloads.Queue do
   end
 
   defp format_single_cookie(_), do: nil
+
+  # Classifies a downloaded response body into a magnet link, a torrent/NZB
+  # file, or an HTML page from which a magnet link can be scraped.
+  #
+  # Detection is structural (see ContentType) so trackerless torrents — whose
+  # bencode dictionaries do not begin with `8:announce` — are recognised.
+  defp classify_body(body) when is_binary(body) and byte_size(body) > 0 do
+    case ContentType.detect(body) do
+      :magnet ->
+        {:ok, {:magnet, String.trim(body)}}
+
+      type when type in [:torrent, :nzb] ->
+        Logger.info("Detected #{type} file (#{byte_size(body)} bytes)")
+        {:ok, {:file, body, type}}
+
+      :unknown ->
+        case extract_magnet_from_html(body) do
+          {:ok, magnet_url} ->
+            Logger.info("Extracted magnet link from HTML page")
+            {:ok, {:magnet, magnet_url}}
+
+          {:error, :no_magnet_found} ->
+            Logger.error(
+              "Downloaded body was not a recognised torrent/NZB/magnet, and no magnet link was found inside it"
+            )
+
+            {:error,
+             {:download_failed, "Downloaded content was not a torrent, NZB, or magnet link"}}
+        end
+    end
+  end
+
+  defp classify_body(_),
+    do: {:error, {:download_failed, "Empty response body"}}
 
   # Extracts a magnet link from HTML content
   # This is used when FlareSolverr returns an HTML page (e.g., 1337x torrent detail page)

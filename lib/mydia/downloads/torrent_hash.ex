@@ -95,6 +95,22 @@ defmodule Mydia.Downloads.TorrentHash do
   end
 
   @doc """
+  Returns true if the binary is a structurally valid bencoded torrent metainfo
+  file — a top-level dictionary containing an `info` dictionary.
+
+  Works regardless of bencode key order, so both classic tracker-based torrents
+  (which begin with `d8:announce…`) and trackerless / DHT-only torrents
+  (which begin with whichever key sorts first, often `comment` or `created by`)
+  are recognised.
+  """
+  @spec valid_metainfo?(binary()) :: boolean()
+  def valid_metainfo?(<<?d, _rest::binary>> = body) do
+    match?({:ok, _, _}, find_info_dict_boundaries(body))
+  end
+
+  def valid_metainfo?(_), do: false
+
+  @doc """
   Constructs a magnet URI from a raw info hash and title.
 
   Validates the hash format (40-char SHA1 hex or 64-char SHA256 hex) and appends
