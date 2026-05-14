@@ -55,6 +55,22 @@ defmodule Mydia.Library.ReleaseParser.ResolverTest do
       assert result.season == 1
       assert result.episodes == [5]
     end
+
+    test "verbose 'Season N Episode M' produces season + episodes" do
+      result = resolve("Off Campus (2026) Season 1 Episode 1 The Deal")
+      assert result.season == 1
+      assert result.episodes == [1]
+    end
+
+    test "verbose 'Season N Episode M-' with trailing punctuation still extracts episode" do
+      # Regression: filenames like "Season 1 Episode 1- The Deal - PrimeWire.mp4"
+      # leave a trailing dash on the episode-number token. The episode integer
+      # must still be parsed instead of falling through to nil and crashing
+      # downstream import code.
+      result = resolve("Off Campus (2026) Season 1 Episode 1- The Deal - PrimeWire")
+      assert result.season == 1
+      assert result.episodes == [1]
+    end
   end
 
   describe "unbound movie" do

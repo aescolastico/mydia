@@ -468,6 +468,70 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
 
     @tag :tmp_dir
+    test "TV file with parsable season but nil episodes is flagged as unresolved", %{
+      tmp_dir: tmp_dir
+    } do
+      # Regression: a file whose name parses to season=N but no episode
+      # number (e.g. `Show.S01.mkv` or `Show Season 1 Foo.mkv`) used to
+      # crash `import_file/5` with `FunctionClauseError` in `List.first/2`
+      # because the clause did `List.first(parsed.episodes) || 1` without
+      # guarding for nil. The job must route the file to the Issues tab
+      # (via match_status: "unresolved_files") instead of raising or
+      # silently importing as episode 1.
+      _library_path = create_test_library_path(tmp_dir, :series)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+
+      # `Mystery.Show.S01.mkv` parses to season=1, episodes=nil.
+      video_file = Path.join(download_dir, "Mystery.Show.S01.mkv")
+      File.write!(video_file, "fake video content")
+
+      media_item = media_item_fixture(%{type: "tv_show", title: "Mystery Show"})
+
+      _episode =
+        episode_fixture(%{
+          media_item_id: media_item.id,
+          season_number: 1,
+          episode_number: 1
+        })
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "NilEpisodesClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "NilEpisodesClient",
+          download_client_id: "nilep123"
+        })
+
+      assert {:error, :all_files_unresolved} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.match_status == "unresolved_files"
+      assert [unresolved] = updated.metadata["unresolved_files"]
+      assert unresolved["name"] == "Mystery.Show.S01.mkv"
+      assert unresolved["parsed_season"] == 1
+      assert unresolved["parsed_episode"] == nil
+    end
+
+    @tag :tmp_dir
     test "returns error when save_path points to non-existent path", %{tmp_dir: _tmp_dir} do
       media_item =
         media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
