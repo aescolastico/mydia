@@ -79,11 +79,13 @@ defmodule MydiaWeb.AdminSettingsLiveTest do
       assert setting.updated_by_id == user.id
     end
 
-    test "toggle persists a value the crash reporter recognises as enabled", %{view: view} do
+    test "toggle persists a value the crash reporter recognises as enabled", %{conn: conn} do
       case Settings.get_config_setting_by_key("crash_reporting.enabled") do
         nil -> :ok
         existing -> Settings.delete_config_setting(existing)
       end
+
+      {:ok, view, _html} = live(conn, ~p"/admin/config/settings")
 
       view
       |> element("input[type='checkbox'][phx-value-key='crash_reporting.enabled']")
