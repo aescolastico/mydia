@@ -612,4 +612,76 @@ defmodule Mydia.Jobs.MediaImportTest do
       use_ssl: false
     }
   end
+
+  describe "idempotency" do
+    test "short-circuits with :ok when download.imported_at is already set" do
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "AlreadyImportedClient",
+          download_client_id: "imported-1"
+        })
+
+      {:ok, _} =
+        Mydia.Downloads.update_download(download, %{
+          completed_at: DateTime.utc_now(),
+          imported_at: DateTime.utc_now()
+        })
+
+      # No client config exists; if we fell through to import_download/2 we
+      # would hit {:error, :no_client}. The fact that we still return :ok
+      # proves the short-circuit triggered first.
+      assert :ok == perform_job(MediaImport, %{"download_id" => download.id})
+    end
+
+    test "duplicate inserts are deduped by Oban :unique" do
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "UniqueClient",
+          download_client_id: "unique-1"
+        })
+
+      args = %{"download_id" => download.id}
+
+      assert {:ok, _job1} = args |> MediaImport.new() |> Oban.insert()
+      assert {:ok, job2} = args |> MediaImport.new() |> Oban.insert()
+
+      # Oban marks the duplicate insert with conflict?: true and reuses the
+      # original job, so the queue still contains exactly one job for this
+      # download.
+      assert job2.conflict? == true
+      assert [_one] = all_enqueued(worker: MediaImport, args: args)
+    end
+
+    test "scheduled (:scheduled) job dedupes against a freshly inserted webhook job" do
+      # The snooze loop schedules :scheduled jobs while we wait for downloads
+      # to finish. A webhook firing in that window must NOT enqueue a new
+      # job — the unique config explicitly includes :scheduled for this
+      # exact race.
+      media_item = media_item_fixture()
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: "RaceClient",
+          download_client_id: "race-1"
+        })
+
+      future = DateTime.add(DateTime.utc_now(), 300, :second)
+      args = %{"download_id" => download.id}
+
+      assert {:ok, _scheduled} =
+               args |> MediaImport.new(scheduled_at: future) |> Oban.insert()
+
+      assert {:ok, second} = args |> MediaImport.new() |> Oban.insert()
+
+      assert second.conflict? == true
+      assert [_one] = all_enqueued(worker: MediaImport, args: args)
+    end
+  end
 end

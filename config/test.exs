@@ -63,11 +63,20 @@ config :phoenix, :plug_init_mode, :runtime
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
 
-# Disable Oban during testing to prevent pool conflicts with SQL Sandbox
-# Using engine: false disables Oban's engine entirely in test mode
+# Run Oban in manual testing mode: jobs go into the DB but no queue workers run.
+# We keep the real engine (Lite for SQLite, Basic for PostgreSQL) so
+# `Oban.insert/1` enforces `unique:` constraints in tests. Pool conflicts with
+# SQL Sandbox are avoided by disabling queues/plugins.
+oban_engine =
+  case database_adapter do
+    Ecto.Adapters.Postgres -> Oban.Engines.Basic
+    _ -> Oban.Engines.Lite
+  end
+
 config :mydia, Oban,
+  repo: Mydia.Repo,
   testing: :manual,
-  engine: false,
+  engine: oban_engine,
   queues: false,
   plugins: false
 
