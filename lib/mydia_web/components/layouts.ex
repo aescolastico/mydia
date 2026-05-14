@@ -101,11 +101,11 @@ defmodule MydiaWeb.Layouts do
               </div>
               <a
                 href="/player"
-                class="btn btn-primary btn-sm h-8 min-h-8 px-2 hover:px-3 rounded-full transition-all duration-200 group"
+                class="btn btn-primary btn-sm gap-1.5 rounded-full shadow-sm hover:shadow-md transition-shadow"
                 title="Open Player"
               >
                 <.icon name="hero-play-solid" class="w-4 h-4" />
-                <span class="hidden group-hover:inline text-sm">Player</span>
+                <span class="text-sm font-semibold">Player</span>
               </a>
             </div>
           </div>
