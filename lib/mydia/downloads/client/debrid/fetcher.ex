@@ -187,7 +187,7 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   end
 
   defp resolve_urls(_provider_module, %{prefetched_urls: prefetched} = state)
-       when is_list(prefetched) do
+       when is_list(prefetched) and prefetched != [] do
     # First run: use the URLs already resolved by the dispatch adapter to
     # avoid doubling the /unrestrict/link (or equivalent) call count.
     # Clear prefetched_urls so that a retry uses a fresh provider call.

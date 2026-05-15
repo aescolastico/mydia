@@ -189,9 +189,19 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
   end
 
   defp resolve_and_check(host) do
+    # Check both IPv4 and IPv6 resolution to cover all RFC1918/link-local cases.
     case :inet.getaddr(to_charlist(host), :inet) do
-      {:ok, {a, b, c, d}} -> ipv4_in_blocklist?({a, b, c, d})
-      _ -> false
+      {:ok, {a, b, c, d}} ->
+        ipv4_in_blocklist?({a, b, c, d})
+
+      _ ->
+        case :inet.getaddr(to_charlist(host), :inet6) do
+          {:ok, ipv6_tuple} when tuple_size(ipv6_tuple) == 8 ->
+            ipv6_in_blocklist?(ipv6_tuple)
+
+          _ ->
+            false
+        end
     end
   end
 
