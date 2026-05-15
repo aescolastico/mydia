@@ -138,6 +138,25 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.RealDebridTest do
       assert {:error, %Error{type: :api_error, details: %{reason: :rate_limited}}} =
                RealDebrid.submit_torrent(config, {:magnet, "magnet:?xt=throttled"})
     end
+
+    test "error_code 7 (unknown_ressource) maps to :invalid_torrent with :rejected_after_acceptance",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/torrents/addMagnet", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          404,
+          Jason.encode!(%{"error" => "unknown_ressource", "error_code" => 7})
+        )
+      end)
+
+      assert {:error,
+              %Error{
+                type: :invalid_torrent,
+                details: %{reason: :rejected_after_acceptance, error_code: 7}
+              }} =
+               RealDebrid.submit_torrent(config, {:magnet, "magnet:?xt=phantom"})
+    end
   end
 
   describe "post_submission_setup/2" do

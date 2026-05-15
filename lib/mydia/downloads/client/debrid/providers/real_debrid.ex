@@ -280,6 +280,23 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.RealDebrid do
     code = extract_error_code(body)
 
     case {status, code} do
+      # error_code clauses come first — RD often returns 404 + a specific
+      # error_code, and the code is more diagnostic than the HTTP status.
+      {_, 8} ->
+        Error.authentication_failed("RD bad token", merge_details(sanitized, code))
+
+      {_, 7} ->
+        # "unknown_ressource" — most commonly seen when an addMagnet
+        # successfully returns an id, but RD's anti-piracy auto-review
+        # then deletes the torrent before selectFiles or info can act
+        # on it. The id is real but the resource is gone. From the
+        # operator's perspective this is identical to an infringing
+        # rejection: skip the release, try the next one.
+        Error.invalid_torrent(
+          "RD rejected the torrent after acceptance",
+          merge_details(sanitized, code, :rejected_after_acceptance)
+        )
+
       {401, _} ->
         Error.authentication_failed("RD auth failed", merge_details(sanitized, code))
 
@@ -294,9 +311,6 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.RealDebrid do
 
       {503, _} ->
         Error.network_error("RD upstream unavailable", merge_details(sanitized, code))
-
-      {_, 8} ->
-        Error.authentication_failed("RD bad token", merge_details(sanitized, code))
 
       {_, 9} ->
         Error.authentication_failed(
