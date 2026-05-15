@@ -34,10 +34,16 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
   # Hosts we refuse to fetch from regardless of provider claim. SSRF
   # defense — a compromised provider could otherwise have us request its
   # own internal infrastructure.
+  # Tuples are {octet1, octet2, octet3, prefix_bits}. The fourth element is
+  # the CIDR prefix length, not the third octet — getting this wrong with
+  # `prefix=0` causes `matches_prefix?/3` to compare zero bits, which
+  # tautologically matches every IP (including public ones), bricking the
+  # SSRF guard for legitimate provider CDNs (RD's chi3-4.download.real-debrid.com
+  # was a real-world casualty).
   @rfc1918_patterns [
     {127, 0, 0, 8},
     {10, 0, 0, 8},
-    {172, 16, 12, 0},
+    {172, 16, 0, 12},
     {192, 168, 0, 16},
     {169, 254, 0, 16},
     {0, 0, 0, 8}
@@ -208,6 +214,9 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
   defp ipv4_in_blocklist?({a, b, _c, _d} = ip) do
     Enum.any?(@rfc1918_patterns, fn {p1, p2, p3, prefix} ->
       case prefix do
+        # 0-bit prefix tautologically matches everything — refuse it so a
+        # mistyped pattern can never accidentally reject public traffic.
+        0 -> false
         8 -> a == p1
         16 -> a == p1 and b == p2
         12 -> a == p1 and Bitwise.band(b, 0xF0) == Bitwise.band(p2, 0xF0)

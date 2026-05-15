@@ -71,6 +71,30 @@ defmodule Mydia.Downloads.Client.Debrid.SharedTest do
                Shared.validate_download_url("https://192.168.1.1/secret")
     end
 
+    test "rejects RFC1918 172.16.0.0/12 boundaries" do
+      assert {:error, %Error{details: %{reason: :private_host}}} =
+               Shared.validate_download_url("https://172.16.0.1/secret")
+
+      assert {:error, %Error{details: %{reason: :private_host}}} =
+               Shared.validate_download_url("https://172.31.255.254/secret")
+    end
+
+    test "accepts public IPs in 172.0.0.0/8 outside the /12 private range" do
+      # 172.15.x.x and 172.32.x.x are public — must not be caught by the
+      # 172.16/12 RFC1918 pattern.
+      assert {:ok, _} = Shared.validate_download_url("https://172.15.0.1/file")
+      assert {:ok, _} = Shared.validate_download_url("https://172.32.0.1/file")
+    end
+
+    test "accepts a typical public IPv4 (regression: prefix=0 tautology bug)" do
+      # If `@rfc1918_patterns` has a pattern with prefix=0, matches_prefix?
+      # with `Enum.take(_, 0)` returns `[] == []` → true, blocking every IP.
+      # A regression here would reject all public download URLs (e.g. RD's
+      # chi3-4.download.real-debrid.com CDN).
+      assert {:ok, _} = Shared.validate_download_url("https://93.184.216.34/file")
+      assert {:ok, _} = Shared.validate_download_url("https://8.8.8.8/file")
+    end
+
     test "rejects link-local 169.254.0.0/16 (AWS metadata)" do
       assert {:error, %Error{details: %{reason: :private_host}}} =
                Shared.validate_download_url("https://169.254.169.254/latest/meta-data/")
