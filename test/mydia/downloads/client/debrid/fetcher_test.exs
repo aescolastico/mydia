@@ -102,7 +102,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
           provider_job: fake_provider_job(download.download_client_id),
           provider_module: StubProvider,
           jitter_ms: 0,
-          staging_dir: staging
+          download_dir: staging
         )
 
       :ok = wait_for_fetcher_exit(download.id)
@@ -145,7 +145,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
         provider_job: fake_provider_job(download.download_client_id),
         provider_module: StubProvider,
         jitter_ms: 50,
-        staging_dir: staging
+        download_dir: staging
       ]
 
       [r1, r2] =
@@ -184,7 +184,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
           provider_job: fake_provider_job(download.download_client_id),
           provider_module: StubProvider,
           jitter_ms: 0,
-          staging_dir: staging
+          download_dir: staging
         )
 
       :ok = wait_for_fetcher_exit(download.id)
@@ -221,7 +221,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
           provider_job: fake_provider_job(download.download_client_id),
           provider_module: StubProvider,
           jitter_ms: 0,
-          staging_dir: staging
+          download_dir: staging
         )
 
       :ok = wait_for_fetcher_exit(download.id)
@@ -254,7 +254,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
           provider_job: fake_provider_job(download.download_client_id),
           provider_module: StubProvider,
           jitter_ms: 200,
-          staging_dir: staging
+          download_dir: staging
         )
 
       :ok = wait_for_fetcher_exit(download.id)

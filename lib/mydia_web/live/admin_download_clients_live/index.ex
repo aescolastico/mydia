@@ -153,23 +153,33 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
     client = Settings.get_download_client_config!(id)
 
     client_config =
-      if client.type == :blackhole do
-        %{
-          type: :blackhole,
-          connection_settings: client.connection_settings || %{}
-        }
-      else
-        %{
-          type: client.type,
-          host: client.host,
-          port: client.port,
-          use_ssl: client.use_ssl,
-          username: client.username,
-          password: client.password,
-          api_key: client.api_key,
-          url_base: client.url_base,
-          options: client.connection_settings || %{}
-        }
+      cond do
+        client.type == :blackhole ->
+          %{
+            type: :blackhole,
+            connection_settings: client.connection_settings || %{}
+          }
+
+        client.type == :debrid ->
+          %{
+            type: :debrid,
+            api_key: client.api_key,
+            download_directory: client.download_directory,
+            connection_settings: client.connection_settings || %{}
+          }
+
+        true ->
+          %{
+            type: client.type,
+            host: client.host,
+            port: client.port,
+            use_ssl: client.use_ssl,
+            username: client.username,
+            password: client.password,
+            api_key: client.api_key,
+            url_base: client.url_base,
+            options: client.connection_settings || %{}
+          }
       end
 
     case test_client_connection(client_config) do
@@ -223,11 +233,22 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
           }
 
         type == :debrid ->
+          # The UI renders the Provider sub-selector with "real_debrid" as
+          # the visible default via the `<.input value={...}>` attribute, but
+          # that visible default doesn't enter the changeset until the user
+          # interacts with the field — phx-change fires on user input only.
+          # Mirror the visible default here so "Test Connection" works on a
+          # fresh form where the operator only filled in the API key.
+          provider =
+            params.connection_settings
+            |> Kernel.||(%{})
+            |> Map.get("provider", "real_debrid")
+
           %{
             type: :debrid,
             api_key: params.api_key,
             download_directory: params.download_directory,
-            connection_settings: params.connection_settings || %{}
+            connection_settings: Map.put(params.connection_settings || %{}, "provider", provider)
           }
 
         true ->

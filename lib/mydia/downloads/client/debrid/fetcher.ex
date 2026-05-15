@@ -1,7 +1,7 @@
 defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   @moduledoc """
   Per-download GenServer that streams the provider's HTTPS URLs into the
-  configured staging path.
+  configured download directory.
 
   Registered under
   `{:via, Registry, {FetcherRegistry, {:debrid_fetcher, download_id}}}`, so
@@ -128,7 +128,7 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
       config: Keyword.fetch!(opts, :config),
       provider_job: Keyword.fetch!(opts, :provider_job),
       provider_module: Keyword.get(opts, :provider_module),
-      staging_dir: Keyword.get(opts, :staging_dir),
+      download_dir: Keyword.get(opts, :download_dir),
       req_options: Keyword.get(opts, :req_options, []),
       jitter_ms: Keyword.get(opts, :jitter_ms, :rand.uniform(@startup_jitter_max_ms)),
       retries_left: Keyword.get(opts, :max_retries, @max_retries),
@@ -172,10 +172,10 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
          {:ok, {urls_or_descriptors, state}} <- resolve_urls(provider_module, state),
          {:ok, urls} <- prepare_urls(urls_or_descriptors, state),
          {:ok, download} <- persist_urls(urls_or_descriptors, state),
-         staging_dir <- staging_dir!(state),
-         :ok <- File.mkdir_p(staging_dir),
+         download_dir <- download_dir!(state),
+         :ok <- File.mkdir_p(download_dir),
          {:ok, final_state} <-
-           stream_all(urls, staging_dir, %{state | provider_module: provider_module}, download) do
+           stream_all(urls, download_dir, %{state | provider_module: provider_module}, download) do
       {:ok, final_state}
     end
   end
@@ -274,23 +274,23 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
     History.update_download(download, %{metadata: new_metadata})
   end
 
-  defp stream_all(urls, staging_dir, state, download) do
-    with {:ok, state} <- stream_each(urls, staging_dir, state, download) do
-      finalize(staging_dir, state)
+  defp stream_all(urls, download_dir, state, download) do
+    with {:ok, state} <- stream_each(urls, download_dir, state, download) do
+      finalize(download_dir, state)
     end
   end
 
-  defp stream_each([], _staging_dir, state, _download), do: {:ok, state}
+  defp stream_each([], _download_dir, state, _download), do: {:ok, state}
 
-  defp stream_each([entry | rest], staging_dir, state, download) do
+  defp stream_each([entry | rest], download_dir, state, download) do
     {url_for_request, name_hint} = http_url_and_name(entry, state)
 
     final_name = filename_for(name_hint, state, download)
-    final_path = Path.join(staging_dir, final_name)
+    final_path = Path.join(download_dir, final_name)
     part_path = final_path <> ".part"
 
     case stream_one(url_for_request, part_path, final_path, state, download) do
-      {:ok, state} -> stream_each(rest, staging_dir, state, download)
+      {:ok, state} -> stream_each(rest, download_dir, state, download)
       {:error, _} = err -> err
     end
   end
@@ -438,12 +438,12 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
     :ok
   end
 
-  defp finalize(_staging_dir, state) do
-    # Update Download.metadata["save_path"] to point at the staging dir.
+  defp finalize(_download_dir, state) do
+    # Update Download.metadata["save_path"] to point at the download directory.
     # The existing MediaImport pipeline picks the file up from there.
     download = History.get_download!(state.download_id)
 
-    save_path = staging_dir!(state)
+    save_path = download_dir!(state)
 
     new_metadata = Map.merge(download.metadata || %{}, %{"save_path" => save_path})
 
@@ -456,17 +456,17 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
     end
   end
 
-  defp staging_dir!(state) do
+  defp download_dir!(state) do
     base =
       cond do
-        is_binary(state.staging_dir) and state.staging_dir != "" ->
-          state.staging_dir
+        is_binary(state.download_dir) and state.download_dir != "" ->
+          state.download_dir
 
         is_binary(state.config[:download_directory]) and state.config[:download_directory] != "" ->
           state.config[:download_directory]
 
         true ->
-          default_staging_root()
+          default_download_root()
       end
 
     Path.join(base, state.download_id)
@@ -476,7 +476,7 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   # image the LSIO volume `/data` is mounted and writable (see the project
   # Dockerfile's `VOLUME ["/config", "/data", "/media"]`); falling back to
   # `System.tmp_dir!()` covers dev, tests, and non-Docker installs.
-  defp default_staging_root do
+  defp default_download_root do
     cond do
       writable_dir?("/data") -> "/data/debrid-downloads"
       true -> Path.join(System.tmp_dir!(), "mydia-debrid-downloads")

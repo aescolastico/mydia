@@ -57,6 +57,11 @@ defmodule Mydia.Downloads.Client.Debrid.RateLimiter do
     # started the GenServer). Fail open — better to over-permit briefly
     # than to block the entire pipeline.
     _ -> :ok
+  catch
+    # `GenServer.call/2` to a non-existent process emits an `:exit` signal,
+    # not an Elixir exception, so `rescue` alone won't catch it. Same
+    # fail-open posture as the rescue clause.
+    :exit, _ -> :ok
   end
 
   @doc """
