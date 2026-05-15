@@ -472,14 +472,14 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
     Path.join(base, state.download_id)
   end
 
-  # Picks the operator-conventional staging root. In the production Docker
+  # Picks the operator-conventional download root. In the production Docker
   # image the LSIO volume `/data` is mounted and writable (see the project
   # Dockerfile's `VOLUME ["/config", "/data", "/media"]`); falling back to
   # `System.tmp_dir!()` covers dev, tests, and non-Docker installs.
   defp default_staging_root do
     cond do
-      writable_dir?("/data") -> "/data/debrid-staging"
-      true -> Path.join(System.tmp_dir!(), "mydia-debrid-staging")
+      writable_dir?("/data") -> "/data/debrid-downloads"
+      true -> Path.join(System.tmp_dir!(), "mydia-debrid-downloads")
     end
   end
 
