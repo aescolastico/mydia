@@ -656,7 +656,9 @@ defmodule Mydia.Jobs.TVShowSearch do
     final_count
   end
 
-  defp should_prefer_season_pack?(missing_episodes, media_item, season_number) do
+  @doc false
+  # Public for unit testing — internal helper.
+  def should_prefer_season_pack?(missing_episodes, media_item, season_number) do
     missing_count = length(missing_episodes)
 
     # Try to get total episode count from metadata
@@ -689,7 +691,13 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   defp get_total_episodes_for_season(media_item, season_number) do
-    # Try to get episode count from metadata
+    case metadata_episode_count(media_item, season_number) do
+      count when is_integer(count) and count > 0 -> count
+      _ -> db_episode_count(media_item.id, season_number)
+    end
+  end
+
+  defp metadata_episode_count(media_item, season_number) do
     case media_item.metadata do
       %{"seasons" => seasons} when is_list(seasons) ->
         Enum.find_value(seasons, fn season ->
@@ -700,6 +708,18 @@ defmodule Mydia.Jobs.TVShowSearch do
 
       _ ->
         nil
+    end
+  end
+
+  defp db_episode_count(media_item_id, season_number) do
+    case Repo.aggregate(
+           from(e in Episode,
+             where: e.media_item_id == ^media_item_id and e.season_number == ^season_number
+           ),
+           :count
+         ) do
+      0 -> nil
+      n -> n
     end
   end
 

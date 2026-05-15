@@ -952,4 +952,86 @@ defmodule Mydia.Jobs.TVShowSearchTest do
       assert length(downloads_after_second) == first_count
     end
   end
+
+  describe "should_prefer_season_pack?/3" do
+    test "falls back to episodes table when metadata episode_count is 0" do
+      # Reproduces the Stillwater/Slow Horses case: TVDB scrape left
+      # episode_count: 0 in metadata, but episodes table has real counts.
+      # Without the fallback, missing_count is used as the total, yielding
+      # 100% missing and incorrectly preferring season packs for partial seasons.
+      tv_show =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Zero Count Show",
+          metadata: %{
+            "seasons" => [
+              %{"season_number" => 1, "episode_count" => 0}
+            ]
+          }
+        })
+
+      episodes =
+        for ep_num <- 1..6 do
+          episode_fixture(%{
+            media_item_id: tv_show.id,
+            season_number: 1,
+            episode_number: ep_num,
+            air_date: Date.add(~D[2020-01-01], ep_num * 7)
+          })
+        end
+
+      # Only 1 of 6 missing = 16.7% — should NOT prefer the pack.
+      missing = Enum.take(episodes, 1)
+
+      refute TVShowSearch.should_prefer_season_pack?(missing, tv_show, 1)
+    end
+
+    test "uses metadata episode_count when it is populated" do
+      tv_show =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Populated Count Show",
+          metadata: %{
+            "seasons" => [
+              %{"season_number" => 1, "episode_count" => 10}
+            ]
+          }
+        })
+
+      # 8 of 10 missing = 80% — prefers the pack via metadata.
+      missing =
+        for ep_num <- 1..8 do
+          episode_fixture(%{
+            media_item_id: tv_show.id,
+            season_number: 1,
+            episode_number: ep_num,
+            air_date: Date.add(~D[2020-01-01], ep_num * 7)
+          })
+        end
+
+      assert TVShowSearch.should_prefer_season_pack?(missing, tv_show, 1)
+    end
+
+    test "prefers season pack when most episodes in the DB are missing" do
+      tv_show =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Mostly Missing Show",
+          metadata: %{"seasons" => [%{"season_number" => 1, "episode_count" => 0}]}
+        })
+
+      missing =
+        for ep_num <- 1..8 do
+          episode_fixture(%{
+            media_item_id: tv_show.id,
+            season_number: 1,
+            episode_number: ep_num,
+            air_date: Date.add(~D[2020-01-01], ep_num * 7)
+          })
+        end
+
+      # 8 of 8 in the DB are missing — 100% via DB fallback.
+      assert TVShowSearch.should_prefer_season_pack?(missing, tv_show, 1)
+    end
+  end
 end
