@@ -1,0 +1,202 @@
+defmodule Mydia.Downloads.Client.Debrid.Providers.TorBoxTest do
+  @moduledoc """
+  Bypass-only tests for the TorBox provider — no real-account validation.
+  """
+  use ExUnit.Case, async: false
+
+  alias Mydia.Downloads.Client.Debrid.Providers.TorBox
+  alias Mydia.Downloads.Client.Debrid.ProviderJob
+  alias Mydia.Downloads.Client.Error
+
+  setup do
+    bypass = Bypass.open()
+    base = "http://127.0.0.1:#{bypass.port}"
+
+    prior = Application.get_env(:mydia, :tor_box_base_url)
+    Application.put_env(:mydia, :tor_box_base_url, base)
+    on_exit(fn -> Application.put_env(:mydia, :tor_box_base_url, prior) end)
+
+    {:ok, bypass: bypass, config: %{api_key: "tb-token", type: :debrid}}
+  end
+
+  defp success(data), do: Jason.encode!(%{"success" => true, "data" => data})
+
+  describe "validate_credentials/1" do
+    test "active plan returns ok", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/user/me", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          success(%{"plan" => 1, "premium_expires_at" => "2099-12-31T00:00:00Z"})
+        )
+      end)
+
+      assert {:ok, _} = TorBox.validate_credentials(config)
+    end
+
+    test "BAD_TOKEN returns :authentication_failed", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/user/me", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{"success" => false, "error" => "BAD_TOKEN"}))
+      end)
+
+      assert {:error, %Error{type: :authentication_failed}} =
+               TorBox.validate_credentials(config)
+    end
+  end
+
+  describe "submit_torrent/2" do
+    test "magnet returns the integer torrent_id as string", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "POST", "/torrents/createtorrent", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, success(%{"torrent_id" => 42}))
+      end)
+
+      assert {:ok, "42"} = TorBox.submit_torrent(config, {:magnet, "magnet:?xt=abc"})
+    end
+  end
+
+  describe "get_job/2 ready predicate" do
+    test "download_finished && download_present → :ready", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/torrents/mylist", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          success(%{
+            "id" => 1,
+            "download_state" => "completed",
+            "download_finished" => true,
+            "download_present" => true,
+            "size" => 100,
+            "progress" => 1.0,
+            "files" => []
+          })
+        )
+      end)
+
+      assert {:ok, %ProviderJob{state: :ready}} = TorBox.get_job(config, "1")
+    end
+
+    test "download_finished without download_present → :finalizing (no premature ready)",
+         %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/torrents/mylist", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          success(%{
+            "id" => 1,
+            "download_state" => "completed",
+            "download_finished" => true,
+            "download_present" => false,
+            "size" => 100,
+            "progress" => 1.0,
+            "files" => []
+          })
+        )
+      end)
+
+      assert {:ok, %ProviderJob{state: :finalizing}} = TorBox.get_job(config, "1")
+    end
+  end
+
+  describe "get_download_urls/2 (descriptors)" do
+    test "returns tokenless descriptors with provider/torrent_id/file_id", %{config: config} do
+      job = %ProviderJob{
+        provider_id: "42",
+        state: :ready,
+        raw_status: %{
+          "id" => 42,
+          "files" => [%{"id" => 1}, %{"id" => 2}, %{"id" => 3}]
+        }
+      }
+
+      assert {:ok, descriptors} = TorBox.get_download_urls(config, job)
+      assert length(descriptors) == 3
+
+      assert Enum.all?(descriptors, fn d ->
+               d["provider"] == "torbox" and d["torrent_id"] == 42 and is_integer(d["file_id"])
+             end)
+
+      # No descriptor should contain a token=value reference.
+      refute Enum.any?(descriptors, fn d ->
+               Enum.any?(Map.values(d), fn v -> is_binary(v) and v =~ "token=" end)
+             end)
+    end
+
+    test "descriptors round-trip cleanly through JSON encode/decode", %{config: config} do
+      job = %ProviderJob{
+        provider_id: "42",
+        state: :ready,
+        raw_status: %{"id" => 42, "files" => [%{"id" => 1}]}
+      }
+
+      assert {:ok, [d]} = TorBox.get_download_urls(config, job)
+      assert {:ok, decoded} = Jason.encode(d) |> elem(1) |> Jason.decode()
+      assert decoded["provider"] == "torbox"
+    end
+  end
+
+  describe "materialize_descriptor/2" do
+    test "reconstructs a token-bearing URL from descriptor + config", %{config: config} do
+      descriptor = %{"torrent_id" => 42, "file_id" => 5}
+      assert {:ok, url} = TorBox.materialize_descriptor(config, descriptor)
+      assert url =~ "token=tb-token"
+      assert url =~ "torrent_id=42"
+      assert url =~ "file_id=5"
+      assert url =~ "redirect=true"
+    end
+
+    test "missing api_key returns :invalid_config" do
+      descriptor = %{"torrent_id" => 1, "file_id" => 1}
+
+      assert {:error, %Error{type: :invalid_config}} =
+               TorBox.materialize_descriptor(%{api_key: nil}, descriptor)
+    end
+  end
+
+  describe "list_jobs/2" do
+    test "filters to requested ids", %{bypass: bypass, config: config} do
+      Bypass.expect(bypass, "GET", "/torrents/mylist", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          success([
+            %{
+              "id" => 1,
+              "download_state" => "downloading",
+              "download_finished" => false,
+              "download_present" => false,
+              "size" => 100,
+              "progress" => 0.5,
+              "files" => []
+            },
+            %{
+              "id" => 2,
+              "download_state" => "completed",
+              "download_finished" => true,
+              "download_present" => true,
+              "size" => 50,
+              "progress" => 1.0,
+              "files" => []
+            }
+          ])
+        )
+      end)
+
+      assert {:ok, jobs} = TorBox.list_jobs(config, ["1", "2"])
+      assert map_size(jobs) == 2
+      assert %ProviderJob{state: :downloading} = jobs["1"]
+      assert %ProviderJob{state: :ready} = jobs["2"]
+    end
+  end
+
+  describe "rate_limit_budget/0" do
+    test "returns {300, 60}", do: assert(TorBox.rate_limit_budget() == {300, 60})
+  end
+end
