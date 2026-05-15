@@ -17,7 +17,7 @@
       # Pre-fetch Rust/Cargo dependencies for the p2p NIF (required for sandbox build)
       cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
         src = ../../native/mydia_p2p;
-        hash = "sha256-VcrP8X42fT2n0LvO8VtmZGEpquyxQrall8KuUyMUvLc=";
+        hash = "sha256-mwciW6cx+n26KEQYv3rJi4ceq+sKhy6rBaTMOC7/8Is=";
       };
 
       # Import Mix dependencies from deps.nix with overrides for Nix sandbox builds
