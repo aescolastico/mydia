@@ -320,9 +320,10 @@ defmodule Mydia.Jobs.MediaImport do
 
           has_unresolved = updated_download.match_status == "unresolved_files"
 
-          # Only mark as fully imported and cleanup if no unresolved files remain
+          # Cleanup is only safe when every file resolved — keep the
+          # download in the client when some files remain unmatched so
+          # the user can manually retry after fixing the matches.
           unless has_unresolved do
-            # Check if we should remove from client based on client config
             client_info = get_client_info(download)
             should_cleanup = client_info && client_info.remove_completed
 
@@ -339,24 +340,43 @@ defmodule Mydia.Jobs.MediaImport do
                 client: download.download_client
               )
             end
+          end
 
-            # Mark download as imported instead of deleting
-            # This allows the download to appear in the Completed tab
-            case Downloads.update_download(updated_download, %{
-                   imported_at: DateTime.utc_now(),
-                   match_status: partial_pack_status
-                 }) do
-              {:ok, _updated} ->
-                Logger.info("Download marked as imported",
-                  download_id: download.id
-                )
+          # Always stamp `imported_at` once we've made an honest attempt,
+          # even when some files are still unresolved. `match_status` keeps
+          # surfacing the partial result in the Issues tab. The previous
+          # behaviour left `imported_at` nil on partial imports, which
+          # caused DownloadMonitor.list_stuck_downloads/1 to re-flag the
+          # download every poll and enqueue a fresh MediaImport job every
+          # 2 minutes — a retry loop that did no useful work but kept
+          # showing "Import stalled - never ran" in the UI.
+          import_update =
+            %{imported_at: DateTime.utc_now()}
+            |> then(fn attrs ->
+              # Preserve `match_status: "unresolved_files"` when present so
+              # the Issues tab can still surface partial imports. Only
+              # touch match_status when we're transitioning to a clean
+              # state (partial_pack or nil), never overwrite the
+              # in-progress "unresolved_files" flag.
+              if has_unresolved do
+                attrs
+              else
+                Map.put(attrs, :match_status, partial_pack_status)
+              end
+            end)
 
-              {:error, changeset} ->
-                Logger.warning("Failed to mark download as imported",
-                  download_id: download.id,
-                  errors: inspect(changeset.errors)
-                )
-            end
+          case Downloads.update_download(updated_download, import_update) do
+            {:ok, _updated} ->
+              Logger.info("Download marked as imported",
+                download_id: download.id,
+                has_unresolved: has_unresolved
+              )
+
+            {:error, changeset} ->
+              Logger.warning("Failed to mark download as imported",
+                download_id: download.id,
+                errors: inspect(changeset.errors)
+              )
           end
 
           # Write NFO metadata files if enabled for this library path
@@ -910,6 +930,43 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
+  # Ensure `Media.refresh_episodes_for_tv_show/1` is invoked at most once
+  # per Oban job per show. Each Oban worker call runs in its own process,
+  # so the process dictionary gives us a job-scoped memoization key that
+  # cleans itself up automatically when the job exits.
+  #
+  # The dedup target is the media_item id, not the season — a single
+  # refresh call always pulls every season's episodes for the show, so
+  # repeating it for another season number in the same job is pure waste.
+  defp refresh_episodes_once(%Mydia.Media.MediaItem{id: id} = media_item, season) do
+    key = {:media_import_refresh_attempted, id}
+
+    if Process.get(key) do
+      :already_attempted
+    else
+      Process.put(key, true)
+
+      Logger.info("Episode not found, refreshing episodes for TV show",
+        media_item: media_item.title,
+        season: season
+      )
+
+      case Media.refresh_episodes_for_tv_show(media_item) do
+        {:ok, count} ->
+          Logger.info("Refreshed episodes, created #{count} episodes")
+          {:ok, count}
+
+        {:error, reason} = error ->
+          Logger.error("Failed to refresh episodes",
+            media_item: media_item.title,
+            reason: inspect(reason)
+          )
+
+          error
+      end
+    end
+  end
+
   defp import_file(file, download, library_path, args, parser_opts) do
     # Parse filename to extract episode info for TV shows. When the
     # download is already bound to a known `%MediaItem{}`, pass it as
@@ -924,51 +981,55 @@ defmodule Mydia.Jobs.MediaImport do
     # Determine episode and destination path
     {episode, dest_dir} =
       case {download.media_item, download.episode, parsed.type, is_season_pack} do
-        # Season pack - use metadata season number as authoritative source
+        # Season pack - the per-file filename is the authoritative season
+        # hint when the parser found one. The download-level
+        # `season_number` is only the originally-requested season; for
+        # "Complete S01-S03" style packs containing files from multiple
+        # seasons, every file would otherwise be force-matched to that
+        # one season and most would fall through to `:unresolved` (or
+        # worse, collapse onto a single episode row when episode_number
+        # collides). Prefer parsed.season; fall back to season_pack_season
+        # for files where the parser couldn't recover a season token.
         {%{type: "tv_show"} = media_item, _, :tv_show, true}
         when not is_nil(season_pack_season) and not is_nil(parsed.episodes) ->
           episode_number = List.first(parsed.episodes) || 1
+          file_season = parsed.season || season_pack_season
 
           Logger.debug("Processing season pack file",
             file: file.name,
             season_pack_season: season_pack_season,
+            file_season: file_season,
             episode_number: episode_number
           )
 
           episode =
             Media.get_episode_by_number(
               media_item.id,
-              season_pack_season,
+              file_season,
               episode_number
             )
 
           episode =
             if is_nil(episode) do
-              Logger.info("Episode not found, refreshing episodes for TV show",
-                media_item: media_item.title,
-                season: season_pack_season
+              # Refresh metadata at most ONCE per import job per show.
+              # Calling refresh per-file was the metadata-relay hammer
+              # behind the Good Omens incident: the in-memory media_item
+              # struct stays stale across this Enum.map loop, so
+              # `should_skip_season_refresh?` never tripped and every
+              # unresolved file fired a fresh HTTP round-trip. After this
+              # guard, the first miss does the refresh, subsequent misses
+              # in the same job re-use whatever the refresh produced (or
+              # the empty result if refresh failed).
+              refresh_episodes_once(media_item, file_season)
+
+              # Retry episode lookup regardless of refresh result —
+              # another file in this same job may have just created the
+              # episode row we need.
+              Media.get_episode_by_number(
+                media_item.id,
+                file_season,
+                episode_number
               )
-
-              # Try to refresh episodes from metadata provider
-              case Media.refresh_episodes_for_tv_show(media_item) do
-                {:ok, count} ->
-                  Logger.info("Refreshed episodes, created #{count} episodes")
-
-                  # Retry episode lookup
-                  Media.get_episode_by_number(
-                    media_item.id,
-                    season_pack_season,
-                    episode_number
-                  )
-
-                {:error, reason} ->
-                  Logger.error("Failed to refresh episodes",
-                    media_item: media_item.title,
-                    reason: inspect(reason)
-                  )
-
-                  nil
-              end
             else
               episode
             end
@@ -976,22 +1037,24 @@ defmodule Mydia.Jobs.MediaImport do
           if episode do
             Logger.debug("Found episode for season pack file",
               file: file.name,
-              season: season_pack_season,
+              season: file_season,
               episode: episode_number,
               episode_id: episode.id
             )
 
-            # Build destination path using season pack metadata (category-aware)
+            # Build destination path using the matched episode's actual
+            # season — not the download-level season — so files from
+            # `Complete S01-S03` packs land in the right `Season XX` dirs.
             base_dir = build_series_base_path(media_item, library_path)
 
             dest_dir =
-              Path.join(base_dir, "Season #{String.pad_leading("#{season_pack_season}", 2, "0")}")
+              Path.join(base_dir, "Season #{String.pad_leading("#{file_season}", 2, "0")}")
 
             {episode, dest_dir}
           else
             Logger.warning("Episode still not found after refresh attempt",
               file: file.name,
-              season: season_pack_season,
+              season: file_season,
               episode: episode_number,
               media_item: media_item.title
             )
@@ -1002,7 +1065,7 @@ defmodule Mydia.Jobs.MediaImport do
                path: file.path,
                name: file.name,
                size: file.size,
-               parsed_season: season_pack_season,
+               parsed_season: file_season,
                parsed_episode: episode_number
              }}
           end

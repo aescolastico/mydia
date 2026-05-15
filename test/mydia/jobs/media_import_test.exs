@@ -667,4 +667,362 @@ defmodule Mydia.Jobs.MediaImportTest do
     # short-circuit above is the user-visible safety net regardless of
     # whether duplicate jobs slip past the unique gate.
   end
+
+  # Regression tests for the Good Omens "Complete S01-S03" pack incident.
+  #
+  # A torrent named `... 2019 S01 S03 Complete ...` was grabbed to satisfy
+  # a single-episode request (S3E1). The pack contained S01E01..S03E01 in
+  # /S01/, /S02/, /S03/ subdirs. The season-pack branch in import_file/5
+  # hard-overrode every file's season with the download-level
+  # `season_number=3`, so:
+  #
+  #   - S01/E01..E06 and S02/E01..E06 were either flagged as unresolved
+  #     (when the parsed episode_number had no corresponding S3 episode)
+  #     or wrongly imported onto S3E1 (when parsed episode_number happened
+  #     to be 1) — multiple files collapsing onto the same episode row.
+  #   - The partial-import path skipped setting `imported_at`, so
+  #     DownloadMonitor's `list_stuck_downloads/1` kept matching the
+  #     download forever and the UI showed "Import stalled - never ran"
+  #     even though it had run ~28 times.
+  describe "season pack with multi-season files (Good Omens regression)" do
+    @tag :tmp_dir
+    test "uses per-file parsed season instead of download-level season override",
+         %{tmp_dir: tmp_dir} do
+      # Setup: TV show with S1E1, S1E2, S2E1. Download is a "season 2 pack"
+      # but the torrent actually contains files from S01 and S02. The
+      # per-file filename is the authoritative season hint — the
+      # download-level `season_number` is just the originally-requested
+      # season, not what the file at hand belongs to.
+      _library_path = create_test_library_path(tmp_dir, :series)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+
+      s1_dir = Path.join(download_dir, "S01")
+      s2_dir = Path.join(download_dir, "S02")
+      File.mkdir_p!(s1_dir)
+      File.mkdir_p!(s2_dir)
+
+      s01e01 = Path.join(s1_dir, "Mystery.Show.S01E01.mkv")
+      s01e02 = Path.join(s1_dir, "Mystery.Show.S01E02.mkv")
+      s02e01 = Path.join(s2_dir, "Mystery.Show.S02E01.mkv")
+
+      for f <- [s01e01, s01e02, s02e01], do: File.write!(f, "fake video")
+
+      media_item = media_item_fixture(%{type: "tv_show", title: "Mystery Show"})
+
+      ep_s1e1 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 1})
+
+      ep_s1e2 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 2})
+
+      ep_s2e1 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 2, episode_number: 1})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "MultiSeasonClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "MultiSeasonClient",
+          download_client_id: "multiseason-1",
+          metadata: %{
+            "season_pack" => true,
+            "season_number" => 2,
+            "episode_count" => 1
+          }
+        })
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+
+      # All three files must be matched to their actual episodes.
+      refute updated.match_status == "unresolved_files",
+             "Expected all files to resolve; got unresolved: #{inspect(updated.metadata["unresolved_files"])}"
+
+      # Each parsed season's episode must end up with its own media_file row,
+      # not collapsed onto a single S2E1 entry.
+      files_by_episode =
+        Mydia.Library.list_media_files()
+        |> Enum.filter(&(&1.episode_id in [ep_s1e1.id, ep_s1e2.id, ep_s2e1.id]))
+        |> Enum.group_by(& &1.episode_id)
+
+      assert Map.has_key?(files_by_episode, ep_s1e1.id),
+             "S1E1 must get its own media_file, not collapse onto S2E1"
+
+      assert Map.has_key?(files_by_episode, ep_s1e2.id),
+             "S1E2 must get its own media_file"
+
+      assert Map.has_key?(files_by_episode, ep_s2e1.id),
+             "S2E1 must get its own media_file"
+    end
+
+    @tag :tmp_dir
+    test "different-season files with the same episode number don't collapse onto one row",
+         %{tmp_dir: tmp_dir} do
+      # The Bug D variant: three E01 files from three different seasons
+      # were all rewritten to season=download.season_number, episode=1 and
+      # all matched the single existing S3E1 row.
+      _library_path = create_test_library_path(tmp_dir, :series)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+
+      File.write!(Path.join(download_dir, "Show.S01E01.mkv"), "v")
+      File.write!(Path.join(download_dir, "Show.S02E01.mkv"), "v")
+      File.write!(Path.join(download_dir, "Show.S03E01.mkv"), "v")
+
+      media_item = media_item_fixture(%{type: "tv_show", title: "Show"})
+
+      ep_s1e1 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 1})
+
+      ep_s2e1 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 2, episode_number: 1})
+
+      ep_s3e1 =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 3, episode_number: 1})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "ThreeE01Client",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "ThreeE01Client",
+          download_client_id: "three-e01-1",
+          metadata: %{
+            "season_pack" => true,
+            "season_number" => 3,
+            "episode_count" => 1
+          }
+        })
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      episode_ids_with_files =
+        Mydia.Library.list_media_files()
+        |> Enum.map(& &1.episode_id)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> MapSet.new()
+
+      expected = MapSet.new([ep_s1e1.id, ep_s2e1.id, ep_s3e1.id])
+
+      assert MapSet.equal?(episode_ids_with_files, expected),
+             "Expected exactly the three E01 episodes to be referenced once each, got: #{inspect(MapSet.to_list(episode_ids_with_files))}"
+    end
+  end
+
+  # Regression for the partial-import retry loop (Bug C).
+  #
+  # When a season-pack import resolves some files but flags others as
+  # unresolved, the historical behaviour skipped setting `imported_at`,
+  # which left the download permanently matching
+  # `Downloads.list_stuck_downloads/1`. DownloadMonitor then re-enqueued
+  # `MediaImport` every 2 minutes forever, and the user-facing Issues tab
+  # rendered the misleading "Import stalled - never ran" message even
+  # though dozens of import attempts had succeeded.
+  describe "partial import retry-loop (stalled detector)" do
+    @tag :tmp_dir
+    test "marks imported_at even when some files remain unresolved",
+         %{tmp_dir: tmp_dir} do
+      _library_path = create_test_library_path(tmp_dir, :series)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+
+      # One file matches an existing episode; one file is unparseable
+      # for episode number and must end up unresolved.
+      File.write!(Path.join(download_dir, "Show.S01E01.mkv"), "v")
+      File.write!(Path.join(download_dir, "Show.S01.mkv"), "v")
+
+      media_item = media_item_fixture(%{type: "tv_show", title: "Show"})
+
+      _ep =
+        episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 1})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "PartialClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      # Make completed_at older than list_stuck_downloads' 60-min threshold
+      # so the stuck detector would re-fire if imported_at stayed nil.
+      old_completion = DateTime.add(DateTime.utc_now(), -2, :hour)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: old_completion,
+          download_client: "PartialClient",
+          download_client_id: "partial-1",
+          metadata: %{
+            "season_pack" => true,
+            "season_number" => 1,
+            "episode_count" => 2
+          }
+        })
+
+      # `:partial_import` is the contract result when some files resolve and
+      # others don't — that's expected here. The bug is that `imported_at`
+      # stayed nil on this path, which is what we assert below.
+      assert {:ok, result} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      assert result in [:imported, :partial_import]
+
+      updated = Mydia.Downloads.get_download!(download.id)
+
+      assert updated.imported_at != nil,
+             "Partial imports must set imported_at to break the stuck-detector retry loop"
+
+      assert updated.match_status == "unresolved_files",
+             "match_status must still surface the partial result to the Issues tab"
+
+      stuck = Mydia.Downloads.list_stuck_downloads()
+      stuck_ids = Enum.map(stuck, & &1.id)
+
+      refute download.id in stuck_ids,
+             "list_stuck_downloads must not re-flag a download whose import already ran"
+    end
+  end
+
+  # Regression for the metadata-relay hammer (Bug A).
+  #
+  # The season-pack branch in `import_file/5` called
+  # `Media.refresh_episodes_for_tv_show(media_item)` on every unmatched
+  # file, passing the same in-memory media_item struct each time. Even
+  # though `refresh_episodes_for_tv_show` has a `should_skip_season_refresh?`
+  # threshold check, the in-memory `seasons_refreshed_at` stayed stale
+  # across the per-file loop, so the threshold never tripped and the
+  # function refetched from the metadata-relay once per unresolved file.
+  # A 10-file Good Omens import hit the relay 10× per job, and the
+  # MediaImport job re-ran every 2 minutes from the stall-detector loop.
+  describe "metadata-relay refresh deduplication" do
+    @tag :tmp_dir
+    test "refresh_episodes_for_tv_show is called at most once per import",
+         %{tmp_dir: tmp_dir} do
+      _library_path = create_test_library_path(tmp_dir, :series)
+
+      download_dir = Path.join(tmp_dir, "downloads")
+      File.mkdir_p!(download_dir)
+
+      # Five files for a season whose episodes don't exist in the DB. Each
+      # missing lookup would historically trigger a fresh refresh round-trip.
+      for i <- 1..5 do
+        File.write!(Path.join(download_dir, "Show.S99E0#{i}.mkv"), "v")
+      end
+
+      media_item = media_item_fixture(%{type: "tv_show", title: "Show"})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "RefreshDedupClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "RefreshDedupClient",
+          download_client_id: "refresh-dedup-1",
+          metadata: %{
+            "season_pack" => true,
+            "season_number" => 99,
+            "episode_count" => 5
+          }
+        })
+
+      # Point metadata relay at an unreachable URL so every refresh call
+      # fails quickly without creating episodes. Without dedup the import
+      # would invoke refresh once per file (5 times); with dedup it's at
+      # most once for the whole job regardless of how many files miss.
+      # `Mydia.Metadata.metadata_relay_url/0` reads from System env, not
+      # Application config, so we have to override there.
+      previous_env = System.get_env("METADATA_RELAY_URL")
+      System.put_env("METADATA_RELAY_URL", "http://127.0.0.1:1")
+
+      on_exit(fn ->
+        if previous_env do
+          System.put_env("METADATA_RELAY_URL", previous_env)
+        else
+          System.delete_env("METADATA_RELAY_URL")
+        end
+      end)
+
+      # Count "Failed to refresh episodes" — that line only fires inside
+      # the refresh attempt itself, so its count equals the number of
+      # actual `Media.refresh_episodes_for_tv_show/1` invocations. (The
+      # outer "Episode still not found …" warning fires per file
+      # regardless of dedup and is not a reliable counter.)
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          perform_job(MediaImport, %{
+            "download_id" => download.id,
+            "save_path" => download_dir
+          })
+        end)
+
+      refresh_attempts =
+        log
+        |> String.split("\n")
+        |> Enum.count(&String.contains?(&1, "Failed to refresh episodes"))
+
+      assert refresh_attempts <= 1,
+             "refresh_episodes_for_tv_show should be invoked at most once per import job; got #{refresh_attempts} attempts across 5 unresolved files"
+    end
+  end
 end
