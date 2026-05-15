@@ -128,7 +128,8 @@ defmodule Mydia.Downloads.Client do
   @type list_torrents_opts :: [
           filter: :all | :downloading | :seeding | :completed | :paused | :active | :inactive,
           category: String.t(),
-          tag: String.t()
+          tag: String.t(),
+          downloads: %{String.t() => Mydia.Downloads.Download.t()}
         ]
 
   @doc """
@@ -205,6 +206,15 @@ defmodule Mydia.Downloads.Client do
     * `:filter` - Filter torrents by state (`:all`, `:downloading`, `:seeding`, etc.)
     * `:category` - Filter by category
     * `:tag` - Filter by tag
+    * `:downloads` - A `%{download_client_id => Mydia.Downloads.Download.t()}`
+      map. The orchestrator (`Mydia.Downloads.History.fetch_all_client_statuses/1`)
+      pre-filters its loaded downloads list by client name and passes the
+      result through. Adapters that don't need it (qBittorrent, Transmission,
+      Blackhole, SABnzbd, NZBGet, rTorrent) ignore the opt. The debrid
+      adapter consumes it to look up the Mydia row for R8 metadata persistence
+      without performing DB queries inside the callback. Callers that don't
+      have the downloads loaded may pass an empty map; debrid will return
+      `{:ok, []}` in that case.
 
   ## Examples
 

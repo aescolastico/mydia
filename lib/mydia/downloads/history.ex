@@ -44,7 +44,7 @@ defmodule Mydia.Downloads.History do
       Enum.map(downloads, &enrich_download_with_empty_status/1)
     else
       # Get status from all clients
-      client_statuses = fetch_all_client_statuses(clients)
+      client_statuses = fetch_all_client_statuses(clients, downloads)
 
       # Enrich downloads with client status
       downloads
@@ -153,7 +153,7 @@ defmodule Mydia.Downloads.History do
     |> Enum.filter(& &1.enabled)
   end
 
-  defp fetch_all_client_statuses(clients) do
+  defp fetch_all_client_statuses(clients, downloads \\ []) do
     # Fetch torrents from all clients concurrently. We deliberately distinguish
     # between two outcomes that previously collapsed into "empty list":
     #
@@ -163,13 +163,23 @@ defmodule Mydia.Downloads.History do
     # The downstream classifier MUST NOT mark a download "missing" just because
     # its client was unreachable, otherwise a brief client restart flags every
     # active download as failed.
+    #
+    # We pre-group the loaded downloads by `download_client` name and forward
+    # the per-client map (keyed by `download_client_id`) to each adapter via
+    # `opts[:downloads]`. Adapters that don't need it ignore the opt; the
+    # debrid adapter consumes it to look up the Mydia `Download` row for the
+    # R8 metadata merge without performing DB queries inside the behaviour
+    # callback.
+    downloads_by_client = group_downloads_by_client(downloads)
+
     clients
     |> Task.async_stream(
       fn client_config ->
         adapter = get_adapter_module(client_config.type)
         config = config_to_map(client_config)
+        client_downloads = Map.get(downloads_by_client, client_config.name, %{})
 
-        case Client.list_torrents(adapter, config, []) do
+        case Client.list_torrents(adapter, config, downloads: client_downloads) do
           {:ok, torrents} ->
             torrents_map =
               torrents
@@ -192,6 +202,23 @@ defmodule Mydia.Downloads.History do
     |> Enum.reduce(%{}, fn
       {:ok, {client_name, result}}, acc -> Map.put(acc, client_name, result)
       _, acc -> acc
+    end)
+  end
+
+  defp group_downloads_by_client(downloads) do
+    Enum.reduce(downloads, %{}, fn download, acc ->
+      case {download.download_client, download.download_client_id} do
+        {nil, _} ->
+          acc
+
+        {_, nil} ->
+          acc
+
+        {client_name, client_id} ->
+          Map.update(acc, client_name, %{client_id => download}, fn existing ->
+            Map.put(existing, client_id, download)
+          end)
+      end
     end)
   end
 
