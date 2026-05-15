@@ -409,10 +409,19 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                     <.input
                       field={@download_client_form[:download_directory]}
                       type="text"
-                      label="Staging Directory"
-                      placeholder="/path/to/staging"
+                      label="Staging Directory (optional)"
+                      placeholder="/data/debrid-staging"
                     />
                   </div>
+
+                  <p class="text-xs text-base-content/60">
+                    Where Mydia streams completed downloads before importing them
+                    into your library. Defaults to <code>/data/debrid-staging</code>
+                    when the standard <code>/data</code>
+                    volume is mounted, otherwise
+                    the system temp directory. Override only if you need a specific
+                    filesystem (e.g., a faster disk or one with more headroom).
+                  </p>
                 </div>
               <% @selected_type == "blackhole" -> %>
                 <%!-- Blackhole-specific fields --%>
