@@ -95,6 +95,14 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
   """
   @spec validate_download_url(String.t()) :: {:ok, String.t()} | {:error, Error.t()}
   def validate_download_url(url) when is_binary(url) do
+    if relaxed_url_validation?() do
+      relaxed_validate(url)
+    else
+      strict_validate(url)
+    end
+  end
+
+  defp strict_validate(url) do
     case URI.parse(url) do
       %URI{scheme: scheme} when scheme not in ["https"] ->
         {:error,
@@ -118,6 +126,28 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
           {:ok, URI.to_string(parsed)}
         end
     end
+  end
+
+  # Only enabled inside the test environment when explicitly opted in. Keeps
+  # the SSRF guard intact for production while letting Fetcher tests drive
+  # the GenServer against `Bypass`-served `http://127.0.0.1:PORT` URLs.
+  defp relaxed_validate(url) do
+    case URI.parse(url) do
+      %URI{scheme: nil} ->
+        {:error,
+         Error.api_error("URL missing scheme", %{reason: :missing_scheme, url: redact_url(url)})}
+
+      %URI{host: host} when host in [nil, ""] ->
+        {:error,
+         Error.api_error("URL missing host", %{reason: :missing_host, url: redact_url(url)})}
+
+      uri ->
+        {:ok, URI.to_string(uri)}
+    end
+  end
+
+  defp relaxed_url_validation? do
+    Application.get_env(:mydia, :debrid_relaxed_url_validation, false) == true
   end
 
   @doc """
