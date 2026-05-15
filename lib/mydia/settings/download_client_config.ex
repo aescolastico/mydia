@@ -49,7 +49,19 @@ defmodule Mydia.Settings.DownloadClientConfig do
           updated_at: DateTime.t()
         }
 
-  @client_types [:qbittorrent, :transmission, :rtorrent, :blackhole, :http, :sabnzbd, :nzbget]
+  @client_types [
+    :qbittorrent,
+    :transmission,
+    :rtorrent,
+    :blackhole,
+    :http,
+    :sabnzbd,
+    :nzbget,
+    :debrid
+  ]
+
+  @debrid_providers ~w(real_debrid all_debrid premiumize tor_box)
+  @debrid_default_grace_minutes 1440
 
   schema "download_client_configs" do
     field :name, :string
@@ -104,11 +116,32 @@ defmodule Mydia.Settings.DownloadClientConfig do
     ])
     |> validate_required([:name, :type])
     |> validate_inclusion(:type, @client_types)
+    |> apply_debrid_grace_default(attrs)
     |> validate_by_type()
     |> validate_number(:priority, greater_than: 0)
     |> validate_number(:incomplete_grace_minutes, greater_than: 0)
     |> validate_priority_profile()
     |> unique_constraint(:name)
+  end
+
+  # Debrid clients submit a release to the provider and then wait — sometimes
+  # for hours — while the provider downloads it from its own swarm. The stall
+  # detector's default 60-minute grace would flag those waits as stalled. When
+  # the operator hasn't explicitly set a value, default `:debrid` clients to
+  # 1440 minutes (24h). Explicit operator overrides are preserved.
+  defp apply_debrid_grace_default(changeset, attrs) do
+    case get_field(changeset, :type) do
+      :debrid ->
+        if Map.has_key?(attrs, :incomplete_grace_minutes) or
+             Map.has_key?(attrs, "incomplete_grace_minutes") do
+          changeset
+        else
+          put_change(changeset, :incomplete_grace_minutes, @debrid_default_grace_minutes)
+        end
+
+      _ ->
+        changeset
+    end
   end
 
   @valid_priority_keys ~w(verylow low normal high veryhigh)
@@ -145,12 +178,17 @@ defmodule Mydia.Settings.DownloadClientConfig do
     end
   end
 
-  # Blackhole clients use filesystem paths instead of network config
+  # Blackhole and debrid clients use config patterns that don't include
+  # `:host`/`:port`. Other clients still require them.
   defp validate_by_type(changeset) do
     case get_field(changeset, :type) do
       :blackhole ->
         changeset
         |> validate_blackhole_config()
+
+      :debrid ->
+        changeset
+        |> validate_debrid_config()
 
       _network_client ->
         changeset
@@ -170,4 +208,41 @@ defmodule Mydia.Settings.DownloadClientConfig do
         |> add_error(:connection_settings, "must include watch_folder and completed_folder")
     end
   end
+
+  # Debrid clients require an API key and a `provider` selector under
+  # `connection_settings`. `:host`/`:port` are intentionally ignored — the
+  # provider's base URL is hardcoded per-provider module.
+  defp validate_debrid_config(changeset) do
+    changeset
+    |> validate_required([:api_key])
+    |> validate_debrid_provider()
+  end
+
+  defp validate_debrid_provider(changeset) do
+    case get_field(changeset, :connection_settings) do
+      %{"provider" => provider} when is_binary(provider) ->
+        if provider in @debrid_providers do
+          changeset
+        else
+          add_error(
+            changeset,
+            :connection_settings,
+            "provider must be one of: #{Enum.join(@debrid_providers, ", ")} (got #{inspect(provider)})"
+          )
+        end
+
+      _ ->
+        add_error(
+          changeset,
+          :connection_settings,
+          "must include provider (one of: #{Enum.join(@debrid_providers, ", ")})"
+        )
+    end
+  end
+
+  @doc """
+  Returns the supported debrid provider names (as strings).
+  """
+  @spec debrid_providers() :: [String.t()]
+  def debrid_providers, do: @debrid_providers
 end

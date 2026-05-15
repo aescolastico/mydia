@@ -69,4 +69,44 @@ defmodule Mydia.Downloads.DownloadTest do
       assert reloaded.last_known_bytes == 42
     end
   end
+
+  describe "bytes_pulled field" do
+    test "defaults to nil when not provided" do
+      {:ok, download} =
+        %Download{}
+        |> Download.changeset(@valid_attrs)
+        |> Repo.insert()
+
+      assert download.bytes_pulled == nil
+    end
+
+    test "casts an integer value cleanly and round-trips through the database" do
+      attrs = Map.put(@valid_attrs, :bytes_pulled, 8_388_608)
+
+      {:ok, inserted} =
+        %Download{}
+        |> Download.changeset(attrs)
+        |> Repo.insert()
+
+      assert inserted.bytes_pulled == 8_388_608
+
+      reloaded = Repo.get!(Download, inserted.id)
+      assert reloaded.bytes_pulled == 8_388_608
+    end
+
+    test "updates to bytes_pulled persist" do
+      {:ok, download} =
+        %Download{}
+        |> Download.changeset(@valid_attrs)
+        |> Repo.insert()
+
+      {:ok, updated} =
+        download
+        |> Download.changeset(%{bytes_pulled: 1024})
+        |> Repo.update()
+
+      reloaded = Repo.get!(Download, updated.id)
+      assert reloaded.bytes_pulled == 1024
+    end
+  end
 end
