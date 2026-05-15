@@ -453,6 +453,7 @@ defmodule Mydia.Downloads.History do
   defp get_adapter_module(:http), do: Mydia.Downloads.Client.HTTP
   defp get_adapter_module(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
   defp get_adapter_module(:nzbget), do: Mydia.Downloads.Client.Nzbget
+  defp get_adapter_module(:debrid), do: Mydia.Downloads.Client.Debrid
   defp get_adapter_module(_), do: nil
 
   defp config_to_map(config) do

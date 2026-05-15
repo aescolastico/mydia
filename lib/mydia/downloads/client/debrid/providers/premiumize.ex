@@ -42,7 +42,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
   def validate_credentials(config) do
     case Req.get(base_url() <> "/account/info", headers: auth_headers(config)) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, data} ->
             case data["premium_until"] do
               n when is_integer(n) and n > 0 ->
@@ -74,7 +74,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
            headers: auth_headers(config)
          ) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, %{"id" => id}} ->
             {:ok, to_string(id)}
 
@@ -104,7 +104,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
            headers: auth_headers(config)
          ) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, %{"id" => id}} ->
             {:ok, to_string(id)}
 
@@ -169,7 +169,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
   defp list_transfers(config) do
     case Req.get(base_url() <> "/transfer/list", headers: auth_headers(config)) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, %{"transfers" => transfers}} ->
             {:ok, transfers}
 
@@ -206,7 +206,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
            headers: auth_headers(config)
          ) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, %{"link" => url}} when is_binary(url) ->
             {:ok, [url]}
 
@@ -232,7 +232,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
            headers: auth_headers(config)
          ) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, data} -> {:ok, walk_folder(data["content"] || [], config)}
           {:error, err} -> {:error, err}
         end
@@ -268,7 +268,7 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
            headers: auth_headers(config)
          ) do
       {:ok, %Req.Response{status: 200, body: body}} ->
-        case wrap_pm(body) do
+        case wrap_pm(body, config) do
           {:ok, _} -> :ok
           {:error, %Error{type: :not_found}} -> :ok
           {:error, err} -> {:error, err}
@@ -307,47 +307,50 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.Premiumize do
 
   ## ── Envelope wrapper ────────────────────────────────────────────────
 
-  defp wrap_pm(%{"status" => "success"} = body), do: {:ok, body}
+  defp wrap_pm(%{"status" => "success"} = body, _config), do: {:ok, body}
 
-  defp wrap_pm(%{"status" => "error", "message" => msg} = body) do
+  defp wrap_pm(%{"status" => "error", "message" => msg} = body, config) do
     code = body["error_code"] || extract_code_from_message(msg)
-    {:error, error_for_code(code, body)}
+    {:error, error_for_code(code, body, config)}
   end
 
-  defp wrap_pm(other), do: {:error, Error.parse_error("Unexpected PM envelope", %{body: other})}
+  defp wrap_pm(other, config),
+    do: {:error, Error.parse_error("Unexpected PM envelope", %{body: sanitize(other, config)})}
 
   defp extract_code_from_message("not_found"), do: "not_found"
   defp extract_code_from_message("rate_limit_reached"), do: "rate_limit_reached"
   defp extract_code_from_message(_), do: nil
 
-  defp error_for_code(code, body) do
+  defp error_for_code(code, body, config) do
+    sanitized = sanitize(body, config)
+
     case code do
       "authentication_failed" ->
-        Error.authentication_failed("PM auth failed", %{body: body})
+        Error.authentication_failed("PM auth failed", %{body: sanitized})
 
       "permission_denied" ->
-        Error.authentication_failed("PM permission denied", %{body: body})
+        Error.authentication_failed("PM permission denied", %{body: sanitized})
 
       "not_found" ->
-        Error.not_found("PM resource not found", %{body: body})
+        Error.not_found("PM resource not found", %{body: sanitized})
 
       "service_unsupported" ->
-        Error.invalid_torrent("PM service unsupported", %{body: body})
+        Error.invalid_torrent("PM service unsupported", %{body: sanitized})
 
       "account_limit_reached" ->
-        Error.api_error("PM account limit", %{reason: :slot_limit, body: body})
+        Error.api_error("PM account limit", %{reason: :slot_limit, body: sanitized})
 
       "service_limit_reached" ->
-        Error.api_error("PM service limit", %{reason: :provider_unavailable, body: body})
+        Error.api_error("PM service limit", %{reason: :provider_unavailable, body: sanitized})
 
       "service_down" ->
-        Error.api_error("PM service down", %{reason: :provider_unavailable, body: body})
+        Error.api_error("PM service down", %{reason: :provider_unavailable, body: sanitized})
 
       "rate_limit_reached" ->
-        Error.api_error("PM rate limited", %{reason: :rate_limited, body: body})
+        Error.api_error("PM rate limited", %{reason: :rate_limited, body: sanitized})
 
       _ ->
-        Error.api_error("PM error: #{inspect(code)}", %{body: body})
+        Error.api_error("PM error: #{inspect(code)}", %{body: sanitized})
     end
   end
 

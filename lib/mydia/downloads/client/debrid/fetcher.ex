@@ -17,14 +17,19 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
 
   ## Recovery on init
 
-  If a `.part` file exists for the download AND `Download.bytes_pulled > 0`,
-  the Fetcher re-calls `Provider.get_download_urls/2` (RD URLs are
-  IP-bound and short-lived — trusting stored URLs across restarts produces
-  silent failures), issues a `Range: bytes=<bytes_pulled>-` request, and
-  appends. If the server returns 200 instead of 206, the `.part` is
-  deleted and the fetch restarts from byte 0. After `@max_retries`
-  exhaustions, the Download is marked failed and the existing queue retry
-  pipeline takes over.
+  If a `.part` file exists for a file being downloaded, its on-disk size is
+  used as the resume offset (not the DB `bytes_pulled` value). This ensures
+  correct recovery after a mid-transfer crash regardless of when the DB was
+  last updated, and avoids multi-file resume offset collisions.  The Fetcher
+  always re-calls `Provider.get_download_urls/2` on restart since RD URLs are
+  IP-bound and short-lived. After `@max_retries` failures, the Download is
+  marked failed and the existing queue retry pipeline takes over.
+
+  ## Retry
+
+  On any `run/1` error, the Fetcher retries up to `@max_retries` times with
+  an exponential back-off (5s, 10s, 15s). Retries clear `prefetched_urls` so
+  each attempt re-resolves URLs from the provider.
 
   ## Jitter
 
@@ -127,6 +132,10 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
       req_options: Keyword.get(opts, :req_options, []),
       jitter_ms: Keyword.get(opts, :jitter_ms, :rand.uniform(@startup_jitter_max_ms)),
       retries_left: Keyword.get(opts, :max_retries, @max_retries),
+      # Pre-resolved URLs passed from the dispatch adapter on the first
+      # claim. On process restart these are nil and `resolve_urls/2` falls
+      # back to calling the provider, since IP-bound URLs expire.
+      prefetched_urls: Keyword.get(opts, :prefetched_urls),
       finished?: false
     }
 
@@ -140,6 +149,16 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
       {:ok, new_state} ->
         {:stop, :normal, new_state}
 
+      {:error, reason} when state.retries_left > 0 ->
+        Logger.warning(
+          "Debrid fetcher attempt failed for download_id=#{state.download_id} " <>
+            "(#{state.retries_left} retries left): #{inspect(reason)}"
+        )
+
+        retry_ms = (@max_retries - state.retries_left + 1) * 5_000
+        Process.send_after(self(), :begin, retry_ms)
+        {:noreply, %{state | retries_left: state.retries_left - 1}}
+
       {:error, reason} ->
         fail_download(state, reason)
         {:stop, :normal, state}
@@ -150,7 +169,7 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
 
   defp run(state) do
     with {:ok, provider_module} <- resolve_provider_module(state),
-         {:ok, urls_or_descriptors} <- resolve_urls(provider_module, state),
+         {:ok, {urls_or_descriptors, state}} <- resolve_urls(provider_module, state),
          {:ok, urls} <- prepare_urls(urls_or_descriptors, state),
          {:ok, download} <- persist_urls(urls_or_descriptors, state),
          staging_dir <- staging_dir!(state),
@@ -167,6 +186,14 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
     with {:ok, key} <- Provider.provider_key(config), do: Provider.module_for(key)
   end
 
+  defp resolve_urls(_provider_module, %{prefetched_urls: prefetched} = state)
+       when is_list(prefetched) do
+    # First run: use the URLs already resolved by the dispatch adapter to
+    # avoid doubling the /unrestrict/link (or equivalent) call count.
+    # Clear prefetched_urls so that a retry uses a fresh provider call.
+    {:ok, {prefetched, %{state | prefetched_urls: nil}}}
+  end
+
   defp resolve_urls(provider_module, state) do
     %{config: config, provider_job: job} = state
     provider_atom = provider_atom(provider_module)
@@ -178,7 +205,10 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
            {budget_req, budget_window}
          ) do
       :ok ->
-        provider_module.get_download_urls(config, job)
+        case provider_module.get_download_urls(config, job) do
+          {:ok, urls} -> {:ok, {urls, state}}
+          {:error, _} = err -> err
+        end
 
       {:error, :rate_limited} ->
         {:error,
@@ -245,8 +275,9 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   end
 
   defp stream_all(urls, staging_dir, state, download) do
-    {:ok, state} = stream_each(urls, staging_dir, state, download)
-    finalize(staging_dir, state)
+    with {:ok, state} <- stream_each(urls, staging_dir, state, download) do
+      finalize(staging_dir, state)
+    end
   end
 
   defp stream_each([], _staging_dir, state, _download), do: {:ok, state}
@@ -318,24 +349,30 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
 
   defp maybe_validate_url(url) when is_binary(url), do: Shared.validate_download_url(url)
 
-  defp prepare_part(part_path, download, _state) do
-    cond do
-      not File.exists?(part_path) ->
-        :ok = File.touch(part_path)
-        {:ok, 0}
+  defp prepare_part(part_path, _download, state) do
+    if File.exists?(part_path) do
+      actual_size = byte_size_of(part_path)
 
-      is_integer(download.bytes_pulled) and download.bytes_pulled > 0 ->
-        # Recovery: trust bytes_pulled, range-resume.
-        {:ok, download.bytes_pulled}
-
-      true ->
-        :ok = File.rm!(part_path) |> wrap_ok()
-        :ok = File.touch(part_path)
+      if actual_size > 0 do
+        # Sync bytes_pulled to the real file size so crash-recovery uses
+        # the correct Range offset, regardless of what the DB row says.
+        # This also correctly handles multi-file releases: each file has
+        # its own `.part` path, so `actual_size` is the offset for *this*
+        # file, not a previous one.
+        update_bytes_pulled(state.download_id, actual_size)
+        {:ok, actual_size}
+      else
         {:ok, 0}
+      end
+    else
+      :ok = File.touch(part_path)
+      # Reset bytes_pulled to 0 when starting a fresh file so that a
+      # previous completed file's byte count doesn't pollute progress
+      # reporting or recovery for the next file in a multi-file release.
+      update_bytes_pulled(state.download_id, 0)
+      {:ok, 0}
     end
   end
-
-  defp wrap_ok(:ok), do: :ok
 
   defp fetch_into(url, part_path, offset, state) do
     headers =

@@ -215,23 +215,33 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Index do
       end
 
     test_config =
-      if type == :blackhole do
-        %{
-          type: :blackhole,
-          connection_settings: params.connection_settings || %{}
-        }
-      else
-        %{
-          type: type,
-          host: params.host,
-          port: params.port,
-          use_ssl: params.use_ssl || false,
-          username: params.username,
-          password: params.password,
-          api_key: params.api_key,
-          url_base: params.url_base,
-          options: params.connection_settings || %{}
-        }
+      cond do
+        type == :blackhole ->
+          %{
+            type: :blackhole,
+            connection_settings: params.connection_settings || %{}
+          }
+
+        type == :debrid ->
+          %{
+            type: :debrid,
+            api_key: params.api_key,
+            download_directory: params.download_directory,
+            connection_settings: params.connection_settings || %{}
+          }
+
+        true ->
+          %{
+            type: type,
+            host: params.host,
+            port: params.port,
+            use_ssl: params.use_ssl || false,
+            username: params.username,
+            password: params.password,
+            api_key: params.api_key,
+            url_base: params.url_base,
+            options: params.connection_settings || %{}
+          }
       end
 
     case test_client_connection(test_config) do

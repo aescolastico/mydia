@@ -3,7 +3,7 @@ defmodule Mydia.Repo.Migrations.AddBytesPulledToDownloads do
 
   def change do
     alter table(:downloads) do
-      add :bytes_pulled, :integer
+      add :bytes_pulled, :bigint
     end
   end
 end

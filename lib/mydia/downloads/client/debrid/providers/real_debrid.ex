@@ -151,16 +151,31 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.RealDebrid do
 
   def list_jobs(config, provider_job_ids) do
     # No batch endpoint. Fan out concurrent get_job calls under a
-    # bounded parallelism. The RateLimiter at the Fetcher / dispatch
-    # layer is what protects the 250/min cap; here we just keep the
-    # concurrent count reasonable.
+    # bounded parallelism. Each sub-request acquires its own rate-limit
+    # slot so that the full fan-out count is accurately tracked against
+    # the 250/min provider budget.
+    budget = rate_limit_budget()
+    api_key = config[:api_key] || ""
+
     results =
       provider_job_ids
       |> Task.async_stream(
         fn id ->
-          case get_job(config, id) do
-            {:ok, job} -> {id, {:ok, job}}
-            {:error, %Error{} = err} -> {id, {:error, err}}
+          alias Mydia.Downloads.Client.Debrid.RateLimiter
+
+          case RateLimiter.acquire(:real_debrid, api_key, budget) do
+            :ok ->
+              case get_job(config, id) do
+                {:ok, job} -> {id, {:ok, job}}
+                {:error, %Error{} = err} -> {id, {:error, err}}
+              end
+
+            {:error, :rate_limited} ->
+              {id,
+               {:error,
+                Error.api_error("Real-Debrid rate limited on list_jobs sub-request", %{
+                  reason: :rate_limited
+                })}}
           end
         end,
         timeout: :infinity,

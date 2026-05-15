@@ -159,14 +159,38 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
     cond do
       host == "" -> true
       host in ["localhost", "::1", "[::1]"] -> true
-      true -> private_ip?(host)
+      true -> private_ip_or_hostname?(host)
     end
   end
 
-  defp private_ip?(host) do
-    case :inet.parse_address(to_charlist(host)) do
+  defp private_ip_or_hostname?(host) do
+    # Strip brackets from IPv6 URL notation (e.g., "[::1]" → "::1")
+    host_stripped =
+      if String.starts_with?(host, "[") and String.ends_with?(host, "]") do
+        String.slice(host, 1, byte_size(host) - 2)
+      else
+        host
+      end
+
+    case :inet.parse_address(to_charlist(host_stripped)) do
+      {:ok, {a, b, c, d}} ->
+        ipv4_in_blocklist?({a, b, c, d})
+
+      {:ok, ipv6_tuple} when tuple_size(ipv6_tuple) == 8 ->
+        ipv6_in_blocklist?(ipv6_tuple)
+
+      _ ->
+        # Not a raw IP literal — attempt DNS resolution to catch
+        # hostnames that point at RFC1918 / link-local addresses.
+        # Fail *open* on resolution errors (DNS unavailable, timeout)
+        # so valid provider CDNs are not blocked by transient DNS issues.
+        resolve_and_check(host_stripped)
+    end
+  end
+
+  defp resolve_and_check(host) do
+    case :inet.getaddr(to_charlist(host), :inet) do
       {:ok, {a, b, c, d}} -> ipv4_in_blocklist?({a, b, c, d})
-      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
       _ -> false
     end
   end
@@ -180,6 +204,16 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
         _ -> matches_prefix?(ip, {p1, p2, p3, 0}, prefix)
       end
     end)
+  end
+
+  # ULA: fc00::/7 — top 7 bits 1111110x → (a & 0xFE00) == 0xFC00.
+  # Link-local: fe80::/10 — top 10 bits 1111111010 → (a & 0xFFC0) == 0xFE80.
+  defp ipv6_in_blocklist?({a, _b, _c, _d, _e, _f, _g, _h}) do
+    cond do
+      Bitwise.band(a, 0xFE00) == 0xFC00 -> true
+      Bitwise.band(a, 0xFFC0) == 0xFE80 -> true
+      true -> false
+    end
   end
 
   defp matches_prefix?({a, b, c, d}, {p1, p2, p3, p4}, prefix) do

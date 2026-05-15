@@ -48,25 +48,15 @@ defmodule Mydia.Downloads.Client.Debrid.RateLimiter do
   """
   @spec acquire(provider(), String.t() | nil, budget()) ::
           :ok | {:error, :rate_limited}
-  def acquire(provider, api_key, {requests, window_seconds})
+  def acquire(provider, api_key, {requests, window_seconds} = budget)
       when is_atom(provider) and is_integer(requests) and requests > 0 and
              is_integer(window_seconds) and window_seconds > 0 do
-    key = key(provider, api_key)
-    now = System.monotonic_time(:millisecond)
-    window_start = now - window_seconds * 1_000
-
-    if count(key, window_start) < requests do
-      slot_id = System.unique_integer([:monotonic, :positive])
-      :ets.insert(@table_name, {{key, now, slot_id}, true})
-      :ok
-    else
-      {:error, :rate_limited}
-    end
+    GenServer.call(__MODULE__, {:acquire, provider, api_key, budget})
   rescue
-    # ETS table doesn't exist (e.g., during boot or in tests that haven't
+    # GenServer not running (e.g., during boot or in tests that haven't
     # started the GenServer). Fail open — better to over-permit briefly
     # than to block the entire pipeline.
-    ArgumentError -> :ok
+    _ -> :ok
   end
 
   @doc """
@@ -116,6 +106,24 @@ defmodule Mydia.Downloads.Client.Debrid.RateLimiter do
     schedule_cleanup()
     Logger.info("Debrid rate limiter started")
     {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:acquire, provider, api_key, {requests, window_seconds}}, _from, state) do
+    key = key(provider, api_key)
+    now = System.monotonic_time(:millisecond)
+    window_start = now - window_seconds * 1_000
+
+    result =
+      if count(key, window_start) < requests do
+        slot_id = System.unique_integer([:monotonic, :positive])
+        :ets.insert(@table_name, {{key, now, slot_id}, true})
+        :ok
+      else
+        {:error, :rate_limited}
+      end
+
+    {:reply, result, state}
   end
 
   @impl true

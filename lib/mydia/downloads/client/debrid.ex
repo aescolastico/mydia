@@ -41,6 +41,9 @@ defmodule Mydia.Downloads.Client.Debrid do
   alias Mydia.Downloads.Client.Debrid.{Fetcher, Provider, RateLimiter, Shared}
   alias Mydia.Downloads.Client.Error
   alias Mydia.Downloads.Structs.ClientInfo
+  alias Mydia.Downloads.{Download, History}
+  alias Mydia.Repo
+  import Ecto.Query, only: [from: 2]
 
   ## ── Behaviour callbacks ──────────────────────────────────────────────
 
@@ -120,13 +123,14 @@ defmodule Mydia.Downloads.Client.Debrid do
 
   @impl true
   def remove_torrent(config, client_id, _opts \\ []) do
+    # Terminate any running Fetcher for this download before deleting the
+    # provider-side job. We look up the Mydia download by client_id so
+    # that callers don't need to plumb the internal download_id through.
+    terminate_fetcher_for_client_id(client_id)
+
     with {:ok, provider_module, provider_atom, _key} <- resolve_provider(config),
          :ok <- acquire(provider_atom, config),
          :ok <- best_effort_provider_delete(provider_module, config, client_id) do
-      # Best-effort Fetcher termination: the caller (`Queue.cancel_download`)
-      # already has the Download row and terminates the Fetcher itself via
-      # `Fetcher.terminate(download_id)` before calling us, so we don't need
-      # to look it up by `client_id` here.
       :ok
     else
       {:error, %Error{} = err} -> {:error, sanitize_error(err, config)}
@@ -200,8 +204,9 @@ defmodule Mydia.Downloads.Client.Debrid do
 
   defp persist_r8_and_claim(provider_module, provider_atom, config, job, download) do
     with :ok <- acquire(provider_atom, config),
-         {:ok, urls_or_descriptors} <- provider_module.get_download_urls(config, job) do
-      persisted = build_r8(provider_module, urls_or_descriptors)
+         {:ok, urls_or_descriptors} <- provider_module.get_download_urls(config, job),
+         {:ok, validated} <- validate_r8_urls(urls_or_descriptors) do
+      persisted = build_r8(provider_module, validated)
       merge_metadata!(download, %{"debrid_urls" => persisted})
 
       _ =
@@ -209,18 +214,44 @@ defmodule Mydia.Downloads.Client.Debrid do
           download_id: download.id,
           config: config,
           provider_job: job,
-          provider_module: provider_module
+          provider_module: provider_module,
+          prefetched_urls: validated
         )
 
       :ok
     else
       {:error, err} ->
+        sanitized = sanitize_error(err, config)
+
         Logger.warning(
           "Debrid (#{provider_atom}) failed to resolve URLs for download " <>
-            "#{download.id}: #{inspect(err)}"
+            "#{download.id}: #{inspect(sanitized)}"
         )
 
         :error
+    end
+  end
+
+  # Validates all HTTPS URLs from the provider before persisting them.
+  # Descriptors (TorBox tokenless entries) are passed through as-is since
+  # their eventual URL is constructed at fetch-time, where validation happens.
+  defp validate_r8_urls(urls_or_descriptors) do
+    Enum.reduce_while(urls_or_descriptors, {:ok, []}, fn
+      %{"provider" => _} = descriptor, {:ok, acc} ->
+        {:cont, {:ok, [descriptor | acc]}}
+
+      url, {:ok, acc} when is_binary(url) ->
+        case Shared.validate_download_url(url) do
+          {:ok, validated_url} -> {:cont, {:ok, [validated_url | acc]}}
+          {:error, _} = err -> {:halt, err}
+        end
+
+      other, {:ok, acc} ->
+        {:cont, {:ok, [other | acc]}}
+    end)
+    |> case do
+      {:ok, list} -> {:ok, Enum.reverse(list)}
+      err -> err
     end
   end
 
@@ -244,7 +275,7 @@ defmodule Mydia.Downloads.Client.Debrid do
   end
 
   defp merge_metadata!(download, new_keys) do
-    Mydia.Downloads.History.update_download(download, %{
+    History.update_download(download, %{
       metadata: Map.merge(download.metadata || %{}, new_keys)
     })
   end
@@ -382,6 +413,26 @@ defmodule Mydia.Downloads.Client.Debrid do
   end
 
   defp sanitize_error(other, _config), do: other
+
+  # Terminates any running Fetcher for a download identified by its
+  # provider-side client_id. Best-effort — if no Fetcher is running or the
+  # lookup fails, it is silently ignored.
+  defp terminate_fetcher_for_client_id(client_id) do
+    try do
+      download_id =
+        Repo.one(
+          from(d in Download,
+            where: d.download_client_id == ^client_id and d.download_client == "debrid",
+            select: d.id,
+            limit: 1
+          )
+        )
+
+      if download_id, do: Fetcher.terminate(download_id)
+    rescue
+      _ -> :ok
+    end
+  end
 
   # `get_status/2` is the synchronous variant used by `queue.ex:521` and
   # `media_import.ex:502`. Neither has the Mydia `Download.id` handy when
