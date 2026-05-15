@@ -1533,6 +1533,7 @@ defmodule Mydia.Jobs.MediaImport do
   defp get_adapter_module(:http), do: Mydia.Downloads.Client.HTTP
   defp get_adapter_module(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
   defp get_adapter_module(:nzbget), do: Mydia.Downloads.Client.Nzbget
+  defp get_adapter_module(:debrid), do: Mydia.Downloads.Client.Debrid
   defp get_adapter_module(_), do: nil
 
   defp build_client_config(client_config) do
@@ -1541,6 +1542,17 @@ defmodule Mydia.Jobs.MediaImport do
         # Blackhole uses connection_settings for folder paths
         %{
           type: :blackhole,
+          connection_settings: client_config.connection_settings || %{}
+        }
+
+      :debrid ->
+        # Debrid reads the provider sub-selector from
+        # `connection_settings["provider"]` and the operator's bearer token
+        # from `api_key`. Without these the dispatch returns :invalid_config.
+        %{
+          type: :debrid,
+          api_key: client_config.api_key,
+          download_directory: client_config.download_directory,
           connection_settings: client_config.connection_settings || %{}
         }
 

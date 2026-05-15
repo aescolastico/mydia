@@ -94,11 +94,20 @@ defmodule Mydia.Downloads.Client.Debrid do
     with {:ok, provider_module, provider_atom, _key} <- resolve_provider(config),
          :ok <- acquire(provider_atom, config),
          {:ok, job} <- provider_module.get_job(config, client_id) do
+      # Look up the Mydia Download by client_id so synthesize_status sees
+      # save_path / bytes_pulled from metadata. MediaImport's
+      # `get_download_files/2` falls back to args.save_path ONLY when
+      # `get_status` returns `{:error, _}` — if we return `{:ok, status}`
+      # with `status.save_path == nil`, it treats it as a hard `:no_save_path`
+      # failure and never tries the fallback. Loading the Download here
+      # closes that gap and lets the cron-driven completion flow work.
+      download = lookup_download_by_client_id(client_id)
+
       status =
         Shared.synthesize_status(
           job,
-          fetcher_state(client_id_to_download_id(client_id), nil),
-          nil
+          fetcher_state(download && download.id, download),
+          download
         )
 
       {:ok, status}
@@ -107,6 +116,19 @@ defmodule Mydia.Downloads.Client.Debrid do
       {:error, other} -> {:error, sanitize_error(other, config)}
     end
   end
+
+  defp lookup_download_by_client_id(client_id) when is_binary(client_id) do
+    import Ecto.Query
+
+    Mydia.Downloads.Download
+    |> where([d], d.download_client_id == ^client_id)
+    |> limit(1)
+    |> Mydia.Repo.one()
+  rescue
+    _ -> nil
+  end
+
+  defp lookup_download_by_client_id(_), do: nil
 
   @impl true
   def list_torrents(config, opts \\ []) do
@@ -475,9 +497,4 @@ defmodule Mydia.Downloads.Client.Debrid do
       _ -> :ok
     end
   end
-
-  # `get_status/2` is the synchronous variant used by `queue.ex:521` and
-  # `media_import.ex:502`. Neither has the Mydia `Download.id` handy when
-  # it calls us, so we synthesize a degraded status (no `bytes_pulled`).
-  defp client_id_to_download_id(_client_id), do: nil
 end
