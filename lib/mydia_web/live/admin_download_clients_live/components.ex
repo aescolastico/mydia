@@ -121,11 +121,14 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                   </div>
                   <div class="text-xs opacity-60 mt-1 truncate">
                     <span class="font-mono">
-                      <%= if client.type == :blackhole do %>
-                        {get_in(client.connection_settings || %{}, ["watch_folder"]) ||
-                          "No watch folder"}
-                      <% else %>
-                        {if client.use_ssl, do: "https://", else: "http://"}{client.host}:{client.port}
+                      <%= cond do %>
+                        <% client.type == :blackhole -> %>
+                          {get_in(client.connection_settings || %{}, ["watch_folder"]) ||
+                            "No watch folder"}
+                        <% client.type == :debrid -> %>
+                          {debrid_provider_label(client)}
+                        <% true -> %>
+                          {if client.use_ssl, do: "https://", else: "http://"}{client.host}:{client.port}
                       <% end %>
                     </span>
                     <%= if client.category do %>
@@ -717,4 +720,18 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
   defp health_status_label(:healthy), do: "Healthy"
   defp health_status_label(:unhealthy), do: "Unhealthy"
   defp health_status_label(:unknown), do: "Unknown"
+
+  # Renders a short summary string for a debrid client row in the list.
+  # Surfaces the provider's human-readable label (e.g., "Real-Debrid"); the
+  # debrid type itself isn't routed by host/port so the host/port fallback
+  # used by other clients would render an empty "http://:" string.
+  defp debrid_provider_label(client) do
+    case get_in(client.connection_settings || %{}, ["provider"]) do
+      provider when is_binary(provider) ->
+        Mydia.Downloads.Client.Debrid.Provider.label_for(provider)
+
+      _ ->
+        "No provider"
+    end
+  end
 end
