@@ -296,12 +296,17 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   end
 
   defp http_url_and_name(entry, _state) when is_binary(entry) do
+    # URL-decode the basename so URI-encoded characters (`%20` for space,
+    # `%5B` for `[`, etc.) become real filename characters. Otherwise the
+    # MediaImport file parser sees "Project%20Hail%20Mary.mkv" and fails
+    # title detection that depends on the file's natural-language tokens.
     name =
       entry
       |> URI.parse()
       |> Map.get(:path)
       |> Kernel.||("debrid-file")
       |> Path.basename()
+      |> URI.decode()
 
     {entry, name}
   end
@@ -441,16 +446,21 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   defp finalize(_download_dir, state) do
     # Update Download.metadata["save_path"] to point at the download directory.
     # The existing MediaImport pipeline picks the file up from there.
+    #
+    # NOTE: do NOT set Download.completed_at here. The DownloadMonitor cron
+    # uses `is_nil(d.db_completed_at)` as the "newly completed → enqueue
+    # MediaImport" trigger (see download_monitor.ex's `completed` filter).
+    # If the Fetcher sets completed_at itself, the cron skips this row
+    # forever and the file sits in staging without ever being imported.
+    # The cron's `handle_completed_download/2` is what should stamp
+    # completed_at — right before it enqueues the import job.
     download = History.get_download!(state.download_id)
 
     save_path = download_dir!(state)
 
     new_metadata = Map.merge(download.metadata || %{}, %{"save_path" => save_path})
 
-    case History.update_download(download, %{
-           metadata: new_metadata,
-           completed_at: DateTime.utc_now()
-         }) do
+    case History.update_download(download, %{metadata: new_metadata}) do
       {:ok, _} -> {:ok, state}
       {:error, cs} -> {:error, Error.unknown("failed to finalize download: #{inspect(cs)}")}
     end

@@ -209,6 +209,10 @@ defmodule Mydia.Downloads.Client.Debrid do
       persisted = build_r8(provider_module, validated)
       merge_metadata!(download, %{"debrid_urls" => persisted})
 
+      # If a previous cron tick stamped an error_message (e.g. transient
+      # rate-limit), clear it now that we've successfully resolved URLs.
+      maybe_clear_download_error(download)
+
       _ =
         Fetcher.claim(
           download_id: download.id,
@@ -228,9 +232,47 @@ defmodule Mydia.Downloads.Client.Debrid do
             "#{download.id}: #{inspect(sanitized)}"
         )
 
+        # Surface the failure to the operator. Without this, the downloads
+        # page sees a `:ready` provider state with no save_path and shows
+        # the synthesized `:queued` state with no indication of *why* nothing
+        # is progressing. Writing to `error_message` makes the failure
+        # visible in the UI alongside the queued badge.
+        record_download_error(download, error_message_for(sanitized))
+
         :error
     end
   end
+
+  defp record_download_error(download, message) do
+    case Mydia.Downloads.History.update_download(download, %{error_message: message}) do
+      {:ok, _} -> :ok
+      {:error, _} -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  # Clear an `error_message` we previously stamped (prefixed "Debrid: ").
+  # Avoids wiping diagnostics set by other code paths.
+  defp maybe_clear_download_error(%Mydia.Downloads.Download{error_message: msg} = download)
+       when is_binary(msg) do
+    if String.starts_with?(msg, "Debrid: ") do
+      Mydia.Downloads.History.update_download(download, %{error_message: nil})
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp maybe_clear_download_error(_), do: :ok
+
+  defp error_message_for(%Error{message: msg, details: %{reason: reason}})
+       when is_atom(reason),
+       do: "Debrid: #{msg} (#{reason})"
+
+  defp error_message_for(%Error{message: msg}), do: "Debrid: #{msg}"
+  defp error_message_for(other), do: "Debrid: #{inspect(other)}"
 
   # Validates all HTTPS URLs from the provider before persisting them.
   # Descriptors (TorBox tokenless entries) are passed through as-is since

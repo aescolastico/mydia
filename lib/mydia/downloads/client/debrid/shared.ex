@@ -360,23 +360,41 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
     }
   end
 
-  defp apply_state(base, %ProviderJob{state: :queued}, _fs, _dl),
-    do: %{base | state: :queued}
+  # The debrid lifecycle has TWO download phases the operator cares about:
+  # the provider's own download from the swarm (we have no local copy yet)
+  # and Mydia's local pull from the provider's CDN. Mirroring the provider's
+  # progress while the local pull hasn't started would show "Downloading 100%"
+  # on a torrent that has no local bytes — misleading. The mapping below
+  # surfaces local progress when the local pull is running, and uses
+  # :queued / :checking to communicate provider-side phases.
 
+  defp apply_state(base, %ProviderJob{state: :queued}, _fs, _dl),
+    do: %{base | state: :queued, progress: 0.0, downloaded: 0}
+
+  # Provider is pulling from the swarm — surface it as `:downloading` with the
+  # provider's progress so the operator sees forward motion, but in the
+  # broader sense "Mydia hasn't received any bytes yet locally". We mirror
+  # provider progress here because the UI's existing `:downloading` badge
+  # is the most informative we have without a sub-state column.
   defp apply_state(base, %ProviderJob{state: :downloading} = job, _fs, _dl) do
     downloaded = mirror_downloaded(job)
     %{base | state: :downloading, downloaded: downloaded}
   end
 
-  defp apply_state(base, %ProviderJob{state: :finalizing} = job, _fs, _dl) do
-    downloaded = mirror_downloaded(job)
-    %{base | state: :downloading, downloaded: downloaded}
-  end
+  # Provider has finished from the swarm and is packaging/caching to its
+  # hoster — surface as `:checking` so the UI shows distinct "verifying"
+  # state instead of an in-progress percentage. Mydia still has nothing
+  # locally; checking the package on the provider side fits the
+  # `DownloadStatus :checking` taxonomy ("verifying/repairing/moving").
+  defp apply_state(base, %ProviderJob{state: :finalizing}, _fs, _dl),
+    do: %{base | state: :checking, progress: 0.0, downloaded: 0}
 
-  defp apply_state(base, %ProviderJob{state: :ready}, :completed, %Download{
+  # Provider is fully ready AND Mydia's local fetcher has finished writing
+  # the file → save_path is set on the Download → terminal `:completed`.
+  defp apply_state(base, %ProviderJob{state: :ready}, _fs, %Download{
          metadata: %{"save_path" => save_path}
        })
-       when is_binary(save_path) do
+       when is_binary(save_path) and save_path != "" do
     %{
       base
       | state: :completed,
@@ -387,28 +405,37 @@ defmodule Mydia.Downloads.Client.Debrid.Shared do
     }
   end
 
+  # Provider is ready but the fetcher itself failed terminally.
   defp apply_state(base, %ProviderJob{state: :ready}, :failed, _dl),
-    do: %{base | state: :error}
+    do: %{base | state: :error, progress: 0.0, downloaded: 0}
 
-  defp apply_state(base, %ProviderJob{state: :ready} = job, _fetcher_state, download) do
-    downloaded =
-      case download do
-        %Download{bytes_pulled: n} when is_integer(n) and n > 0 -> n
-        _ -> mirror_downloaded(job)
-      end
+  # Provider is ready and the local fetcher is actively streaming. Surface
+  # the fetcher's progress (bytes_pulled / size) — NOT the provider's
+  # mirrored 100%. This is the case the operator should see most often
+  # during a healthy debrid download.
+  defp apply_state(base, %ProviderJob{state: :ready}, :running, %Download{} = download) do
+    bytes = download.bytes_pulled || 0
 
     progress =
       if base.size > 0 do
-        downloaded / base.size * 100.0
+        bytes / base.size * 100.0
       else
-        base.progress || 0.0
+        0.0
       end
 
-    %{base | state: :downloading, downloaded: downloaded, progress: progress}
+    %{base | state: :downloading, downloaded: bytes, progress: progress}
   end
 
+  # Provider is ready, no fetcher running yet, no save_path. The Mydia-side
+  # work hasn't started (or hasn't been claimed since the last cron tick).
+  # Report `:queued` rather than mirroring the provider's 100% — the
+  # operator hasn't received any bytes locally yet, even though RD says
+  # the torrent is "done" on their side.
+  defp apply_state(base, %ProviderJob{state: :ready}, _fetcher_state, _download),
+    do: %{base | state: :queued, progress: 0.0, downloaded: 0}
+
   defp apply_state(base, %ProviderJob{state: :error}, _fs, _dl),
-    do: %{base | state: :error}
+    do: %{base | state: :error, progress: 0.0, downloaded: 0}
 
   defp mirror_downloaded(%ProviderJob{total_bytes: total, progress: p})
        when is_integer(total) and total > 0 and is_number(p) do
