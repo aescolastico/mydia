@@ -153,7 +153,7 @@ defmodule Mydia.Downloads.History do
     |> Enum.filter(& &1.enabled)
   end
 
-  defp fetch_all_client_statuses(clients, downloads \\ []) do
+  defp fetch_all_client_statuses(clients, downloads) do
     # Fetch torrents from all clients concurrently. We deliberately distinguish
     # between two outcomes that previously collapsed into "empty list":
     #

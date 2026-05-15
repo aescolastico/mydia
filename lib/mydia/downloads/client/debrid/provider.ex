@@ -112,14 +112,34 @@ defmodule Mydia.Downloads.Client.Debrid.Provider do
 
   @doc """
   Provider-string-to-module map used by the dispatch adapter.
+
+  Honors `Application.get_env(:mydia, :debrid_provider_overrides, %{})`
+  first so tests can inject a stub module per provider key without
+  touching the production lookup table.
   """
   @spec module_for(String.t()) :: {:ok, module()} | {:error, Error.t()}
-  def module_for("real_debrid"), do: {:ok, Mydia.Downloads.Client.Debrid.Providers.RealDebrid}
-  def module_for("all_debrid"), do: {:ok, Mydia.Downloads.Client.Debrid.Providers.AllDebrid}
-  def module_for("premiumize"), do: {:ok, Mydia.Downloads.Client.Debrid.Providers.Premiumize}
-  def module_for("tor_box"), do: {:ok, Mydia.Downloads.Client.Debrid.Providers.TorBox}
+  def module_for(key) when is_binary(key) do
+    overrides = Application.get_env(:mydia, :debrid_provider_overrides, %{})
 
-  def module_for(other) do
+    case Map.fetch(overrides, key) do
+      {:ok, module} when is_atom(module) -> {:ok, module}
+      :error -> default_module_for(key)
+    end
+  end
+
+  defp default_module_for("real_debrid"),
+    do: {:ok, Mydia.Downloads.Client.Debrid.Providers.RealDebrid}
+
+  defp default_module_for("all_debrid"),
+    do: {:ok, Mydia.Downloads.Client.Debrid.Providers.AllDebrid}
+
+  defp default_module_for("premiumize"),
+    do: {:ok, Mydia.Downloads.Client.Debrid.Providers.Premiumize}
+
+  defp default_module_for("tor_box"),
+    do: {:ok, Mydia.Downloads.Client.Debrid.Providers.TorBox}
+
+  defp default_module_for(other) do
     {:error,
      Error.invalid_config(
        "unknown debrid provider: #{inspect(other)} " <>
