@@ -1020,8 +1020,8 @@ defmodule Mydia.Jobs.TVShowSearchTest do
           metadata: %{"seasons" => [%{"season_number" => 1, "episode_count" => 0}]}
         })
 
-      missing =
-        for ep_num <- 1..8 do
+      episodes =
+        for ep_num <- 1..10 do
           episode_fixture(%{
             media_item_id: tv_show.id,
             season_number: 1,
@@ -1030,7 +1030,9 @@ defmodule Mydia.Jobs.TVShowSearchTest do
           })
         end
 
-      # 8 of 8 in the DB are missing — 100% via DB fallback.
+      missing = Enum.take(episodes, 8)
+
+      # 8 of 10 in the DB are missing — 80% via DB fallback.
       assert TVShowSearch.should_prefer_season_pack?(missing, tv_show, 1)
     end
   end
