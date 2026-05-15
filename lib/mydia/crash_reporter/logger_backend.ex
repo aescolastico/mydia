@@ -41,7 +41,24 @@ defmodule Mydia.CrashReporter.LoggerBackend do
   @impl true
   def handle_event({level, _gl, {Logger, msg, _ts, metadata}}, state)
       when level in [:error, :warning] do
-    # Only report if crash reporting is enabled
+    # Short-circuit the disabled kill-switch before touching the database.
+    # `Mydia.CrashReporter.enabled?/0` queries `config_settings`, and from a
+    # gen_event handler that query doesn't share the test's sandbox connection
+    # ownership — leaking a checkout that surfaces as `Exqlite.Error: Database
+    # busy` in a later test.
+    if Application.get_env(:mydia, :crash_reporter_disabled?, false) do
+      {:ok, state}
+    else
+      maybe_handle_event(msg, metadata, state)
+    end
+  end
+
+  @impl true
+  def handle_event(_event, state) do
+    {:ok, state}
+  end
+
+  defp maybe_handle_event(msg, metadata, state) do
     if Mydia.CrashReporter.enabled?() do
       state = maybe_cleanup_rate_limits(state)
 
@@ -67,11 +84,6 @@ defmodule Mydia.CrashReporter.LoggerBackend do
     else
       {:ok, state}
     end
-  end
-
-  @impl true
-  def handle_event(_event, state) do
-    {:ok, state}
   end
 
   @impl true
