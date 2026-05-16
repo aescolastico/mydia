@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
         - name: metadata-relay
-          image: ghcr.io/getmydia/mydia/metadata-relay:0.7.2
+          image: ghcr.io/getmydia/mydia/metadata-relay:0.9.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
