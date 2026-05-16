@@ -340,4 +340,86 @@ defmodule Mydia.Library.MediaFileTest do
       assert changeset.valid?
     end
   end
+
+  describe "analysis state fields" do
+    setup do
+      {:ok, library} =
+        %LibraryPath{}
+        |> LibraryPath.changeset(%{
+          path: "/test/analysis-state",
+          type: :movies,
+          monitored: true
+        })
+        |> Repo.insert()
+
+      %{library: library}
+    end
+
+    test "freshly inserted scan row defaults to analyzed_at nil and analysis_attempts 0", %{
+      library: library
+    } do
+      {:ok, media_file} =
+        %MediaFile{}
+        |> MediaFile.scan_changeset(%{
+          relative_path: "Movie.mkv",
+          library_path_id: library.id,
+          size: 1_000_000_000
+        })
+        |> Repo.insert()
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+
+      assert is_nil(reloaded.analyzed_at)
+      assert reloaded.analysis_attempts == 0
+      assert is_nil(reloaded.last_analysis_error)
+    end
+
+    test "changeset/2 casts analyzed_at, analysis_attempts, and last_analysis_error", %{
+      library: library
+    } do
+      {:ok, media_file} =
+        %MediaFile{}
+        |> MediaFile.scan_changeset(%{
+          relative_path: "Movie.mkv",
+          library_path_id: library.id
+        })
+        |> Repo.insert()
+
+      analyzed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, updated} =
+        media_file
+        |> MediaFile.scan_changeset(%{
+          analyzed_at: analyzed_at,
+          analysis_attempts: 2,
+          last_analysis_error: ":ffprobe_timeout"
+        })
+        |> Repo.update()
+
+      assert updated.analyzed_at == analyzed_at
+      assert updated.analysis_attempts == 2
+      assert updated.last_analysis_error == ":ffprobe_timeout"
+    end
+
+    test "scan_changeset/2 also casts the new fields", %{library: library} do
+      analyzed_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, media_file} =
+        %MediaFile{}
+        |> MediaFile.scan_changeset(%{
+          relative_path: "Other.mkv",
+          library_path_id: library.id,
+          analyzed_at: analyzed_at,
+          analysis_attempts: 1,
+          last_analysis_error: ":invalid_json"
+        })
+        |> Repo.insert()
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+
+      assert reloaded.analyzed_at == analyzed_at
+      assert reloaded.analysis_attempts == 1
+      assert reloaded.last_analysis_error == ":invalid_json"
+    end
+  end
 end
