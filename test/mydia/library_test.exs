@@ -1,6 +1,8 @@
 defmodule Mydia.LibraryTest do
   use Mydia.DataCase
 
+  import Ecto.Query, only: [from: 2]
+
   alias Mydia.Library
 
   import Mydia.SettingsFixtures
@@ -415,6 +417,161 @@ defmodule Mydia.LibraryTest do
 
       total_after = Library.total_storage_bytes()
       assert total_after == total_before - 300
+    end
+  end
+
+  describe "apply_analysis/2" do
+    alias Mydia.Library.MediaFile
+    alias Mydia.Library.Structs.FileAnalysisResult
+    alias Mydia.Library.Structs.FileMetadata
+    alias Mydia.Repo
+
+    setup do
+      library_path = library_path_fixture(%{path: "/apply-analysis", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "subject.mkv",
+          library_path_id: library_path.id,
+          size: 1_500_000
+        })
+
+      result = %FileAnalysisResult{
+        resolution: "1080p",
+        codec: "H.264 (High)",
+        audio_codec: "AAC Stereo",
+        bitrate: 8_000_000,
+        hdr_format: nil,
+        size: 2_147_483_648,
+        duration: 5400.5,
+        container: "mkv"
+      }
+
+      %{media_file: media_file, result: result}
+    end
+
+    test "success path populates tech metadata, analyzed_at, and clears last_analysis_error",
+         %{media_file: media_file, result: result} do
+      assert :ok = Library.apply_analysis(media_file, {:ok, result})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+
+      assert reloaded.codec == "h264"
+      assert reloaded.audio_codec == "aac"
+      assert reloaded.resolution == "1080p"
+      assert reloaded.bitrate == 8_000_000
+      assert is_nil(reloaded.hdr_format)
+      assert reloaded.size == 2_147_483_648
+      assert %FileMetadata{container: "mkv", duration: 5400.5} = reloaded.metadata
+      assert %DateTime{} = reloaded.analyzed_at
+      assert reloaded.last_analysis_error == nil
+    end
+
+    test "second concurrent writer returns :already_analyzed and does not overwrite",
+         %{media_file: media_file, result: result} do
+      assert :ok = Library.apply_analysis(media_file, {:ok, result})
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      analyzed_at = reloaded.analyzed_at
+
+      different_result = %FileAnalysisResult{result | codec: "HEVC"}
+      assert :already_analyzed = Library.apply_analysis(media_file, {:ok, different_result})
+
+      final = Repo.get!(MediaFile, media_file.id)
+      assert final.codec == "h264"
+      assert final.analyzed_at == analyzed_at
+    end
+
+    test "failure path bumps analysis_attempts and records last_analysis_error",
+         %{media_file: media_file} do
+      assert {:error, :ffprobe_timeout} =
+               Library.apply_analysis(media_file, {:error, :ffprobe_timeout})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.analysis_attempts == 1
+      assert reloaded.last_analysis_error == ":ffprobe_timeout"
+      assert is_nil(reloaded.analyzed_at)
+      assert is_nil(reloaded.codec)
+    end
+
+    test "three consecutive failures leave analysis_attempts at 3",
+         %{media_file: media_file} do
+      for _ <- 1..3 do
+        assert {:error, :ffprobe_failed} =
+                 Library.apply_analysis(media_file, {:error, :ffprobe_failed})
+      end
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.analysis_attempts == 3
+      assert reloaded.last_analysis_error == ":ffprobe_failed"
+    end
+
+    test "success path leaves existing size untouched when result.size is nil",
+         %{media_file: media_file, result: result} do
+      no_size_result = %FileAnalysisResult{result | size: nil}
+
+      assert :ok = Library.apply_analysis(media_file, {:ok, no_size_result})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.size == 1_500_000
+      assert reloaded.codec == "h264"
+    end
+
+    test "merges into existing FileMetadata without clobbering unrelated fields",
+         %{media_file: media_file, result: result} do
+      preset_metadata = %FileMetadata{
+        width: 1920,
+        height: 1080,
+        source: "trusted-release"
+      }
+
+      Repo.update_all(
+        from(mf in MediaFile, where: mf.id == ^media_file.id),
+        set: [metadata: preset_metadata]
+      )
+
+      assert :ok = Library.apply_analysis(media_file, {:ok, result})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.metadata.width == 1920
+      assert reloaded.metadata.height == 1080
+      assert reloaded.metadata.source == "trusted-release"
+      assert reloaded.metadata.container == "mkv"
+      assert reloaded.metadata.duration == 5400.5
+    end
+  end
+
+  describe "reset_analysis_state/1" do
+    alias Mydia.Library.MediaFile
+    alias Mydia.Library.Structs.FileAnalysisResult
+    alias Mydia.Repo
+
+    test "clears analyzed_at, analysis_attempts, and last_analysis_error" do
+      library_path = library_path_fixture(%{path: "/reset-analysis", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "subject.mkv",
+          library_path_id: library_path.id,
+          size: 1_500_000
+        })
+
+      # Drive the row to "analyzed with failures recorded" state
+      assert :ok =
+               Library.apply_analysis(media_file, {:ok, %FileAnalysisResult{codec: "H.264"}})
+
+      Library.apply_analysis(media_file, {:error, :ffprobe_failed})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.analyzed_at
+      assert reloaded.analysis_attempts == 1
+      assert reloaded.last_analysis_error == ":ffprobe_failed"
+
+      assert :ok = Library.reset_analysis_state(reloaded)
+
+      reset = Repo.get!(MediaFile, media_file.id)
+      assert is_nil(reset.analyzed_at)
+      assert reset.analysis_attempts == 0
+      assert is_nil(reset.last_analysis_error)
     end
   end
 end

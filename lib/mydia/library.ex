@@ -305,6 +305,126 @@ defmodule Mydia.Library do
   end
 
   @doc """
+  Applies a `FileAnalyzer.analyze/1` outcome to a `MediaFile` row.
+
+  Two branches:
+
+    * `{:ok, %FileAnalysisResult{}}` performs a guarded write
+      (`UPDATE ... WHERE id = ? AND analyzed_at IS NULL`) that sets every
+      tech-metadata column, populates `analyzed_at`, clears
+      `last_analysis_error`, and bumps `updated_at`. Returns `:ok` when the
+      write landed, `:already_analyzed` when another writer beat us.
+    * `{:error, reason}` increments `analysis_attempts` and records
+      `last_analysis_error` without touching tech metadata. Returns the
+      original `{:error, reason}` so callers can decide how to surface it.
+
+  Used by the recurring analysis worker, the lazy-on-play fallback in
+  `Mydia.Streaming.Candidates`, and the operator-triggered
+  `refresh_file_metadata/1`. The `WHERE analyzed_at IS NULL` guard makes
+  concurrent writers safe: only the first success-write lands.
+  """
+  @spec apply_analysis(
+          MediaFile.t(),
+          {:ok, Mydia.Library.Structs.FileAnalysisResult.t()} | {:error, term()}
+        ) :: :ok | :already_analyzed | {:error, term()}
+  def apply_analysis(
+        %MediaFile{} = media_file,
+        {:ok, %Mydia.Library.Structs.FileAnalysisResult{} = result}
+      ) do
+    apply_analysis_success(media_file, result)
+  end
+
+  def apply_analysis(%MediaFile{} = media_file, {:error, reason}) do
+    apply_analysis_failure(media_file, reason)
+  end
+
+  defp apply_analysis_success(%MediaFile{} = media_file, result) do
+    alias Mydia.Library.Structs.FileMetadata
+    alias Mydia.Streaming.Codec
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    # Re-read the current metadata so we merge ffprobe fields into whatever
+    # other writers have persisted (FileMetadata fields like width/height/source
+    # are set by other paths and must survive the analysis write).
+    current_metadata =
+      Repo.one(from(mf in MediaFile, where: mf.id == ^media_file.id, select: mf.metadata)) ||
+        FileMetadata.empty()
+
+    metadata =
+      current_metadata
+      |> maybe_put_struct_field(:duration, result.duration)
+      |> maybe_put_struct_field(:container, result.container)
+
+    set = [
+      codec: Codec.normalize_video_codec(result.codec),
+      audio_codec: Codec.normalize_audio_codec(result.audio_codec),
+      resolution: result.resolution,
+      bitrate: result.bitrate,
+      hdr_format: result.hdr_format,
+      metadata: metadata,
+      analyzed_at: now,
+      last_analysis_error: nil,
+      updated_at: now
+    ]
+
+    # `size` is set only when ffprobe surfaced a value; otherwise we leave the
+    # existing column alone so we do not overwrite a known size with nil.
+    set = if result.size, do: Keyword.put(set, :size, result.size), else: set
+
+    query =
+      from(mf in MediaFile,
+        where: mf.id == ^media_file.id and is_nil(mf.analyzed_at)
+      )
+
+    case Repo.update_all(query, set: set) do
+      {1, _} -> :ok
+      {0, _} -> :already_analyzed
+    end
+  end
+
+  defp apply_analysis_failure(%MediaFile{} = media_file, reason) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    reason_text = format_analysis_error(reason)
+
+    query = from(mf in MediaFile, where: mf.id == ^media_file.id)
+
+    Repo.update_all(query,
+      inc: [analysis_attempts: 1],
+      set: [last_analysis_error: reason_text, updated_at: now]
+    )
+
+    {:error, reason}
+  end
+
+  @doc """
+  Clears analysis state on a `MediaFile` row so the next worker tick or
+  manual retry treats it as un-analyzed again.
+
+  Resets `analyzed_at`, `analysis_attempts`, and `last_analysis_error`.
+  Intended as the building block for an operator-triggered retry surface.
+  """
+  @spec reset_analysis_state(MediaFile.t()) :: :ok
+  def reset_analysis_state(%MediaFile{} = media_file) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    query = from(mf in MediaFile, where: mf.id == ^media_file.id)
+
+    Repo.update_all(query,
+      set: [analyzed_at: nil, analysis_attempts: 0, last_analysis_error: nil, updated_at: now]
+    )
+
+    :ok
+  end
+
+  defp maybe_put_struct_field(struct, _field, nil), do: struct
+  defp maybe_put_struct_field(struct, field, value), do: Map.put(struct, field, value)
+
+  defp format_analysis_error(reason) when is_atom(reason), do: inspect(reason)
+  defp format_analysis_error(reason) when is_binary(reason), do: reason
+  defp format_analysis_error(reason), do: inspect(reason)
+
+  @doc """
   Deletes a media file.
   """
   @spec delete_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
