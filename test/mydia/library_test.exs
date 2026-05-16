@@ -741,15 +741,23 @@ defmodule Mydia.LibraryTest do
           size: 1_500_000
         })
 
-      # Drive the row to "analyzed with failures recorded" state
+      # Drive the row to "analyzed, then a stale failure arrives" state. With
+      # the failure-path guard, the stale failure no longer bumps attempts on
+      # an already-analyzed row — but reset_analysis_state still needs to
+      # clear all three fields cleanly.
       assert :ok =
                Library.apply_analysis(media_file, {:ok, %FileAnalysisResult{codec: "H.264"}})
 
-      Library.apply_analysis(media_file, {:error, :ffprobe_failed})
+      # Force a non-zero attempts/error state directly so we have something
+      # to reset.
+      Repo.update_all(
+        from(mf in MediaFile, where: mf.id == ^media_file.id),
+        set: [analysis_attempts: 2, last_analysis_error: ":ffprobe_failed"]
+      )
 
       reloaded = Repo.get!(MediaFile, media_file.id)
       assert reloaded.analyzed_at
-      assert reloaded.analysis_attempts == 1
+      assert reloaded.analysis_attempts == 2
       assert reloaded.last_analysis_error == ":ffprobe_failed"
 
       assert :ok = Library.reset_analysis_state(reloaded)
@@ -758,6 +766,50 @@ defmodule Mydia.LibraryTest do
       assert is_nil(reset.analyzed_at)
       assert reset.analysis_attempts == 0
       assert is_nil(reset.last_analysis_error)
+    end
+
+    test "returns {:error, :not_found} when the row no longer exists" do
+      library_path = library_path_fixture(%{path: "/reset-missing", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "vanished.mkv",
+          library_path_id: library_path.id,
+          size: 1_500_000
+        })
+
+      Repo.delete!(media_file)
+
+      assert {:error, :not_found} = Library.reset_analysis_state(media_file)
+    end
+  end
+
+  describe "apply_analysis_failure on already-analyzed rows" do
+    alias Mydia.Library.MediaFile
+    alias Mydia.Library.Structs.FileAnalysisResult
+    alias Mydia.Repo
+
+    test "does not bump analysis_attempts after analyzed_at is set" do
+      library_path = library_path_fixture(%{path: "/stale-failure", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "subject.mkv",
+          library_path_id: library_path.id,
+          size: 1_500_000
+        })
+
+      assert :ok =
+               Library.apply_analysis(media_file, {:ok, %FileAnalysisResult{codec: "H.264"}})
+
+      # A stale failure arriving after analyzed_at is set must not flip the
+      # row back into "needs another attempt" territory.
+      Library.apply_analysis(media_file, {:error, :ffprobe_failed})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.analyzed_at
+      assert reloaded.analysis_attempts == 0
+      assert is_nil(reloaded.last_analysis_error)
     end
   end
 

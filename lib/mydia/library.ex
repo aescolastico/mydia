@@ -331,7 +331,13 @@ defmodule Mydia.Library do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
     reason_text = format_analysis_error(reason)
 
-    query = from(mf in MediaFile, where: mf.id == ^media_file.id)
+    # Guard against stale-failure writes: if another writer has already
+    # populated analyzed_at, do not bump the attempts counter on what is now
+    # a known-good row.
+    query =
+      from(mf in MediaFile,
+        where: mf.id == ^media_file.id and is_nil(mf.analyzed_at)
+      )
 
     Repo.update_all(query,
       inc: [analysis_attempts: 1],
@@ -348,17 +354,23 @@ defmodule Mydia.Library do
   Resets `analyzed_at`, `analysis_attempts`, and `last_analysis_error`.
   Intended as the building block for an operator-triggered retry surface.
   """
-  @spec reset_analysis_state(MediaFile.t()) :: :ok
+  @spec reset_analysis_state(MediaFile.t()) :: :ok | {:error, :not_found}
   def reset_analysis_state(%MediaFile{} = media_file) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     query = from(mf in MediaFile, where: mf.id == ^media_file.id)
 
-    Repo.update_all(query,
-      set: [analyzed_at: nil, analysis_attempts: 0, last_analysis_error: nil, updated_at: now]
-    )
-
-    :ok
+    case Repo.update_all(query,
+           set: [
+             analyzed_at: nil,
+             analysis_attempts: 0,
+             last_analysis_error: nil,
+             updated_at: now
+           ]
+         ) do
+      {1, _} -> :ok
+      {0, _} -> {:error, :not_found}
+    end
   end
 
   defp maybe_put_struct_field(struct, _field, nil), do: struct
@@ -1713,37 +1725,13 @@ defmodule Mydia.Library do
           # Operator-triggered retry: clear analysis_attempts first so the row
           # is no longer blocked by the worker's ceiling, then re-run ffprobe
           # and route the write through apply_analysis/2 to share the guarded
-          # write with the worker and the lazy fallback.
-          reset_analysis_state(media_file)
-
-          result = FileAnalyzer.analyze(absolute_path)
-
-          case apply_analysis(media_file, result) do
-            outcome when outcome in [:ok, :already_analyzed] ->
-              now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-              from(mf in MediaFile, where: mf.id == ^media_file.id)
-              |> Repo.update_all(set: [verified_at: now])
-
-              updated_file = get_media_file!(media_file.id, preload: [:library_path])
-
-              Logger.info("Refreshed file metadata",
-                file_id: media_file.id,
-                path: absolute_path,
-                resolution: updated_file.resolution,
-                codec: updated_file.codec,
-                audio: updated_file.audio_codec
-              )
-
-              {:ok, updated_file}
-
-            {:error, reason} ->
-              Logger.warning("FFprobe analysis failed during refresh",
-                file_id: media_file.id,
-                reason: inspect(reason)
-              )
-
-              {:error, reason}
+          # write with the worker and the lazy fallback. If the row was deleted
+          # mid-flight we surface that cleanly rather than letting the later
+          # get_media_file!/2 raise.
+          with :ok <- reset_analysis_state(media_file) do
+            result = FileAnalyzer.analyze(absolute_path)
+            apply_analysis_outcome = apply_analysis(media_file, result)
+            handle_refresh_outcome(media_file, absolute_path, apply_analysis_outcome, result)
           end
         else
           Logger.warning("File does not exist, cannot refresh metadata",
@@ -1754,6 +1742,35 @@ defmodule Mydia.Library do
           {:error, :file_not_found}
         end
     end
+  end
+
+  defp handle_refresh_outcome(media_file, absolute_path, outcome, _result)
+       when outcome in [:ok, :already_analyzed] do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    from(mf in MediaFile, where: mf.id == ^media_file.id)
+    |> Repo.update_all(set: [verified_at: now])
+
+    updated_file = get_media_file!(media_file.id, preload: [:library_path])
+
+    Logger.info("Refreshed file metadata",
+      file_id: media_file.id,
+      path: absolute_path,
+      resolution: updated_file.resolution,
+      codec: updated_file.codec,
+      audio: updated_file.audio_codec
+    )
+
+    {:ok, updated_file}
+  end
+
+  defp handle_refresh_outcome(media_file, _absolute_path, {:error, reason}, _result) do
+    Logger.warning("FFprobe analysis failed during refresh",
+      file_id: media_file.id,
+      reason: inspect(reason)
+    )
+
+    {:error, reason}
   end
 
   @doc """

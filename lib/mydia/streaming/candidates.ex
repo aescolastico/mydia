@@ -11,7 +11,7 @@ defmodule Mydia.Streaming.Candidates do
   require Logger
 
   alias Mydia.Library
-  alias Mydia.Library.MediaFile
+  alias Mydia.Library.{FileAnalyzer, MediaFile}
   alias Mydia.Library.Structs.FileMetadata
   alias Mydia.Repo
   alias Mydia.Streaming.{CodecString, Compatibility}
@@ -154,7 +154,7 @@ defmodule Mydia.Streaming.Candidates do
     max_attempts = Application.get_env(:mydia, :file_analysis_max_attempts, @default_max_attempts)
 
     if media_file.analysis_attempts < max_attempts do
-      result = Mydia.Library.FileAnalyzer.analyze(absolute_path)
+      result = FileAnalyzer.analyze(absolute_path)
 
       case Library.apply_analysis(media_file, result) do
         outcome when outcome in [:ok, :already_analyzed] ->

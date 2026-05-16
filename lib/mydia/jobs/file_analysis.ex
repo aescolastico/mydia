@@ -22,7 +22,16 @@ defmodule Mydia.Jobs.FileAnalysis do
 
   use Oban.Worker,
     queue: :analysis,
-    max_attempts: 3
+    max_attempts: 3,
+    # Prevent cron pileup when a batch overruns the 1-minute tick. Two ticks
+    # concurrently selecting the same `analyzed_at IS NULL` rows would run
+    # ffprobe twice on the same files; the apply_analysis WHERE guard
+    # protects the write but not the wasted work.
+    unique: [
+      period: 60,
+      fields: [:worker],
+      states: [:available, :scheduled, :executing]
+    ]
 
   import Ecto.Query
 
@@ -41,50 +50,44 @@ defmodule Mydia.Jobs.FileAnalysis do
     batch_size = Application.get_env(:mydia, :file_analysis_batch_size, @default_batch_size)
     max_attempts = Application.get_env(:mydia, :file_analysis_max_attempts, @default_max_attempts)
 
-    ids =
+    rows =
       from(mf in MediaFile,
         where: is_nil(mf.analyzed_at) and mf.analysis_attempts < ^max_attempts,
         order_by: [asc: mf.inserted_at],
         limit: ^batch_size,
-        select: mf.id
+        preload: :library_path
       )
       |> Repo.all()
 
-    case ids do
+    case rows do
       [] ->
         :ok
 
-      ids ->
-        Logger.debug("FileAnalysis worker processing batch", count: length(ids))
+      rows ->
+        Logger.debug("FileAnalysis worker processing batch", count: length(rows))
 
-        Enum.each(ids, &analyze_one/1)
+        Enum.each(rows, &analyze_one/1)
 
         :ok
     end
   end
 
-  defp analyze_one(id) do
-    case Repo.get(MediaFile, id) |> Repo.preload(:library_path) do
+  defp analyze_one(%MediaFile{} = media_file) do
+    case MediaFile.absolute_path(media_file) do
       nil ->
-        :ok
+        Library.apply_analysis(media_file, {:error, :path_not_resolved})
 
-      %MediaFile{} = media_file ->
-        case MediaFile.absolute_path(media_file) do
-          nil ->
-            Library.apply_analysis(media_file, {:error, :path_not_resolved})
+        Logger.warning("Skipping analysis: media file path could not be resolved",
+          file_id: media_file.id
+        )
 
-            Logger.warning("Skipping analysis: media file path could not be resolved",
-              file_id: media_file.id
-            )
-
-          absolute_path ->
-            result = FileAnalyzer.analyze(absolute_path)
-            outcome = Library.apply_analysis(media_file, result)
-            log_outcome(media_file, absolute_path, result, outcome)
-        end
-
-        :ok
+      absolute_path ->
+        result = FileAnalyzer.analyze(absolute_path)
+        outcome = Library.apply_analysis(media_file, result)
+        log_outcome(media_file, absolute_path, result, outcome)
     end
+
+    :ok
   end
 
   defp log_outcome(media_file, path, {:ok, _}, :ok) do

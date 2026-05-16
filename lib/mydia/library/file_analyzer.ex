@@ -39,8 +39,15 @@ defmodule Mydia.Library.FileAnalyzer do
     if File.exists?(file_path) do
       with {:ok, ffprobe_data} <- run_ffprobe(file_path),
            {:ok, metadata} <- parse_ffprobe_output(ffprobe_data) do
-        # Add file size
-        size = File.stat!(file_path).size
+        # File may disappear between the existence check and here on a long
+        # ffprobe run; fall back to nil rather than raising so the row's
+        # failure path still gets exercised via apply_analysis/2.
+        size =
+          case File.stat(file_path) do
+            {:ok, %{size: s}} -> s
+            {:error, _} -> nil
+          end
+
         {:ok, %{metadata | size: size}}
       end
     else
@@ -159,6 +166,17 @@ defmodule Mydia.Library.FileAnalyzer do
         )
 
         {:error, :ffprobe_failed}
+
+      {:EXIT, ^port, reason} ->
+        # Linked-port abnormal teardown. Without this clause the receive blocks
+        # until the full timeout fires even though the port is already dead.
+        Logger.error("FFprobe port exited abnormally",
+          file: file_path,
+          elapsed_ms: elapsed_ms(start_ms),
+          reason: {:port_exit, reason}
+        )
+
+        {:error, {:port_exit, reason}}
     after
       remaining ->
         Logger.error("FFprobe timed out",
@@ -169,7 +187,20 @@ defmodule Mydia.Library.FileAnalyzer do
         )
 
         kill_ffprobe(port, os_pid)
+        flush_port_messages(port)
         {:error, :ffprobe_timeout}
+    end
+  end
+
+  # Drain any pending `{port, _}` or `{:EXIT, port, _}` messages so they do not
+  # accumulate in the caller's mailbox after the port has been killed. Bounded
+  # by `after 0` so this is a non-blocking flush.
+  defp flush_port_messages(port) do
+    receive do
+      {^port, _} -> flush_port_messages(port)
+      {:EXIT, ^port, _} -> flush_port_messages(port)
+    after
+      0 -> :ok
     end
   end
 
