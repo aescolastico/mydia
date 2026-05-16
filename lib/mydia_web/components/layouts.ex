@@ -5,6 +5,8 @@ defmodule MydiaWeb.Layouts do
   """
   use MydiaWeb, :html
 
+  alias MydiaWeb.FeedbackComponents
+
   # Embed all files in layouts/* within this module.
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
@@ -49,6 +51,9 @@ defmodule MydiaWeb.Layouts do
   attr :music_count, :integer, default: 0, doc: "number of music albums in library"
   attr :books_count, :integer, default: 0, doc: "number of books in library"
   attr :executing_jobs, :list, default: [], doc: "list of currently executing background jobs"
+  attr :feedback_enabled?, :boolean, default: false, doc: "whether to render feedback UI"
+  attr :show_feedback_modal, :boolean, default: false, doc: "whether the feedback modal is open"
+  attr :feedback_form, :any, default: nil, doc: "feedback form state"
 
   attr :current_path, :string,
     default: nil,
@@ -220,7 +225,6 @@ defmodule MydiaWeb.Layouts do
                   <.icon name="hero-folder" class="w-5 h-5" /> Collections
                 </.link>
               </li>
-
               <%= if @current_user && @current_user.role == "admin" do %>
                 <li class="menu-title mt-4">
                   <span>Administration</span>
@@ -336,7 +340,23 @@ defmodule MydiaWeb.Layouts do
           <% end %>
           
     <!-- User menu at bottom -->
-          <div class="p-4 border-t border-base-300">
+          <div class="space-y-3 p-4 border-t border-base-300">
+            <button
+              :if={@feedback_enabled?}
+              type="button"
+              id="sidebar-send-feedback"
+              phx-click="open_feedback_modal"
+              class="btn btn-primary h-auto w-full justify-start gap-3 rounded-2xl px-4 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <.icon name="hero-chat-bubble-left-right" class="size-5 shrink-0" />
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm font-semibold leading-tight">Send feedback</span>
+                <span class="mt-1 block text-xs text-primary-content/80">
+                  Report bugs, request features, or share ideas.
+                </span>
+              </span>
+            </button>
+
             <div class="dropdown dropdown-top dropdown-end w-full">
               <label tabindex="0" class="btn btn-ghost w-full justify-start">
                 <div class="avatar placeholder">
@@ -382,13 +402,20 @@ defmodule MydiaWeb.Layouts do
             </div>
             
     <!-- Theme toggle (desktop only) -->
-            <div class="hidden lg:flex mt-2 justify-center">
+            <div class="hidden lg:flex justify-center">
               <.theme_toggle id="theme-toggle-sidebar" />
             </div>
           </div>
         </aside>
       </div>
     </div>
+
+    <FeedbackComponents.feedback_modal
+      :if={@feedback_enabled? && @feedback_form}
+      id="feedback-modal"
+      form={@feedback_form}
+      show={@show_feedback_modal}
+    />
 
     <.flash_group flash={@flash} />
     """
