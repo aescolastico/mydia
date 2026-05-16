@@ -8,6 +8,9 @@ defmodule Mydia.Downloads.Client.RegistryTest do
     @behaviour Mydia.Downloads.Client
 
     @impl true
+    def supported_protocols, do: [:torrent]
+
+    @impl true
     def test_connection(_config), do: {:ok, %{version: "1.0.0"}}
 
     @impl true
@@ -31,6 +34,9 @@ defmodule Mydia.Downloads.Client.RegistryTest do
 
   defmodule AnotherTestAdapter do
     @behaviour Mydia.Downloads.Client
+
+    @impl true
+    def supported_protocols, do: [:torrent]
 
     @impl true
     def test_connection(_config), do: {:ok, %{version: "2.0.0"}}

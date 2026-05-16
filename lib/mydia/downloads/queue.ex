@@ -746,7 +746,14 @@ defmodule Mydia.Downloads.Queue do
   def supports_download_type?(client, download_type) do
     case Registry.get_adapter(client.type) do
       {:ok, adapter} ->
-        function_exported?(adapter, :supported_protocols, 0) and
+        # `function_exported?/3` returns false for modules that haven't been
+        # loaded yet (it doesn't auto-load). In production every adapter is
+        # loaded during application boot via Mydia.Downloads.register_clients/0,
+        # but in tests modules load lazily and the check would falsely
+        # report "not supported". `Code.ensure_loaded?/1` forces a load
+        # before the predicate runs.
+        Code.ensure_loaded?(adapter) and
+          function_exported?(adapter, :supported_protocols, 0) and
           download_type in adapter.supported_protocols()
 
       {:error, _} ->

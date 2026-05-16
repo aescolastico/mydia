@@ -110,7 +110,15 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
       reloaded = Repo.get!(Download, download.id)
 
       assert reloaded.bytes_pulled == 50_000
-      assert reloaded.completed_at != nil
+
+      # NOTE: completed_at is intentionally NOT set by the Fetcher's
+      # finalize/2. The DownloadMonitor cron uses `is_nil(d.db_completed_at)`
+      # as its "newly completed → enqueue MediaImport" filter; setting
+      # completed_at here would short-circuit that and the import would
+      # never run. The save_path write below is what signals completion
+      # to the cron via the synthesize_status `:ready + save_path → :completed`
+      # mapping.
+      refute reloaded.completed_at
 
       save_path = reloaded.metadata["save_path"]
       assert is_binary(save_path)
@@ -264,8 +272,11 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
     end
   end
 
-  # Polls the Fetcher's Registry entry until it's gone (or times out).
-  defp wait_for_fetcher_exit(download_id, attempts \\ 60) do
+  # Polls the Fetcher's Registry entry until it's gone (or times out.)
+  # Default budget is 30s — the Fetcher's retry-with-exponential-backoff
+  # path (max_retries=3 with growing waits) needs more than the original
+  # 3s budget. Polling stays at 100ms so successful tests still exit fast.
+  defp wait_for_fetcher_exit(download_id, attempts \\ 300) do
     if attempts == 0 do
       flunk("fetcher for #{download_id} did not exit in time")
     else
@@ -274,7 +285,7 @@ defmodule Mydia.Downloads.Client.Debrid.FetcherTest do
           :ok
 
         {:ok, _pid} ->
-          :timer.sleep(50)
+          :timer.sleep(100)
           wait_for_fetcher_exit(download_id, attempts - 1)
       end
     end

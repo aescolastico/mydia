@@ -9,6 +9,9 @@ defmodule Mydia.Downloads.ClientTest do
     @behaviour Client
 
     @impl true
+    def supported_protocols, do: [:torrent]
+
+    @impl true
     def test_connection(%{host: "valid.host"}) do
       {:ok, %{version: "v4.5.0", api_version: "2.8.19"}}
     end

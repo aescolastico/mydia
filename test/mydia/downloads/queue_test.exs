@@ -141,6 +141,19 @@ defmodule Mydia.Downloads.QueueTest do
     # "No download clients configured" for every torrent search result.
     # See queue.ex supports_download_type?/2.
 
+    setup do
+      # Registry.clear/0 is called by registry_test.exs's setup. When that
+      # file runs before this one (test order isn't deterministic across
+      # processes), the Registry is empty and Queue.supports_download_type?
+      # falls through to `{:error, _} -> false`. Re-register the adapters
+      # this describe block exercises so the tests are insulated.
+      alias Mydia.Downloads.Client.Registry
+      Registry.register(:qbittorrent, Mydia.Downloads.Client.QBittorrent)
+      Registry.register(:sabnzbd, Mydia.Downloads.Client.Sabnzbd)
+      Registry.register(:debrid, Mydia.Downloads.Client.Debrid)
+      :ok
+    end
+
     test "debrid client is eligible for :torrent" do
       client = %DownloadClientConfig{type: :debrid, enabled: true}
       assert Queue.supports_download_type?(client, :torrent)

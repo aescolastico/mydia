@@ -209,10 +209,14 @@ defmodule Mydia.Downloads.Client.Debrid.SharedTest do
       assert status.downloaded == 500_000
     end
 
-    test "maps :finalizing → :downloading (mydia has no :finalizing state)" do
+    test "maps :finalizing → :checking (provider is packaging/uploading, local has 0 bytes)" do
       status = Shared.synthesize_status(job(:finalizing, %{progress: 100.0}), :not_started, nil)
-      assert status.state == :downloading
-      assert status.downloaded == 1_000_000
+      # `:checking` distinguishes "provider verifying" from "local fetcher
+      # actively pulling" — mirroring the provider's 100% as `:downloading`
+      # would falsely show full progress before Mydia has any local bytes.
+      assert status.state == :checking
+      assert status.downloaded == 0
+      assert status.progress == 0.0
     end
 
     test "maps :ready + fetcher running → :downloading using Download.bytes_pulled" do
@@ -224,13 +228,19 @@ defmodule Mydia.Downloads.Client.Debrid.SharedTest do
       assert status.downloaded == 250_000
     end
 
-    test "maps :ready + fetcher not started + no save_path → :downloading at 0 bytes" do
+    test "maps :ready + fetcher not started + no save_path → :queued at 0 bytes" do
       download = %Download{bytes_pulled: nil, metadata: %{}}
 
       status = Shared.synthesize_status(job(:ready, %{progress: 100.0}), :not_started, download)
 
-      assert status.state == :downloading
-      assert status.downloaded == 1_000_000
+      # Provider says "done on my side" but Mydia's local Fetcher hasn't
+      # started yet — report `:queued`, NOT `:downloading` at 100%, so the
+      # UI doesn't show "Downloading 100%" on a torrent with zero local
+      # bytes. The :ready→:queued transition is the seam the cron flips
+      # to :completed once save_path is written.
+      assert status.state == :queued
+      assert status.downloaded == 0
+      assert status.progress == 0.0
     end
 
     test "maps :ready + fetcher completed + save_path present → :completed" do
@@ -256,7 +266,10 @@ defmodule Mydia.Downloads.Client.Debrid.SharedTest do
 
     test "handles nil download in get_status/2-style synchronous path" do
       status = Shared.synthesize_status(job(:ready, %{progress: 100.0}), :not_started, nil)
-      assert status.state == :downloading
+      # Same as the `download` branch above — without a Download row we
+      # can't see bytes_pulled or save_path, so the lifecycle phase is
+      # the pre-local-fetch :queued state.
+      assert status.state == :queued
       refute status.save_path
     end
   end
