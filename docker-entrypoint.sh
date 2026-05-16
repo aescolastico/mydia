@@ -51,8 +51,17 @@ fi
 # Main entrypoint logic (runs as dev user or root if no LOCAL_UID)
 # ============================================================================
 
-# Determine if we're running an interactive server or a one-off command
-if [ $# -eq 0 ]; then
+# Determine if we're running an interactive server or a one-off command.
+#
+# "Server mode" (FULL_SETUP=true) is selected when:
+#   - no args were passed (use built-in default `mix phx.server`), OR
+#   - the explicit command is `mix phx.server` (e.g. `command: [...]` in
+#     compose.override.yml pinning the command so the container is
+#     immune to whatever CMD is baked into the image).
+# Both produce identical behavior; either form survives a corrupted
+# image CMD layer (a recurring symptom — past tooling has committed
+# the running container, replacing the original CMD with `sleep 1800`).
+if [ $# -eq 0 ] || [ "$*" = "mix phx.server" ]; then
     COMMAND="mix phx.server"
     FULL_SETUP=true
 else
