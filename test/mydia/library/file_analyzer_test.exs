@@ -1,5 +1,7 @@
 defmodule Mydia.Library.FileAnalyzerTest do
-  use ExUnit.Case, async: true
+  # Tests mutate Application env (ffprobe_path, ffprobe_timeout_ms) so we must
+  # run them serially to avoid interleaving with other tests in the suite.
+  use ExUnit.Case, async: false
 
   alias Mydia.Library.FileAnalyzer
 
@@ -103,5 +105,98 @@ defmodule Mydia.Library.FileAnalyzerTest do
       # Would need mock FFprobe output
       assert true
     end
+  end
+
+  describe "ffprobe timeout and process cleanup" do
+    setup do
+      target_file = write_temp_file("fake video content")
+
+      on_exit(fn ->
+        Application.delete_env(:mydia, :ffprobe_path)
+        Application.delete_env(:mydia, :ffprobe_timeout_ms)
+        File.rm(target_file)
+      end)
+
+      %{target_file: target_file}
+    end
+
+    test "returns {:error, :ffprobe_timeout} when ffprobe exceeds the configured timeout",
+         %{target_file: target_file} do
+      shim = write_shim("#!/bin/sh\nsleep 5\n")
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+        Application.put_env(:mydia, :ffprobe_timeout_ms, 200)
+
+        started_at = System.monotonic_time(:millisecond)
+        result = FileAnalyzer.analyze(target_file)
+        elapsed = System.monotonic_time(:millisecond) - started_at
+
+        assert {:error, :ffprobe_timeout} = result
+        # Should return promptly after the timeout fires (200ms + brief kill window)
+        assert elapsed < 1500,
+               "expected analyze/1 to return within 1500ms of the 200ms timeout, got #{elapsed}ms"
+      after
+        File.rm(shim)
+      end
+    end
+
+    test "kills the OS process when the timeout fires (no zombie)",
+         %{target_file: target_file} do
+      # Marker arg so we can find the shim process via pgrep
+      marker = "mydia-zombie-test-#{:rand.uniform(1_000_000_000)}"
+      shim = write_shim("#!/bin/sh\nsleep 30 # #{marker}\n")
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+        Application.put_env(:mydia, :ffprobe_timeout_ms, 150)
+
+        assert {:error, :ffprobe_timeout} = FileAnalyzer.analyze(target_file)
+
+        # Give the SIGKILL a moment to propagate through `kill -9`
+        Process.sleep(200)
+
+        {pgrep_out, _} = System.cmd("pgrep", ["-f", marker], stderr_to_stdout: true)
+        leftover = String.trim(pgrep_out)
+
+        assert leftover == "",
+               "expected no leftover ffprobe-shim processes matching #{marker}, found: #{leftover}"
+      after
+        File.rm(shim)
+        # Defensive cleanup if a process did leak
+        System.cmd("pkill", ["-9", "-f", marker], stderr_to_stdout: true)
+      end
+    end
+
+    test "returns {:error, :ffprobe_failed} when the shim exits non-zero",
+         %{target_file: target_file} do
+      shim = write_shim("#!/bin/sh\necho 'simulated ffprobe failure' >&2\nexit 1\n")
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+        assert {:error, :ffprobe_failed} = FileAnalyzer.analyze(target_file)
+      after
+        File.rm(shim)
+      end
+    end
+
+    test "returns {:error, :ffprobe_not_found} when no ffprobe binary resolves",
+         %{target_file: target_file} do
+      Application.put_env(:mydia, :ffprobe_path, "/nonexistent/ffprobe-binary")
+      assert {:error, :ffprobe_not_found} = FileAnalyzer.analyze(target_file)
+    end
+  end
+
+  defp write_temp_file(content) do
+    path = Path.join(System.tmp_dir!(), "ffprobe_test_#{:rand.uniform(10_000_000)}.mkv")
+    File.write!(path, content)
+    path
+  end
+
+  defp write_shim(script_body) do
+    path = Path.join(System.tmp_dir!(), "ffprobe_shim_#{:rand.uniform(10_000_000)}.sh")
+    File.write!(path, script_body)
+    File.chmod!(path, 0o755)
+    path
   end
 end

@@ -50,60 +50,155 @@ defmodule Mydia.Library.FileAnalyzer do
 
   ## Private Functions
 
-  defp run_ffprobe(file_path) do
-    # FFprobe command to get JSON output with stream and format info
-    args = [
-      "-v",
-      "quiet",
-      "-print_format",
-      "json",
-      "-show_format",
-      "-show_streams",
-      file_path
-    ]
+  # Default 30s timeout for ffprobe. Overridable via
+  # `config :mydia, :ffprobe_timeout_ms` so operators on slow mounts can tune it.
+  @default_timeout_ms 30_000
 
-    case System.cmd("ffprobe", args, stderr_to_stdout: true) do
-      {output, 0} ->
-        case Jason.decode(output) do
+  defp run_ffprobe(file_path) do
+    start_ms = System.monotonic_time(:millisecond)
+    timeout_ms = Application.get_env(:mydia, :ffprobe_timeout_ms, @default_timeout_ms)
+
+    case resolve_ffprobe_path() do
+      nil ->
+        Logger.error("Failed to run FFprobe - is it installed?",
+          file: file_path,
+          elapsed_ms: elapsed_ms(start_ms),
+          reason: :ffprobe_not_found
+        )
+
+        {:error, :ffprobe_not_found}
+
+      ffprobe_path ->
+        args = [
+          "-v",
+          "quiet",
+          "-print_format",
+          "json",
+          "-show_format",
+          "-show_streams",
+          file_path
+        ]
+
+        try do
+          port =
+            Port.open(
+              {:spawn_executable, ffprobe_path},
+              [:binary, :exit_status, :stderr_to_stdout, :hide, args: args]
+            )
+
+          os_pid =
+            case Port.info(port, :os_pid) do
+              {:os_pid, pid} -> pid
+              _ -> nil
+            end
+
+          collect_ffprobe_output(port, os_pid, [], start_ms, timeout_ms, file_path)
+        rescue
+          e in ErlangError ->
+            Logger.error("Failed to run FFprobe - is it installed?",
+              file: file_path,
+              elapsed_ms: elapsed_ms(start_ms),
+              reason: :ffprobe_not_found,
+              error: inspect(e)
+            )
+
+            {:error, :ffprobe_not_found}
+
+          e ->
+            Logger.error("Unexpected error running FFprobe",
+              file: file_path,
+              elapsed_ms: elapsed_ms(start_ms),
+              reason: :unexpected_error,
+              error: inspect(e)
+            )
+
+            {:error, :unexpected_error}
+        end
+    end
+  end
+
+  # Resolve ffprobe binary. Tests can override via Application env to point at
+  # a fake shim that simulates timeouts or specific failure modes.
+  defp resolve_ffprobe_path do
+    case Application.get_env(:mydia, :ffprobe_path) do
+      path when is_binary(path) and path != "" -> path
+      _ -> System.find_executable("ffprobe")
+    end
+  end
+
+  defp collect_ffprobe_output(port, os_pid, acc, start_ms, timeout_ms, file_path) do
+    remaining = max(0, timeout_ms - elapsed_ms(start_ms))
+
+    receive do
+      {^port, {:data, data}} ->
+        collect_ffprobe_output(port, os_pid, [acc | data], start_ms, timeout_ms, file_path)
+
+      {^port, {:exit_status, 0}} ->
+        case Jason.decode(IO.iodata_to_binary(acc)) do
           {:ok, data} ->
             {:ok, data}
 
           {:error, error} ->
             Logger.error("Failed to parse FFprobe JSON output",
               file: file_path,
+              elapsed_ms: elapsed_ms(start_ms),
+              reason: :invalid_json,
               error: inspect(error)
             )
 
             {:error, :invalid_json}
         end
 
-      {error_output, exit_code} ->
+      {^port, {:exit_status, exit_code}} ->
         Logger.error("FFprobe failed",
           file: file_path,
+          elapsed_ms: elapsed_ms(start_ms),
           exit_code: exit_code,
-          output: error_output
+          reason: :ffprobe_failed,
+          output: IO.iodata_to_binary(acc)
         )
 
         {:error, :ffprobe_failed}
+    after
+      remaining ->
+        Logger.error("FFprobe timed out",
+          file: file_path,
+          elapsed_ms: elapsed_ms(start_ms),
+          timeout_ms: timeout_ms,
+          reason: :ffprobe_timeout
+        )
+
+        kill_ffprobe(port, os_pid)
+        {:error, :ffprobe_timeout}
+    end
+  end
+
+  # Close the port and ensure no zombie OS process survives the timeout. Mirrors
+  # the pattern in `Mydia.Streaming.FFmpegHlsTranscoder` (lines 340-374).
+  defp kill_ffprobe(port, os_pid) do
+    if is_port(port) and Port.info(port) do
+      Port.close(port)
+    end
+
+    # Brief grace window for the port closure to propagate
+    Process.sleep(50)
+
+    if os_pid && process_alive?(os_pid) do
+      Logger.warning("FFprobe process #{os_pid} did not terminate gracefully, sending SIGKILL")
+      System.cmd("kill", ["-9", to_string(os_pid)], stderr_to_stdout: true)
+    end
+  end
+
+  defp process_alive?(os_pid) do
+    case System.cmd("kill", ["-0", to_string(os_pid)], stderr_to_stdout: true) do
+      {_, 0} -> true
+      _ -> false
     end
   rescue
-    e in ErlangError ->
-      # FFprobe might not be installed
-      Logger.error("Failed to run FFprobe - is it installed?",
-        file: file_path,
-        error: inspect(e)
-      )
-
-      {:error, :ffprobe_not_found}
-
-    e ->
-      Logger.error("Unexpected error running FFprobe",
-        file: file_path,
-        error: inspect(e)
-      )
-
-      {:error, :unexpected_error}
+    _ -> false
   end
+
+  defp elapsed_ms(start_ms), do: System.monotonic_time(:millisecond) - start_ms
 
   defp parse_ffprobe_output(data) do
     streams = Map.get(data, "streams", [])
