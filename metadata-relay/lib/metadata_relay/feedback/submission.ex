@@ -14,14 +14,14 @@ defmodule MetadataRelay.Feedback.Submission do
   @states ["unread", "read", "archived"]
 
   schema "feedback_submissions" do
-    field :type, :string
-    field :message, :string
-    field :contact, :string
-    field :instance_id, :string
-    field :mydia_version, :string
-    field :source_ip, :string
-    field :state, :string, default: "unread"
-    field :github_ref, :string
+    field(:type, :string)
+    field(:message, :string)
+    field(:contact, :string)
+    field(:instance_id, :string)
+    field(:mydia_version, :string)
+    field(:source_ip, :string)
+    field(:state, :string, default: "unread")
+    field(:github_ref, :string)
 
     timestamps(type: :utc_datetime)
   end

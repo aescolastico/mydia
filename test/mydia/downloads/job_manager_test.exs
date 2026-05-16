@@ -432,9 +432,7 @@ defmodule Mydia.Downloads.JobManagerTest do
   # Helper functions
 
   defp create_test_video do
-    # Create a simple test video file path (doesn't need to exist for most tests)
-    # For tests that actually run FFmpeg, use create_minimal_test_video/0
-    "/tmp/test_video_#{System.unique_integer([:positive])}.mp4"
+    create_minimal_test_video()
   end
 
   defp create_minimal_test_video do
