@@ -128,6 +128,7 @@ defmodule MydiaWeb.FeedbackModalTest do
   test "valid submit posts feedback, closes modal, and flashes thanks", %{conn: conn} do
     bypass = Bypass.open()
     System.put_env("METADATA_RELAY_URL", endpoint_url(bypass))
+    stub_dashboard_requests(bypass)
 
     Bypass.expect_once(bypass, "POST", "/feedback", fn conn ->
       {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -166,6 +167,7 @@ defmodule MydiaWeb.FeedbackModalTest do
   test "rate limit preserves the draft", %{conn: conn} do
     bypass = Bypass.open()
     System.put_env("METADATA_RELAY_URL", endpoint_url(bypass))
+    stub_dashboard_requests(bypass)
 
     Bypass.expect_once(bypass, "POST", "/feedback", fn conn ->
       conn
@@ -192,6 +194,7 @@ defmodule MydiaWeb.FeedbackModalTest do
   test "old relay unavailable response preserves the page", %{conn: conn} do
     bypass = Bypass.open()
     System.put_env("METADATA_RELAY_URL", endpoint_url(bypass))
+    stub_dashboard_requests(bypass)
 
     Bypass.expect_once(bypass, "POST", "/feedback", fn conn ->
       Plug.Conn.resp(conn, 404, "Not found")
@@ -238,4 +241,14 @@ defmodule MydiaWeb.FeedbackModalTest do
   end
 
   defp endpoint_url(bypass), do: "http://localhost:#{bypass.port}"
+
+  defp stub_dashboard_requests(bypass) do
+    for path <- ["/tmdb/movies/trending", "/tmdb/tv/trending"] do
+      Bypass.stub(bypass, "GET", path, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{results: []}))
+      end)
+    end
+  end
 end
