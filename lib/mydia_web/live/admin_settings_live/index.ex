@@ -352,6 +352,16 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           source: crash_reporting_source(all_db_settings)
         }
       ],
+      "Feedback" => [
+        %{
+          key: "feedback.enabled",
+          label: "Show Send feedback button",
+          type: :boolean,
+          value: Mydia.Feedback.enabled?(),
+          editable: true,
+          source: feedback_source(all_db_settings)
+        }
+      ],
       "Library" => [
         %{
           key: "library.auto_repair_enabled",
@@ -430,6 +440,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
 
       setting ->
         parse_boolean_value(setting.value)
+    end
+  end
+
+  defp feedback_source(all_db_settings) do
+    if Map.has_key?(all_db_settings, "feedback.enabled") do
+      :database
+    else
+      :default
     end
   end
 
@@ -522,6 +540,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       "Metadata" -> :metadata
       "Downloads" -> :downloads
       "Crash Reporting" -> :crash_reporting
+      "Feedback" -> :feedback
       "Notifications" -> :notifications
       "FlareSolverr" -> :flaresolverr
       "Library" -> :library

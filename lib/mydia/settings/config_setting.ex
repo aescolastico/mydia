@@ -71,6 +71,7 @@ defmodule Mydia.Settings.ConfigSetting do
     :downloads,
     :notifications,
     :crash_reporting,
+    :feedback,
     :general,
     :flaresolverr
   ]

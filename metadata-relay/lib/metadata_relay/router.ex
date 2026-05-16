@@ -4,6 +4,7 @@ defmodule MetadataRelay.Router do
   """
 
   use Plug.Router
+  require Logger
 
   alias MetadataRelay.TMDB.Handler
   alias MetadataRelay.TVDB.Handler, as: TVDBHandler
@@ -12,6 +13,14 @@ defmodule MetadataRelay.Router do
   alias MetadataRelay.OpenSubtitles.Handler, as: SubtitlesHandler
   alias MetadataRelay.Pairing.Handler, as: PairingHandler
   alias MetadataRelay.Trakt.Handler, as: TraktHandler
+
+  @feedback_param_atoms %{
+    "type" => :type,
+    "message" => :message,
+    "contact" => :contact,
+    "instance_id" => :instance_id,
+    "mydia_version" => :mydia_version
+  }
 
   plug(Plug.Logger)
   plug(Plug.Parsers, parsers: [:urlencoded, :json], json_decoder: Jason)
@@ -238,6 +247,11 @@ defmodule MetadataRelay.Router do
   # Crash Report Ingestion
   post "/crashes/report" do
     handle_crash_report(conn)
+  end
+
+  # Feedback Ingestion
+  post "/feedback" do
+    handle_feedback(conn)
   end
 
   # Subtitle Search
@@ -722,6 +736,174 @@ defmodule MetadataRelay.Router do
   defp build_location(nil, line), do: [line: line]
   defp build_location(file, nil), do: [file: String.to_charlist(file)]
   defp build_location(file, line), do: [file: String.to_charlist(file), line: line]
+
+  defp handle_feedback(conn) do
+    client_ip = get_client_ip(conn)
+    instance_id = feedback_rate_limit_instance_id(conn.body_params)
+
+    with {:ok, _remaining} <-
+           MetadataRelay.RateLimiter.check_rate_limit("feedback:ip:#{client_ip}",
+             limit: 5,
+             window_ms: 3_600_000
+           ),
+         {:ok, _remaining} <-
+           MetadataRelay.RateLimiter.check_rate_limit("feedback:instance:#{instance_id}",
+             limit: 5,
+             window_ms: 3_600_000
+           ) do
+      process_feedback(conn, client_ip)
+    else
+      {:error, :rate_limited} ->
+        MetadataRelay.Metrics.inc("metadata_relay_rate_limited_total")
+
+        conn
+        |> put_resp_header("retry-after", "3600")
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          429,
+          Jason.encode!(%{
+            error: "Too many requests",
+            message: "Rate limit exceeded. Please try again later."
+          })
+        )
+    end
+  end
+
+  defp process_feedback(conn, client_ip) do
+    with {:ok, attrs} <- validate_feedback(conn.body_params),
+         attrs = Map.put(attrs, :source_ip, client_ip),
+         {:ok, submission} <- MetadataRelay.Feedback.create_submission(attrs) do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(201, Jason.encode!(%{status: "created", id: submission.id}))
+    else
+      {:error, :invalid_json} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          400,
+          Jason.encode!(%{error: "Invalid JSON", message: "Request body must be valid JSON"})
+        )
+
+      {:error, :message_too_long} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "Message too long", limit_bytes: 4096}))
+
+      {:error, {:validation, errors}} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(400, Jason.encode!(%{error: "Validation failed", errors: errors}))
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(
+          400,
+          Jason.encode!(%{
+            error: "Validation failed",
+            errors: changeset_error_messages(changeset)
+          })
+        )
+
+      {:error, reason} ->
+        Logger.error("Failed to store feedback", reason: inspect(reason))
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(%{error: "Internal server error"}))
+    end
+  end
+
+  defp validate_feedback(params) when is_map(params) do
+    type = get_feedback_param(params, "type")
+    message = get_feedback_param(params, "message")
+    contact = get_feedback_param(params, "contact")
+    instance_id = get_feedback_param(params, "instance_id")
+    mydia_version = get_feedback_param(params, "mydia_version")
+
+    errors =
+      []
+      |> require_feedback_field("type", type)
+      |> require_feedback_field("message", message)
+      |> validate_feedback_type(type)
+      |> validate_optional_feedback_field("contact", contact)
+      |> validate_optional_feedback_field("instance_id", instance_id)
+      |> validate_optional_feedback_field("mydia_version", mydia_version)
+
+    cond do
+      errors != [] ->
+        {:error, {:validation, Enum.reverse(errors)}}
+
+      byte_size(message) > 4096 ->
+        {:error, :message_too_long}
+
+      true ->
+        {:ok,
+         %{
+           type: type,
+           message: message,
+           contact: normalize_optional_feedback_field(contact),
+           instance_id: normalize_optional_feedback_field(instance_id),
+           mydia_version: normalize_optional_feedback_field(mydia_version)
+         }}
+    end
+  end
+
+  defp validate_feedback(_), do: {:error, :invalid_json}
+
+  defp feedback_rate_limit_instance_id(params) when is_map(params) do
+    case get_feedback_param(params, "instance_id") do
+      value when is_binary(value) and value != "" -> value
+      _ -> "anonymous"
+    end
+  end
+
+  defp feedback_rate_limit_instance_id(_), do: "anonymous"
+
+  defp get_feedback_param(params, key) do
+    Map.get(params, key) || Map.get(params, Map.fetch!(@feedback_param_atoms, key))
+  end
+
+  defp require_feedback_field(errors, field, value) do
+    if is_binary(value) && String.trim(value) != "" do
+      errors
+    else
+      ["Missing required field: #{field}" | errors]
+    end
+  end
+
+  defp validate_feedback_type(errors, type) when type in ["bug", "idea", "question"], do: errors
+
+  defp validate_feedback_type(errors, type) when is_binary(type) and type != "" do
+    ["Invalid type: #{type}" | errors]
+  end
+
+  defp validate_feedback_type(errors, _type), do: errors
+
+  defp validate_optional_feedback_field(errors, _field, nil), do: errors
+  defp validate_optional_feedback_field(errors, _field, value) when is_binary(value), do: errors
+
+  defp validate_optional_feedback_field(errors, field, _value) do
+    ["Invalid field: #{field}" | errors]
+  end
+
+  defp normalize_optional_feedback_field(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_feedback_field(_value), do: nil
+
+  defp changeset_error_messages(changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {message, _opts} -> message end)
+    |> Enum.flat_map(fn {field, messages} ->
+      Enum.map(List.wrap(messages), fn message -> "#{field} #{message}" end)
+    end)
+  end
 
   defp handle_subtitles_request(conn, handler_fn) do
     case handler_fn.() do

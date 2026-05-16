@@ -19,19 +19,51 @@ defmodule Mydia.Downloads.Transcoding do
            type: "download"
          ) do
       nil ->
-        %TranscodeJob{}
-        |> TranscodeJob.changeset(%{
+        attrs = %{
           media_file_id: media_file_id,
           resolution: resolution,
           type: "download",
           status: "pending",
           progress: 0.0
-        })
+        }
+
+        %TranscodeJob{}
+        |> TranscodeJob.changeset(attrs)
         |> Repo.insert()
+        |> case do
+          {:ok, job} ->
+            {:ok, job}
+
+          {:error, %Ecto.Changeset{} = changeset} ->
+            if unique_download_job_conflict?(changeset) do
+              {:ok,
+               Repo.get_by!(TranscodeJob,
+                 media_file_id: media_file_id,
+                 resolution: resolution,
+                 type: "download"
+               )}
+            else
+              {:error, changeset}
+            end
+
+          error ->
+            error
+        end
 
       job ->
         {:ok, job}
     end
+  end
+
+  defp unique_download_job_conflict?(%Ecto.Changeset{} = changeset) do
+    Enum.any?(changeset.errors, fn
+      {_field, {_message, opts}} ->
+        opts[:constraint] == :unique and
+          to_string(opts[:constraint_name]) == "transcode_jobs_media_file_id_resolution_index"
+
+      _ ->
+        false
+    end)
   end
 
   def get_cached_transcode(media_file_id, resolution) do

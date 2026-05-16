@@ -8,6 +8,7 @@ defmodule MydiaWeb.Live.UserAuth do
   import Phoenix.Component
   import Phoenix.LiveView
 
+  alias Ecto.Changeset
   alias Mydia.Accounts
   alias Mydia.Accounts.Authorization
   alias Mydia.Auth.Guardian
@@ -144,7 +145,11 @@ defmodule MydiaWeb.Live.UserAuth do
       |> assign(:books_count, books_count)
       |> assign(:executing_jobs, executing_jobs)
       |> assign(:current_path, nil)
+      |> assign(:feedback_enabled?, Mydia.Feedback.enabled?())
+      |> assign(:show_feedback_modal, false)
+      |> assign(:feedback_form, build_feedback_form(%{}))
       |> attach_hook(:jobs_status_hook, :handle_info, &handle_jobs_status/2)
+      |> attach_hook(:feedback_hook, :handle_event, &handle_feedback_event/3)
 
     # handle_params hooks only work for LiveViews mounted via live/3 in the router.
     # This on_mount also runs for non-router views (e.g. dead view rendering), so
@@ -173,6 +178,107 @@ defmodule MydiaWeb.Live.UserAuth do
   defp handle_jobs_status(_msg, socket) do
     {:cont, socket}
   end
+
+  defp handle_feedback_event("open_feedback_modal", _params, socket) do
+    {:halt, assign(socket, :show_feedback_modal, true)}
+  end
+
+  defp handle_feedback_event("close_feedback_modal", _params, socket) do
+    {:halt,
+     socket
+     |> assign(:show_feedback_modal, false)
+     |> assign(:feedback_form, build_feedback_form(%{}))}
+  end
+
+  defp handle_feedback_event("validate_feedback", %{"feedback" => feedback_params}, socket) do
+    {:halt, assign(socket, :feedback_form, build_feedback_form(feedback_params, :validate))}
+  end
+
+  defp handle_feedback_event("submit_feedback", %{"feedback" => feedback_params}, socket) do
+    changeset = feedback_changeset(feedback_params)
+
+    if changeset.valid? do
+      feedback =
+        changeset
+        |> Changeset.apply_changes()
+
+      case Mydia.Feedback.send(feedback) do
+        {:ok, _result} ->
+          {:halt,
+           socket
+           |> put_flash(:info, "Thanks, feedback sent.")
+           |> assign(:show_feedback_modal, false)
+           |> assign(:feedback_form, build_feedback_form(%{}))}
+
+        {:error, {:rate_limited, retry_after}} ->
+          {:halt,
+           socket
+           |> put_flash(
+             :error,
+             "Feedback is rate limited. Try again #{retry_after_text(retry_after)}."
+           )
+           |> assign(:feedback_form, build_feedback_form(feedback_params))}
+
+        {:error, :service_unavailable} ->
+          {:halt,
+           socket
+           |> put_flash(
+             :error,
+             "Feedback service is temporarily unavailable. Please try again later."
+           )
+           |> assign(:feedback_form, build_feedback_form(feedback_params))}
+
+        {:error, _reason} ->
+          {:halt,
+           socket
+           |> put_flash(:error, "Could not send feedback. Please try again later.")
+           |> assign(:feedback_form, build_feedback_form(feedback_params))}
+      end
+    else
+      {:halt, assign(socket, :feedback_form, build_feedback_form(feedback_params, :validate))}
+    end
+  end
+
+  defp handle_feedback_event(_event, _params, socket), do: {:cont, socket}
+
+  defp build_feedback_form(params, action \\ nil) do
+    params
+    |> feedback_changeset()
+    |> Map.put(:action, action)
+    |> to_form(as: :feedback)
+  end
+
+  defp feedback_changeset(params) do
+    types = %{type: :string, message: :string, contact: :string}
+
+    {%{}, types}
+    |> Changeset.cast(params, Map.keys(types))
+    |> Changeset.validate_required([:type, :message])
+    |> Changeset.validate_inclusion(:type, ["bug", "idea", "question"])
+    |> validate_feedback_message_bytes()
+  end
+
+  defp validate_feedback_message_bytes(changeset) do
+    Changeset.validate_change(changeset, :message, fn :message, message ->
+      if byte_size(message) > 4096 do
+        [message: "should be at most 4096 bytes"]
+      else
+        []
+      end
+    end)
+  end
+
+  defp retry_after_text(nil), do: "later"
+
+  defp retry_after_text(seconds) when is_integer(seconds) and seconds < 60,
+    do: "in #{seconds} seconds"
+
+  defp retry_after_text(seconds) when is_integer(seconds) do
+    minutes = max(div(seconds, 60), 1)
+    "in about #{minutes} minutes"
+  end
+
+  defp retry_after_text(_seconds), do: "later"
 
   # Get a MapSet of library types that have at least one enabled library path
   defp get_configured_library_types do

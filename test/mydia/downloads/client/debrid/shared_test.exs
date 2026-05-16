@@ -45,9 +45,9 @@ defmodule Mydia.Downloads.Client.Debrid.SharedTest do
   end
 
   describe "validate_download_url/1" do
-    test "accepts an HTTPS URL on a public host" do
-      assert {:ok, "https://example.com/file.mkv"} =
-               Shared.validate_download_url("https://example.com/file.mkv")
+    test "accepts an HTTPS URL on a public IPv4 host" do
+      assert {:ok, "https://93.184.216.34/file.mkv"} =
+               Shared.validate_download_url("https://93.184.216.34/file.mkv")
     end
 
     test "rejects HTTP" do

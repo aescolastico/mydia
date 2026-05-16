@@ -1,0 +1,54 @@
+defmodule MetadataRelay.Feedback do
+  @moduledoc """
+  Stores and triages feedback submissions from Mydia instances.
+  """
+
+  import Ecto.Query
+
+  alias MetadataRelay.Feedback.Submission
+  alias MetadataRelay.Repo
+
+  def create_submission(attrs) when is_map(attrs) do
+    %Submission{}
+    |> Submission.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def list_submissions(opts \\ []) do
+    Submission
+    |> maybe_filter(:state, Keyword.get(opts, :state))
+    |> maybe_filter(:type, Keyword.get(opts, :type))
+    |> order_by([submission], desc: submission.inserted_at)
+    |> Repo.all()
+  end
+
+  def get_submission(id) when is_binary(id) do
+    with {:ok, uuid} <- Ecto.UUID.cast(id) do
+      Repo.get(Submission, uuid)
+    else
+      :error -> nil
+    end
+  end
+
+  def get_submission!(id), do: Repo.get!(Submission, id)
+
+  def update_state(%Submission{} = submission, state) do
+    submission
+    |> Submission.state_changeset(state)
+    |> Repo.update()
+  end
+
+  def set_github_ref(%Submission{} = submission, github_ref) do
+    submission
+    |> Submission.github_ref_changeset(github_ref)
+    |> Repo.update()
+  end
+
+  defp maybe_filter(query, _field, nil), do: query
+  defp maybe_filter(query, _field, "all"), do: query
+  defp maybe_filter(query, _field, :all), do: query
+
+  defp maybe_filter(query, field, value) do
+    where(query, [submission], field(submission, ^field) == ^value)
+  end
+end

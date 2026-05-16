@@ -5,6 +5,25 @@ import Config
 
 # Skip runtime configuration for test environment (handled in test.exs)
 if config_env() != :test do
+  dashboard_username =
+    System.get_env("DASHBOARD_USERNAME") ||
+      if config_env() == :prod do
+        raise("DASHBOARD_USERNAME not set")
+      else
+        "admin"
+      end
+
+  dashboard_password =
+    System.get_env("DASHBOARD_PASSWORD") ||
+      if config_env() == :prod do
+        raise("DASHBOARD_PASSWORD not set")
+      else
+        "admin"
+      end
+
+  config :metadata_relay,
+    dashboard_auth: [username: dashboard_username, password: dashboard_password]
+
   # Database configuration (all environments except test)
   db_path = System.get_env("SQLITE_DB_PATH") || "./metadata_relay.db"
 
