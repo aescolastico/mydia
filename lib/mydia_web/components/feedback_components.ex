@@ -6,6 +6,7 @@ defmodule MydiaWeb.FeedbackComponents do
   use MydiaWeb, :html
 
   @github_discussions_url "https://github.com/getmydia/mydia/discussions/new/choose"
+  @message_limit_bytes 4096
 
   attr :id, :string, required: true
   attr :form, :any, required: true
@@ -14,8 +15,9 @@ defmodule MydiaWeb.FeedbackComponents do
   def feedback_modal(assigns) do
     assigns =
       assigns
-      |> assign(:message_length, message_length(assigns.form))
-      |> assign(:message_too_long?, message_length(assigns.form) > 4096)
+      |> assign(:message_size_bytes, message_size_bytes(assigns.form))
+      |> assign(:message_too_long?, message_size_bytes(assigns.form) > @message_limit_bytes)
+      |> assign(:message_limit_bytes, @message_limit_bytes)
       |> assign(:github_discussions_url, @github_discussions_url)
 
     ~H"""
@@ -58,7 +60,6 @@ defmodule MydiaWeb.FeedbackComponents do
           field={@form[:message]}
           type="textarea"
           label="Message"
-          maxlength="4096"
           rows="6"
           placeholder="What happened, what did you expect, or what would make Mydia better?"
         />
@@ -68,7 +69,7 @@ defmodule MydiaWeb.FeedbackComponents do
           @message_too_long? && "text-error",
           !@message_too_long? && "text-base-content/60"
         ]}>
-          {@message_length} / 4096
+          {@message_size_bytes} / {@message_limit_bytes} bytes
         </div>
 
         <.input
@@ -94,10 +95,10 @@ defmodule MydiaWeb.FeedbackComponents do
     """
   end
 
-  defp message_length(form) do
+  defp message_size_bytes(form) do
     form
     |> Phoenix.HTML.Form.input_value(:message)
     |> to_string()
-    |> String.length()
+    |> byte_size()
   end
 end

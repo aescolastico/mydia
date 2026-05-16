@@ -22,6 +22,14 @@ defmodule MetadataRelay.Feedback do
     |> Repo.all()
   end
 
+  def get_submission(id) when is_binary(id) do
+    with {:ok, uuid} <- Ecto.UUID.cast(id) do
+      Repo.get(Submission, uuid)
+    else
+      :error -> nil
+    end
+  end
+
   def get_submission!(id), do: Repo.get!(Submission, id)
 
   def update_state(%Submission{} = submission, state) do

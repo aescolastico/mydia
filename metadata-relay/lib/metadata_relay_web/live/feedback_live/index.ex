@@ -43,7 +43,9 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
   end
 
   def handle_event("archive", %{"id" => id}, socket) do
-    update_submission(socket, id, fn submission -> Feedback.update_state(submission, "archived") end)
+    update_submission(socket, id, fn submission ->
+      Feedback.update_state(submission, "archived")
+    end)
   end
 
   def handle_event("save_github_ref", %{"id" => id, "github_ref" => github_ref}, socket) do
@@ -53,21 +55,22 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
   end
 
   defp update_submission(socket, id, updater) do
-    submission = Feedback.get_submission!(id)
+    case Feedback.get_submission(id) do
+      nil ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Feedback no longer exists.")
+         |> load_submissions()}
 
-    case updater.(submission) do
-      {:ok, _submission} ->
-        {:noreply, load_submissions(socket)}
+      submission ->
+        case updater.(submission) do
+          {:ok, _submission} ->
+            {:noreply, load_submissions(socket)}
 
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Could not update feedback.")}
+          {:error, _changeset} ->
+            {:noreply, put_flash(socket, :error, "Could not update feedback.")}
+        end
     end
-  rescue
-    Ecto.NoResultsError ->
-      {:noreply,
-       socket
-       |> put_flash(:error, "Feedback no longer exists.")
-       |> load_submissions()}
   end
 
   defp load_submissions(socket) do

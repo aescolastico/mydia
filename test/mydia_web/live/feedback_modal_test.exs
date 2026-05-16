@@ -90,7 +90,7 @@ defmodule MydiaWeb.FeedbackModalTest do
     assert html =~ "can&#39;t be blank"
   end
 
-  test "message longer than 4096 characters is rejected", %{conn: conn} do
+  test "message longer than 4096 bytes is rejected", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
 
     view
@@ -104,7 +104,25 @@ defmodule MydiaWeb.FeedbackModalTest do
       })
       |> render_submit()
 
-    assert html =~ "should be at most 4096 character"
+    assert html =~ "should be at most 4096 bytes"
+  end
+
+  test "multi-byte message longer than 4096 bytes is rejected", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    view
+    |> element("#sidebar-send-feedback")
+    |> render_click()
+
+    html =
+      view
+      |> form("#feedback-form", %{
+        feedback: %{type: "bug", message: String.duplicate("🎬", 1025)}
+      })
+      |> render_submit()
+
+    assert html =~ "should be at most 4096 bytes"
+    assert html =~ "4100 / 4096 bytes"
   end
 
   test "valid submit posts feedback, closes modal, and flashes thanks", %{conn: conn} do

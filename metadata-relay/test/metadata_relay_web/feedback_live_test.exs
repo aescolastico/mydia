@@ -122,6 +122,18 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
     assert html =~ "Feedback no longer exists."
   end
 
+  test "saving github_ref with an invalid id shows an error" do
+    {:ok, view, _html} = live(authed_conn(), "/feedback")
+
+    html =
+      render_hook(view, "save_github_ref", %{
+        "id" => "not-a-uuid",
+        "github_ref" => "gh#1"
+      })
+
+    assert html =~ "Feedback no longer exists."
+  end
+
   defp authed_conn do
     build_conn()
     |> put_req_header("authorization", "Basic " <> Base.encode64("admin:admin"))

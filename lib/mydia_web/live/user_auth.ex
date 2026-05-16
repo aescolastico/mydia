@@ -213,13 +213,19 @@ defmodule MydiaWeb.Live.UserAuth do
         {:error, {:rate_limited, retry_after}} ->
           {:halt,
            socket
-           |> put_flash(:error, "Feedback is rate limited. Try again #{retry_after_text(retry_after)}.")
+           |> put_flash(
+             :error,
+             "Feedback is rate limited. Try again #{retry_after_text(retry_after)}."
+           )
            |> assign(:feedback_form, build_feedback_form(feedback_params))}
 
         {:error, :service_unavailable} ->
           {:halt,
            socket
-           |> put_flash(:error, "Feedback service is temporarily unavailable. Please try again later.")
+           |> put_flash(
+             :error,
+             "Feedback service is temporarily unavailable. Please try again later."
+           )
            |> assign(:feedback_form, build_feedback_form(feedback_params))}
 
         {:error, _reason} ->
@@ -249,11 +255,23 @@ defmodule MydiaWeb.Live.UserAuth do
     |> Changeset.cast(params, Map.keys(types))
     |> Changeset.validate_required([:type, :message])
     |> Changeset.validate_inclusion(:type, ["bug", "idea", "question"])
-    |> Changeset.validate_length(:message, max: 4096)
+    |> validate_feedback_message_bytes()
+  end
+
+  defp validate_feedback_message_bytes(changeset) do
+    Changeset.validate_change(changeset, :message, fn :message, message ->
+      if byte_size(message) > 4096 do
+        [message: "should be at most 4096 bytes"]
+      else
+        []
+      end
+    end)
   end
 
   defp retry_after_text(nil), do: "later"
-  defp retry_after_text(seconds) when is_integer(seconds) and seconds < 60, do: "in #{seconds} seconds"
+
+  defp retry_after_text(seconds) when is_integer(seconds) and seconds < 60,
+    do: "in #{seconds} seconds"
 
   defp retry_after_text(seconds) when is_integer(seconds) do
     minutes = max(div(seconds, 60), 1)

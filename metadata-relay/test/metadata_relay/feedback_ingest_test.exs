@@ -67,10 +67,20 @@ defmodule MetadataRelay.FeedbackIngestTest do
       assert "Invalid type: spam" in errors
     end
 
+    test "returns 400 when an optional field has the wrong type" do
+      conn =
+        post_feedback(%{"type" => "bug", "message" => "Playback froze", "contact" => %{"x" => 1}})
+
+      assert conn.status == 400
+      assert %{"error" => "Validation failed", "errors" => errors} = Jason.decode!(conn.resp_body)
+      assert "Invalid field: contact" in errors
+    end
+
     test "returns 400 with a distinct body when message is too long" do
       conn = post_feedback(%{"type" => "bug", "message" => String.duplicate("a", 4097)})
 
       assert conn.status == 400
+
       assert %{"error" => "Message too long", "limit_bytes" => 4096} =
                Jason.decode!(conn.resp_body)
     end

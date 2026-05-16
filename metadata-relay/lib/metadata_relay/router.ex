@@ -4,6 +4,7 @@ defmodule MetadataRelay.Router do
   """
 
   use Plug.Router
+  require Logger
 
   alias MetadataRelay.TMDB.Handler
   alias MetadataRelay.TVDB.Handler, as: TVDBHandler
@@ -794,28 +795,41 @@ defmodule MetadataRelay.Router do
         |> put_resp_content_type("application/json")
         |> send_resp(400, Jason.encode!(%{error: "Validation failed", errors: errors}))
 
-      {:error, reason} ->
+      {:error, %Ecto.Changeset{} = changeset} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(
-          500,
+          400,
           Jason.encode!(%{
-            error: "Internal server error",
-            message: "Failed to store feedback: #{inspect(reason)}"
+            error: "Validation failed",
+            errors: changeset_error_messages(changeset)
           })
         )
+
+      {:error, reason} ->
+        Logger.error("Failed to store feedback", reason: inspect(reason))
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(500, Jason.encode!(%{error: "Internal server error"}))
     end
   end
 
   defp validate_feedback(params) when is_map(params) do
     type = get_feedback_param(params, "type")
     message = get_feedback_param(params, "message")
+    contact = get_feedback_param(params, "contact")
+    instance_id = get_feedback_param(params, "instance_id")
+    mydia_version = get_feedback_param(params, "mydia_version")
 
     errors =
       []
       |> require_feedback_field("type", type)
       |> require_feedback_field("message", message)
       |> validate_feedback_type(type)
+      |> validate_optional_feedback_field("contact", contact)
+      |> validate_optional_feedback_field("instance_id", instance_id)
+      |> validate_optional_feedback_field("mydia_version", mydia_version)
 
     cond do
       errors != [] ->
@@ -829,9 +843,9 @@ defmodule MetadataRelay.Router do
          %{
            type: type,
            message: message,
-           contact: get_feedback_param(params, "contact"),
-           instance_id: get_feedback_param(params, "instance_id"),
-           mydia_version: get_feedback_param(params, "mydia_version")
+           contact: normalize_optional_feedback_field(contact),
+           instance_id: normalize_optional_feedback_field(instance_id),
+           mydia_version: normalize_optional_feedback_field(mydia_version)
          }}
     end
   end
@@ -866,6 +880,30 @@ defmodule MetadataRelay.Router do
   end
 
   defp validate_feedback_type(errors, _type), do: errors
+
+  defp validate_optional_feedback_field(errors, _field, nil), do: errors
+  defp validate_optional_feedback_field(errors, _field, value) when is_binary(value), do: errors
+
+  defp validate_optional_feedback_field(errors, field, _value) do
+    ["Invalid field: #{field}" | errors]
+  end
+
+  defp normalize_optional_feedback_field(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_feedback_field(_value), do: nil
+
+  defp changeset_error_messages(changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {message, _opts} -> message end)
+    |> Enum.flat_map(fn {field, messages} ->
+      Enum.map(List.wrap(messages), fn message -> "#{field} #{message}" end)
+    end)
+  end
 
   defp handle_subtitles_request(conn, handler_fn) do
     case handler_fn.() do
