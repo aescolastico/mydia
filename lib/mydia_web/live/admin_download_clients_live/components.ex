@@ -121,11 +121,14 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                   </div>
                   <div class="text-xs opacity-60 mt-1 truncate">
                     <span class="font-mono">
-                      <%= if client.type == :blackhole do %>
-                        {get_in(client.connection_settings || %{}, ["watch_folder"]) ||
-                          "No watch folder"}
-                      <% else %>
-                        {if client.use_ssl, do: "https://", else: "http://"}{client.host}:{client.port}
+                      <%= cond do %>
+                        <% client.type == :blackhole -> %>
+                          {get_in(client.connection_settings || %{}, ["watch_folder"]) ||
+                            "No watch folder"}
+                        <% client.type == :debrid -> %>
+                          {debrid_provider_label(client)}
+                        <% true -> %>
+                          {if client.use_ssl, do: "https://", else: "http://"}{client.host}:{client.port}
                       <% end %>
                     </span>
                     <%= if client.category do %>
@@ -347,7 +350,8 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                     {"Blackhole", "blackhole"},
                     {"SABnzbd", "sabnzbd"},
                     {"NZBGet", "nzbget"},
-                    {"HTTP", "http"}
+                    {"HTTP", "http"},
+                    {"Debrid", "debrid"}
                   ]}
                   required
                 />
@@ -359,124 +363,192 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
 
             <div class="divider my-1"></div>
 
-            <%= if @selected_type == "blackhole" do %>
-              <%!-- Blackhole-specific fields --%>
-              <div class="space-y-3">
-                <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
-                  <.icon name="hero-folder" class="w-4 h-4" />
-                  <span>Folder Settings</span>
-                </div>
-
-                <div class="alert alert-info text-sm py-2">
-                  <.icon name="hero-information-circle" class="w-4 h-4" />
-                  <span>
-                    Blackhole writes .torrent files to a watch folder for external processing.
-                  </span>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <.input
-                    name="download_client_config[connection_settings][watch_folder]"
-                    type="text"
-                    label="Watch Folder"
-                    placeholder="/path/to/watch"
-                    value={
-                      get_in(
-                        Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
-                          %{},
-                        ["watch_folder"]
-                      ) || ""
-                    }
-                    required
-                  />
-                  <.input
-                    name="download_client_config[connection_settings][completed_folder]"
-                    type="text"
-                    label="Completed Folder"
-                    placeholder="/path/to/completed"
-                    value={
-                      get_in(
-                        Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
-                          %{},
-                        ["completed_folder"]
-                      ) || ""
-                    }
-                    required
-                  />
-                </div>
-
-                <div class="flex items-center justify-between bg-base-200 rounded-lg px-4 py-3">
-                  <div class="flex items-center gap-3">
-                    <.icon name="hero-folder-open" class="w-4 h-4 text-base-content/60" />
-                    <div>
-                      <span class="text-sm font-medium">Category Subfolders</span>
-                      <p class="text-xs text-base-content/50">Create movies/tv subfolders</p>
-                    </div>
+            <%= cond do %>
+              <% @selected_type == "debrid" -> %>
+                <%!-- Debrid-specific fields --%>
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
+                    <.icon name="hero-cloud" class="w-4 h-4" />
+                    <span>Debrid Service</span>
                   </div>
-                  <input
-                    type="checkbox"
-                    name="download_client_config[connection_settings][use_category_subfolders]"
-                    value="true"
-                    checked={
-                      get_in(
-                        Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
-                          %{},
-                        ["use_category_subfolders"]
-                      ) == true
-                    }
-                    class="toggle toggle-primary toggle-sm"
-                  />
-                </div>
-              </div>
-            <% else %>
-              <%!-- Network client fields --%>
-              <div class="space-y-3">
-                <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
-                  <.icon name="hero-server" class="w-4 h-4" />
-                  <span>Connection</span>
-                </div>
 
-                <div class="grid grid-cols-6 gap-3">
-                  <div class="col-span-6 md:col-span-4">
+                  <div class="alert alert-info text-sm py-2">
+                    <.icon name="hero-information-circle" class="w-4 h-4" />
+                    <span>
+                      Releases are submitted to your chosen provider and downloaded on their
+                      infrastructure. Your IP never participates in the swarm.
+                    </span>
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <.input
-                      field={@download_client_form[:host]}
-                      type="text"
-                      label="Host"
-                      placeholder="localhost"
+                      name="download_client_config[connection_settings][provider]"
+                      type="select"
+                      label="Provider"
+                      options={[
+                        {"Real-Debrid", "real_debrid"},
+                        {"AllDebrid", "all_debrid"},
+                        {"Premiumize", "premiumize"},
+                        {"TorBox", "tor_box"}
+                      ]}
+                      value={
+                        get_in(
+                          Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
+                            %{},
+                          ["provider"]
+                        ) || "real_debrid"
+                      }
+                      required
+                    />
+                    <.input
+                      field={@download_client_form[:api_key]}
+                      type="password"
+                      label="API Key"
                       required
                     />
                   </div>
-                  <div class="col-span-3 md:col-span-1">
-                    <.input field={@download_client_form[:port]} type="number" label="Port" required />
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <.input
+                      field={@download_client_form[:download_directory]}
+                      type="text"
+                      label="Download Directory (optional)"
+                      placeholder="/data/debrid-downloads"
+                    />
                   </div>
-                  <div class="col-span-3 md:col-span-1">
-                    <.input field={@download_client_form[:use_ssl]} type="checkbox" label="SSL" />
+
+                  <p class="text-xs text-base-content/60">
+                    Where Mydia writes files pulled from the debrid provider before
+                    importing them into your library. Defaults to <code>/data/debrid-downloads</code>
+                    when the standard <code>/data</code>
+                    volume is mounted, otherwise the system temp directory.
+                    Override only if you need a specific filesystem (e.g., a faster
+                    disk or one with more headroom).
+                  </p>
+                </div>
+              <% @selected_type == "blackhole" -> %>
+                <%!-- Blackhole-specific fields --%>
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
+                    <.icon name="hero-folder" class="w-4 h-4" />
+                    <span>Folder Settings</span>
+                  </div>
+
+                  <div class="alert alert-info text-sm py-2">
+                    <.icon name="hero-information-circle" class="w-4 h-4" />
+                    <span>
+                      Blackhole writes .torrent files to a watch folder for external processing.
+                    </span>
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <.input
+                      name="download_client_config[connection_settings][watch_folder]"
+                      type="text"
+                      label="Watch Folder"
+                      placeholder="/path/to/watch"
+                      value={
+                        get_in(
+                          Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
+                            %{},
+                          ["watch_folder"]
+                        ) || ""
+                      }
+                      required
+                    />
+                    <.input
+                      name="download_client_config[connection_settings][completed_folder]"
+                      type="text"
+                      label="Completed Folder"
+                      placeholder="/path/to/completed"
+                      value={
+                        get_in(
+                          Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
+                            %{},
+                          ["completed_folder"]
+                        ) || ""
+                      }
+                      required
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-between bg-base-200 rounded-lg px-4 py-3">
+                    <div class="flex items-center gap-3">
+                      <.icon name="hero-folder-open" class="w-4 h-4 text-base-content/60" />
+                      <div>
+                        <span class="text-sm font-medium">Category Subfolders</span>
+                        <p class="text-xs text-base-content/50">Create movies/tv subfolders</p>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      name="download_client_config[connection_settings][use_category_subfolders]"
+                      value="true"
+                      checked={
+                        get_in(
+                          Phoenix.HTML.Form.input_value(@download_client_form, :connection_settings) ||
+                            %{},
+                          ["use_category_subfolders"]
+                        ) == true
+                      }
+                      class="toggle toggle-primary toggle-sm"
+                    />
                   </div>
                 </div>
+              <% true -> %>
+                <%!-- Network client fields --%>
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">
+                    <.icon name="hero-server" class="w-4 h-4" />
+                    <span>Connection</span>
+                  </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <.input field={@download_client_form[:username]} type="text" label="Username" />
-                  <.input field={@download_client_form[:password]} type="password" label="Password" />
-                </div>
+                  <div class="grid grid-cols-6 gap-3">
+                    <div class="col-span-6 md:col-span-4">
+                      <.input
+                        field={@download_client_form[:host]}
+                        type="text"
+                        label="Host"
+                        placeholder="localhost"
+                        required
+                      />
+                    </div>
+                    <div class="col-span-3 md:col-span-1">
+                      <.input
+                        field={@download_client_form[:port]}
+                        type="number"
+                        label="Port"
+                        required
+                      />
+                    </div>
+                    <div class="col-span-3 md:col-span-1">
+                      <.input field={@download_client_form[:use_ssl]} type="checkbox" label="SSL" />
+                    </div>
+                  </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <.input field={@download_client_form[:api_key]} type="password" label="API Key" />
-                  <.input
-                    field={@download_client_form[:url_base]}
-                    type="text"
-                    label="URL Base"
-                    placeholder="/transmission/"
-                  />
-                </div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <.input field={@download_client_form[:username]} type="text" label="Username" />
+                    <.input field={@download_client_form[:password]} type="password" label="Password" />
+                  </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <.input
-                    field={@download_client_form[:download_directory]}
-                    type="text"
-                    label="Download Directory"
-                  />
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <.input field={@download_client_form[:api_key]} type="password" label="API Key" />
+                    <.input
+                      field={@download_client_form[:url_base]}
+                      type="text"
+                      label="URL Base"
+                      placeholder="/transmission/"
+                    />
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <.input
+                      field={@download_client_form[:download_directory]}
+                      type="text"
+                      label="Download Directory"
+                    />
+                  </div>
                 </div>
-              </div>
             <% end %>
 
             <%!-- Per-content-type categories. Hidden for blackhole and HTTP transports. --%>
@@ -648,4 +720,18 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
   defp health_status_label(:healthy), do: "Healthy"
   defp health_status_label(:unhealthy), do: "Unhealthy"
   defp health_status_label(:unknown), do: "Unknown"
+
+  # Renders a short summary string for a debrid client row in the list.
+  # Surfaces the provider's human-readable label (e.g., "Real-Debrid"); the
+  # debrid type itself isn't routed by host/port so the host/port fallback
+  # used by other clients would render an empty "http://:" string.
+  defp debrid_provider_label(client) do
+    case get_in(client.connection_settings || %{}, ["provider"]) do
+      provider when is_binary(provider) ->
+        Mydia.Downloads.Client.Debrid.Provider.label_for(provider)
+
+      _ ->
+        "No provider"
+    end
+  end
 end

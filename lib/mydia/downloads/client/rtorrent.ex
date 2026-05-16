@@ -63,6 +63,9 @@ defmodule Mydia.Downloads.Client.Rtorrent do
 
   @behaviour Mydia.Downloads.Client
 
+  @impl true
+  def supported_protocols, do: [:torrent]
+
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Client.Helpers

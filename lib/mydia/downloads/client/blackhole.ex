@@ -52,6 +52,9 @@ defmodule Mydia.Downloads.Client.Blackhole do
 
   @behaviour Mydia.Downloads.Client
 
+  @impl true
+  def supported_protocols, do: [:torrent]
+
   alias Mydia.Downloads.Client.Error
   alias Mydia.Downloads.Client.Helpers
   alias Mydia.Downloads.Structs.{ClientInfo, DownloadStatus}

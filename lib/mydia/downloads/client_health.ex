@@ -246,6 +246,7 @@ defmodule Mydia.Downloads.ClientHealth do
   defp get_adapter(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
   defp get_adapter(:nzbget), do: Mydia.Downloads.Client.Nzbget
   defp get_adapter(:http), do: Mydia.Downloads.Client.HTTP
+  defp get_adapter(:debrid), do: Mydia.Downloads.Client.Debrid
 
   defp config_to_map(config) do
     %{

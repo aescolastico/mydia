@@ -71,6 +71,9 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
 
   @behaviour Mydia.Downloads.Client
 
+  @impl true
+  def supported_protocols, do: [:nzb]
+
   alias Mydia.Downloads.Client.{Error, HTTP}
   alias Mydia.Downloads.Priority
   alias Mydia.Downloads.Client.Helpers

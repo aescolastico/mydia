@@ -274,6 +274,7 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
       {:noreply,
        socket
        |> assign(:downloading_release_url, download_url)
+       |> mark_result(download_url, %{downloading: true})
        |> start_async(:download_release, fn ->
          result = Downloads.initiate_download(search_result, opts)
          Process.sleep(400)
@@ -282,6 +283,34 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
     else
       {:unauthorized, socket} -> {:noreply, socket}
     end
+  end
+
+  # Re-stream a single result row with extra fields merged in (e.g. `:downloading`,
+  # `:downloaded`). Streams don't re-render existing items on parent assign changes,
+  # so per-row state must be pushed via stream_insert.
+  defp mark_result(socket, download_url, extra) do
+    case find_prepared_result(socket, download_url) do
+      nil -> socket
+      item -> stream_insert(socket, :search_results, Map.merge(item, extra))
+    end
+  end
+
+  defp find_prepared_result(socket, download_url) do
+    raw_results = Map.get(socket.assigns, :raw_search_results, [])
+    assigns = socket.assigns
+    media_item = assigns.media_item
+    media_type = if media_item.type == "movie", do: :movie, else: :episode
+
+    raw_results
+    |> filter_search_results(assigns)
+    |> sort_search_results(
+      assigns.sort_by,
+      media_item.quality_profile,
+      media_type,
+      Map.get(assigns, :manual_search_query)
+    )
+    |> prepare_for_stream()
+    |> Enum.find(&(&1.download_url == download_url))
   end
 
   # handle_async dispatches
@@ -350,42 +379,17 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
 
     media_item = load_media_item(media_item_id)
 
-    socket =
-      socket
-      |> assign(:downloading_release_url, nil)
-      |> assign(:download_error, nil)
-      |> assign(:media_item, media_item)
-      |> assign(:downloads_with_status, load_downloads_with_status(media_item))
-
-    raw_results = Map.get(socket.assigns, :raw_search_results, [])
-    assigns = socket.assigns
-    media_item = assigns.media_item
-
-    media_type = if media_item.type == "movie", do: :movie, else: :episode
-    filtered = filter_search_results(raw_results, assigns)
-
-    sorted =
-      sort_search_results(
-        filtered,
-        assigns.sort_by,
-        media_item.quality_profile,
-        media_type,
-        Map.get(assigns, :manual_search_query)
-      )
-
-    prepared = prepare_for_stream(sorted)
-
-    socket =
-      case Enum.find(prepared, &(&1.download_url == download_url)) do
-        nil -> socket
-        item -> stream_insert(socket, :search_results, Map.put(item, :downloaded, true))
-      end
-
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> assign(:downloading_release_url, nil)
+     |> assign(:download_error, nil)
+     |> assign(:media_item, media_item)
+     |> assign(:downloads_with_status, load_downloads_with_status(media_item))
+     |> mark_result(download_url, %{downloading: false, downloaded: true})}
   end
 
   def handle_download_release_async(
-        {:ok, {{:error, reason}, title, _media_item_id, _download_url}},
+        {:ok, {{:error, reason}, title, _media_item_id, download_url}},
         socket
       ) do
     Logger.error("Failed to initiate download for #{title}: #{inspect(reason)}")
@@ -393,11 +397,17 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
     {:noreply,
      socket
      |> assign(:downloading_release_url, nil)
-     |> assign(:download_error, "Failed to start download: #{inspect(reason)}")}
+     |> assign(:download_error, "Failed to start download: #{inspect(reason)}")
+     |> mark_result(download_url, %{downloading: false})}
   end
 
   def handle_download_release_async({:exit, reason}, socket) do
     Logger.error("Download task crashed: #{inspect(reason)}")
+
+    download_url = socket.assigns[:downloading_release_url]
+
+    socket =
+      if download_url, do: mark_result(socket, download_url, %{downloading: false}), else: socket
 
     {:noreply,
      socket

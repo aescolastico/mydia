@@ -781,32 +781,38 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                 </div>
                 <%!-- Download Action --%>
                 <div class="flex items-center">
-                  <%= if Map.get(result, :downloaded) do %>
-                    <button class="btn btn-success btn-sm btn-disabled" disabled>
-                      <.icon name="hero-check" class="w-4 h-4" />
-                      <span class="hidden sm:inline">Grabbed</span>
-                    </button>
-                  <% else %>
-                    <button
-                      class="btn btn-primary btn-sm group/dl [&.phx-click-loading]:btn-disabled [&.phx-click-loading]:pointer-events-none"
-                      phx-click="download_from_search"
-                      phx-value-download-url={result.download_url}
-                      phx-value-title={result.title}
-                      phx-value-indexer={result.indexer}
-                      phx-value-size={result.size || 0}
-                      phx-value-seeders={result.seeders || 0}
-                      phx-value-leechers={result.leechers || 0}
-                      phx-value-quality={get_search_quality_badge(result) || "Unknown"}
-                      title="Download this release"
-                    >
-                      <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline">
-                      </span>
-                      <.icon
-                        name="hero-arrow-down-tray"
-                        class="w-4 h-4 group-[.phx-click-loading]/dl:hidden"
-                      />
-                      <span class="hidden sm:inline">Download</span>
-                    </button>
+                  <%= cond do %>
+                    <% Map.get(result, :downloaded) -> %>
+                      <button class="btn btn-success btn-sm btn-disabled" disabled>
+                        <.icon name="hero-check" class="w-4 h-4" />
+                        <span class="hidden sm:inline">Grabbed</span>
+                      </button>
+                    <% Map.get(result, :downloading) -> %>
+                      <button class="btn btn-primary btn-sm btn-disabled" disabled>
+                        <span class="loading loading-spinner loading-xs"></span>
+                        <span class="hidden sm:inline">Sending...</span>
+                      </button>
+                    <% true -> %>
+                      <button
+                        class="btn btn-primary btn-sm group/dl [&.phx-click-loading]:btn-disabled [&.phx-click-loading]:pointer-events-none"
+                        phx-click="download_from_search"
+                        phx-value-download-url={result.download_url}
+                        phx-value-title={result.title}
+                        phx-value-indexer={result.indexer}
+                        phx-value-size={result.size || 0}
+                        phx-value-seeders={result.seeders || 0}
+                        phx-value-leechers={result.leechers || 0}
+                        phx-value-quality={get_search_quality_badge(result) || "Unknown"}
+                        title="Download this release"
+                      >
+                        <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline">
+                        </span>
+                        <.icon
+                          name="hero-arrow-down-tray"
+                          class="w-4 h-4 group-[.phx-click-loading]/dl:hidden"
+                        />
+                        <span class="hidden sm:inline">Download</span>
+                      </button>
                   <% end %>
                 </div>
               </li>

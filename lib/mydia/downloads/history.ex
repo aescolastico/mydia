@@ -44,7 +44,7 @@ defmodule Mydia.Downloads.History do
       Enum.map(downloads, &enrich_download_with_empty_status/1)
     else
       # Get status from all clients
-      client_statuses = fetch_all_client_statuses(clients)
+      client_statuses = fetch_all_client_statuses(clients, downloads)
 
       # Enrich downloads with client status
       downloads
@@ -153,7 +153,7 @@ defmodule Mydia.Downloads.History do
     |> Enum.filter(& &1.enabled)
   end
 
-  defp fetch_all_client_statuses(clients) do
+  defp fetch_all_client_statuses(clients, downloads) do
     # Fetch torrents from all clients concurrently. We deliberately distinguish
     # between two outcomes that previously collapsed into "empty list":
     #
@@ -163,13 +163,23 @@ defmodule Mydia.Downloads.History do
     # The downstream classifier MUST NOT mark a download "missing" just because
     # its client was unreachable, otherwise a brief client restart flags every
     # active download as failed.
+    #
+    # We pre-group the loaded downloads by `download_client` name and forward
+    # the per-client map (keyed by `download_client_id`) to each adapter via
+    # `opts[:downloads]`. Adapters that don't need it ignore the opt; the
+    # debrid adapter consumes it to look up the Mydia `Download` row for the
+    # R8 metadata merge without performing DB queries inside the behaviour
+    # callback.
+    downloads_by_client = group_downloads_by_client(downloads)
+
     clients
     |> Task.async_stream(
       fn client_config ->
         adapter = get_adapter_module(client_config.type)
         config = config_to_map(client_config)
+        client_downloads = Map.get(downloads_by_client, client_config.name, %{})
 
-        case Client.list_torrents(adapter, config, []) do
+        case Client.list_torrents(adapter, config, downloads: client_downloads) do
           {:ok, torrents} ->
             torrents_map =
               torrents
@@ -192,6 +202,23 @@ defmodule Mydia.Downloads.History do
     |> Enum.reduce(%{}, fn
       {:ok, {client_name, result}}, acc -> Map.put(acc, client_name, result)
       _, acc -> acc
+    end)
+  end
+
+  defp group_downloads_by_client(downloads) do
+    Enum.reduce(downloads, %{}, fn download, acc ->
+      case {download.download_client, download.download_client_id} do
+        {nil, _} ->
+          acc
+
+        {_, nil} ->
+          acc
+
+        {client_name, client_id} ->
+          Map.update(acc, client_name, %{client_id => download}, fn existing ->
+            Map.put(existing, client_id, download)
+          end)
+      end
     end)
   end
 
@@ -370,6 +397,7 @@ defmodule Mydia.Downloads.History do
       :completed -> "completed"
       :paused -> "paused"
       :checking -> "checking"
+      :queued -> "queued"
       :error -> "failed"
       _ -> "unknown"
     end
@@ -380,8 +408,12 @@ defmodule Mydia.Downloads.History do
   defp apply_status_filters(downloads, :active) do
     Enum.filter(downloads, fn d ->
       # Active downloads are those that haven't been imported yet
-      # and are currently downloading, seeding, checking, or paused
-      is_nil(d.imported_at) and d.status in ["downloading", "seeding", "checking", "paused"]
+      # and are currently downloading, seeding, checking, paused, or queued.
+      # `queued` covers the debrid lifecycle phases where the provider is
+      # waiting on the swarm or Mydia's local fetcher hasn't claimed the
+      # ready job yet — without this they'd vanish from the queue tab.
+      is_nil(d.imported_at) and
+        d.status in ["downloading", "seeding", "checking", "paused", "queued"]
     end)
   end
 
@@ -426,6 +458,7 @@ defmodule Mydia.Downloads.History do
   defp get_adapter_module(:http), do: Mydia.Downloads.Client.HTTP
   defp get_adapter_module(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
   defp get_adapter_module(:nzbget), do: Mydia.Downloads.Client.Nzbget
+  defp get_adapter_module(:debrid), do: Mydia.Downloads.Client.Debrid
   defp get_adapter_module(_), do: nil
 
   defp config_to_map(config) do

@@ -767,6 +767,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "cancelled" -> "badge-warning"
       "downloading" -> "badge-primary"
       "checking" -> "badge-info"
+      "queued" -> "badge-info"
       "paused" -> "badge-warning"
       "stalled" -> "badge-warning"
       _ -> "badge-ghost"

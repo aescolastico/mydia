@@ -128,7 +128,8 @@ defmodule Mydia.Downloads.Client do
   @type list_torrents_opts :: [
           filter: :all | :downloading | :seeding | :completed | :paused | :active | :inactive,
           category: String.t(),
-          tag: String.t()
+          tag: String.t(),
+          downloads: %{String.t() => Mydia.Downloads.Download.t()}
         ]
 
   @doc """
@@ -205,6 +206,15 @@ defmodule Mydia.Downloads.Client do
     * `:filter` - Filter torrents by state (`:all`, `:downloading`, `:seeding`, etc.)
     * `:category` - Filter by category
     * `:tag` - Filter by tag
+    * `:downloads` - A `%{download_client_id => Mydia.Downloads.Download.t()}`
+      map. The orchestrator (`Mydia.Downloads.History.fetch_all_client_statuses/1`)
+      pre-filters its loaded downloads list by client name and passes the
+      result through. Adapters that don't need it (qBittorrent, Transmission,
+      Blackhole, SABnzbd, NZBGet, rTorrent) ignore the opt. The debrid
+      adapter consumes it to look up the Mydia row for R8 metadata persistence
+      without performing DB queries inside the callback. Callers that don't
+      have the downloads loaded may pass an empty map; debrid will return
+      `{:ok, []}` in that case.
 
   ## Examples
 
@@ -266,6 +276,31 @@ defmodule Mydia.Downloads.Client do
       :ok
   """
   @callback resume_torrent(config(), client_id :: String.t()) :: :ok | {:error, Error.t()}
+
+  @typedoc """
+  Download protocol an adapter can accept.
+
+  Torrent-capable adapters list `:torrent`; Usenet-capable adapters list `:nzb`.
+  An adapter may declare both if it accepts either kind of payload.
+  """
+  @type protocol :: :torrent | :nzb
+
+  @doc """
+  Declares which download protocols the adapter can accept.
+
+  `Mydia.Downloads.Queue` consults this to pick eligible clients when a
+  search result resolves to `:torrent` or `:nzb`. Adapters MUST return a
+  non-empty list — otherwise they'll never be selected by priority.
+
+  ## Examples
+
+      iex> Mydia.Downloads.Client.QBittorrent.supported_protocols()
+      [:torrent]
+
+      iex> Mydia.Downloads.Client.Sabnzbd.supported_protocols()
+      [:nzb]
+  """
+  @callback supported_protocols() :: [protocol(), ...]
 
   ## Convenience Functions
 

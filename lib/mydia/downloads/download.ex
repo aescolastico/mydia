@@ -26,6 +26,7 @@ defmodule Mydia.Downloads.Download do
           import_failed_at: DateTime.t() | nil,
           last_progress_at: DateTime.t() | nil,
           last_known_bytes: integer(),
+          bytes_pulled: integer() | nil,
           media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
           episode: Mydia.Media.Episode.t() | nil | Ecto.Association.NotLoaded.t(),
           library_path: Mydia.Settings.LibraryPath.t() | nil | Ecto.Association.NotLoaded.t(),
@@ -57,6 +58,13 @@ defmodule Mydia.Downloads.Download do
     # breaker to avoid polling stuck downloads forever.
     field :last_progress_at, :utc_datetime_usec
     field :last_known_bytes, :integer, default: 0
+
+    # Bytes streamed locally into staging by the debrid Fetcher (or any future
+    # adapter that performs a separate post-completion local pull). Updated
+    # atomically every 8 MB during streaming so the Range-resume recovery path
+    # in `Fetcher.init/1` knows where to resume after a crash. Nil for adapters
+    # that don't perform a local pull.
+    field :bytes_pulled, :integer
 
     belongs_to :media_item, Mydia.Media.MediaItem
     belongs_to :episode, Mydia.Media.Episode
@@ -92,7 +100,8 @@ defmodule Mydia.Downloads.Download do
       :import_next_retry_at,
       :import_failed_at,
       :last_progress_at,
-      :last_known_bytes
+      :last_known_bytes,
+      :bytes_pulled
     ])
     |> validate_required([:title])
     |> validate_inclusion(:match_status, ["unmatched", "unresolved_files", "partial_pack"])

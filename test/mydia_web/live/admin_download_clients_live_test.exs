@@ -150,6 +150,42 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       refute has_element?(view, "#download-client-priority-profile")
     end
 
+    test "debrid type renders provider sub-selector and hides host/port/categories", %{
+      view: view
+    } do
+      view
+      |> element(~s{button[phx-click="new_download_client"]})
+      |> render_click()
+
+      html =
+        view
+        |> form("#download-client-form", %{
+          "download_client_config" => %{"type" => "debrid"}
+        })
+        |> render_change()
+
+      # Provider sub-selector is visible (under connection_settings[provider])
+      assert html =~ "Debrid Service"
+      assert html =~ "real_debrid"
+      assert html =~ "all_debrid"
+      assert html =~ "premiumize"
+      assert html =~ "tor_box"
+
+      # Categories and priority-profile blocks are hidden for debrid.
+      refute has_element?(view, "#download-client-categories")
+      refute has_element?(view, "#download-client-priority-profile")
+    end
+
+    test "Debrid option appears in the type select", %{view: view} do
+      view
+      |> element(~s{button[phx-click="new_download_client"]})
+      |> render_click()
+
+      html = render(view)
+      assert html =~ ~s{value="debrid"}
+      assert html =~ "Debrid"
+    end
+
     test "legacy single-category clients prefill all three content-type inputs", %{conn: conn} do
       {:ok, legacy_client} =
         Settings.create_download_client_config(%{

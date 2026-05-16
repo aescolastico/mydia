@@ -717,22 +717,10 @@ defmodule Mydia.Downloads.Queue do
   end
 
   defp select_client_by_priority(download_type) do
-    # Torrent clients
-    torrent_clients = [:transmission, :qbittorrent, :rtorrent]
-    # Usenet clients
-    usenet_clients = [:nzbget, :sabnzbd]
-
     client =
       Settings.list_download_client_configs()
       |> Enum.filter(& &1.enabled)
-      |> Enum.filter(fn client ->
-        case download_type do
-          :torrent -> client.type in torrent_clients
-          :nzb -> client.type in usenet_clients
-          # No filter if type unknown
-          _ -> true
-        end
-      end)
+      |> Enum.filter(&supports_download_type?(&1, download_type))
       |> Enum.sort_by(& &1.priority, :asc)
       |> List.first()
 
@@ -745,6 +733,32 @@ defmodule Mydia.Downloads.Queue do
     end
 
     client
+  end
+
+  # Public-but-undocumented for testability.
+  #
+  # Asks the adapter what protocols it accepts and matches against the
+  # search result's resolved download_type. When download_type is nil (we
+  # couldn't sniff it from the payload), every client is eligible — the
+  # adapter's `add_torrent/3` will reject mismatched payloads.
+  def supports_download_type?(_client, nil), do: true
+
+  def supports_download_type?(client, download_type) do
+    case Registry.get_adapter(client.type) do
+      {:ok, adapter} ->
+        # `function_exported?/3` returns false for modules that haven't been
+        # loaded yet (it doesn't auto-load). In production every adapter is
+        # loaded during application boot via Mydia.Downloads.register_clients/0,
+        # but in tests modules load lazily and the check would falsely
+        # report "not supported". `Code.ensure_loaded?/1` forces a load
+        # before the predicate runs.
+        Code.ensure_loaded?(adapter) and
+          function_exported?(adapter, :supported_protocols, 0) and
+          download_type in adapter.supported_protocols()
+
+      {:error, _} ->
+        false
+    end
   end
 
   defp get_adapter_for_client(client_config) do
