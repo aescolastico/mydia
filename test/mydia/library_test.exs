@@ -540,6 +540,192 @@ defmodule Mydia.LibraryTest do
     end
   end
 
+  describe "create_scanned_media_file/1 (U4 import path)" do
+    alias Mydia.Library.MediaFile
+
+    test "leaves tech-metadata columns nil and analysis state at zero" do
+      library_path = library_path_fixture(%{path: "/u4-import", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "Untouched.mkv",
+          library_path_id: library_path.id,
+          size: 1_000_000
+        })
+
+      assert is_nil(media_file.codec)
+      assert is_nil(media_file.resolution)
+      assert is_nil(media_file.bitrate)
+      assert is_nil(media_file.audio_codec)
+      assert is_nil(media_file.hdr_format)
+      assert is_nil(media_file.analyzed_at)
+      assert media_file.analysis_attempts == 0
+    end
+
+    test "does not enqueue any Oban jobs as a side effect" do
+      library_path = library_path_fixture(%{path: "/u4-no-jobs", type: "movies"})
+
+      before_count = Mydia.Repo.aggregate(Oban.Job, :count)
+
+      {:ok, _media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "NoJobs.mkv",
+          library_path_id: library_path.id,
+          size: 1_000_000
+        })
+
+      after_count = Mydia.Repo.aggregate(Oban.Job, :count)
+      assert before_count == after_count
+    end
+
+    test "remains fast across many rows (no per-file ffprobe)" do
+      library_path = library_path_fixture(%{path: "/u4-fast", type: "movies"})
+
+      {elapsed_us, _} =
+        :timer.tc(fn ->
+          for i <- 1..50 do
+            {:ok, _} =
+              Library.create_scanned_media_file(%{
+                relative_path: "Fast/file_#{i}.mkv",
+                library_path_id: library_path.id,
+                size: 1_000_000
+              })
+          end
+        end)
+
+      # 50 inserts should easily complete in well under 5 seconds; if inline
+      # ffprobe ever returns, this assertion will fail loudly.
+      assert elapsed_us < 5_000_000,
+             "expected 50 imports under 5s, took #{elapsed_us / 1_000}ms"
+
+      assert Mydia.Repo.aggregate(
+               from(mf in MediaFile, where: mf.library_path_id == ^library_path.id),
+               :count
+             ) == 50
+    end
+  end
+
+  describe "refresh_file_metadata/1 (U4 operator retry)" do
+    alias Mydia.Library.MediaFile
+    alias Mydia.Library.Structs.FileAnalysisResult
+    alias Mydia.Repo
+
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:mydia, :ffprobe_path)
+        Application.delete_env(:mydia, :ffprobe_timeout_ms)
+      end)
+
+      :ok
+    end
+
+    test "returns {:error, :file_not_found} when the file is missing on disk" do
+      library_path = library_path_fixture(%{path: "/u4-missing", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "missing.mkv",
+          library_path_id: library_path.id,
+          size: 1_000_000
+        })
+
+      media_file = Repo.preload(media_file, :library_path)
+      assert {:error, :file_not_found} = Library.refresh_file_metadata(media_file)
+    end
+
+    test "returns {:error, :path_not_resolved} when library_path is nil" do
+      library_path = library_path_fixture(%{path: "/u4-resolve", type: "movies"})
+
+      {:ok, media_file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "stub.mkv",
+          library_path_id: library_path.id,
+          size: 1_000_000
+        })
+
+      # Force absolute_path/1 to return nil
+      detached = %{media_file | library_path: nil, relative_path: nil}
+      assert {:error, :path_not_resolved} = Library.refresh_file_metadata(detached)
+    end
+
+    test "success path resets analysis_attempts, populates analyzed_at, and sets verified_at" do
+      target = Path.join(System.tmp_dir!(), "u4_refresh_ok_#{:rand.uniform(1_000_000)}.mkv")
+      File.write!(target, "fake content")
+
+      shim_json =
+        ~s({"streams":[{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"bit_rate":"8000000"},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"5400.5","format_name":"matroska,webm","size":"#{File.stat!(target).size}","bit_rate":"8000000"}})
+
+      shim = write_shim_returning(shim_json)
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        library_path = library_path_fixture(%{path: Path.dirname(target), type: "movies"})
+
+        {:ok, media_file} =
+          Library.create_scanned_media_file(%{
+            relative_path: Path.basename(target),
+            library_path_id: library_path.id,
+            size: File.stat!(target).size
+          })
+
+        # Drive the row to a "retry exhausted" state to prove refresh clears it
+        Repo.update_all(
+          from(mf in MediaFile, where: mf.id == ^media_file.id),
+          set: [analysis_attempts: 3, last_analysis_error: ":ffprobe_timeout"]
+        )
+
+        media_file = Repo.preload(media_file, :library_path)
+
+        assert {:ok, %MediaFile{} = refreshed} = Library.refresh_file_metadata(media_file)
+
+        assert refreshed.codec == "h264"
+        assert refreshed.audio_codec == "aac"
+        assert refreshed.resolution == "1080p"
+        assert %DateTime{} = refreshed.analyzed_at
+        assert %DateTime{} = refreshed.verified_at
+        assert refreshed.analysis_attempts == 0
+        assert is_nil(refreshed.last_analysis_error)
+      after
+        File.rm(shim)
+        File.rm(target)
+      end
+    end
+
+    test "failure path bumps analysis_attempts and surfaces the error" do
+      target = Path.join(System.tmp_dir!(), "u4_refresh_fail_#{:rand.uniform(1_000_000)}.mkv")
+      File.write!(target, "fake content")
+
+      shim = write_shim_returning(:exit_nonzero)
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        library_path = library_path_fixture(%{path: Path.dirname(target), type: "movies"})
+
+        {:ok, media_file} =
+          Library.create_scanned_media_file(%{
+            relative_path: Path.basename(target),
+            library_path_id: library_path.id,
+            size: File.stat!(target).size
+          })
+
+        media_file = Repo.preload(media_file, :library_path)
+
+        assert {:error, :ffprobe_failed} = Library.refresh_file_metadata(media_file)
+
+        reloaded = Repo.get!(MediaFile, media_file.id)
+        # reset_analysis_state runs before ffprobe, then failure bumps from 0 to 1
+        assert reloaded.analysis_attempts == 1
+        assert reloaded.last_analysis_error == ":ffprobe_failed"
+        assert is_nil(reloaded.analyzed_at)
+      after
+        File.rm(shim)
+        File.rm(target)
+      end
+    end
+  end
+
   describe "reset_analysis_state/1" do
     alias Mydia.Library.MediaFile
     alias Mydia.Library.Structs.FileAnalysisResult
@@ -573,5 +759,20 @@ defmodule Mydia.LibraryTest do
       assert reset.analysis_attempts == 0
       assert is_nil(reset.last_analysis_error)
     end
+  end
+
+  defp write_shim_returning(:exit_nonzero) do
+    path = Path.join(System.tmp_dir!(), "ffprobe_fail_#{:rand.uniform(10_000_000)}.sh")
+    File.write!(path, "#!/bin/sh\necho 'shim failure' >&2\nexit 1\n")
+    File.chmod!(path, 0o755)
+    path
+  end
+
+  defp write_shim_returning(json) when is_binary(json) do
+    path = Path.join(System.tmp_dir!(), "ffprobe_ok_#{:rand.uniform(10_000_000)}.sh")
+    escaped = String.replace(json, "'", "'\\''")
+    File.write!(path, "#!/bin/sh\nprintf '%s' '#{escaped}'\n")
+    File.chmod!(path, 0o755)
+    path
   end
 end

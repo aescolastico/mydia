@@ -15,7 +15,7 @@ defmodule Mydia.Library.AdultScanner do
   import Ecto.Query, warn: false
 
   alias Mydia.{Adult, Repo}
-  alias Mydia.Library.{Scanner, FileAnalyzer}
+  alias Mydia.Library.Scanner
   alias Mydia.Settings.LibraryPath
 
   @doc """
@@ -91,17 +91,16 @@ defmodule Mydia.Library.AdultScanner do
     # Parse filename for metadata
     parsed = parse_filename(file_info.filename)
 
-    # Extract technical metadata
-    technical_metadata = extract_technical_metadata(file_info.path)
-
     # Find or create studio if we have a studio name
     studio = if parsed.studio, do: find_or_create_studio(parsed.studio)
 
     # Find or create scene
     scene = find_or_create_scene(parsed, studio)
 
-    # Create adult file record
-    case create_adult_file(file_info, relative_path, library_path, scene, technical_metadata) do
+    # Create adult file record. Tech metadata (codec/resolution/bitrate/...) is
+    # left nil at import time; the background analysis worker is responsible
+    # for filling it in.
+    case create_adult_file(file_info, relative_path, library_path, scene) do
       {:ok, adult_file} ->
         Logger.debug("Created adult file record",
           path: relative_path,
@@ -130,18 +129,10 @@ defmodule Mydia.Library.AdultScanner do
         process_new_file(file_info, library_path)
 
       adult_file ->
-        # Update size and re-extract technical metadata
-        technical_metadata = extract_technical_metadata(file_info.path)
-
-        Adult.update_adult_file(adult_file, %{
-          size: file_info.size,
-          resolution: technical_metadata[:resolution],
-          codec: technical_metadata[:codec],
-          audio_codec: technical_metadata[:audio_codec],
-          bitrate: technical_metadata[:bitrate],
-          duration: technical_metadata[:duration],
-          hdr_format: technical_metadata[:hdr_format]
-        })
+        # Update size only; tech metadata is left alone here so we do not
+        # clobber existing analysis results, and we do not run ffprobe inline
+        # on the scan path.
+        Adult.update_adult_file(adult_file, %{size: file_info.size})
 
         Logger.debug("Updated adult file", path: relative_path)
     end
@@ -214,42 +205,14 @@ defmodule Mydia.Library.AdultScanner do
   defp maybe_filter_studio(query, nil), do: where(query, [s], is_nil(s.studio_id))
   defp maybe_filter_studio(query, studio_id), do: where(query, [s], s.studio_id == ^studio_id)
 
-  defp create_adult_file(file_info, relative_path, library_path, scene, technical_metadata) do
+  defp create_adult_file(file_info, relative_path, library_path, scene) do
     Adult.create_adult_file(%{
       path: file_info.path,
       relative_path: relative_path,
       size: file_info.size,
       library_path_id: library_path.id,
-      scene_id: if(scene, do: scene.id),
-      resolution: technical_metadata[:resolution],
-      codec: technical_metadata[:codec],
-      audio_codec: technical_metadata[:audio_codec],
-      bitrate: technical_metadata[:bitrate],
-      duration: technical_metadata[:duration],
-      hdr_format: technical_metadata[:hdr_format]
+      scene_id: if(scene, do: scene.id)
     })
-  end
-
-  defp extract_technical_metadata(file_path) do
-    case FileAnalyzer.analyze(file_path) do
-      {:ok, metadata} ->
-        %{
-          resolution: metadata.resolution,
-          codec: metadata.codec,
-          audio_codec: metadata.audio_codec,
-          bitrate: metadata.bitrate,
-          duration: truncate_duration(metadata.duration),
-          hdr_format: metadata.hdr_format
-        }
-
-      {:error, reason} ->
-        Logger.warning("Could not extract technical metadata",
-          path: file_path,
-          reason: reason
-        )
-
-        %{}
-    end
   end
 
   # Pattern: "Studio - Performer1, Performer2 - Title"
@@ -345,8 +308,4 @@ defmodule Mydia.Library.AdultScanner do
 
   defp clean_string(nil), do: nil
   defp clean_string(str), do: String.trim(str)
-
-  defp truncate_duration(nil), do: nil
-  defp truncate_duration(duration) when is_float(duration), do: trunc(duration)
-  defp truncate_duration(duration) when is_integer(duration), do: duration
 end

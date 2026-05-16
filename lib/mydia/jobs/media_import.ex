@@ -36,7 +36,7 @@ defmodule Mydia.Jobs.MediaImport do
   require Logger
   alias Mydia.{Downloads, Library, Media, Settings}
   alias Mydia.Downloads.Client
-  alias Mydia.Library.{FileAnalyzer, FileNamer, FileOrganizer, SampleDetector}
+  alias Mydia.Library.{FileNamer, FileOrganizer, SampleDetector}
   alias Mydia.Library.ReleaseParser
   alias Mydia.Library.ReleaseParser.TargetContext
   alias Mydia.Indexers.QualityParser
@@ -1366,36 +1366,6 @@ defmodule Mydia.Jobs.MediaImport do
       audio: filename_metadata.quality.audio
     )
 
-    # Extract technical metadata from the actual file using FFprobe
-    file_metadata =
-      case FileAnalyzer.analyze(path) do
-        {:ok, metadata} ->
-          Logger.debug("Extracted file metadata via FFprobe",
-            path: path,
-            resolution: metadata.resolution,
-            codec: metadata.codec,
-            audio: metadata.audio_codec
-          )
-
-          metadata
-
-        {:error, reason} ->
-          Logger.warning("Failed to analyze file with FFprobe, using filename metadata only",
-            path: path,
-            reason: reason
-          )
-
-          # Continue with empty metadata - we'll use filename fallback below
-          %{
-            resolution: nil,
-            codec: nil,
-            audio_codec: nil,
-            bitrate: nil,
-            hdr_format: nil,
-            size: size
-          }
-      end
-
     # Calculate relative path from absolute path and library path
     relative_path = Path.relative_to(path, library_path.path)
 
@@ -1406,16 +1376,19 @@ defmodule Mydia.Jobs.MediaImport do
       library_path_id: library_path.id
     )
 
-    # Merge metadata: prefer actual file metadata, fall back to filename parsing
+    # Tech metadata (codec/resolution/bitrate/hdr_format) is left nil at import
+    # time; the row is picked up by `Mydia.Jobs.FileAnalysis` which fills it via
+    # the shared `Library.apply_analysis/2` write. We still record filename-derived
+    # values as the initial best guess so quality-profile selection has something
+    # to work with before analysis lands.
     attrs = %{
       relative_path: relative_path,
       library_path_id: library_path.id,
-      size: file_metadata.size || size,
-      resolution: file_metadata.resolution || filename_metadata.quality.resolution,
-      codec: file_metadata.codec || filename_metadata.quality.codec,
-      audio_codec: file_metadata.audio_codec || filename_metadata.quality.audio,
-      bitrate: file_metadata.bitrate,
-      hdr_format: file_metadata.hdr_format || filename_metadata.quality.hdr_format,
+      size: size,
+      resolution: filename_metadata.quality.resolution,
+      codec: filename_metadata.quality.codec,
+      audio_codec: filename_metadata.quality.audio,
+      hdr_format: filename_metadata.quality.hdr_format,
       verified_at: DateTime.utc_now(),
       metadata: %{
         imported_from_download_id: download.id,
