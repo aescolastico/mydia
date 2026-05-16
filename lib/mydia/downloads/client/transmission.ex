@@ -69,6 +69,9 @@ defmodule Mydia.Downloads.Client.Transmission do
 
   @behaviour Mydia.Downloads.Client
 
+  @impl true
+  def supported_protocols, do: [:torrent]
+
   require Logger
 
   alias Mydia.Downloads.Client.{Error, HTTP}

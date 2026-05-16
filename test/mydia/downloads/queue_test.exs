@@ -134,4 +134,68 @@ defmodule Mydia.Downloads.QueueTest do
       assert Queue.resolve_category(client, "movie", category: nil) == nil
     end
   end
+
+  describe "supports_download_type?/2" do
+    # Regression: dispatch used to hardcode the torrent_clients list and
+    # left :debrid out, so a debrid-only setup logged
+    # "No download clients configured" for every torrent search result.
+    # See queue.ex supports_download_type?/2.
+
+    test "debrid client is eligible for :torrent" do
+      client = %DownloadClientConfig{type: :debrid, enabled: true}
+      assert Queue.supports_download_type?(client, :torrent)
+    end
+
+    test "qbittorrent is eligible for :torrent but not :nzb" do
+      client = %DownloadClientConfig{type: :qbittorrent, enabled: true}
+      assert Queue.supports_download_type?(client, :torrent)
+      refute Queue.supports_download_type?(client, :nzb)
+    end
+
+    test "sabnzbd is eligible for :nzb but not :torrent" do
+      client = %DownloadClientConfig{type: :sabnzbd, enabled: true}
+      assert Queue.supports_download_type?(client, :nzb)
+      refute Queue.supports_download_type?(client, :torrent)
+    end
+
+    test "unknown download_type lets every adapter through (sniff failed)" do
+      client = %DownloadClientConfig{type: :qbittorrent, enabled: true}
+      assert Queue.supports_download_type?(client, nil)
+    end
+
+    test "every Client-behaviour adapter declares supported_protocols/0" do
+      # Guards against the original bug class: if someone adds a new adapter
+      # but forgets to declare protocols, the queue would never select it
+      # for any priority-based dispatch.
+      #
+      # We only enforce the contract on modules that implement the
+      # Mydia.Downloads.Client behaviour (the registry also holds a
+      # non-adapter `:http` placeholder).
+      for {type, adapter} <- Mydia.Downloads.Client.Registry.list_adapters(),
+          implements_client_behaviour?(adapter) do
+        assert function_exported?(adapter, :supported_protocols, 0),
+               "#{inspect(adapter)} (registered as #{inspect(type)}) must implement supported_protocols/0"
+
+        protocols = adapter.supported_protocols()
+
+        assert is_list(protocols) and protocols != [],
+               "#{inspect(adapter)}.supported_protocols/0 must return a non-empty list"
+
+        assert Enum.all?(protocols, &(&1 in [:torrent, :nzb])),
+               "#{inspect(adapter)}.supported_protocols/0 returned #{inspect(protocols)} — only :torrent and :nzb are valid"
+      end
+    end
+
+    defp implements_client_behaviour?(module) do
+      behaviours =
+        :attributes
+        |> module.module_info()
+        |> Keyword.get_values(:behaviour)
+        |> List.flatten()
+
+      Mydia.Downloads.Client in behaviours
+    rescue
+      _ -> false
+    end
+  end
 end

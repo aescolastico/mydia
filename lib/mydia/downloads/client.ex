@@ -277,6 +277,31 @@ defmodule Mydia.Downloads.Client do
   """
   @callback resume_torrent(config(), client_id :: String.t()) :: :ok | {:error, Error.t()}
 
+  @typedoc """
+  Download protocol an adapter can accept.
+
+  Torrent-capable adapters list `:torrent`; Usenet-capable adapters list `:nzb`.
+  An adapter may declare both if it accepts either kind of payload.
+  """
+  @type protocol :: :torrent | :nzb
+
+  @doc """
+  Declares which download protocols the adapter can accept.
+
+  `Mydia.Downloads.Queue` consults this to pick eligible clients when a
+  search result resolves to `:torrent` or `:nzb`. Adapters MUST return a
+  non-empty list — otherwise they'll never be selected by priority.
+
+  ## Examples
+
+      iex> Mydia.Downloads.Client.QBittorrent.supported_protocols()
+      [:torrent]
+
+      iex> Mydia.Downloads.Client.Sabnzbd.supported_protocols()
+      [:nzb]
+  """
+  @callback supported_protocols() :: [protocol(), ...]
+
   ## Convenience Functions
 
   @doc """
