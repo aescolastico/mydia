@@ -493,6 +493,17 @@ defmodule Mydia.LibraryTest do
       assert is_nil(reloaded.codec)
     end
 
+    test "failure path truncates long analysis errors", %{media_file: media_file} do
+      long_reason = String.duplicate("ffprobe stderr ", 300)
+
+      assert {:error, ^long_reason} = Library.apply_analysis(media_file, {:error, long_reason})
+
+      reloaded = Repo.get!(MediaFile, media_file.id)
+      assert reloaded.analysis_attempts == 1
+      assert String.length(reloaded.last_analysis_error) == 2048
+      assert String.starts_with?(long_reason, reloaded.last_analysis_error)
+    end
+
     test "three consecutive failures leave analysis_attempts at 3",
          %{media_file: media_file} do
       for _ <- 1..3 do

@@ -86,6 +86,8 @@ defmodule Mydia.Library.FileAnalyzer do
           file_path
         ]
 
+        previous_trap_exit = Process.flag(:trap_exit, true)
+
         try do
           port =
             Port.open(
@@ -120,6 +122,8 @@ defmodule Mydia.Library.FileAnalyzer do
             )
 
             {:error, :unexpected_error}
+        after
+          Process.flag(:trap_exit, previous_trap_exit)
         end
     end
   end
@@ -138,10 +142,10 @@ defmodule Mydia.Library.FileAnalyzer do
 
     receive do
       {^port, {:data, data}} ->
-        collect_ffprobe_output(port, os_pid, [acc | data], start_ms, timeout_ms, file_path)
+        collect_ffprobe_output(port, os_pid, [data | acc], start_ms, timeout_ms, file_path)
 
       {^port, {:exit_status, 0}} ->
-        case Jason.decode(IO.iodata_to_binary(acc)) do
+        case Jason.decode(IO.iodata_to_binary(Enum.reverse(acc))) do
           {:ok, data} ->
             {:ok, data}
 
@@ -162,7 +166,7 @@ defmodule Mydia.Library.FileAnalyzer do
           elapsed_ms: elapsed_ms(start_ms),
           exit_code: exit_code,
           reason: :ffprobe_failed,
-          output: IO.iodata_to_binary(acc)
+          output: IO.iodata_to_binary(Enum.reverse(acc))
         )
 
         {:error, :ffprobe_failed}

@@ -282,22 +282,57 @@ defmodule Mydia.Library do
   end
 
   defp apply_analysis_success(%MediaFile{} = media_file, result) do
+    apply_analysis_success(media_file, result, 3)
+  end
+
+  defp apply_analysis_success(%MediaFile{} = media_file, result, retries_remaining) do
     alias Mydia.Library.Structs.FileMetadata
     alias Mydia.Streaming.Codec
 
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    # Re-read the current metadata so we merge ffprobe fields into whatever
-    # other writers have persisted (FileMetadata fields like width/height/source
-    # are set by other paths and must survive the analysis write).
-    current_metadata =
-      Repo.one(from(mf in MediaFile, where: mf.id == ^media_file.id, select: mf.metadata)) ||
-        FileMetadata.empty()
+    current =
+      Repo.one(
+        from(mf in MediaFile,
+          where: mf.id == ^media_file.id,
+          select: %{
+            metadata: mf.metadata,
+            analyzed_at: mf.analyzed_at,
+            updated_at: mf.updated_at
+          }
+        )
+      )
 
-    metadata =
-      current_metadata
-      |> maybe_put_struct_field(:duration, result.duration)
-      |> maybe_put_struct_field(:container, result.container)
+    if is_nil(current) or current.analyzed_at do
+      :already_analyzed
+    else
+      current_metadata = current.metadata || FileMetadata.empty()
+
+      metadata =
+        current_metadata
+        |> maybe_put_struct_field(:duration, result.duration)
+        |> maybe_put_struct_field(:container, result.container)
+
+      write_analysis_success(
+        media_file,
+        result,
+        metadata,
+        current.updated_at,
+        now,
+        retries_remaining
+      )
+    end
+  end
+
+  defp write_analysis_success(
+         media_file,
+         result,
+         metadata,
+         expected_updated_at,
+         now,
+         retries_remaining
+       ) do
+    alias Mydia.Streaming.Codec
 
     set = [
       codec: Codec.normalize_video_codec(result.codec),
@@ -318,12 +353,20 @@ defmodule Mydia.Library do
 
     query =
       from(mf in MediaFile,
-        where: mf.id == ^media_file.id and is_nil(mf.analyzed_at)
+        where:
+          mf.id == ^media_file.id and is_nil(mf.analyzed_at) and
+            mf.updated_at == ^expected_updated_at
       )
 
     case Repo.update_all(query, set: set) do
-      {1, _} -> :ok
-      {0, _} -> :already_analyzed
+      {1, _} ->
+        :ok
+
+      {0, _} when retries_remaining > 0 ->
+        apply_analysis_success(media_file, result, retries_remaining - 1)
+
+      {0, _} ->
+        :already_analyzed
     end
   end
 
@@ -376,9 +419,15 @@ defmodule Mydia.Library do
   defp maybe_put_struct_field(struct, _field, nil), do: struct
   defp maybe_put_struct_field(struct, field, value), do: Map.put(struct, field, value)
 
+  @max_analysis_error_length 2048
+
   defp format_analysis_error(reason) when is_atom(reason), do: inspect(reason)
-  defp format_analysis_error(reason) when is_binary(reason), do: reason
-  defp format_analysis_error(reason), do: inspect(reason)
+  defp format_analysis_error(reason) when is_binary(reason), do: truncate_analysis_error(reason)
+  defp format_analysis_error(reason), do: reason |> inspect() |> truncate_analysis_error()
+
+  defp truncate_analysis_error(reason_text) do
+    String.slice(reason_text, 0, @max_analysis_error_length)
+  end
 
   @doc """
   Deletes a media file.

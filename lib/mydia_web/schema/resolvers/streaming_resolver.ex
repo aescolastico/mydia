@@ -127,12 +127,8 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
     # Build session opts
     session_opts = if max_bitrate, do: [max_bitrate: max_bitrate], else: []
 
-    # Load media file to get duration. ensure_codec_info/1 is defensive: the
-    # mutation may fire without streamingCandidates having run first, in which
-    # case the row could be un-analyzed and the session would issue an HLS URL
-    # with no codec metadata.
     with {:ok, media_file} <- load_media_file(file_id),
-         media_file = Candidates.ensure_codec_info(media_file),
+         :ok <- Candidates.ensure_codec_info_async(media_file),
          {:ok, pid} <-
            HlsSessionSupervisor.start_session(media_file.id, user_id, mode, session_opts),
          {:ok, info} <- HlsSession.get_info(pid) do
