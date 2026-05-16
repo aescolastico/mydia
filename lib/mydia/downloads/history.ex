@@ -397,6 +397,7 @@ defmodule Mydia.Downloads.History do
       :completed -> "completed"
       :paused -> "paused"
       :checking -> "checking"
+      :queued -> "queued"
       :error -> "failed"
       _ -> "unknown"
     end
@@ -407,8 +408,12 @@ defmodule Mydia.Downloads.History do
   defp apply_status_filters(downloads, :active) do
     Enum.filter(downloads, fn d ->
       # Active downloads are those that haven't been imported yet
-      # and are currently downloading, seeding, checking, or paused
-      is_nil(d.imported_at) and d.status in ["downloading", "seeding", "checking", "paused"]
+      # and are currently downloading, seeding, checking, paused, or queued.
+      # `queued` covers the debrid lifecycle phases where the provider is
+      # waiting on the swarm or Mydia's local fetcher hasn't claimed the
+      # ready job yet — without this they'd vanish from the queue tab.
+      is_nil(d.imported_at) and
+        d.status in ["downloading", "seeding", "checking", "paused", "queued"]
     end)
   end
 
