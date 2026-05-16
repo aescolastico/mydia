@@ -4,7 +4,7 @@ defmodule MetadataRelay.MixProject do
   def project do
     [
       app: :metadata_relay,
-      version: "0.8.0",
+      version: "0.9.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -35,6 +35,7 @@ defmodule MetadataRelay.MixProject do
       {:phoenix, "~> 1.7"},
       {:phoenix_live_view, "~> 1.0"},
       {:phoenix_html, "~> 4.0"},
+      {:lazy_html, ">= 0.1.0", only: :test},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:corsica, "~> 2.0"}

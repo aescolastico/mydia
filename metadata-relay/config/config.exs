@@ -5,7 +5,8 @@ config :metadata_relay,
   # Default port for HTTP server
   port: 4000,
   # Ecto repository
-  ecto_repos: [MetadataRelay.Repo]
+  ecto_repos: [MetadataRelay.Repo],
+  dashboard_auth: [username: "admin", password: "admin"]
 
 # Configure Phoenix endpoint for ErrorTracker dashboard
 config :metadata_relay, MetadataRelayWeb.Endpoint,

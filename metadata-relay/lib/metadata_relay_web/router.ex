@@ -15,12 +15,27 @@ defmodule MetadataRelayWeb.Router do
     plug(:put_secure_browser_headers)
   end
 
-  # ErrorTracker dashboard
+  pipeline :authed_dashboard do
+    plug(:dashboard_basic_auth)
+  end
+
+  # Maintainer dashboards
   scope "/" do
-    pipe_through(:browser)
+    pipe_through([:browser, :authed_dashboard])
     error_tracker_dashboard("/errors")
+    live("/feedback", MetadataRelayWeb.FeedbackLive.Index, :index)
   end
 
   # Forward all other requests to the API router
   forward("/", MetadataRelay.Router)
+
+  defp dashboard_basic_auth(conn, _opts) do
+    Plug.BasicAuth.basic_auth(
+      conn,
+      Keyword.merge(
+        [realm: "Metadata Relay Dashboard"],
+        Application.fetch_env!(:metadata_relay, :dashboard_auth)
+      )
+    )
+  end
 end
