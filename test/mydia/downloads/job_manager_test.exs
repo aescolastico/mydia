@@ -1,47 +1,17 @@
 defmodule Mydia.Downloads.JobManagerTest do
-  use ExUnit.Case, async: false
+  use Mydia.DataCase, async: false
 
   # These tests require FFmpeg to be installed
   @moduletag :requires_ffmpeg
 
   alias Mydia.Downloads.JobManager
 
-  # We need a supervised GenServer for these tests
   setup do
-    # The Registry is already started by the Application supervision tree
-    # The JobManager is also already started
+    cleanup_jobs()
 
-    # Cancel all existing jobs to start fresh
-    %{active: active, queued: queued} = JobManager.list_active_jobs()
-
-    Enum.each(active, fn job ->
-      JobManager.cancel_job(job.media_file_id, job.resolution)
+    on_exit(fn ->
+      cleanup_jobs()
     end)
-
-    Enum.each(queued, fn job ->
-      JobManager.cancel_job(job.media_file_id, job.resolution)
-    end)
-
-    # Wait for cleanup and Registry to fully clear
-    Process.sleep(200)
-
-    # Ensure Registry is completely clean before starting tests
-    registry_name = Mydia.Downloads.TranscodeRegistry
-    all_entries = Registry.select(registry_name, [{{:"$1", :"$2", :"$3"}, [], [:"$$"]}])
-
-    if all_entries != [] do
-      # Force unregister any stale entries (shouldn't happen but safety)
-      Enum.each(all_entries, fn [_key, pid, _value] ->
-        if Process.alive?(pid) do
-          # Process still alive, stop it
-          GenServer.stop(pid, :normal)
-          Process.sleep(50)
-        end
-      end)
-
-      # Wait a bit more for Registry auto-cleanup
-      Process.sleep(100)
-    end
 
     :ok
   end
@@ -467,5 +437,49 @@ defmodule Mydia.Downloads.JobManagerTest do
 
   defp create_temp_output_path do
     "/tmp/test_output_#{System.unique_integer([:positive])}.mp4"
+  end
+
+  defp cleanup_jobs do
+    %{active: active, queued: queued} = JobManager.list_active_jobs()
+
+    Enum.each(active ++ queued, fn job ->
+      JobManager.cancel_job(job.media_file_id, job.resolution)
+    end)
+
+    wait_for_registry_cleanup()
+  end
+
+  defp wait_for_registry_cleanup(attempts_left \\ 20)
+
+  defp wait_for_registry_cleanup(0) do
+    registry_entries()
+    |> Enum.each(fn [_key, pid, _value] ->
+      if Process.alive?(pid) do
+        GenServer.stop(pid, :normal)
+      end
+    end)
+
+    Process.sleep(100)
+  end
+
+  defp wait_for_registry_cleanup(attempts_left) do
+    case registry_entries() do
+      [] ->
+        :ok
+
+      entries ->
+        Enum.each(entries, fn [_key, pid, _value] ->
+          if not Process.alive?(pid) do
+            Process.sleep(10)
+          end
+        end)
+
+        Process.sleep(50)
+        wait_for_registry_cleanup(attempts_left - 1)
+    end
+  end
+
+  defp registry_entries do
+    Registry.select(Mydia.Downloads.TranscodeRegistry, [{{:"$1", :"$2", :"$3"}, [], [:"$$"]}])
   end
 end
