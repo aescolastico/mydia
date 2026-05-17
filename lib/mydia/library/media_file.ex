@@ -18,6 +18,9 @@ defmodule Mydia.Library.MediaFile do
           audio_codec: String.t() | nil,
           bitrate: integer() | nil,
           verified_at: DateTime.t() | nil,
+          analyzed_at: DateTime.t() | nil,
+          analysis_attempts: integer(),
+          last_analysis_error: String.t() | nil,
           metadata: Mydia.Library.Structs.FileMetadata.t(),
           cover_blob: String.t() | nil,
           sprite_blob: String.t() | nil,
@@ -45,6 +48,9 @@ defmodule Mydia.Library.MediaFile do
     field :audio_codec, :string
     field :bitrate, :integer
     field :verified_at, :utc_datetime
+    field :analyzed_at, :utc_datetime
+    field :analysis_attempts, :integer, default: 0
+    field :last_analysis_error, :string
     field :metadata, Mydia.Library.FileMetadataType
 
     # Generated media content references (MD5 checksums as storage keys)
@@ -110,6 +116,9 @@ defmodule Mydia.Library.MediaFile do
       :audio_codec,
       :bitrate,
       :verified_at,
+      :analyzed_at,
+      :analysis_attempts,
+      :last_analysis_error,
       :metadata,
       :cover_blob,
       :sprite_blob,
@@ -154,6 +163,9 @@ defmodule Mydia.Library.MediaFile do
       :audio_codec,
       :bitrate,
       :verified_at,
+      :analyzed_at,
+      :analysis_attempts,
+      :last_analysis_error,
       :metadata,
       :cover_blob,
       :sprite_blob,

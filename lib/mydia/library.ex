@@ -200,74 +200,17 @@ defmodule Mydia.Library do
   Creates a media file during library scanning.
   Parent association is optional and will be set later during metadata enrichment.
 
-  Automatically extracts technical metadata (codec, resolution, container) via FFprobe
-  using the library_path_id and relative_path to compute the absolute path.
+  Returns immediately without running ffprobe. Tech metadata (codec, resolution,
+  container, etc.) is populated asynchronously by `Mydia.Jobs.FileAnalysis` or
+  the lazy fallback in `Mydia.Streaming.Candidates`, both keyed off
+  `analyzed_at IS NULL`.
   """
   @spec create_scanned_media_file(map()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
   def create_scanned_media_file(attrs \\ %{}) do
-    # Extract technical metadata by computing absolute path from library_path + relative_path
-    attrs = maybe_extract_technical_metadata(attrs)
-
     %MediaFile{}
     |> MediaFile.scan_changeset(attrs)
     |> Repo.insert()
   end
-
-  defp maybe_extract_technical_metadata(
-         %{library_path_id: library_path_id, relative_path: relative_path} = attrs
-       )
-       when is_binary(relative_path) do
-    # Get library path to compute absolute path
-    library_path =
-      try do
-        Mydia.Settings.get_library_path!(library_path_id)
-      rescue
-        _ -> nil
-      end
-
-    case library_path do
-      nil ->
-        attrs
-
-      library_path ->
-        absolute_path = Path.join(library_path.path, relative_path)
-
-        case FileAnalyzer.analyze(absolute_path) do
-          {:ok, analysis} ->
-            # Build metadata map with duration and container
-            metadata =
-              %{}
-              |> maybe_put_metadata("duration", analysis.duration)
-              |> maybe_put_metadata("container", analysis.container)
-
-            alias Mydia.Streaming.Codec
-
-            attrs
-            |> Map.put(:codec, Codec.normalize_video_codec(analysis.codec))
-            |> Map.put(:audio_codec, Codec.normalize_audio_codec(analysis.audio_codec))
-            |> Map.put(:resolution, analysis.resolution)
-            |> Map.put(:bitrate, analysis.bitrate)
-            |> Map.put(:hdr_format, analysis.hdr_format)
-            |> maybe_put_if_not_empty(:metadata, metadata)
-
-          {:error, reason} ->
-            Logger.warning("Failed to extract technical metadata",
-              path: absolute_path,
-              reason: inspect(reason)
-            )
-
-            attrs
-        end
-    end
-  end
-
-  defp maybe_extract_technical_metadata(attrs), do: attrs
-
-  defp maybe_put_metadata(map, _key, nil), do: map
-  defp maybe_put_metadata(map, key, value), do: Map.put(map, key, value)
-
-  defp maybe_put_if_not_empty(attrs, _key, map) when map == %{}, do: attrs
-  defp maybe_put_if_not_empty(attrs, key, map), do: Map.put(attrs, key, map)
 
   @doc """
   Updates a media file.
@@ -302,6 +245,188 @@ defmodule Mydia.Library do
     media_file
     |> Ecto.Changeset.change(verified_at: DateTime.utc_now() |> DateTime.truncate(:second))
     |> Repo.update()
+  end
+
+  @doc """
+  Applies a `FileAnalyzer.analyze/1` outcome to a `MediaFile` row.
+
+  Two branches:
+
+    * `{:ok, %FileAnalysisResult{}}` performs a guarded write
+      (`UPDATE ... WHERE id = ? AND analyzed_at IS NULL`) that sets every
+      tech-metadata column, populates `analyzed_at`, clears
+      `last_analysis_error`, and bumps `updated_at`. Returns `:ok` when the
+      write landed, `:already_analyzed` when another writer beat us.
+    * `{:error, reason}` increments `analysis_attempts` and records
+      `last_analysis_error` without touching tech metadata. Returns the
+      original `{:error, reason}` so callers can decide how to surface it.
+
+  Used by the recurring analysis worker, the lazy-on-play fallback in
+  `Mydia.Streaming.Candidates`, and the operator-triggered
+  `refresh_file_metadata/1`. The `WHERE analyzed_at IS NULL` guard makes
+  concurrent writers safe: only the first success-write lands.
+  """
+  @spec apply_analysis(
+          MediaFile.t(),
+          {:ok, Mydia.Library.Structs.FileAnalysisResult.t()} | {:error, term()}
+        ) :: :ok | :already_analyzed | {:error, term()}
+  def apply_analysis(
+        %MediaFile{} = media_file,
+        {:ok, %Mydia.Library.Structs.FileAnalysisResult{} = result}
+      ) do
+    apply_analysis_success(media_file, result)
+  end
+
+  def apply_analysis(%MediaFile{} = media_file, {:error, reason}) do
+    apply_analysis_failure(media_file, reason)
+  end
+
+  defp apply_analysis_success(%MediaFile{} = media_file, result) do
+    apply_analysis_success(media_file, result, 3)
+  end
+
+  defp apply_analysis_success(%MediaFile{} = media_file, result, retries_remaining) do
+    alias Mydia.Library.Structs.FileMetadata
+    alias Mydia.Streaming.Codec
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    current =
+      Repo.one(
+        from(mf in MediaFile,
+          where: mf.id == ^media_file.id,
+          select: %{
+            metadata: mf.metadata,
+            analyzed_at: mf.analyzed_at,
+            updated_at: mf.updated_at
+          }
+        )
+      )
+
+    if is_nil(current) or current.analyzed_at do
+      :already_analyzed
+    else
+      current_metadata = current.metadata || FileMetadata.empty()
+
+      metadata =
+        current_metadata
+        |> maybe_put_struct_field(:duration, result.duration)
+        |> maybe_put_struct_field(:container, result.container)
+
+      write_analysis_success(
+        media_file,
+        result,
+        metadata,
+        current.updated_at,
+        now,
+        retries_remaining
+      )
+    end
+  end
+
+  defp write_analysis_success(
+         media_file,
+         result,
+         metadata,
+         expected_updated_at,
+         now,
+         retries_remaining
+       ) do
+    alias Mydia.Streaming.Codec
+
+    set = [
+      codec: Codec.normalize_video_codec(result.codec),
+      audio_codec: Codec.normalize_audio_codec(result.audio_codec),
+      resolution: result.resolution,
+      bitrate: result.bitrate,
+      hdr_format: result.hdr_format,
+      metadata: metadata,
+      analyzed_at: now,
+      analysis_attempts: 0,
+      last_analysis_error: nil,
+      updated_at: now
+    ]
+
+    # `size` is set only when ffprobe surfaced a value; otherwise we leave the
+    # existing column alone so we do not overwrite a known size with nil.
+    set = if result.size, do: Keyword.put(set, :size, result.size), else: set
+
+    query =
+      from(mf in MediaFile,
+        where:
+          mf.id == ^media_file.id and is_nil(mf.analyzed_at) and
+            mf.updated_at == ^expected_updated_at
+      )
+
+    case Repo.update_all(query, set: set) do
+      {1, _} ->
+        :ok
+
+      {0, _} when retries_remaining > 0 ->
+        apply_analysis_success(media_file, result, retries_remaining - 1)
+
+      {0, _} ->
+        :already_analyzed
+    end
+  end
+
+  defp apply_analysis_failure(%MediaFile{} = media_file, reason) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    reason_text = format_analysis_error(reason)
+
+    # Guard against stale-failure writes: if another writer has already
+    # populated analyzed_at, do not bump the attempts counter on what is now
+    # a known-good row.
+    query =
+      from(mf in MediaFile,
+        where: mf.id == ^media_file.id and is_nil(mf.analyzed_at)
+      )
+
+    Repo.update_all(query,
+      inc: [analysis_attempts: 1],
+      set: [last_analysis_error: reason_text, updated_at: now]
+    )
+
+    {:error, reason}
+  end
+
+  @doc """
+  Clears analysis state on a `MediaFile` row so the next worker tick or
+  manual retry treats it as un-analyzed again.
+
+  Resets `analyzed_at`, `analysis_attempts`, and `last_analysis_error`.
+  Intended as the building block for an operator-triggered retry surface.
+  """
+  @spec reset_analysis_state(MediaFile.t()) :: :ok | {:error, :not_found}
+  def reset_analysis_state(%MediaFile{} = media_file) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    query = from(mf in MediaFile, where: mf.id == ^media_file.id)
+
+    case Repo.update_all(query,
+           set: [
+             analyzed_at: nil,
+             analysis_attempts: 0,
+             last_analysis_error: nil,
+             updated_at: now
+           ]
+         ) do
+      {1, _} -> :ok
+      {0, _} -> {:error, :not_found}
+    end
+  end
+
+  defp maybe_put_struct_field(struct, _field, nil), do: struct
+  defp maybe_put_struct_field(struct, field, value), do: Map.put(struct, field, value)
+
+  @max_analysis_error_length 2048
+
+  defp format_analysis_error(reason) when is_atom(reason), do: inspect(reason)
+  defp format_analysis_error(reason) when is_binary(reason), do: truncate_analysis_error(reason)
+  defp format_analysis_error(reason), do: reason |> inspect() |> truncate_analysis_error()
+
+  defp truncate_analysis_error(reason_text) do
+    String.slice(reason_text, 0, @max_analysis_error_length)
   end
 
   @doc """
@@ -1646,75 +1771,16 @@ defmodule Mydia.Library do
 
       absolute_path ->
         if File.exists?(absolute_path) do
-          # Use relative_path for filename parsing (more stable than absolute path)
-          filename =
-            case media_file.relative_path do
-              nil -> Path.basename(absolute_path)
-              relative_path -> Path.basename(relative_path)
-            end
-
-          # Parse filename for fallback metadata
-          filename_metadata = FileParser.parse(filename)
-
-          # Analyze actual file with FFprobe
-          file_metadata =
-            case FileAnalyzer.analyze(absolute_path) do
-              {:ok, metadata} ->
-                Logger.debug("Extracted file metadata via FFprobe",
-                  file_id: media_file.id,
-                  resolution: metadata.resolution,
-                  codec: metadata.codec
-                )
-
-                metadata
-
-              {:error, reason} ->
-                Logger.warning("FFprobe analysis failed, using filename metadata only",
-                  file_id: media_file.id,
-                  reason: reason
-                )
-
-                %{
-                  resolution: nil,
-                  codec: nil,
-                  audio_codec: nil,
-                  bitrate: nil,
-                  hdr_format: nil,
-                  size: nil
-                }
-            end
-
-          # Merge: prefer file analysis, fall back to filename
-          update_attrs = %{
-            resolution: file_metadata.resolution || filename_metadata.quality.resolution,
-            codec: file_metadata.codec || filename_metadata.quality.codec,
-            audio_codec: file_metadata.audio_codec || filename_metadata.quality.audio,
-            bitrate: file_metadata.bitrate,
-            hdr_format:
-              file_metadata.hdr_format || Map.get(filename_metadata.quality, :hdr_format),
-            size: file_metadata.size || File.stat!(absolute_path).size,
-            verified_at: DateTime.utc_now() |> DateTime.truncate(:second)
-          }
-
-          case update_media_file(media_file, update_attrs) do
-            {:ok, updated_file} ->
-              Logger.info("Refreshed file metadata",
-                file_id: media_file.id,
-                path: absolute_path,
-                resolution: updated_file.resolution,
-                codec: updated_file.codec,
-                audio: updated_file.audio_codec
-              )
-
-              {:ok, updated_file}
-
-            {:error, changeset} ->
-              Logger.error("Failed to update media file with refreshed metadata",
-                file_id: media_file.id,
-                errors: inspect(changeset.errors)
-              )
-
-              {:error, :update_failed}
+          # Operator-triggered retry: clear analysis_attempts first so the row
+          # is no longer blocked by the worker's ceiling, then re-run ffprobe
+          # and route the write through apply_analysis/2 to share the guarded
+          # write with the worker and the lazy fallback. If the row was deleted
+          # mid-flight we surface that cleanly rather than letting the later
+          # get_media_file!/2 raise.
+          with :ok <- reset_analysis_state(media_file) do
+            result = FileAnalyzer.analyze(absolute_path)
+            apply_analysis_outcome = apply_analysis(media_file, result)
+            handle_refresh_outcome(media_file, absolute_path, apply_analysis_outcome, result)
           end
         else
           Logger.warning("File does not exist, cannot refresh metadata",
@@ -1725,6 +1791,35 @@ defmodule Mydia.Library do
           {:error, :file_not_found}
         end
     end
+  end
+
+  defp handle_refresh_outcome(media_file, absolute_path, outcome, _result)
+       when outcome in [:ok, :already_analyzed] do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    from(mf in MediaFile, where: mf.id == ^media_file.id)
+    |> Repo.update_all(set: [verified_at: now])
+
+    updated_file = get_media_file!(media_file.id, preload: [:library_path])
+
+    Logger.info("Refreshed file metadata",
+      file_id: media_file.id,
+      path: absolute_path,
+      resolution: updated_file.resolution,
+      codec: updated_file.codec,
+      audio: updated_file.audio_codec
+    )
+
+    {:ok, updated_file}
+  end
+
+  defp handle_refresh_outcome(media_file, _absolute_path, {:error, reason}, _result) do
+    Logger.warning("FFprobe analysis failed during refresh",
+      file_id: media_file.id,
+      reason: inspect(reason)
+    )
+
+    {:error, reason}
   end
 
   @doc """

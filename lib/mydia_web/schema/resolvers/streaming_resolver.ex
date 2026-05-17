@@ -127,8 +127,8 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
     # Build session opts
     session_opts = if max_bitrate, do: [max_bitrate: max_bitrate], else: []
 
-    # Load media file to get duration
     with {:ok, media_file} <- load_media_file(file_id),
+         :ok <- Candidates.ensure_codec_info_async(media_file),
          {:ok, pid} <-
            HlsSessionSupervisor.start_session(media_file.id, user_id, mode, session_opts),
          {:ok, info} <- HlsSession.get_info(pid) do
@@ -157,7 +157,7 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
   end
 
   defp load_media_file(file_id) do
-    {:ok, Library.get_media_file!(file_id)}
+    {:ok, Library.get_media_file!(file_id, preload: [:library_path])}
   rescue
     Ecto.NoResultsError ->
       {:error, :not_found}

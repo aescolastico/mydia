@@ -8,9 +8,15 @@ defmodule Mydia.Streaming.Candidates do
 
   import Ecto.Query, warn: false
 
-  alias Mydia.Library.MediaFile
+  require Logger
+
+  alias Mydia.Library
+  alias Mydia.Library.{FileAnalyzer, MediaFile}
   alias Mydia.Library.Structs.FileMetadata
+  alias Mydia.Repo
   alias Mydia.Streaming.{CodecString, Compatibility}
+
+  @default_max_attempts 3
 
   @doc """
   Resolves a media file from a content_type and id.
@@ -72,6 +78,26 @@ defmodule Mydia.Streaming.Candidates do
       media_file
     end
   end
+
+  @doc """
+  Schedules codec extraction without blocking the caller.
+  """
+  def ensure_codec_info_async(%MediaFile{analyzed_at: nil, analysis_attempts: 0} = media_file) do
+    case Task.Supervisor.start_child(Mydia.TaskSupervisor, fn -> ensure_codec_info(media_file) end) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to schedule lazy ffprobe analysis",
+          file_id: media_file.id,
+          reason: inspect(reason)
+        )
+
+        {:error, reason}
+    end
+  end
+
+  def ensure_codec_info_async(%MediaFile{}), do: :ok
 
   @doc """
   Builds a prioritized list of streaming candidates for a media file.
@@ -144,36 +170,27 @@ defmodule Mydia.Streaming.Candidates do
     }
   end
 
-  defp maybe_extract_codec_info(%MediaFile{codec: nil} = media_file, absolute_path) do
-    case Mydia.Library.FileAnalyzer.analyze(absolute_path) do
-      {:ok, analysis} ->
-        metadata = media_file.metadata || FileMetadata.empty()
+  defp maybe_extract_codec_info(%MediaFile{analyzed_at: nil} = media_file, absolute_path) do
+    max_attempts = Application.get_env(:mydia, :file_analysis_max_attempts, @default_max_attempts)
 
-        updated_metadata =
-          %{metadata | container: analysis.container}
-          |> maybe_put_duration(analysis.duration)
+    if media_file.analysis_attempts < max_attempts do
+      result = FileAnalyzer.analyze(absolute_path)
 
-        updated = %{
+      case Library.apply_analysis(media_file, result) do
+        outcome when outcome in [:ok, :already_analyzed] ->
+          Repo.get!(MediaFile, media_file.id) |> Repo.preload(:library_path)
+
+        {:error, reason} ->
+          Logger.warning("Lazy ffprobe analysis failed",
+            file_id: media_file.id,
+            reason: inspect(reason)
+          )
+
           media_file
-          | codec: Mydia.Streaming.Codec.normalize_video_codec(analysis.codec),
-            audio_codec: Mydia.Streaming.Codec.normalize_audio_codec(analysis.audio_codec),
-            metadata: updated_metadata
-        }
-
-        spawn(fn ->
-          Mydia.Library.update_media_file_scan(media_file, %{
-            codec: updated.codec,
-            audio_codec: updated.audio_codec,
-            resolution: analysis.resolution,
-            bitrate: analysis.bitrate,
-            metadata: updated_metadata
-          })
-        end)
-
-        updated
-
-      {:error, _reason} ->
-        media_file
+      end
+    else
+      # Attempt ceiling already hit; do not retry forever on every play.
+      media_file
     end
   end
 
@@ -200,9 +217,4 @@ defmodule Mydia.Streaming.Candidates do
         media_file
     end
   end
-
-  defp maybe_put_duration(%FileMetadata{} = metadata, nil), do: metadata
-
-  defp maybe_put_duration(%FileMetadata{} = metadata, duration),
-    do: %{metadata | duration: duration}
 end

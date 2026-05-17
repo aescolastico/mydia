@@ -257,6 +257,7 @@ config :mydia, Oban,
     default: 5,
     media: 3,
     search: 2,
+    analysis: 2,
     notifications: 1,
     maintenance: 1,
     import_lists: 2,
@@ -293,7 +294,9 @@ config :mydia, Oban,
        # Sync watched status with media servers every 30 minutes
        {"*/30 * * * *", Mydia.Jobs.MediaServerWatchedSync, args: %{"mode" => "all_enabled"}},
        # Purge expired release-blacklist rows daily at 5:30 AM (#123)
-       {"30 5 * * *", Mydia.Jobs.BlacklistCleanup}
+       {"30 5 * * *", Mydia.Jobs.BlacklistCleanup},
+       # Analyze media files lacking tech metadata every minute (#131)
+       {"* * * * *", Mydia.Jobs.FileAnalysis}
      ]}
   ]
 
