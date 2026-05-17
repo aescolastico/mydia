@@ -4,6 +4,7 @@ defmodule Mydia.Library do
   """
 
   import Ecto.Query, warn: false
+  import Mydia.DB
   import Mydia.QueryHelpers
   alias Mydia.Repo
   alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator}
@@ -474,11 +475,8 @@ defmodule Mydia.Library do
             where:
               mf.id == ^media_file.id and mf.updated_at == ^current.updated_at and
                 mf.analyzed_at == ^current.analyzed_at and
-                fragment(
-                  "json_extract(?, '$.width') IS NULL OR json_extract(?, '$.height') IS NULL",
-                  mf.metadata,
-                  mf.metadata
-                )
+                (is_nil(json_extract(mf.metadata, "$.width")) or
+                   is_nil(json_extract(mf.metadata, "$.height")))
           )
 
         case Repo.update_all(query, set: set) do

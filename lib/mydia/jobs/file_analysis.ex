@@ -35,6 +35,7 @@ defmodule Mydia.Jobs.FileAnalysis do
     ]
 
   import Ecto.Query
+  import Mydia.DB
 
   require Logger
 
@@ -93,11 +94,8 @@ defmodule Mydia.Jobs.FileAnalysis do
         not is_nil(mf.analyzed_at) and is_nil(mf.trashed_at) and
           mf.analysis_attempts < ^max_attempts and
           not is_nil(mf.codec) and not is_nil(mf.resolution) and
-          fragment(
-            "json_extract(?, '$.width') IS NULL OR json_extract(?, '$.height') IS NULL",
-            mf.metadata,
-            mf.metadata
-          ) and
+          (is_nil(json_extract(mf.metadata, "$.width")) or
+             is_nil(json_extract(mf.metadata, "$.height"))) and
           mf.id not in ^exclude_ids,
       order_by: [asc: mf.updated_at, asc: mf.id],
       limit: ^overscan_limit,
