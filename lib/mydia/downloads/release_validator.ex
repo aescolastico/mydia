@@ -109,7 +109,12 @@ defmodule Mydia.Downloads.ReleaseValidator do
   @suspicious_extensions ~w(.exe .scr .bat .cmd .com .msi .vbs .js .jar .pif)
 
   defp suspicious_extension?(name) do
-    ext = name |> Path.extname() |> String.downcase()
+    ext =
+      name
+      |> String.trim()
+      |> Path.extname()
+      |> String.downcase()
+
     ext in @suspicious_extensions
   end
 

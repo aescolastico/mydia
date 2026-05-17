@@ -182,6 +182,12 @@ defmodule Mydia.Downloads.ReleaseValidatorTest do
       assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
     end
 
+    test "rejects executable extension with trailing whitespace" do
+      name = "Movie.2024.1080p.BluRay.x264.exe "
+
+      assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
+    end
+
     test "rejects other Windows executable extensions" do
       for ext <- ~w(.scr .bat .cmd .com .msi .vbs .js .jar .pif) do
         name = "Movie.Title.2020.1080p.BluRay.x264#{ext}"

@@ -165,12 +165,6 @@ defmodule Mydia.Jobs.MediaImport do
             handle_import_failure(download, reason, attempt, terminal?: terminal?)
 
             if terminal? do
-              Logger.warning("Media import giving up — terminal failure",
-                download_id: download_id,
-                attempt: attempt,
-                reason: inspect(reason)
-              )
-
               {:cancel, reason}
             else
               {:error, reason}

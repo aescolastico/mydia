@@ -647,6 +647,96 @@ defmodule Mydia.Jobs.MediaImportTest do
       updated = Mydia.Downloads.get_download!(download.id)
       assert updated.import_last_error =~ "Download path not found"
     end
+
+    test "cancels missing path after the third attempt and clears retry metadata" do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "MissingPathTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "MissingPathTerminalClient",
+          download_client_id: "missing-path-terminal"
+        })
+
+      assert {:cancel, {:path_not_found, "/no/such/path/exists"}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => "/no/such/path/exists"
+                 },
+                 attempt: 3
+               )
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_retry_count == 3
+      assert is_nil(updated.import_next_retry_at)
+      assert updated.import_last_error =~ "Download path not found"
+    end
+
+    @tag :tmp_dir
+    test "cancels inaccessible path after the third attempt and clears retry metadata",
+         %{tmp_dir: tmp_dir} do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Restricted Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "RestrictedPathTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      restricted_dir = Path.join(tmp_dir, "restricted-download")
+      File.mkdir_p!(restricted_dir)
+      File.write!(Path.join(restricted_dir, "movie.mkv"), "video")
+      File.chmod!(restricted_dir, 0o000)
+      on_exit(fn -> File.chmod!(restricted_dir, 0o755) end)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "RestrictedPathTerminalClient",
+          download_client_id: "restricted-path-terminal"
+        })
+
+      assert {:cancel, {:path_not_accessible, ^restricted_dir}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => restricted_dir
+                 },
+                 attempt: 3
+               )
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_retry_count == 3
+      assert is_nil(updated.import_next_retry_at)
+      assert updated.import_last_error =~ "Download path is not accessible"
+    end
   end
 
   # Helper functions
