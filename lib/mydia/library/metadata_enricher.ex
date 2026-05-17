@@ -11,6 +11,7 @@ defmodule Mydia.Library.MetadataEnricher do
 
   require Logger
   alias Mydia.{Media, Metadata, Repo, Settings}
+  alias Mydia.Metadata.NfoWriter
 
   @doc """
   Enriches a media item with full metadata from the provider.
@@ -91,6 +92,8 @@ defmodule Mydia.Library.MetadataEnricher do
               enrich_episodes(media_item, provider_id, config, match_result_with_file_id)
             end
           end
+
+          NfoWriter.maybe_write_nfos(media_item.id)
 
           {:ok, media_item}
 
