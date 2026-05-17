@@ -51,19 +51,69 @@ defmodule Mydia.Library.FileAnalyzerTest do
   end
 
   describe "resolution extraction" do
-    test "correctly categorizes common resolutions" do
-      # These would need actual FFprobe integration to test properly
-      # For now, we document the expected behavior
+    setup do
+      target_file = write_temp_file("fake video content")
 
-      # 4K: height >= 2000, width >= 3800
-      # 2160p: height >= 2000
-      # 1440p: height >= 1400
-      # 1080p: height >= 1000
-      # 720p: height >= 700
-      # 480p: height >= 450
-      # 360p: height >= 300
+      on_exit(fn ->
+        Application.delete_env(:mydia, :ffprobe_path)
+        File.rm(target_file)
+      end)
 
-      assert true
+      %{target_file: target_file}
+    end
+
+    test "keeps standard 1080p video at 1080p", %{target_file: target_file} do
+      shim =
+        write_json_shim(
+          ~s({"streams":[{"codec_type":"video","codec_name":"h264","width":1920,"height":1080},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"60.0","format_name":"matroska"}})
+        )
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        assert {:ok, result} = FileAnalyzer.analyze(target_file)
+        assert result.resolution == "1080p"
+        assert result.width == 1920
+        assert result.height == 1080
+      after
+        File.rm(shim)
+      end
+    end
+
+    test "treats cropped 1920x800 widescreen encodes as 1080p", %{target_file: target_file} do
+      shim =
+        write_json_shim(
+          ~s({"streams":[{"codec_type":"video","codec_name":"hevc","width":1920,"height":800},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"60.0","format_name":"matroska"}})
+        )
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        assert {:ok, result} = FileAnalyzer.analyze(target_file)
+        assert result.resolution == "1080p"
+        assert result.width == 1920
+        assert result.height == 800
+      after
+        File.rm(shim)
+      end
+    end
+
+    test "does not up-rank true 720p widescreen encodes", %{target_file: target_file} do
+      shim =
+        write_json_shim(
+          ~s({"streams":[{"codec_type":"video","codec_name":"h264","width":1280,"height":534},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"60.0","format_name":"matroska"}})
+        )
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        assert {:ok, result} = FileAnalyzer.analyze(target_file)
+        assert result.resolution == "720p"
+        assert result.width == 1280
+        assert result.height == 534
+      after
+        File.rm(shim)
+      end
     end
   end
 
@@ -198,5 +248,10 @@ defmodule Mydia.Library.FileAnalyzerTest do
     File.write!(path, script_body)
     File.chmod!(path, 0o755)
     path
+  end
+
+  defp write_json_shim(json) do
+    escaped = String.replace(json, "'", "'\\''")
+    write_shim("#!/bin/sh\nprintf '%s' '#{escaped}'\n")
   end
 end

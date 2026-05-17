@@ -312,6 +312,8 @@ defmodule Mydia.Library do
         current_metadata
         |> maybe_put_struct_field(:duration, result.duration)
         |> maybe_put_struct_field(:container, result.container)
+        |> maybe_put_struct_field(:width, result.width)
+        |> maybe_put_struct_field(:height, result.height)
 
       write_analysis_success(
         media_file,
@@ -418,6 +420,90 @@ defmodule Mydia.Library do
 
   defp maybe_put_struct_field(struct, _field, nil), do: struct
   defp maybe_put_struct_field(struct, field, value), do: Map.put(struct, field, value)
+
+  defp record_repair_failure(%MediaFile{} = media_file, reason) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    reason_text = format_analysis_error(reason)
+
+    query = from(mf in MediaFile, where: mf.id == ^media_file.id)
+
+    Repo.update_all(query,
+      inc: [analysis_attempts: 1],
+      set: [last_analysis_error: reason_text, updated_at: now]
+    )
+  end
+
+  defp apply_repair_analysis(%MediaFile{} = media_file, result) do
+    apply_repair_analysis(media_file, result, 3)
+  end
+
+  defp apply_repair_analysis(%MediaFile{} = media_file, result, retries_remaining) do
+    alias Mydia.Library.Structs.FileMetadata
+
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    current =
+      Repo.one(
+        from(mf in MediaFile,
+          where: mf.id == ^media_file.id,
+          select: %{
+            metadata: mf.metadata,
+            updated_at: mf.updated_at
+          }
+        )
+      )
+
+    case current do
+      nil ->
+        {:error, :not_found}
+
+      current ->
+        metadata =
+          current.metadata
+          |> Kernel.||(FileMetadata.empty())
+          |> maybe_put_struct_field(:duration, result.duration)
+          |> maybe_put_struct_field(:container, result.container)
+          |> maybe_put_struct_field(:width, result.width)
+          |> maybe_put_struct_field(:height, result.height)
+
+        set = build_analysis_success_set(result, metadata, now)
+
+        query =
+          from(mf in MediaFile,
+            where: mf.id == ^media_file.id and mf.updated_at == ^current.updated_at
+          )
+
+        case Repo.update_all(query, set: set) do
+          {1, _} ->
+            :ok
+
+          {0, _} when retries_remaining > 0 ->
+            apply_repair_analysis(media_file, result, retries_remaining - 1)
+
+          {0, _} ->
+            {:error, :not_found}
+        end
+    end
+  end
+
+  defp build_analysis_success_set(result, metadata, now) do
+    alias Mydia.Streaming.Codec
+
+    set = [
+      codec: Codec.normalize_video_codec(result.codec),
+      audio_codec: Codec.normalize_audio_codec(result.audio_codec),
+      resolution: result.resolution,
+      bitrate: result.bitrate,
+      hdr_format: result.hdr_format,
+      metadata: metadata,
+      analyzed_at: now,
+      analysis_attempts: 0,
+      last_analysis_error: nil,
+      updated_at: now
+    ]
+
+    if result.size, do: Keyword.put(set, :size, result.size), else: set
+  end
 
   @max_analysis_error_length 2048
 
@@ -1831,6 +1917,66 @@ defmodule Mydia.Library do
   def refresh_file_metadata_by_id(media_file_id) do
     media_file = get_media_file!(media_file_id, preload: [:library_path])
     refresh_file_metadata(media_file)
+  end
+
+  @doc """
+  Re-analyzes an already-analyzed file in place without clearing the existing
+  analysis state first.
+
+  Intended for self-healing passes that backfill newly tracked metadata fields
+  or repair legacy analyzer mistakes while preserving the old row on failure.
+  """
+  @spec repair_file_metadata(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, term()}
+  def repair_file_metadata(%MediaFile{} = media_file) do
+    case MediaFile.absolute_path(media_file) do
+      nil ->
+        Logger.error("Cannot repair file metadata - path could not be resolved",
+          file_id: media_file.id
+        )
+
+        {:error, :path_not_resolved}
+
+      absolute_path ->
+        if File.exists?(absolute_path) do
+          case FileAnalyzer.analyze(absolute_path) do
+            {:ok, result} ->
+              case apply_repair_analysis(media_file, result) do
+                :ok ->
+                  updated_file = get_media_file!(media_file.id, preload: [:library_path])
+
+                  Logger.info("Repaired file metadata",
+                    file_id: media_file.id,
+                    path: absolute_path,
+                    resolution: updated_file.resolution,
+                    codec: updated_file.codec,
+                    audio: updated_file.audio_codec
+                  )
+
+                  {:ok, updated_file}
+
+                {:error, :not_found} = error ->
+                  error
+              end
+
+            {:error, reason} ->
+              record_repair_failure(media_file, reason)
+
+              Logger.warning("FFprobe analysis failed during repair",
+                file_id: media_file.id,
+                reason: inspect(reason)
+              )
+
+              {:error, reason}
+          end
+        else
+          Logger.warning("File does not exist, cannot repair metadata",
+            file_id: media_file.id,
+            path: absolute_path
+          )
+
+          {:error, :file_not_found}
+        end
+    end
   end
 
   @doc """

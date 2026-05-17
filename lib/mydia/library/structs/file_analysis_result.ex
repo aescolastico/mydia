@@ -24,6 +24,8 @@ defmodule Mydia.Library.Structs.FileAnalysisResult do
 
   defstruct [
     :resolution,
+    :width,
+    :height,
     :codec,
     :audio_codec,
     :bitrate,
@@ -35,6 +37,8 @@ defmodule Mydia.Library.Structs.FileAnalysisResult do
 
   @type t :: %__MODULE__{
           resolution: String.t() | nil,
+          width: integer() | nil,
+          height: integer() | nil,
           codec: String.t() | nil,
           audio_codec: String.t() | nil,
           bitrate: integer() | nil,
