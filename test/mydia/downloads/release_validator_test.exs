@@ -163,6 +163,45 @@ defmodule Mydia.Downloads.ReleaseValidatorTest do
     end
   end
 
+  describe "validate_release/1 - suspicious executable extensions" do
+    test "rejects .exe release disguised as 1080p TV episode" do
+      name = "From.S04E05.1080p.WEB.h264-ETHEL.exe"
+
+      assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
+    end
+
+    test "rejects .exe release disguised as movie" do
+      name = "The.Matrix.1999.1080p.BluRay.x264.exe"
+
+      assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
+    end
+
+    test "rejects uppercase .EXE extension" do
+      name = "Your.Friends.and.Neighbors.S02E07.1080p.WEB.h264-ETHEL.EXE"
+
+      assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
+    end
+
+    test "rejects other Windows executable extensions" do
+      for ext <- ~w(.scr .bat .cmd .com .msi .vbs .js .jar .pif) do
+        name = "Movie.Title.2020.1080p.BluRay.x264#{ext}"
+        assert {:error, :suspicious_extension} = ReleaseValidator.validate_release(name)
+      end
+    end
+
+    test "accepts release without an extension" do
+      name = "From.S04E05.1080p.WEB.h264-ETHEL"
+
+      assert {:ok, ^name} = ReleaseValidator.validate_release(name)
+    end
+
+    test "accepts release with legitimate .mkv extension" do
+      name = "From.S04E05.1080p.WEB.h264-ETHEL.mkv"
+
+      assert {:ok, ^name} = ReleaseValidator.validate_release(name)
+    end
+  end
+
   describe "validate_release/1 - no meaningful content" do
     test "rejects release with only brackets and quality markers" do
       name = "[Tracker] (2020) 1080p BluRay x264"

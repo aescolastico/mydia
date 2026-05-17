@@ -28,6 +28,12 @@ defmodule Mydia.Downloads.ReleaseValidator do
      - Example: `yenc movie title`
      - These are raw usenet posts, not proper releases
 
+  6. **Suspicious executable extensions** - Release name ends in an executable
+     extension (.exe, .scr, .bat, .cmd, .com, .msi, .vbs, .js, .jar, .pif)
+     - Example: `From.S04E05.1080p.WEB.h264-ETHEL.exe`
+     - These are malware torrents disguised as 1080p video releases. A
+       legitimate video release never carries an executable extension.
+
   ## Usage
 
       iex> ReleaseValidator.validate_release("The.Matrix.1999.1080p.BluRay.x264")
@@ -56,10 +62,15 @@ defmodule Mydia.Downloads.ReleaseValidator do
   - `:reversed_pattern` - Strange reversed naming
   - `:yenc_pattern` - Raw usenet binary encoding
   - `:no_meaningful_content` - No extractable title content
+  - `:suspicious_extension` - Release name ends in an executable extension
   """
   @spec validate_release(String.t()) :: {:ok, String.t()} | {:error, atom()}
   def validate_release(name) when is_binary(name) do
     cond do
+      suspicious_extension?(name) ->
+        Logger.warning("Rejecting release with suspicious executable extension: #{name}")
+        {:error, :suspicious_extension}
+
       is_hashed_release?(name) ->
         Logger.debug("Rejecting hashed release: #{name}")
         {:error, :hashed_release}
@@ -90,6 +101,17 @@ defmodule Mydia.Downloads.ReleaseValidator do
   end
 
   ## Private Functions - Validation Patterns
+
+  # Release filenames that end in a Windows executable extension are malware
+  # — a legitimate 1080p video release never has a .exe extension. These show
+  # up periodically from public indexers using real-looking release-group
+  # names (e.g. "ETHEL") to slip past automatic-grab filters.
+  @suspicious_extensions ~w(.exe .scr .bat .cmd .com .msi .vbs .js .jar .pif)
+
+  defp suspicious_extension?(name) do
+    ext = name |> Path.extname() |> String.downcase()
+    ext in @suspicious_extensions
+  end
 
   # Detects hashed releases with long hex strings in brackets
   # Example: [A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6] Movie Title
