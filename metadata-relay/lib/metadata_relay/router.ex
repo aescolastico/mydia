@@ -773,7 +773,7 @@ defmodule MetadataRelay.Router do
     with {:ok, attrs} <- validate_feedback(conn.body_params),
          attrs = Map.put(attrs, :source_ip, client_ip),
          {:ok, submission} <- MetadataRelay.Feedback.create_submission(attrs) do
-      notify_feedback_submission(submission)
+      schedule_feedback_notification(submission)
 
       conn
       |> put_resp_content_type("application/json")
@@ -853,6 +853,19 @@ defmodule MetadataRelay.Router do
   end
 
   defp validate_feedback(_), do: {:error, :invalid_json}
+
+  defp schedule_feedback_notification(submission) do
+    case Task.Supervisor.start_child(MetadataRelay.TaskSupervisor, fn ->
+           notify_feedback_submission(submission)
+         end) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Failed to schedule feedback notification email", reason: inspect(reason))
+        :ok
+    end
+  end
 
   defp notify_feedback_submission(submission) do
     case MetadataRelay.Feedback.Notifier.deliver_new_submission(submission) do

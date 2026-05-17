@@ -67,6 +67,21 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
     assert has_element?(view, "#feedback-#{archived.id}")
   end
 
+  test "invalid filter values fall back to safe defaults" do
+    {:ok, unread} = Feedback.create_submission(%{type: "bug", message: "Unread"})
+    {:ok, read} = Feedback.create_submission(%{type: "idea", message: "Read"})
+    {:ok, _read} = Feedback.update_state(read, "read")
+
+    {:ok, view, _html} = live(authed_conn(), "/feedback")
+
+    html = render_change(view, "filter", %{"filters" => %{"state" => "bogus", "type" => "bogus"}})
+
+    assert html =~ "State: all states"
+    assert html =~ "Type: all types"
+    assert has_element?(view, "#feedback-#{unread.id}")
+    assert has_element?(view, "#feedback-#{read.id}")
+  end
+
   test "mark read transitions an unread row" do
     {:ok, submission} = Feedback.create_submission(%{type: "bug", message: "Unread"})
 

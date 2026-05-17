@@ -22,6 +22,46 @@ defmodule MetadataRelay.Feedback do
     |> Repo.all()
   end
 
+  def submission_summary do
+    Repo.one(
+      from(submission in Submission,
+        select: %{
+          total: count(submission.id),
+          unread:
+            fragment(
+              "coalesce(sum(case when ? = 'unread' then 1 else 0 end), 0)",
+              submission.state
+            ),
+          read:
+            fragment(
+              "coalesce(sum(case when ? = 'read' then 1 else 0 end), 0)",
+              submission.state
+            ),
+          archived:
+            fragment(
+              "coalesce(sum(case when ? = 'archived' then 1 else 0 end), 0)",
+              submission.state
+            ),
+          bug:
+            fragment(
+              "coalesce(sum(case when ? = 'bug' then 1 else 0 end), 0)",
+              submission.type
+            ),
+          idea:
+            fragment(
+              "coalesce(sum(case when ? = 'idea' then 1 else 0 end), 0)",
+              submission.type
+            ),
+          question:
+            fragment(
+              "coalesce(sum(case when ? = 'question' then 1 else 0 end), 0)",
+              submission.type
+            )
+        }
+      )
+    )
+  end
+
   def get_submission(id) when is_binary(id) do
     with {:ok, uuid} <- Ecto.UUID.cast(id) do
       Repo.get(Submission, uuid)

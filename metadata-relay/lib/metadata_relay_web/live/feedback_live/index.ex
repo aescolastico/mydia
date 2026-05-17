@@ -8,6 +8,8 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
   alias MetadataRelay.Feedback
 
   @message_preview_limit 220
+  @valid_state_filters ~w(unread read archived all)
+  @valid_type_filters ~w(bug idea question all)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -24,8 +26,8 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
   def handle_event("filter", %{"filters" => filters}, socket) do
     {:noreply,
      socket
-     |> assign(:state_filter, Map.get(filters, "state", "unread"))
-     |> assign(:type_filter, Map.get(filters, "type", "all"))
+     |> assign(:state_filter, normalize_state_filter(Map.get(filters, "state")))
+     |> assign(:type_filter, normalize_type_filter(Map.get(filters, "type")))
      |> load_dashboard()}
   end
 
@@ -81,40 +83,16 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
       |> maybe_filter(:state, socket.assigns.state_filter)
       |> maybe_filter(:type, socket.assigns.type_filter)
 
-    all_submissions = Feedback.list_submissions()
     filtered_submissions = Feedback.list_submissions(opts)
 
     socket
     |> assign(:submissions, filtered_submissions)
-    |> assign(:summary, summarize_submissions(all_submissions))
+    |> assign(:summary, Feedback.submission_summary())
     |> assign(:visible_count, length(filtered_submissions))
   end
 
   defp maybe_filter(opts, _key, "all"), do: opts
   defp maybe_filter(opts, key, value), do: Keyword.put(opts, key, value)
-
-  defp summarize_submissions(submissions) do
-    Enum.reduce(submissions, empty_summary(), fn submission, summary ->
-      summary
-      |> increment_summary(:total)
-      |> increment_summary(state_key(submission.state))
-      |> increment_summary(type_key(submission.type))
-    end)
-  end
-
-  defp empty_summary do
-    %{total: 0, unread: 0, read: 0, archived: 0, bug: 0, idea: 0, question: 0}
-  end
-
-  defp increment_summary(summary, key), do: Map.update!(summary, key, &(&1 + 1))
-
-  defp state_key("unread"), do: :unread
-  defp state_key("read"), do: :read
-  defp state_key("archived"), do: :archived
-
-  defp type_key("bug"), do: :bug
-  defp type_key("idea"), do: :idea
-  defp type_key("question"), do: :question
 
   def expanded?(expanded_ids, id), do: MapSet.member?(expanded_ids, id)
 
@@ -163,9 +141,19 @@ defmodule MetadataRelayWeb.FeedbackLive.Index do
   defp label_for_state_filter("unread"), do: "unread"
   defp label_for_state_filter("read"), do: "read"
   defp label_for_state_filter("archived"), do: "archived"
+  defp label_for_state_filter(_), do: "all states"
 
   defp label_for_type_filter("all"), do: "all types"
   defp label_for_type_filter("bug"), do: "bug"
   defp label_for_type_filter("idea"), do: "idea"
   defp label_for_type_filter("question"), do: "question"
+  defp label_for_type_filter(_), do: "all types"
+
+  defp normalize_state_filter(nil), do: "unread"
+  defp normalize_state_filter(value) when value in @valid_state_filters, do: value
+  defp normalize_state_filter(_), do: "all"
+
+  defp normalize_type_filter(nil), do: "all"
+  defp normalize_type_filter(value) when value in @valid_type_filters, do: value
+  defp normalize_type_filter(_), do: "all"
 end

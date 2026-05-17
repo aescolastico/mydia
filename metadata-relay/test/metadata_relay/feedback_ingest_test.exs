@@ -1,8 +1,6 @@
 defmodule MetadataRelay.FeedbackIngestTest do
   use ExUnit.Case, async: false
 
-  import Swoosh.TestAssertions
-
   alias MetadataRelay.Feedback
   alias MetadataRelay.Feedback.Submission
   alias MetadataRelay.Repo
@@ -11,6 +9,8 @@ defmodule MetadataRelay.FeedbackIngestTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Repo.delete_all(Submission)
+    Application.put_env(:swoosh, :shared_test_process, self())
+    flush_mailbox()
 
     case GenServer.whereis(MetadataRelay.RateLimiter) do
       nil -> start_supervised!(MetadataRelay.RateLimiter)
@@ -18,6 +18,10 @@ defmodule MetadataRelay.FeedbackIngestTest do
     end
 
     :ets.delete_all_objects(:rate_limiter)
+
+    on_exit(fn ->
+      Application.delete_env(:swoosh, :shared_test_process)
+    end)
 
     :ok
   end
@@ -44,11 +48,9 @@ defmodule MetadataRelay.FeedbackIngestTest do
       assert submission.mydia_version == "1.2.3"
       assert submission.source_ip == "127.0.0.1"
 
-      assert_email_sent(
-        to: "maintainer@example.com",
-        from: "metadata-relay@example.com",
-        subject: "[Mydia feedback] bug: Playback froze"
-      )
+      email = await_email(fn email -> email.subject == "[Mydia feedback] bug: Playback froze" end)
+      assert email.to == [{"", "maintainer@example.com"}]
+      assert email.from == {"", "metadata-relay@example.com"}
     end
 
     test "includes submission details in the notification email" do
@@ -63,14 +65,17 @@ defmodule MetadataRelay.FeedbackIngestTest do
 
       assert conn.status == 201
 
-      assert_email_sent(fn email ->
-        assert email.text_body =~ "Type: idea"
-        assert email.text_body =~ "Contact: user@example.com"
-        assert email.text_body =~ "Instance: instance-1"
-        assert email.text_body =~ "Mydia version: 1.2.3"
-        assert email.text_body =~ "Message:\nAdd watch party mode"
-        assert email.text_body =~ "Dashboard: https://relay.example.com/feedback#feedback-"
-      end)
+      email =
+        await_email(fn email ->
+          email.subject == "[Mydia feedback] idea: Add watch party mode"
+        end)
+
+      assert email.text_body =~ "Type: idea"
+      assert email.text_body =~ "Contact: user@example.com"
+      assert email.text_body =~ "Instance: instance-1"
+      assert email.text_body =~ "Mydia version: 1.2.3"
+      assert email.text_body =~ "Message:\nAdd watch party mode"
+      assert email.text_body =~ "Dashboard: https://relay.example.com/feedback#feedback-"
     end
 
     test "returns 400 when type is missing" do
@@ -212,5 +217,37 @@ defmodule MetadataRelay.FeedbackIngestTest do
     conn
     |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
     |> Router.call([])
+  end
+
+  defp await_email(match?, timeout \\ 1_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_email(match?, deadline)
+  end
+
+  defp do_await_email(match?, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:email, email} ->
+        if match?.(email) do
+          email
+        else
+          do_await_email(match?, deadline)
+        end
+
+      _other ->
+        do_await_email(match?, deadline)
+    after
+      remaining ->
+        flunk("expected matching feedback notification email")
+    end
+  end
+
+  defp flush_mailbox do
+    receive do
+      _message -> flush_mailbox()
+    after
+      0 -> :ok
+    end
   end
 end

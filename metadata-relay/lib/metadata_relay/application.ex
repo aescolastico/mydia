@@ -19,6 +19,8 @@ defmodule MetadataRelay.Application do
         MetadataRelay.Repo,
         # PubSub for Phoenix LiveView
         {Phoenix.PubSub, name: MetadataRelay.PubSub},
+        # Background tasks that should not block request handling
+        {Task.Supervisor, name: MetadataRelay.TaskSupervisor},
         # Cache adapter (Redis or in-memory)
         {cache_adapter, cache_opts},
         # Long-lived ETS owner for pairing fallback storage
