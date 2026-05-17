@@ -438,6 +438,8 @@ defmodule Mydia.LibraryTest do
 
       result = %FileAnalysisResult{
         resolution: "1080p",
+        width: 1920,
+        height: 1080,
         codec: "H.264 (High)",
         audio_codec: "AAC Stereo",
         bitrate: 8_000_000,
@@ -462,7 +464,14 @@ defmodule Mydia.LibraryTest do
       assert reloaded.bitrate == 8_000_000
       assert is_nil(reloaded.hdr_format)
       assert reloaded.size == 2_147_483_648
-      assert %FileMetadata{container: "mkv", duration: 5400.5} = reloaded.metadata
+
+      assert %FileMetadata{
+               container: "mkv",
+               duration: 5400.5,
+               width: 1920,
+               height: 1080
+             } = reloaded.metadata
+
       assert %DateTime{} = reloaded.analyzed_at
       assert reloaded.last_analysis_error == nil
     end

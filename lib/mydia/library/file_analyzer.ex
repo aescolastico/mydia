@@ -246,6 +246,8 @@ defmodule Mydia.Library.FileAnalyzer do
     metadata =
       FileAnalysisResult.new(%{
         resolution: extract_resolution(video_stream),
+        width: video_stream && video_stream["width"],
+        height: video_stream && video_stream["height"],
         codec: extract_video_codec(video_stream),
         audio_codec: extract_audio_codec(audio_stream),
         bitrate: extract_bitrate(video_stream, format),
@@ -316,37 +318,73 @@ defmodule Mydia.Library.FileAnalyzer do
   defp extract_resolution(video_stream) do
     height = video_stream["height"]
     width = video_stream["width"]
+    effective_height = effective_resolution_height(width, height)
 
     cond do
       # 4K / UHD / 2160p
-      height >= 2000 ->
+      effective_height >= 2000 ->
         if width >= 3800, do: "4K", else: "2160p"
 
       # 1440p
-      height >= 1400 ->
+      effective_height >= 1400 ->
         "1440p"
 
       # 1080p / Full HD
-      height >= 1000 ->
+      effective_height >= 1000 ->
         "1080p"
 
       # 720p / HD
-      height >= 700 ->
+      effective_height >= 700 ->
         "720p"
 
       # 480p / SD
-      height >= 450 ->
+      effective_height >= 450 ->
         "480p"
 
       # 360p
-      height >= 300 ->
+      effective_height >= 300 ->
         "360p"
 
       true ->
         # Unknown or very low resolution
-        if height, do: "#{height}p", else: nil
+        if effective_height, do: "#{effective_height}p", else: nil
     end
   end
+
+  # Cropped cinemascope encodes often keep the source width (for example
+  # 1920x800) while trimming black bars from the stored frame height. Use the
+  # encoded width as a fallback only when the stored height is not already near
+  # a standard tier. That fixes 1920x800 -> 1080p and 1280x534 -> 720p while
+  # leaving true ultrawide sources like 2560x1080 at their actual 1080p tier.
+  defp effective_resolution_height(width, height)
+       when is_integer(width) and is_integer(height) and width > 0 and height > 0 do
+    cond do
+      standard_resolution_height?(height) ->
+        height
+
+      width > height ->
+        inferred_resolution_height_from_width(width) || height
+
+      true ->
+        height
+    end
+  end
+
+  defp effective_resolution_height(_width, height), do: height
+
+  @resolution_height_tolerance 24
+
+  defp standard_resolution_height?(height) do
+    Enum.any?([2160, 1440, 1080, 720, 480, 360], fn standard_height ->
+      abs(height - standard_height) <= @resolution_height_tolerance
+    end)
+  end
+
+  defp inferred_resolution_height_from_width(width) when width >= 3800, do: 2160
+  defp inferred_resolution_height_from_width(width) when width >= 2500, do: 1440
+  defp inferred_resolution_height_from_width(width) when width >= 1900, do: 1080
+  defp inferred_resolution_height_from_width(width) when width >= 1200, do: 720
+  defp inferred_resolution_height_from_width(_width), do: nil
 
   defp extract_video_codec(nil), do: nil
 

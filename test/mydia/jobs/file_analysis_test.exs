@@ -10,6 +10,7 @@ defmodule Mydia.Jobs.FileAnalysisTest do
   alias Mydia.Jobs.FileAnalysis
   alias Mydia.Library
   alias Mydia.Library.MediaFile
+  alias Mydia.Library.Structs.FileMetadata
   alias Mydia.Repo
 
   setup do
@@ -135,6 +136,41 @@ defmodule Mydia.Jobs.FileAnalysisTest do
         File.rm(shim)
       end
     end
+
+    test "repairs analyzed rows that are missing persisted dimensions" do
+      {_library_path, [{media_file, path}]} = seed_real_files(1, "u5_repair")
+
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      Repo.update_all(
+        from(mf in MediaFile, where: mf.id == ^media_file.id),
+        set: [
+          analyzed_at: now,
+          resolution: "720p",
+          codec: "hevc",
+          audio_codec: "aac",
+          metadata: %FileMetadata{container: "mkv", duration: 60.0}
+        ]
+      )
+
+      shim = write_cropped_1080_shim(path)
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        assert :ok = perform_job(FileAnalysis, %{})
+
+        reloaded = Repo.get!(MediaFile, media_file.id)
+        assert reloaded.resolution == "1080p"
+        assert reloaded.metadata.width == 1920
+        assert reloaded.metadata.height == 800
+        assert %DateTime{} = reloaded.analyzed_at
+        assert is_nil(reloaded.last_analysis_error)
+      after
+        File.rm(shim)
+        File.rm(path)
+      end
+    end
   end
 
   describe "configuration wiring (source config/config.exs)" do
@@ -210,6 +246,23 @@ defmodule Mydia.Jobs.FileAnalysisTest do
       ~s({"streams":[{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"bit_rate":"8000000"},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"5400.5","format_name":"matroska,webm","size":"#{size}","bit_rate":"8000000"}})
 
     path = Path.join(System.tmp_dir!(), "u5_ffprobe_ok_#{:rand.uniform(10_000_000)}.sh")
+    escaped = String.replace(json, "'", "'\\''")
+    File.write!(path, "#!/bin/sh\nprintf '%s' '#{escaped}'\n")
+    File.chmod!(path, 0o755)
+    path
+  end
+
+  defp write_cropped_1080_shim(reference_path) do
+    size =
+      case File.stat(reference_path) do
+        {:ok, %{size: s}} -> s
+        _ -> 1024
+      end
+
+    json =
+      ~s({"streams":[{"codec_type":"video","codec_name":"hevc","width":1920,"height":800,"bit_rate":"8000000"},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"5400.5","format_name":"matroska,webm","size":"#{size}","bit_rate":"8000000"}})
+
+    path = Path.join(System.tmp_dir!(), "u5_ffprobe_repair_#{:rand.uniform(10_000_000)}.sh")
     escaped = String.replace(json, "'", "'\\''")
     File.write!(path, "#!/bin/sh\nprintf '%s' '#{escaped}'\n")
     File.chmod!(path, 0o755)
