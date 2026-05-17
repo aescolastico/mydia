@@ -93,7 +93,7 @@ defmodule Mydia.Library.MetadataEnricher do
             end
           end
 
-          NfoWriter.maybe_write_nfos(media_item.id)
+          NfoWriter.maybe_write_nfos(media_item)
 
           {:ok, media_item}
 
