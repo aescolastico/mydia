@@ -155,13 +155,41 @@ defmodule Mydia.Jobs.MediaImport do
             clear_retry_metadata(download)
             {:ok, result}
 
-          {:error, reason} = error ->
-            # Failure - update retry metadata and schedule next retry
-            handle_import_failure(download, reason, attempt)
-            error
+          {:error, reason} ->
+            # Failure - update retry metadata. If the failure is structurally
+            # unfixable (e.g. a completed torrent contains zero importable
+            # media files, or its save path has been gone for several
+            # attempts), stop Oban's retry loop so the row doesn't keep
+            # re-scanning for days.
+            terminal? = terminal_failure?(reason, attempt)
+            handle_import_failure(download, reason, attempt, terminal?: terminal?)
+
+            if terminal? do
+              {:cancel, reason}
+            else
+              {:error, reason}
+            end
         end
     end
   end
+
+  # Classifies failures whose state will not change by retrying.
+  #
+  # `:no_importable_files` fires only after a *completed* torrent has been
+  # scanned and zero files matched the video-extension whitelist. Re-scanning
+  # the same finished torrent will deterministically produce the same result,
+  # so retrying is pointless. The common cause in production is malware
+  # torrents named `*.1080p.WEB.h264-<group>.exe` — the importer correctly
+  # rejects them, then they sit in the retry queue for weeks.
+  #
+  # Filesystem-availability errors (`:path_not_found`, `:path_not_accessible`)
+  # can legitimately be transient — a remote mount blip, a torrent client
+  # that hasn't finished moving files yet — so they get a small budget of
+  # retries before we give up.
+  defp terminal_failure?(:no_importable_files, _attempt), do: true
+  defp terminal_failure?({:path_not_found, _path}, attempt) when attempt >= 3, do: true
+  defp terminal_failure?({:path_not_accessible, _path}, attempt) when attempt >= 3, do: true
+  defp terminal_failure?(_reason, _attempt), do: false
 
   defp fetch_download(download_id) do
     {:ok,
@@ -1582,15 +1610,20 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
-  # Update download record with retry metadata after a failed attempt
-  defp handle_import_failure(download, reason, attempt) do
-    backoff_seconds = calculate_backoff(attempt)
-    next_retry_at = DateTime.add(DateTime.utc_now(), backoff_seconds, :second)
+  # Update download record with retry metadata after a failed attempt.
+  # When `terminal?: true` is passed, clears `import_next_retry_at` so the
+  # UI can show "gave up" instead of advertising a retry that will never fire.
+  defp handle_import_failure(download, reason, attempt, opts \\ []) do
+    terminal? = Keyword.get(opts, :terminal?, false)
 
-    # Format error message with actionable context
+    next_retry_at =
+      if terminal? do
+        nil
+      else
+        DateTime.add(DateTime.utc_now(), calculate_backoff(attempt), :second)
+      end
+
     error_message = format_import_error(reason, download)
-
-    # Track first failure timestamp
     import_failed_at = download.import_failed_at || DateTime.utc_now()
 
     attrs = %{
@@ -1602,13 +1635,20 @@ defmodule Mydia.Jobs.MediaImport do
 
     case Downloads.update_download(download, attrs) do
       {:ok, _updated} ->
-        Logger.warning("Import failed, will retry",
-          download_id: download.id,
-          attempt: attempt,
-          reason: error_message,
-          next_retry_at: next_retry_at,
-          backoff_seconds: backoff_seconds
-        )
+        if terminal? do
+          Logger.warning("Import failed terminally — no further retries",
+            download_id: download.id,
+            attempt: attempt,
+            reason: error_message
+          )
+        else
+          Logger.warning("Import failed, will retry",
+            download_id: download.id,
+            attempt: attempt,
+            reason: error_message,
+            next_retry_at: next_retry_at
+          )
+        end
 
         :ok
 

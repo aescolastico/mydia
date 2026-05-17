@@ -254,6 +254,62 @@ defmodule Mydia.Jobs.MediaImportTest do
                perform_job(MediaImport, %{"download_id" => download.id})
     end
 
+    @tag :tmp_dir
+    test "cancels (no retry) when completed torrent has no importable files",
+         %{tmp_dir: tmp_dir} do
+      # Real bug from production: malware torrents named
+      # `From.S04E05.1080p.WEB.h264-ETHEL.exe` slip past the indexer, finish
+      # downloading, and then sit in the retry queue forever because the
+      # importer keeps rejecting them with `:no_importable_files`. Re-scanning
+      # the same finished torrent will deterministically produce the same
+      # result — there's no recovery path, so the job must `:cancel` on the
+      # first attempt instead of burning days of exponential backoff.
+      _library_path = create_test_library_path(tmp_dir, :movies)
+
+      download_dir = Path.join(tmp_dir, "ethel-malware")
+      File.mkdir_p!(download_dir)
+      File.write!(Path.join(download_dir, "Movie.2024.1080p.exe"), "not a video")
+
+      media_item = media_item_fixture(%{type: "movie", title: "Malware Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "MalwareClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "MalwareClient",
+          download_client_id: "ethel-1"
+        })
+
+      assert {:cancel, :no_importable_files} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+
+      assert updated.import_failed_at != nil,
+             "Terminal failures must still record import_failed_at for the Issues tab"
+
+      assert is_nil(updated.import_next_retry_at),
+             "Terminal failures must clear import_next_retry_at so the UI doesn't advertise a retry that won't fire"
+
+      assert updated.import_last_error =~ "No importable files"
+    end
+
     test "returns error if download has no client info", %{tmp_dir: tmp_dir} do
       # Create a library path
       create_test_library_path(tmp_dir, :movies)
@@ -590,6 +646,96 @@ defmodule Mydia.Jobs.MediaImportTest do
 
       updated = Mydia.Downloads.get_download!(download.id)
       assert updated.import_last_error =~ "Download path not found"
+    end
+
+    test "cancels missing path after the third attempt and clears retry metadata" do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "MissingPathTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "MissingPathTerminalClient",
+          download_client_id: "missing-path-terminal"
+        })
+
+      assert {:cancel, {:path_not_found, "/no/such/path/exists"}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => "/no/such/path/exists"
+                 },
+                 attempt: 3
+               )
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_retry_count == 3
+      assert is_nil(updated.import_next_retry_at)
+      assert updated.import_last_error =~ "Download path not found"
+    end
+
+    @tag :tmp_dir
+    test "cancels inaccessible path after the third attempt and clears retry metadata",
+         %{tmp_dir: tmp_dir} do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Restricted Path Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "RestrictedPathTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      restricted_dir = Path.join(tmp_dir, "restricted-download")
+      File.mkdir_p!(restricted_dir)
+      File.write!(Path.join(restricted_dir, "movie.mkv"), "video")
+      File.chmod!(restricted_dir, 0o000)
+      on_exit(fn -> File.chmod!(restricted_dir, 0o755) end)
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "RestrictedPathTerminalClient",
+          download_client_id: "restricted-path-terminal"
+        })
+
+      assert {:cancel, {:path_not_accessible, ^restricted_dir}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => restricted_dir
+                 },
+                 attempt: 3
+               )
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_retry_count == 3
+      assert is_nil(updated.import_next_retry_at)
+      assert updated.import_last_error =~ "Download path is not accessible"
     end
   end
 
