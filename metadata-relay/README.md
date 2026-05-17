@@ -294,18 +294,17 @@ fly secrets unset SECRET_NAME
 
 ## Deployment
 
-### Automated Releases (Recommended)
+### Automated Deployments (Recommended)
 
 The metadata-relay service uses GitHub Actions for automated CI/CD. When you push a version tag, it automatically:
 
 1. ✅ Runs tests and builds the Docker image
 2. 📦 Pushes the image to GitHub Container Registry (GHCR)
-3. 🚀 Deploys to Fly.io production
-4. 📝 Creates a GitHub release with notes
+3. 🚀 Makes the new image available for your deployment target to roll out
 
-#### Creating a Release
+#### Creating a Deployment Build
 
-To release a new version:
+To publish a new deployable image:
 
 1. **Update the version** in `mix.exs` (if desired):
 
@@ -333,32 +332,15 @@ To release a new version:
    git push origin metadata-relay-v0.2.0
    ```
 
-4. **Monitor the release**:
+4. **Monitor the deployment build**:
    - Go to GitHub Actions to watch the build and deployment
-   - The workflow will automatically deploy to Fly.io
-   - A GitHub release will be created with deployment details
+   - Your deployment target can pull the new image once it is published
 
-#### Prerequisites for Automated Releases
+#### Prerequisites for Automated Deployments
 
-**One-time setup** - Add the Fly.io API token to GitHub secrets:
+No extra deployment secret is required for the GitHub workflow itself. It only needs the default `GITHUB_TOKEN` to publish the metadata-relay image to GHCR.
 
-Using the GitHub CLI (recommended):
-
-```bash
-# Quick one-liner setup
-flyctl auth token | gh secret set FLY_API_TOKEN
-
-# Verify it was set
-gh secret list
-```
-
-Or manually via the web UI:
-
-1. Get token: `flyctl auth token`
-2. Go to: Settings → Secrets and variables → Actions
-3. Add secret: Name=`FLY_API_TOKEN`, Value=token from step 1
-
-**That's it!** All releases will now deploy automatically.
+In production, the relay is rolled out separately by infrastructure automation after the new image is published.
 
 **Validate your setup:**
 
@@ -371,19 +353,16 @@ cd metadata-relay
 **Helpful commands:**
 
 ```bash
-# Monitor a release in real-time
+# Monitor a deployment build in real-time
 gh run watch
 
 # View recent workflow runs
-gh run list --workflow=metadata-relay-release.yml
-
-# Check Fly.io deployment logs
-flyctl logs -a metadata-relay -f
+gh run list --workflow=deploy-relay.yml
 ```
 
 #### What Gets Built
 
-Each release creates multi-platform Docker images:
+Each deployment build creates multi-platform Docker images:
 
 - **Platforms**: `linux/amd64`, `linux/arm64`
 - **Registry**: GitHub Container Registry (GHCR)
@@ -864,14 +843,13 @@ Automatically runs on changes to the `metadata-relay/` directory:
 - 📝 **Formatting**: Ensures code follows project standards
 - 🐳 **Docker Build**: Verifies Docker image builds successfully
 
-### Release Workflow (Runs on version tags)
+### Deployment Workflow (Runs on version tags)
 
 Triggered when pushing tags matching `metadata-relay-v*`:
 
 - 🏗️ **Build**: Creates multi-platform Docker images (amd64, arm64)
 - 📦 **Publish**: Pushes to GitHub Container Registry
-- 🚀 **Deploy**: Automatically deploys to Fly.io production
-- 📝 **Release**: Creates GitHub release with deployment notes
+- 🚀 **Deploy**: Makes a new semver-tagged image available for infrastructure automation to roll out
 
 All workflows must pass before code can be merged, ensuring production stability.
 

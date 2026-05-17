@@ -28,9 +28,9 @@ mix format
 
 Environment variables: `PORT` (default 4001), `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` (required in production for `/errors` and `/feedback` dashboards), `TMDB_API_KEY`, `TVDB_API_KEY`, `REDIS_URL` (optional).
 
-## Releasing a New Version
+## Deploying a New Version
 
-The release process is tag-driven and fully automated via GitHub Actions.
+The deployment process is tag-driven and automated via GitHub Actions.
 
 ### Steps
 
@@ -45,7 +45,7 @@ The release process is tag-driven and fully automated via GitHub Actions.
    git commit -m "feat(metadata-relay): prepare vX.Y.Z release"
    ```
 
-3. **Create and push a version tag**:
+3. **Create and push a deployment tag**:
    ```bash
    git tag metadata-relay-vX.Y.Z
    git push origin metadata-relay-vX.Y.Z
@@ -53,12 +53,11 @@ The release process is tag-driven and fully automated via GitHub Actions.
 
 ### What Happens Automatically
 
-The `release-relay.yml` workflow triggers on tags matching `metadata-relay-v*` and:
+The `deploy-relay.yml` workflow triggers on tags matching `metadata-relay-v*` and:
 
 1. Builds **multi-platform Docker images** (linux/amd64 + linux/arm64)
 2. Pushes to **GHCR** at `ghcr.io/getmydia/mydia/metadata-relay` with semver tags (`latest`, `X.Y.Z`, `X.Y`, `X`)
 3. Generates build attestations for supply chain security
-4. Creates a **GitHub Release** with deployment notes
 
 ### Auto-Deployment
 
