@@ -94,6 +94,7 @@ class Config:
     relay_secret_key_base: str = ""
     relay_tvdb_api_key: str = ""
     relay_tmdb_api_key: str = ""
+    relay_smtp_password: str = ""
 
     # CoTURN
     coturn_secret: str = ""
@@ -172,6 +173,7 @@ class Config:
             "relay_secret_key_base": self.relay_secret_key_base,
             "relay_tvdb_api_key": self.relay_tvdb_api_key,
             "relay_tmdb_api_key": self.relay_tmdb_api_key,
+            "relay_smtp_password": self.relay_smtp_password,
             "coturn_secret": self.coturn_secret,
             "grafana_admin_password": self.grafana_admin_password,
             "oauth2_proxy_client_id": self.oauth2_proxy_client_id,
@@ -920,31 +922,26 @@ def phase_app(config: Config, dry_run: bool = False) -> bool:
         console.print("  [green]✓[/green] Secret 'metadata-relay-secrets' exists")
         # Update secret if not in dry run
         if not dry_run:
-             console.print("  [dim]Updating secret...[/dim]")
-             # Generate yaml and pipe to apply
-             proc = subprocess.Popen(
-                ["kubectl", "create", "secret", "generic", "metadata-relay-secrets",
-                "-n", namespace,
-                "--dry-run=client", "-o", "yaml",
-                f"--from-literal=RELAY_TOKEN_SECRET={config.relay_secret_key_base}",
-                f"--from-literal=TMDB_API_KEY={config.relay_tmdb_api_key}",
-                f"--from-literal=TVDB_API_KEY={config.relay_tvdb_api_key}"],
-                stdout=subprocess.PIPE
-             )
-             subprocess.run(["kubectl", "apply", "-f", "-"], stdin=proc.stdout)
-             console.print("  [green]✓[/green] Secret updated")
+            console.print("  [dim]Updating secret...[/dim]")
+            run([
+                "kubectl",
+                "patch",
+                "secret",
+                "metadata-relay-secrets",
+                "-n",
+                namespace,
+                "--type",
+                "merge",
+                "-p",
+                json.dumps({"stringData": metadata_relay_secret_data(config)}),
+            ])
+            console.print("  [green]✓[/green] Secret updated")
 
     elif dry_run:
         console.print("  [yellow]Would create:[/yellow] Secret with API keys")
     else:
         console.print("  [dim]Creating secret...[/dim]")
-        run([
-            "kubectl", "create", "secret", "generic", "metadata-relay-secrets",
-            "-n", namespace,
-            f"--from-literal=RELAY_TOKEN_SECRET={config.relay_secret_key_base}",
-            f"--from-literal=TMDB_API_KEY={config.relay_tmdb_api_key}",
-            f"--from-literal=TVDB_API_KEY={config.relay_tvdb_api_key}",
-        ])
+        run(metadata_relay_secret_args(config, namespace))
         console.print("  [green]✓[/green] Secret created")
 
     # --- Apply manifests ---
@@ -959,6 +956,36 @@ def phase_app(config: Config, dry_run: bool = False) -> bool:
         console.print("  [green]✓[/green] Application deployed")
 
     return True
+
+
+def metadata_relay_secret_data(config: Config) -> dict[str, str]:
+    data = {
+        "RELAY_TOKEN_SECRET": config.relay_secret_key_base,
+        "TMDB_API_KEY": config.relay_tmdb_api_key,
+        "TVDB_API_KEY": config.relay_tvdb_api_key,
+    }
+
+    if config.relay_smtp_password:
+        data["SMTP_PASSWORD"] = config.relay_smtp_password
+
+    return data
+
+
+def metadata_relay_secret_args(config: Config, namespace: str) -> list[str]:
+    args = [
+        "kubectl",
+        "create",
+        "secret",
+        "generic",
+        "metadata-relay-secrets",
+        "-n",
+        namespace,
+    ]
+
+    for key, value in metadata_relay_secret_data(config).items():
+        args.append(f"--from-literal={key}={value}")
+
+    return args
 
 
 def phase_monitoring(config: Config, dry_run: bool = False) -> bool:
