@@ -38,6 +38,39 @@ if config_env() != :test do
     http: [port: port],
     server: true
 
+  feedback_email_to = System.get_env("FEEDBACK_EMAIL_TO")
+  feedback_email_from = System.get_env("FEEDBACK_EMAIL_FROM") || "metadata-relay@localhost"
+  feedback_dashboard_url = System.get_env("FEEDBACK_DASHBOARD_URL")
+
+  if feedback_email_to && String.trim(feedback_email_to) != "" do
+    config :metadata_relay, MetadataRelay.Feedback.Notifier,
+      recipient: feedback_email_to,
+      from: feedback_email_from,
+      dashboard_url: feedback_dashboard_url
+
+    smtp_host = System.get_env("SMTP_HOST")
+
+    if smtp_host && String.trim(smtp_host) != "" do
+      smtp_username = System.get_env("SMTP_USERNAME")
+      smtp_password = System.get_env("SMTP_PASSWORD")
+
+      config :metadata_relay, MetadataRelay.Mailer,
+        adapter: Swoosh.Adapters.SMTP,
+        relay: smtp_host,
+        port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
+        username: smtp_username,
+        password: smtp_password,
+        auth: if(smtp_username && smtp_password, do: :always, else: :never),
+        tls: :always,
+        retries: 2,
+        no_mx_lookups: true
+    else
+      if config_env() == :prod do
+        raise("SMTP_HOST must be set when FEEDBACK_EMAIL_TO is configured")
+      end
+    end
+  end
+
   if config_env() == :prod do
     # API keys from environment
     tmdb_api_key = System.get_env("TMDB_API_KEY")

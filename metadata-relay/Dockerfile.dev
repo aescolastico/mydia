@@ -1,7 +1,7 @@
 FROM elixir:1.19-alpine
 
 # Install development dependencies
-RUN apk add --no-cache build-base git inotify-tools curl
+RUN apk add --no-cache build-base git inotify-tools curl nodejs npm
 
 WORKDIR /app
 
@@ -16,8 +16,8 @@ RUN mix deps.get
 # Copy application files
 COPY . .
 
-# Compile dependencies
-RUN mix deps.compile
+# Compile dependencies and prebuild static assets
+RUN mix deps.compile && mix assets.setup && mix assets.build
 
 # Expose the port
 EXPOSE 4001

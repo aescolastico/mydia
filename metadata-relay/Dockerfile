@@ -2,7 +2,7 @@
 FROM elixir:1.19-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache build-base git openssl-dev
+RUN apk add --no-cache build-base git openssl-dev nodejs npm
 
 # Set build environment
 ENV MIX_ENV=prod
@@ -22,6 +22,7 @@ RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
 
 # Copy mix files (building from repo root)
 COPY metadata-relay/mix.exs metadata-relay/mix.lock ./
+COPY metadata-relay/assets/package.json metadata-relay/assets/package-lock.json ./assets/
 
 # Install dependencies with cache (with retry for transient network failures)
 RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
@@ -36,6 +37,9 @@ RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
 # Restore deps from cache copy
 RUN rm -rf deps && mv deps_copy deps
 
+# Install frontend dependencies
+RUN cd assets && npm ci
+
 # Compile dependencies with cache
 RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
     --mount=type=cache,id=relay-mix,target=/root/.mix \
@@ -48,6 +52,7 @@ RUN rm -rf _build && mv _build_copy _build
 
 # Copy application files (building from repo root)
 COPY metadata-relay/config ./config
+COPY metadata-relay/assets ./assets
 COPY metadata-relay/lib ./lib
 COPY metadata-relay/priv ./priv
 
@@ -55,6 +60,11 @@ COPY metadata-relay/priv ./priv
 RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
     --mount=type=cache,id=relay-mix,target=/root/.mix \
     mix compile
+
+# Build frontend assets
+RUN --mount=type=cache,id=relay-hex,target=/root/.hex \
+    --mount=type=cache,id=relay-mix,target=/root/.mix \
+    mix assets.deploy
 
 # Build release
 RUN --mount=type=cache,id=relay-hex,target=/root/.hex \

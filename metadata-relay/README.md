@@ -136,6 +136,13 @@ The service is configured entirely via environment variables for maximum flexibi
 | `TMDB_API_KEY`    | Yes      | -                  | API key for The Movie Database. Get one at https://www.themoviedb.org/settings/api                                      |
 | `TVDB_API_KEY`    | Yes      | -                  | API key for TheTVDB. Get one at https://thetvdb.com/api-information                                                     |
 | `REDIS_URL`       | No       | -                  | Redis connection URL for persistent caching. Format: `redis://[password@]host:port`. If not set, uses in-memory caching |
+| `FEEDBACK_EMAIL_TO` | No     | -                  | Email address that receives a notification for each new feedback submission. Notifications are disabled when unset       |
+| `FEEDBACK_EMAIL_FROM` | No   | `metadata-relay@localhost` | Sender address for feedback notification emails                                                                   |
+| `FEEDBACK_DASHBOARD_URL` | No | -                 | Public dashboard base URL included in feedback notification emails, for example `https://relay.example.com`             |
+| `SMTP_HOST`       | Required when `FEEDBACK_EMAIL_TO` is set in production | - | SMTP relay host used to send feedback notification emails                                                       |
+| `SMTP_PORT`       | No       | `587`              | SMTP relay port                                                                                                         |
+| `SMTP_USERNAME`   | No       | -                  | SMTP username. SMTP auth is enabled when both username and password are present                                          |
+| `SMTP_PASSWORD`   | No       | -                  | SMTP password. SMTP auth is enabled when both username and password are present                                          |
 
 ### Cache Configuration
 

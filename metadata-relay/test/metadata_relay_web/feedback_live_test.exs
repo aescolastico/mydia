@@ -35,15 +35,16 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
     {:ok, _read} = Feedback.update_state(read, "read")
     {:ok, _archived} = Feedback.update_state(archived, "archived")
 
-    {:ok, _view, html} = live(authed_conn(), "/feedback")
+    {:ok, view, html} = live(authed_conn(), "/feedback")
 
-    assert html =~ "Unread new"
-    assert html =~ "Unread old"
-    refute html =~ read.message
-    refute html =~ archived.message
+    assert has_element?(view, "#feedback-dashboard")
+    assert has_element?(view, "#feedback-#{unread_new.id}")
+    assert has_element?(view, "#feedback-#{unread_old.id}")
+    refute has_element?(view, "#feedback-#{read.id}")
+    refute has_element?(view, "#feedback-#{archived.id}")
 
-    assert html =~ "feedback-#{unread_new.id}"
-    assert html =~ "feedback-#{unread_old.id}"
+    assert :binary.match(html, "feedback-#{unread_new.id}") <
+             :binary.match(html, "feedback-#{unread_old.id}")
   end
 
   test "switching state filter to all surfaces all rows" do
@@ -60,9 +61,10 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
       |> form("#feedback-filters", %{"filters" => %{"state" => "all", "type" => "all"}})
       |> render_change()
 
-    assert html =~ unread.message
-    assert html =~ read.message
-    assert html =~ archived.message
+    assert html =~ "Showing 3 matching submissions"
+    assert has_element?(view, "#feedback-#{unread.id}")
+    assert has_element?(view, "#feedback-#{read.id}")
+    assert has_element?(view, "#feedback-#{archived.id}")
   end
 
   test "mark read transitions an unread row" do
@@ -71,10 +73,11 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
     {:ok, view, _html} = live(authed_conn(), "/feedback")
 
     view
-    |> element("button[phx-click='mark_read'][phx-value-id='#{submission.id}']")
+    |> element("#mark-read-#{submission.id}")
     |> render_click()
 
     assert Feedback.get_submission!(submission.id).state == "read"
+    refute has_element?(view, "#mark-read-#{submission.id}")
   end
 
   test "archive transitions a read row" do
@@ -88,10 +91,11 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
     |> render_change()
 
     view
-    |> element("button[phx-click='archive'][phx-value-id='#{submission.id}']")
+    |> element("#archive-#{submission.id}")
     |> render_click()
 
     assert Feedback.get_submission!(submission.id).state == "archived"
+    refute has_element?(view, "#archive-#{submission.id}")
   end
 
   test "saving github_ref persists the tag" do
@@ -101,13 +105,14 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
 
     html =
       view
-      |> form("form[phx-submit='save_github_ref'][phx-value-id='#{submission.id}']", %{
+      |> form("#feedback-github-ref-#{submission.id}", %{
         "github_ref" => "gh#123"
       })
       |> render_submit()
 
     assert Feedback.get_submission!(submission.id).github_ref == "gh#123"
-    assert html =~ "gh#123"
+    assert html =~ "Filed as gh#123"
+    assert has_element?(view, "#github-ref-input-#{submission.id}[value='gh#123']")
   end
 
   test "saving github_ref for a missing row shows an error" do
@@ -120,6 +125,7 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
       })
 
     assert html =~ "Feedback no longer exists."
+    assert has_element?(view, "#dashboard-flash-error", "Feedback no longer exists.")
   end
 
   test "saving github_ref with an invalid id shows an error" do
@@ -132,6 +138,7 @@ defmodule MetadataRelayWeb.FeedbackLiveTest do
       })
 
     assert html =~ "Feedback no longer exists."
+    assert has_element?(view, "#dashboard-flash-error", "Feedback no longer exists.")
   end
 
   defp authed_conn do

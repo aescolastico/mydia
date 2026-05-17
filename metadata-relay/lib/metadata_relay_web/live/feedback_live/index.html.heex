@@ -1,148 +1,214 @@
-<main style="font-family: system-ui, sans-serif; max-width: 1180px; margin: 0 auto; padding: 32px 20px;">
-  <header style="display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 24px;">
-    <div>
-      <h1 style="font-size: 32px; margin: 0 0 6px;">Feedback</h1>
-      <p style="margin: 0; color: #4b5563;">Read and triage feedback sent from Mydia instances.</p>
-    </div>
-  </header>
+<MetadataRelayWeb.Layouts.app flash={@flash}>
+  <section id="feedback-dashboard" class="space-y-6">
+    <section class="hero rounded-box border border-base-300 bg-base-100 shadow-xl">
+      <div class="hero-content w-full flex-col items-stretch gap-8 px-6 py-8 lg:flex-row lg:items-center lg:justify-between">
+        <div class="max-w-2xl space-y-4">
+          <div class="badge badge-primary badge-lg">Maintainer dashboard</div>
 
-  <p
-    :if={Phoenix.Flash.get(@flash, :error)}
-    style="padding: 12px 14px; border-radius: 8px; background: #fee2e2; color: #991b1b; margin-bottom: 16px;"
-  >
-    {Phoenix.Flash.get(@flash, :error)}
-  </p>
-
-  <p
-    :if={Phoenix.Flash.get(@flash, :info)}
-    style="padding: 12px 14px; border-radius: 8px; background: #dbeafe; color: #1e40af; margin-bottom: 16px;"
-  >
-    {Phoenix.Flash.get(@flash, :info)}
-  </p>
-
-  <form phx-change="filter" id="feedback-filters" style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;">
-    <label>
-      <span style="display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px;">State</span>
-      <select name="filters[state]" style="min-width: 140px; padding: 8px;" value={@state_filter}>
-        <option value="unread" selected={@state_filter == "unread"}>Unread</option>
-        <option value="read" selected={@state_filter == "read"}>Read</option>
-        <option value="archived" selected={@state_filter == "archived"}>Archived</option>
-        <option value="all" selected={@state_filter == "all"}>All</option>
-      </select>
-    </label>
-
-    <label>
-      <span style="display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px;">Type</span>
-      <select name="filters[type]" style="min-width: 140px; padding: 8px;" value={@type_filter}>
-        <option value="all" selected={@type_filter == "all"}>All</option>
-        <option value="bug" selected={@type_filter == "bug"}>Bug</option>
-        <option value="idea" selected={@type_filter == "idea"}>Idea</option>
-        <option value="question" selected={@type_filter == "question"}>Question</option>
-      </select>
-    </label>
-  </form>
-
-  <section id="feedback-submissions" style="display: grid; gap: 14px;">
-    <p :if={@submissions == []} style="padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px; color: #4b5563;">
-      No feedback matches the current filters.
-    </p>
-
-    <article
-      :for={submission <- @submissions}
-      id={"feedback-#{submission.id}"}
-      style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: white;"
-    >
-      <div style="display: flex; justify-content: space-between; gap: 16px; align-items: start;">
-        <div>
-          <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-            <strong style="text-transform: capitalize;">{submission.type}</strong>
-            <span style="font-size: 12px; color: #4b5563;">{submission.state}</span>
-            <span :if={submission.github_ref} style="font-size: 12px; color: #1d4ed8;">
-              {submission.github_ref}
-            </span>
+          <div class="space-y-2">
+            <h1 class="text-4xl font-semibold tracking-tight">Feedback triage</h1>
+            <p class="text-base leading-7 text-base-content/70">
+              Review product feedback from Mydia instances, focus on unread items first, and keep GitHub filing notes attached to each submission.
+            </p>
           </div>
-          <p style="white-space: pre-wrap; margin: 0 0 10px;">
-            <%= if expanded?(@expanded_ids, submission.id) do %>
-              {submission.message}
-            <% else %>
-              {truncate_message(submission.message)}
-            <% end %>
-          </p>
-          <button
-            :if={byte_size(submission.message) > 220}
-            type="button"
-            phx-click="toggle_expand"
-            phx-value-id={submission.id}
-            style="border: 0; background: transparent; color: #1d4ed8; padding: 0; cursor: pointer;"
-          >
-            <%= if expanded?(@expanded_ids, submission.id), do: "Collapse", else: "Expand" %>
-          </button>
         </div>
 
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: end;">
-          <button
-            :if={submission.state != "read"}
-            type="button"
-            phx-click="mark_read"
-            phx-value-id={submission.id}
-            style="padding: 8px 10px;"
-          >
-            Mark read
-          </button>
-          <button
-            :if={submission.state != "archived"}
-            type="button"
-            phx-click="archive"
-            phx-value-id={submission.id}
-            style="padding: 8px 10px;"
-          >
-            Archive
-          </button>
+        <div class="stats stats-vertical rounded-box border border-base-300 bg-base-200/70 shadow-sm sm:stats-horizontal">
+          <div id="feedback-stat-total" class="stat">
+            <div class="stat-title">Total</div>
+            <div class="stat-value text-3xl">{@summary.total}</div>
+            <div class="stat-desc">All submissions</div>
+          </div>
+          <div id="feedback-stat-unread" class="stat">
+            <div class="stat-title">Unread</div>
+            <div class="stat-value text-3xl text-primary">{@summary.unread}</div>
+            <div class="stat-desc">Needs review</div>
+          </div>
+          <div id="feedback-stat-read" class="stat">
+            <div class="stat-title">Read</div>
+            <div class="stat-value text-3xl text-info">{@summary.read}</div>
+            <div class="stat-desc">Acknowledged</div>
+          </div>
+          <div id="feedback-stat-archived" class="stat">
+            <div class="stat-title">Archived</div>
+            <div class="stat-value text-3xl text-neutral">{@summary.archived}</div>
+            <div class="stat-desc">Filed away</div>
+          </div>
         </div>
       </div>
+    </section>
 
-      <dl style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 16px 0;">
-        <div>
-          <dt style="font-size: 12px; color: #4b5563;">Contact</dt>
-          <dd style="margin: 0;">{submission.contact || "none"}</dd>
+    <section id="feedback-controls" class="card border border-base-300 bg-base-100 shadow-sm">
+      <div class="card-body gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div class="space-y-1">
+          <h2 class="card-title text-lg">Inbox filters</h2>
+          <p id="feedback-filter-summary" class="text-sm text-base-content/70">
+            {active_filter_label(@state_filter, @type_filter, @visible_count)}
+          </p>
         </div>
-        <div>
-          <dt style="font-size: 12px; color: #4b5563;">Instance</dt>
-          <dd style="margin: 0;">{short_instance_id(submission.instance_id)}</dd>
-        </div>
-        <div>
-          <dt style="font-size: 12px; color: #4b5563;">Version</dt>
-          <dd style="margin: 0;">{submission.mydia_version || "unknown"}</dd>
-        </div>
-        <div>
-          <dt style="font-size: 12px; color: #4b5563;">Source IP</dt>
-          <dd style="margin: 0;">{submission.source_ip || "unknown"}</dd>
-        </div>
-        <div>
-          <dt style="font-size: 12px; color: #4b5563;">Received</dt>
-          <dd style="margin: 0;">{format_time(submission.inserted_at)}</dd>
-        </div>
-      </dl>
 
-      <form
-        phx-submit="save_github_ref"
-        phx-value-id={submission.id}
-        style="display: flex; gap: 8px; align-items: end;"
+        <form
+          id="feedback-filters"
+          phx-change="filter"
+          class="grid w-full gap-4 sm:grid-cols-2 lg:w-auto lg:min-w-[24rem]"
+        >
+          <label class="form-control w-full">
+            <div class="label pb-2">
+              <span class="label-text font-medium">State</span>
+            </div>
+            <select id="feedback-filter-state" name="filters[state]" class="select select-bordered w-full">
+              <option value="unread" selected={@state_filter == "unread"}>Unread</option>
+              <option value="read" selected={@state_filter == "read"}>Read</option>
+              <option value="archived" selected={@state_filter == "archived"}>Archived</option>
+              <option value="all" selected={@state_filter == "all"}>All</option>
+            </select>
+          </label>
+
+          <label class="form-control w-full">
+            <div class="label pb-2">
+              <span class="label-text font-medium">Type</span>
+            </div>
+            <select id="feedback-filter-type" name="filters[type]" class="select select-bordered w-full">
+              <option value="all" selected={@type_filter == "all"}>All</option>
+              <option value="bug" selected={@type_filter == "bug"}>Bug</option>
+              <option value="idea" selected={@type_filter == "idea"}>Idea</option>
+              <option value="question" selected={@type_filter == "question"}>Question</option>
+            </select>
+          </label>
+        </form>
+      </div>
+    </section>
+
+    <section id="feedback-submissions" class="space-y-4">
+      <section
+        :if={@submissions == []}
+        id="feedback-empty-state"
+        class="hero rounded-box border border-dashed border-base-300 bg-base-100 shadow-sm"
       >
-        <label style="flex: 1;">
-          <span style="display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px;">
-            Filed as
-          </span>
-          <input
-            type="text"
-            name="github_ref"
-            value={submission.github_ref}
-            placeholder="gh#123"
-            style="box-sizing: border-box; width: 100%; padding: 8px;"
-          />
-        </label>
-        <button type="submit" style="padding: 8px 10px;">Save</button>
-      </form>
-    </article>
+        <div class="hero-content py-12 text-center">
+          <div class="max-w-md space-y-3">
+            <h2 class="text-2xl font-semibold">Nothing to triage right now</h2>
+            <p class="text-base-content/70">{empty_state_copy(@state_filter, @type_filter)}</p>
+          </div>
+        </div>
+      </section>
+
+      <article
+        :for={submission <- @submissions}
+        id={"feedback-#{submission.id}"}
+        class="card border border-base-300 bg-base-100 shadow-sm transition-shadow hover:shadow-md"
+      >
+        <div class="card-body gap-5">
+          <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div class="min-w-0 flex-1 space-y-4">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class={["badge badge-lg font-semibold", type_badge_class(submission.type)]}>
+                  {type_label(submission.type)}
+                </span>
+                <span class={["badge badge-outline font-medium", state_badge_class(submission.state)]}>
+                  {state_label(submission.state)}
+                </span>
+                <span :if={submission.github_ref} class="badge badge-outline badge-info">
+                  Filed as {submission.github_ref}
+                </span>
+              </div>
+
+              <div class="space-y-2">
+                <p
+                  id={"feedback-message-#{submission.id}"}
+                  class="feedback-message whitespace-pre-wrap text-base leading-7 text-base-content/90"
+                >
+                  <%= if expanded?(@expanded_ids, submission.id) do %>
+                    {submission.message}
+                  <% else %>
+                    {truncate_message(submission.message)}
+                  <% end %>
+                </p>
+
+                <button
+                  :if={expandable_message?(submission.message)}
+                  id={"toggle-expand-#{submission.id}"}
+                  type="button"
+                  phx-click="toggle_expand"
+                  phx-value-id={submission.id}
+                  class="btn btn-ghost btn-xs px-0 normal-case text-primary hover:bg-transparent"
+                >
+                  <%= if expanded?(@expanded_ids, submission.id), do: "Collapse message", else: "Expand message" %>
+                </button>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 flex-wrap gap-2 xl:justify-end">
+              <button
+                :if={submission.state == "unread"}
+                id={"mark-read-#{submission.id}"}
+                type="button"
+                phx-click="mark_read"
+                phx-value-id={submission.id}
+                class="btn btn-secondary btn-sm"
+              >
+                Mark read
+              </button>
+              <button
+                :if={submission.state != "archived"}
+                id={"archive-#{submission.id}"}
+                type="button"
+                phx-click="archive"
+                phx-value-id={submission.id}
+                class="btn btn-outline btn-sm"
+              >
+                Archive
+              </button>
+            </div>
+          </div>
+
+          <dl class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div class="rounded-box bg-base-200/70 p-4">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Contact</dt>
+              <dd class="mt-2 text-sm font-medium text-base-content/80">{submission.contact || "None provided"}</dd>
+            </div>
+            <div class="rounded-box bg-base-200/70 p-4">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Instance</dt>
+              <dd class="mt-2 text-sm font-medium text-base-content/80">{short_instance_id(submission.instance_id)}</dd>
+            </div>
+            <div class="rounded-box bg-base-200/70 p-4">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Version</dt>
+              <dd class="mt-2 text-sm font-medium text-base-content/80">{submission.mydia_version || "Unknown"}</dd>
+            </div>
+            <div class="rounded-box bg-base-200/70 p-4">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Source IP</dt>
+              <dd class="mt-2 text-sm font-medium text-base-content/80">{submission.source_ip || "Unknown"}</dd>
+            </div>
+            <div class="rounded-box bg-base-200/70 p-4">
+              <dt class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Received</dt>
+              <dd class="mt-2 text-sm font-medium text-base-content/80">{format_time(submission.inserted_at)}</dd>
+            </div>
+          </dl>
+
+          <form
+            id={"feedback-github-ref-#{submission.id}"}
+            phx-submit="save_github_ref"
+            phx-value-id={submission.id}
+            class="grid gap-3 rounded-box border border-base-300/80 bg-base-200/40 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
+          >
+            <label class="form-control w-full">
+              <div class="label pb-2">
+                <span class="label-text font-medium">GitHub reference</span>
+                <span class="label-text-alt text-base-content/60">Issue or PR tracking handle</span>
+              </div>
+              <input
+                id={"github-ref-input-#{submission.id}"}
+                type="text"
+                name="github_ref"
+                value={submission.github_ref}
+                placeholder="gh#123"
+                class="input input-bordered w-full"
+              />
+            </label>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </form>
+        </div>
+      </article>
+    </section>
   </section>
-</main>
+</MetadataRelayWeb.Layouts.app>

@@ -25,9 +25,17 @@ metadata_relay-*.tar
 # Temporary files, for example, from tests.
 /tmp/
 
+# Ignore assets that are produced by build tools.
+/priv/static/assets/
+/priv/static/cache_manifest.json
+/priv/static/**/*.gz
+
 # Environment variables
 .env
 .env.local
+
+# Node assets
+/assets/node_modules/
 
 # Docker volumes
 /data/

@@ -4,9 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={Plug.CSRFProtection.get_csrf_token()} />
-    <title>Metadata Relay - Error Tracker</title>
+    <title>{Enum.join(Enum.reject([assigns[:page_title], "Metadata Relay"], &is_nil/1), " · ")}</title>
+    <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    </script>
   </head>
-  <body>
+  <body class="antialiased">
     <%= @inner_content %>
   </body>
 </html>

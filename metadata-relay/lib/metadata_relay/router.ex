@@ -773,6 +773,8 @@ defmodule MetadataRelay.Router do
     with {:ok, attrs} <- validate_feedback(conn.body_params),
          attrs = Map.put(attrs, :source_ip, client_ip),
          {:ok, submission} <- MetadataRelay.Feedback.create_submission(attrs) do
+      notify_feedback_submission(submission)
+
       conn
       |> put_resp_content_type("application/json")
       |> send_resp(201, Jason.encode!(%{status: "created", id: submission.id}))
@@ -851,6 +853,27 @@ defmodule MetadataRelay.Router do
   end
 
   defp validate_feedback(_), do: {:error, :invalid_json}
+
+  defp notify_feedback_submission(submission) do
+    case MetadataRelay.Feedback.Notifier.deliver_new_submission(submission) do
+      :ok ->
+        :ok
+
+      {:ok, _metadata} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Failed to send feedback notification email", reason: inspect(reason))
+        :ok
+    end
+  rescue
+    exception ->
+      Logger.error("Failed to send feedback notification email",
+        reason: Exception.message(exception)
+      )
+
+      :ok
+  end
 
   defp feedback_rate_limit_instance_id(params) when is_map(params) do
     case get_feedback_param(params, "instance_id") do

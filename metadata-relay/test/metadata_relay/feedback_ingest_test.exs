@@ -1,6 +1,8 @@
 defmodule MetadataRelay.FeedbackIngestTest do
   use ExUnit.Case, async: false
 
+  import Swoosh.TestAssertions
+
   alias MetadataRelay.Feedback
   alias MetadataRelay.Feedback.Submission
   alias MetadataRelay.Repo
@@ -41,6 +43,34 @@ defmodule MetadataRelay.FeedbackIngestTest do
       assert submission.instance_id == "instance-1"
       assert submission.mydia_version == "1.2.3"
       assert submission.source_ip == "127.0.0.1"
+
+      assert_email_sent(
+        to: "maintainer@example.com",
+        from: "metadata-relay@example.com",
+        subject: "[Mydia feedback] bug: Playback froze"
+      )
+    end
+
+    test "includes submission details in the notification email" do
+      conn =
+        post_feedback(%{
+          "type" => "idea",
+          "message" => "Add watch party mode",
+          "contact" => "user@example.com",
+          "instance_id" => "instance-1",
+          "mydia_version" => "1.2.3"
+        })
+
+      assert conn.status == 201
+
+      assert_email_sent(fn email ->
+        assert email.text_body =~ "Type: idea"
+        assert email.text_body =~ "Contact: user@example.com"
+        assert email.text_body =~ "Instance: instance-1"
+        assert email.text_body =~ "Mydia version: 1.2.3"
+        assert email.text_body =~ "Message:\nAdd watch party mode"
+        assert email.text_body =~ "Dashboard: https://relay.example.com/feedback#feedback-"
+      end)
     end
 
     test "returns 400 when type is missing" do

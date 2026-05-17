@@ -17,3 +17,10 @@ config :metadata_relay, MetadataRelay.Repo,
 
 config :metadata_relay,
   rendezvous_master_pepper: "test-pepper-not-for-production"
+
+config :metadata_relay, MetadataRelay.Feedback.Notifier,
+  recipient: "maintainer@example.com",
+  from: "metadata-relay@example.com",
+  dashboard_url: "https://relay.example.com"
+
+config :metadata_relay, MetadataRelay.Mailer, adapter: Swoosh.Adapters.Test

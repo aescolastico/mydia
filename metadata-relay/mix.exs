@@ -35,6 +35,10 @@ defmodule MetadataRelay.MixProject do
       {:phoenix, "~> 1.7"},
       {:phoenix_live_view, "~> 1.0"},
       {:phoenix_html, "~> 4.0"},
+      {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
+      {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
+      {:swoosh, "~> 1.17"},
+      {:gen_smtp, "~> 1.2"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
@@ -44,7 +48,20 @@ defmodule MetadataRelay.MixProject do
 
   defp aliases do
     [
-      test: ["test"]
+      setup: ["deps.get", "assets.setup", "assets.build"],
+      test: ["test"],
+      "assets.setup": [
+        "cmd --cd assets npm ci",
+        "tailwind.install --if-missing",
+        "esbuild.install --if-missing"
+      ],
+      "assets.build": ["tailwind metadata_relay", "esbuild metadata_relay"],
+      "assets.deploy": [
+        "cmd --cd assets npm ci",
+        "tailwind metadata_relay --minify",
+        "esbuild metadata_relay --minify",
+        "phx.digest"
+      ]
     ]
   end
 
