@@ -448,6 +448,7 @@ defmodule Mydia.Library do
           where: mf.id == ^media_file.id,
           select: %{
             metadata: mf.metadata,
+            analyzed_at: mf.analyzed_at,
             updated_at: mf.updated_at
           }
         )
@@ -470,7 +471,14 @@ defmodule Mydia.Library do
 
         query =
           from(mf in MediaFile,
-            where: mf.id == ^media_file.id and mf.updated_at == ^current.updated_at
+            where:
+              mf.id == ^media_file.id and mf.updated_at == ^current.updated_at and
+                mf.analyzed_at == ^current.analyzed_at and
+                fragment(
+                  "json_extract(?, '$.width') IS NULL OR json_extract(?, '$.height') IS NULL",
+                  mf.metadata,
+                  mf.metadata
+                )
           )
 
         case Repo.update_all(query, set: set) do

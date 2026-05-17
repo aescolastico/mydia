@@ -353,18 +353,38 @@ defmodule Mydia.Library.FileAnalyzer do
 
   # Cropped cinemascope encodes often keep the source width (for example
   # 1920x800) while trimming black bars from the stored frame height. Use the
-  # implied 16:9 height as a floor for widescreen landscape video so 1080p
-  # sources are not downgraded to 720p purely because of active-image crops.
+  # encoded width as a fallback only when the stored height is not already near
+  # a standard tier. That fixes 1920x800 -> 1080p and 1280x534 -> 720p while
+  # leaving true ultrawide sources like 2560x1080 at their actual 1080p tier.
   defp effective_resolution_height(width, height)
        when is_integer(width) and is_integer(height) and width > 0 and height > 0 do
-    if width > height and width / height >= 16 / 9 do
-      max(height, round(width * 9 / 16))
-    else
-      height
+    cond do
+      standard_resolution_height?(height) ->
+        height
+
+      width > height ->
+        inferred_resolution_height_from_width(width) || height
+
+      true ->
+        height
     end
   end
 
   defp effective_resolution_height(_width, height), do: height
+
+  @resolution_height_tolerance 24
+
+  defp standard_resolution_height?(height) do
+    Enum.any?([2160, 1440, 1080, 720, 480, 360], fn standard_height ->
+      abs(height - standard_height) <= @resolution_height_tolerance
+    end)
+  end
+
+  defp inferred_resolution_height_from_width(width) when width >= 3800, do: 2160
+  defp inferred_resolution_height_from_width(width) when width >= 2500, do: 1440
+  defp inferred_resolution_height_from_width(width) when width >= 1900, do: 1080
+  defp inferred_resolution_height_from_width(width) when width >= 1200, do: 720
+  defp inferred_resolution_height_from_width(_width), do: nil
 
   defp extract_video_codec(nil), do: nil
 

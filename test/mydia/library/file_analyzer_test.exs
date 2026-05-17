@@ -115,6 +115,24 @@ defmodule Mydia.Library.FileAnalyzerTest do
         File.rm(shim)
       end
     end
+
+    test "does not up-rank true ultrawide sources", %{target_file: target_file} do
+      shim =
+        write_json_shim(
+          ~s({"streams":[{"codec_type":"video","codec_name":"hevc","width":2560,"height":1080},{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"60.0","format_name":"matroska"}})
+        )
+
+      try do
+        Application.put_env(:mydia, :ffprobe_path, shim)
+
+        assert {:ok, result} = FileAnalyzer.analyze(target_file)
+        assert result.resolution == "1080p"
+        assert result.width == 2560
+        assert result.height == 1080
+      after
+        File.rm(shim)
+      end
+    end
   end
 
   describe "codec mapping" do

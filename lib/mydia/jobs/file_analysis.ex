@@ -90,7 +90,14 @@ defmodule Mydia.Jobs.FileAnalysis do
 
     from(mf in MediaFile,
       where:
-        is_nil(mf.trashed_at) and mf.analysis_attempts < ^max_attempts and
+        not is_nil(mf.analyzed_at) and is_nil(mf.trashed_at) and
+          mf.analysis_attempts < ^max_attempts and
+          not is_nil(mf.codec) and not is_nil(mf.resolution) and
+          fragment(
+            "json_extract(?, '$.width') IS NULL OR json_extract(?, '$.height') IS NULL",
+            mf.metadata,
+            mf.metadata
+          ) and
           mf.id not in ^exclude_ids,
       order_by: [asc: mf.updated_at, asc: mf.id],
       limit: ^overscan_limit,
@@ -101,13 +108,7 @@ defmodule Mydia.Jobs.FileAnalysis do
     |> Enum.take(limit)
   end
 
-  defp repair_candidate?(%MediaFile{
-         analyzed_at: %DateTime{},
-         codec: codec,
-         resolution: resolution,
-         metadata: %FileMetadata{} = metadata
-       })
-       when not is_nil(codec) and not is_nil(resolution) do
+  defp repair_candidate?(%MediaFile{metadata: %FileMetadata{} = metadata}) do
     is_nil(metadata.width) or is_nil(metadata.height)
   end
 
