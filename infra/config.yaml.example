@@ -23,8 +23,16 @@ relay_tvdb_api_key: "your-tvdb-api-key"
 # TMDB API key from: https://www.themoviedb.org/settings/api
 relay_tmdb_api_key: "your-tmdb-api-key"
 
-# SMTP password for metadata-relay feedback email notifications
-relay_smtp_password: "your-smtp-password"
+# Feedback email notifications (optional)
+# All six fields below must be set together for the relay to send feedback emails.
+# Leave blank to disable. Stored locally only — never committed to git.
+relay_smtp_host: ""
+relay_smtp_port: "587"
+relay_smtp_username: ""
+relay_smtp_password: ""
+relay_feedback_email_to: ""
+relay_feedback_email_from: ""
+relay_feedback_dashboard_url: ""
 
 # Monitoring
 # Leave empty to auto-generate on first deploy
