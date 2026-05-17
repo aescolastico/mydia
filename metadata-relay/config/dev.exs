@@ -7,6 +7,9 @@ config :logger, :console, format: "[$level] $message\n"
 config :metadata_relay, MetadataRelayWeb.Endpoint,
   code_reloader: true,
   check_origin: false,
-  watchers: []
+  watchers: [
+    tailwind: {Tailwind, :install_and_run, [:metadata_relay, ~w(--watch)]},
+    esbuild: {Esbuild, :install_and_run, [:metadata_relay, ~w(--sourcemap=inline --watch)]}
+  ]
 
 config :phoenix, :stacktrace_depth, 20

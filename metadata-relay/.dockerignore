@@ -11,6 +11,8 @@
 _build
 deps
 *.ez
+assets/node_modules
+priv/static/assets
 
 # Documentation
 README.md

@@ -5,6 +5,17 @@ import Config
 
 # Skip runtime configuration for test environment (handled in test.exs)
 if config_env() != :test do
+  normalize_env = fn name ->
+    case System.get_env(name) do
+      nil ->
+        nil
+
+      value ->
+        value = String.trim(value)
+        if value == "", do: nil, else: value
+    end
+  end
+
   dashboard_username =
     System.get_env("DASHBOARD_USERNAME") ||
       if config_env() == :prod do
@@ -37,6 +48,40 @@ if config_env() != :test do
   config :metadata_relay, MetadataRelayWeb.Endpoint,
     http: [port: port],
     server: true
+
+  feedback_email_to = normalize_env.("FEEDBACK_EMAIL_TO")
+  feedback_email_from = normalize_env.("FEEDBACK_EMAIL_FROM") || "metadata-relay@localhost"
+  feedback_dashboard_url = normalize_env.("FEEDBACK_DASHBOARD_URL")
+
+  if feedback_email_to do
+    config :metadata_relay, MetadataRelay.Feedback.Notifier,
+      recipient: feedback_email_to,
+      from: feedback_email_from,
+      dashboard_url: feedback_dashboard_url
+
+    smtp_host = normalize_env.("SMTP_HOST")
+
+    if smtp_host do
+      smtp_username = normalize_env.("SMTP_USERNAME")
+      smtp_password = normalize_env.("SMTP_PASSWORD")
+      smtp_port = normalize_env.("SMTP_PORT") || "587"
+
+      config :metadata_relay, MetadataRelay.Mailer,
+        adapter: Swoosh.Adapters.SMTP,
+        relay: smtp_host,
+        port: String.to_integer(smtp_port),
+        username: smtp_username,
+        password: smtp_password,
+        auth: if(smtp_username && smtp_password, do: :always, else: :never),
+        tls: :always,
+        retries: 2,
+        no_mx_lookups: true
+    else
+      if config_env() == :prod do
+        raise("SMTP_HOST must be set when FEEDBACK_EMAIL_TO is configured")
+      end
+    end
+  end
 
   if config_env() == :prod do
     # API keys from environment
