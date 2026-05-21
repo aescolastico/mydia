@@ -508,7 +508,8 @@ if oidc_issuer && oidc_client_id && oidc_client_secret do
       provider_configuration_opts: %{
         quirks: %{
           document_overrides: %{
-            "pushed_authorization_request_endpoint" => :undefined
+            "pushed_authorization_request_endpoint" => :undefined,
+            "request_parameter_supported" => false
           }
         }
       }
