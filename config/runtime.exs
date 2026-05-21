@@ -502,7 +502,17 @@ if oidc_issuer && oidc_client_id && oidc_client_secret do
 
   # Step 1: Configure the OIDC issuer (required by ueberauth_oidcc)
   config :ueberauth_oidcc, :issuers, [
-    %{name: :default_issuer, issuer: oidc_issuer}
+    %{
+      name: :default_issuer,
+      issuer: oidc_issuer,
+      provider_configuration_opts: %{
+        quirks: %{
+          document_overrides: %{
+            "pushed_authorization_request_endpoint" => :undefined
+          }
+        }
+      }
+    }
   ]
 
   # Step 2: Configure Ueberauth provider with optimal compatibility settings
