@@ -347,6 +347,17 @@ if oidc_issuer && oidc_client_id && oidc_client_secret do
     %{
       name: :default_issuer,
       issuer: oidc_issuer,
+      # Workaround for Authelia 4.39+ JAR strictness (RFC 9101 cross-jwt-
+      # confusion mitigation): Authelia rejects request objects whose JWT
+      # header lacks `typ` (`JWT` or `oauth-authz-req+jwt`). Erlef oidcc up
+      # to and including v3.7.2 signs JARs without setting that header, so
+      # any flow that builds one fails with `invalid_request_object`.
+      #
+      # Patch the discovery doc so oidcc believes the issuer supports
+      # neither PAR nor the `request` parameter; that short-circuits
+      # `oidcc_authorization:attempt_request_object/3` and falls back to a
+      # plain query-param authorize redirect. Drop these overrides once
+      # upstream oidcc sets `typ` on signed request objects.
       provider_configuration_opts: %{
         quirks: %{
           document_overrides: %{
