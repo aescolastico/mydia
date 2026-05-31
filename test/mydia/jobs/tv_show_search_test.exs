@@ -1,5 +1,9 @@
 defmodule Mydia.Jobs.TVShowSearchTest do
-  use Mydia.DataCase, async: true
+  # async: false — this suite overrides the global download-client Registry
+  # (registers MockDownloadAdapter for :transmission). Production adapter
+  # resolution now reads that Registry live, so running async would race
+  # concurrent readers. Every Registry-mutating suite runs sync.
+  use Mydia.DataCase, async: false
   use Oban.Testing, repo: Mydia.Repo
 
   alias Mydia.Jobs.TVShowSearch
