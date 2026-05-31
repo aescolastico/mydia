@@ -261,8 +261,12 @@ defmodule Mydia.DownloadsTest do
         end
       end)
 
-      # Also unregister the mock adapter so no clients are available at all
+      # Also unregister the mock adapter so no clients are available at all.
+      # All resolution sites (queue, history, client_health, untracked_matcher,
+      # media_import) now resolve through the Registry, so restore it after this
+      # test to avoid leaving later tests without the production adapters.
       Mydia.Downloads.Client.Registry.unregister(:qbittorrent)
+      on_exit(fn -> Mydia.Downloads.register_clients() end)
 
       search_result = %SearchResult{
         title: "Test",

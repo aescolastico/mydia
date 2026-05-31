@@ -158,7 +158,7 @@ defmodule Mydia.Downloads.ClientHealth do
   end
 
   defp do_health_check(config) do
-    adapter = get_adapter(config.type)
+    adapter = Client.Registry.lookup(config.type)
     client_config = config_to_map(config)
 
     result =
@@ -238,15 +238,6 @@ defmodule Mydia.Downloads.ClientHealth do
   defp schedule_health_check do
     Process.send_after(self(), :perform_health_checks, @check_interval)
   end
-
-  defp get_adapter(:qbittorrent), do: Mydia.Downloads.Client.QBittorrent
-  defp get_adapter(:transmission), do: Mydia.Downloads.Client.Transmission
-  defp get_adapter(:rtorrent), do: Mydia.Downloads.Client.Rtorrent
-  defp get_adapter(:blackhole), do: Mydia.Downloads.Client.Blackhole
-  defp get_adapter(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
-  defp get_adapter(:nzbget), do: Mydia.Downloads.Client.Nzbget
-  defp get_adapter(:http), do: Mydia.Downloads.Client.HTTP
-  defp get_adapter(:debrid), do: Mydia.Downloads.Client.Debrid
 
   defp config_to_map(config) do
     %{
