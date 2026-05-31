@@ -15,6 +15,33 @@ defmodule Mydia.Settings.DownloadClientConfigTest do
     api_key: "test-api-key"
   }
 
+  describe "rqbit client type" do
+    @rqbit_attrs %{
+      name: "test-rqbit",
+      type: :rqbit,
+      enabled: true,
+      priority: 1,
+      host: "localhost",
+      port: 3030,
+      use_ssl: false
+    }
+
+    test "a rqbit config with host and port is valid" do
+      {:ok, config} = Settings.create_download_client_config(@rqbit_attrs)
+      assert config.type == :rqbit
+      assert config.host == "localhost"
+      assert config.port == 3030
+    end
+
+    test "rqbit requires host and port (network client validation)" do
+      changeset =
+        DownloadClientConfig.changeset(%DownloadClientConfig{}, %{@rqbit_attrs | host: nil})
+
+      refute changeset.valid?
+      assert %{host: _} = errors_on(changeset)
+    end
+  end
+
   describe "wave-2 schema additions" do
     test "inserting with a categories map round-trips correctly" do
       categories = %{"movie" => "movies", "tv" => "tv", "music" => "music"}

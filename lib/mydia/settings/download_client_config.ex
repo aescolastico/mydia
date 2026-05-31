@@ -52,6 +52,7 @@ defmodule Mydia.Settings.DownloadClientConfig do
   @client_types [
     :qbittorrent,
     :transmission,
+    :rqbit,
     :rtorrent,
     :blackhole,
     :http,

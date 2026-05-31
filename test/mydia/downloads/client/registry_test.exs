@@ -63,6 +63,12 @@ defmodule Mydia.Downloads.Client.RegistryTest do
   setup do
     # Clear registry before each test to ensure clean state
     Registry.clear()
+
+    # Every resolution site (queue, history, client_health, untracked_matcher,
+    # media_import) now resolves adapters through this Registry. Clearing it here
+    # would leave the production adapters unregistered for any test file that runs
+    # afterward, so restore them once this file's tests complete.
+    on_exit(fn -> Mydia.Downloads.register_clients() end)
     :ok
   end
 
@@ -105,6 +111,53 @@ defmodule Mydia.Downloads.Client.RegistryTest do
 
       assert error.message =~ "unknown_client"
       assert error.message =~ "Unknown client type"
+    end
+  end
+
+  describe "lookup/1" do
+    test "returns adapter module when registered" do
+      Registry.register(:test_client, TestAdapter)
+
+      assert Registry.lookup(:test_client) == TestAdapter
+    end
+
+    test "returns nil when adapter not registered" do
+      assert Registry.lookup(:unknown_client) == nil
+    end
+  end
+
+  describe "consolidated adapter resolution (single source of truth)" do
+    # Characterizes that register_clients/0 is the one place mapping client type
+    # to adapter module, replacing the four private dispatch tables that formerly
+    # lived in history.ex, untracked_matcher.ex, client_health.ex, and
+    # media_import.ex. Every production type must resolve to its adapter via the
+    # Registry, since those call sites now depend on it.
+    @production_adapters %{
+      qbittorrent: Mydia.Downloads.Client.QBittorrent,
+      transmission: Mydia.Downloads.Client.Transmission,
+      rqbit: Mydia.Downloads.Client.Rqbit,
+      rtorrent: Mydia.Downloads.Client.Rtorrent,
+      blackhole: Mydia.Downloads.Client.Blackhole,
+      http: Mydia.Downloads.Client.HTTP,
+      sabnzbd: Mydia.Downloads.Client.Sabnzbd,
+      nzbget: Mydia.Downloads.Client.Nzbget,
+      debrid: Mydia.Downloads.Client.Debrid
+    }
+
+    setup do
+      Mydia.Downloads.register_clients()
+      :ok
+    end
+
+    test "every production client type resolves to its adapter module" do
+      for {type, module} <- @production_adapters do
+        assert Registry.lookup(type) == module,
+               "expected #{type} to resolve to #{inspect(module)}"
+      end
+    end
+
+    test "unknown type resolves to nil (matches former dispatch-table fallback)" do
+      assert Registry.lookup(:no_such_client) == nil
     end
   end
 
