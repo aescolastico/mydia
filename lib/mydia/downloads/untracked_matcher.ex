@@ -71,7 +71,7 @@ defmodule Mydia.Downloads.UntrackedMatcher do
       # Only fetch torrents from torrent clients (not Usenet or HTTP clients)
       torrent_clients =
         Enum.filter(clients, fn client ->
-          client.type in [:qbittorrent, :transmission]
+          client.type in [:qbittorrent, :transmission, :rqbit]
         end)
 
       torrent_clients
