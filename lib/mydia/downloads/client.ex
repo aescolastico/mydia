@@ -304,9 +304,23 @@ defmodule Mydia.Downloads.Client do
 
   ## Convenience Functions
 
+  # Adapter resolution flows through Client.Registry.lookup/1, which returns nil
+  # for any client type that is not registered (an unknown type, or a type that
+  # has been unregistered). A nil adapter is `is_atom/1`, so without an explicit
+  # clause it would fall through to `adapter.fun(...)` and crash with
+  # `nil.fun/n is undefined`. Every convenience function below short-circuits a
+  # nil adapter into a descriptive error so callers (history, untracked_matcher,
+  # client_health, media_import) degrade the client to unreachable/failed instead
+  # of crashing the calling process.
+  defp no_adapter_error do
+    {:error, Error.invalid_config("No adapter registered for client type")}
+  end
+
   @doc """
   Tests connection to a download client using the specified adapter.
   """
+  def test_connection(nil, _config), do: no_adapter_error()
+
   def test_connection(adapter, config) when is_atom(adapter) do
     adapter.test_connection(config)
   end
@@ -314,13 +328,19 @@ defmodule Mydia.Downloads.Client do
   @doc """
   Adds a torrent using the specified adapter.
   """
-  def add_torrent(adapter, config, torrent, opts \\ []) when is_atom(adapter) do
+  def add_torrent(adapter, config, torrent, opts \\ [])
+
+  def add_torrent(nil, _config, _torrent, _opts), do: no_adapter_error()
+
+  def add_torrent(adapter, config, torrent, opts) when is_atom(adapter) do
     adapter.add_torrent(config, torrent, opts)
   end
 
   @doc """
   Gets torrent status using the specified adapter.
   """
+  def get_status(nil, _config, _client_id), do: no_adapter_error()
+
   def get_status(adapter, config, client_id) when is_atom(adapter) do
     adapter.get_status(config, client_id)
   end
@@ -328,20 +348,30 @@ defmodule Mydia.Downloads.Client do
   @doc """
   Lists all torrents using the specified adapter.
   """
-  def list_torrents(adapter, config, opts \\ []) when is_atom(adapter) do
+  def list_torrents(adapter, config, opts \\ [])
+
+  def list_torrents(nil, _config, _opts), do: no_adapter_error()
+
+  def list_torrents(adapter, config, opts) when is_atom(adapter) do
     adapter.list_torrents(config, opts)
   end
 
   @doc """
   Removes a torrent/download using the specified adapter.
   """
-  def remove_download(adapter, config, client_id, opts \\ []) when is_atom(adapter) do
+  def remove_download(adapter, config, client_id, opts \\ [])
+
+  def remove_download(nil, _config, _client_id, _opts), do: no_adapter_error()
+
+  def remove_download(adapter, config, client_id, opts) when is_atom(adapter) do
     adapter.remove_torrent(config, client_id, opts)
   end
 
   @doc """
   Pauses a torrent using the specified adapter.
   """
+  def pause_torrent(nil, _config, _client_id), do: no_adapter_error()
+
   def pause_torrent(adapter, config, client_id) when is_atom(adapter) do
     adapter.pause_torrent(config, client_id)
   end
@@ -349,6 +379,8 @@ defmodule Mydia.Downloads.Client do
   @doc """
   Resumes a torrent using the specified adapter.
   """
+  def resume_torrent(nil, _config, _client_id), do: no_adapter_error()
+
   def resume_torrent(adapter, config, client_id) when is_atom(adapter) do
     adapter.resume_torrent(config, client_id)
   end
