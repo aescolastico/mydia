@@ -50,6 +50,8 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       end)
 
       Mydia.Downloads.Client.Registry.unregister(:transmission)
+      # Resolution sites now depend on the Registry; restore it after this test.
+      on_exit(fn -> Mydia.Downloads.register_clients() end)
 
       conn =
         conn
@@ -184,6 +186,36 @@ defmodule MydiaWeb.AdminDownloadClientsLiveTest do
       html = render(view)
       assert html =~ ~s{value="debrid"}
       assert html =~ "Debrid"
+    end
+
+    test "rqbit option appears in the type select", %{view: view} do
+      view
+      |> element(~s{button[phx-click="new_download_client"]})
+      |> render_click()
+
+      html = render(view)
+      assert html =~ ~s{value="rqbit"}
+    end
+
+    test "rqbit type renders host/port fields and hides categories", %{view: view} do
+      view
+      |> element(~s{button[phx-click="new_download_client"]})
+      |> render_click()
+
+      html =
+        view
+        |> form("#download-client-form", %{
+          "download_client_config" => %{"type" => "rqbit"}
+        })
+        |> render_change()
+
+      # rqbit is a standard network client: host/port are rendered.
+      assert html =~ "Host"
+      assert html =~ "Port"
+
+      # rqbit has no category or priority-profile concept.
+      refute has_element?(view, "#download-client-categories")
+      refute has_element?(view, "#download-client-priority-profile")
     end
 
     test "legacy single-category clients prefill all three content-type inputs", %{conn: conn} do

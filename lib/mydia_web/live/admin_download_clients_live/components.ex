@@ -346,6 +346,7 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                   options={[
                     {"qBittorrent", "qbittorrent"},
                     {"Transmission", "transmission"},
+                    {"rqbit", "rqbit"},
                     {"rTorrent", "rtorrent"},
                     {"Blackhole", "blackhole"},
                     {"SABnzbd", "sabnzbd"},

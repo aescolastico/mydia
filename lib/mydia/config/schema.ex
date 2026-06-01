@@ -114,7 +114,7 @@ defmodule Mydia.Config.Schema do
       field :name, :string
 
       field :type, Ecto.Enum,
-        values: [:qbittorrent, :transmission, :rtorrent, :http, :sabnzbd, :nzbget]
+        values: [:qbittorrent, :transmission, :rqbit, :rtorrent, :http, :sabnzbd, :nzbget]
 
       field :enabled, :boolean, default: true
       field :priority, :integer, default: 1
@@ -332,6 +332,7 @@ defmodule Mydia.Config.Schema do
     |> validate_inclusion(:type, [
       :qbittorrent,
       :transmission,
+      :rqbit,
       :rtorrent,
       :http,
       :sabnzbd,

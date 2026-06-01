@@ -126,6 +126,28 @@ defmodule Mydia.Downloads.Client.Registry do
   end
 
   @doc """
+  Looks up the adapter module for a client type, returning `nil` when unknown.
+
+  This is the plain `module | nil` counterpart to `get_adapter/1`. It exists so
+  call sites that previously kept their own hardcoded `type -> module` dispatch
+  tables can resolve adapters from this single source of truth without unwrapping
+  an `{:ok, _}` tuple.
+
+  ## Examples
+
+      iex> Registry.register(:qbittorrent, Mydia.Downloads.Client.QBittorrent)
+      iex> Registry.lookup(:qbittorrent)
+      Mydia.Downloads.Client.QBittorrent
+
+      iex> Registry.lookup(:unknown_client)
+      nil
+  """
+  @spec lookup(adapter_type()) :: adapter_module() | nil
+  def lookup(type) when is_atom(type) do
+    Agent.get(__MODULE__, &Map.get(&1, type))
+  end
+
+  @doc """
   Lists all registered adapters.
 
   Returns a keyword list of adapter types and their corresponding modules.

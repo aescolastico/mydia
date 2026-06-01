@@ -26,6 +26,7 @@ defmodule Mydia.Downloads do
     # Register available client adapters
     Registry.register(:qbittorrent, Mydia.Downloads.Client.QBittorrent)
     Registry.register(:transmission, Mydia.Downloads.Client.Transmission)
+    Registry.register(:rqbit, Mydia.Downloads.Client.Rqbit)
     Registry.register(:rtorrent, Mydia.Downloads.Client.Rtorrent)
     Registry.register(:blackhole, Mydia.Downloads.Client.Blackhole)
     Registry.register(:sabnzbd, Mydia.Downloads.Client.Sabnzbd)

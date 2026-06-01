@@ -314,18 +314,25 @@ end
 
 ### Step 8: Register the Adapter
 
-Register your adapter during application startup in `lib/mydia/application.ex`:
+The `Registry` is the **single source of truth** for `type -> adapter module`. Every
+resolution site (`queue`, `history`, `untracked_matcher`, `client_health`,
+`media_import`) calls `Registry.lookup/1` or `Registry.get_adapter/1`, so registering
+once is all that is needed — there are no per-module dispatch tables to update.
+
+Add one line to `Mydia.Downloads.register_clients/0` in `lib/mydia/downloads.ex`:
 
 ```elixir
-def start(_type, _args) do
-  # ... existing children ...
-
-  # Register download client adapters
-  :ok = Mydia.Downloads.Client.Registry.register(:my_client, Mydia.Downloads.Client.MyClient)
-
-  # ... continue with supervision tree ...
+def register_clients do
+  # ... existing registrations ...
+  Registry.register(:my_client, Mydia.Downloads.Client.MyClient)
+  :ok
 end
 ```
+
+`register_clients/0` runs at application startup (via the supervision tree), so the
+adapter is available in every environment. You also need to add `:my_client` to the
+config enum (`lib/mydia/settings/download_client_config.ex`) and the admin UI type
+dropdown so operators can select it — see the existing client entries for the pattern.
 
 ### Step 9: Write Tests
 

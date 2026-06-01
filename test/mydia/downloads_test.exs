@@ -1,5 +1,10 @@
 defmodule Mydia.DownloadsTest do
-  use Mydia.DataCase, async: true
+  # async: false — this suite overrides the global download-client Registry
+  # (registers MockAdapter for :qbittorrent, unregisters :qbittorrent). Since
+  # production adapter resolution now reads that Registry live, running async
+  # would race concurrent readers (media_import, download_monitor) and make them
+  # resolve MockAdapter mid-test. Every Registry-mutating suite runs sync.
+  use Mydia.DataCase, async: false
 
   import Mydia.AccountsFixtures
   import Mydia.SettingsFixtures
@@ -261,8 +266,12 @@ defmodule Mydia.DownloadsTest do
         end
       end)
 
-      # Also unregister the mock adapter so no clients are available at all
+      # Also unregister the mock adapter so no clients are available at all.
+      # All resolution sites (queue, history, client_health, untracked_matcher,
+      # media_import) now resolve through the Registry, so restore it after this
+      # test to avoid leaving later tests without the production adapters.
       Mydia.Downloads.Client.Registry.unregister(:qbittorrent)
+      on_exit(fn -> Mydia.Downloads.register_clients() end)
 
       search_result = %SearchResult{
         title: "Test",

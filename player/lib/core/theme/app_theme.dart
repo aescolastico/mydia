@@ -399,12 +399,15 @@ class AppTheme {
       // Page Transitions - Material 3 style (slide + fade)
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
-          // Use FadeForwardsPageTransitionsBuilder for all platforms
-          // This provides a smooth slide-in from right with fade effect
+          // FadeForwardsPageTransitionsBuilder for every platform: a smooth
+          // slide-in from the right with a fade. Used uniformly (rather than
+          // CupertinoPageTransitionsBuilder on Apple platforms) because that
+          // builder moved from material.dart to cupertino.dart across Flutter
+          // versions, and FadeForwards lives in material.dart on all of them.
           TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
           TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
-          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
           TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
           TargetPlatform.fuchsia: FadeForwardsPageTransitionsBuilder(),
         },

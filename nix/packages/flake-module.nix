@@ -14,10 +14,16 @@
         sha256 = "be3324cc454a42d80951cf6023b9954e9ff27c6daa255483b3e8d608670303f5";
       };
 
-      # Pre-fetch Rust/Cargo dependencies for the p2p NIF (required for sandbox build)
-      cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-        src = ../../native/mydia_p2p;
-        hash = "sha256-mwciW6cx+n26KEQYv3rJi4ceq+sKhy6rBaTMOC7/8Is=";
+      # Pre-fetch Rust/Cargo dependencies for the p2p NIF (required for sandbox build).
+      #
+      # Uses importCargoLock rather than fetchCargoVendor: fetchCargoVendor's
+      # `fetch-cargo-vendor-util` downloads crates with a `python-requests/<ver>`
+      # User-Agent, which crates.io now rejects with HTTP 403 (rust-lang/crates.io#13482),
+      # breaking the build. importCargoLock fetches each crate via nix's fetchurl
+      # (curl UA, not blocked) and derives hashes from Cargo.lock, so no vendor hash
+      # to maintain. The lock is pure crates.io (no git deps), so no outputHashes needed.
+      cargoDeps = pkgs.rustPlatform.importCargoLock {
+        lockFile = ../../native/mydia_p2p/Cargo.lock;
       };
 
       # Import Mix dependencies from deps.nix with overrides for Nix sandbox builds

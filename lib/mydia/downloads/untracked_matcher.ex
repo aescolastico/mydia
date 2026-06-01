@@ -71,7 +71,7 @@ defmodule Mydia.Downloads.UntrackedMatcher do
       # Only fetch torrents from torrent clients (not Usenet or HTTP clients)
       torrent_clients =
         Enum.filter(clients, fn client ->
-          client.type in [:qbittorrent, :transmission]
+          client.type in [:qbittorrent, :transmission, :rqbit]
         end)
 
       torrent_clients
@@ -88,7 +88,7 @@ defmodule Mydia.Downloads.UntrackedMatcher do
   end
 
   defp fetch_client_torrents(client_config) do
-    adapter = get_adapter_module(client_config.type)
+    adapter = Downloads.Client.Registry.lookup(client_config.type)
     config = config_to_map(client_config)
 
     case Downloads.Client.list_torrents(adapter, config, []) do
@@ -293,16 +293,6 @@ defmodule Mydia.Downloads.UntrackedMatcher do
     Settings.list_download_client_configs()
     |> Enum.filter(& &1.enabled)
   end
-
-  defp get_adapter_module(:qbittorrent), do: Mydia.Downloads.Client.QBittorrent
-  defp get_adapter_module(:transmission), do: Mydia.Downloads.Client.Transmission
-  defp get_adapter_module(:rtorrent), do: Mydia.Downloads.Client.Rtorrent
-  defp get_adapter_module(:blackhole), do: Mydia.Downloads.Client.Blackhole
-  defp get_adapter_module(:http), do: Mydia.Downloads.Client.HTTP
-  defp get_adapter_module(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
-  defp get_adapter_module(:nzbget), do: Mydia.Downloads.Client.Nzbget
-  defp get_adapter_module(:debrid), do: Mydia.Downloads.Client.Debrid
-  defp get_adapter_module(_), do: nil
 
   defp config_to_map(config) do
     %{

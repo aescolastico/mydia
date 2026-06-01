@@ -514,7 +514,7 @@ defmodule Mydia.Jobs.MediaImport do
         |> Enum.find(&(&1.name == download.download_client))
 
       if client_config do
-        adapter = get_adapter_module(client_config.type)
+        adapter = Client.Registry.lookup(client_config.type)
 
         %{
           adapter: adapter,
@@ -1526,16 +1526,6 @@ defmodule Mydia.Jobs.MediaImport do
       end
     end
   end
-
-  defp get_adapter_module(:qbittorrent), do: Mydia.Downloads.Client.QBittorrent
-  defp get_adapter_module(:transmission), do: Mydia.Downloads.Client.Transmission
-  defp get_adapter_module(:rtorrent), do: Mydia.Downloads.Client.Rtorrent
-  defp get_adapter_module(:blackhole), do: Mydia.Downloads.Client.Blackhole
-  defp get_adapter_module(:http), do: Mydia.Downloads.Client.HTTP
-  defp get_adapter_module(:sabnzbd), do: Mydia.Downloads.Client.Sabnzbd
-  defp get_adapter_module(:nzbget), do: Mydia.Downloads.Client.Nzbget
-  defp get_adapter_module(:debrid), do: Mydia.Downloads.Client.Debrid
-  defp get_adapter_module(_), do: nil
 
   defp build_client_config(client_config) do
     case client_config.type do
