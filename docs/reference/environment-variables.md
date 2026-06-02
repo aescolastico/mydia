@@ -107,7 +107,7 @@ Configure multiple clients using numbered variables (`<N>` = 1, 2, 3, etc.):
 | `DOWNLOAD_CLIENT_<N>_CATEGORY` | Default category | - |
 | `DOWNLOAD_CLIENT_<N>_DOWNLOAD_DIRECTORY` | Download directory | - |
 
-**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `sabnzbd`, `nzbget`
+**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `sabnzbd`, `nzbget`
 
 Example rqbit client:
 

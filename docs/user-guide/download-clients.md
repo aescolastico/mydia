@@ -4,6 +4,8 @@ Download clients handle the actual downloading of media files. Mydia supports bo
 
 ## Supported Clients
 
+This table highlights the most common client types. The Admin UI also supports rTorrent, Blackhole, and Debrid clients.
+
 ### Torrent Clients
 
 | Client | Protocol | Features |
