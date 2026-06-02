@@ -19,10 +19,13 @@ Navigate to **Admin > Download Clients** to add your download clients.
 
 ### Supported Clients
 
+This list highlights common client types. The Admin UI also supports rTorrent, Blackhole, and Debrid clients.
+
 **Torrent Clients:**
 
 - qBittorrent
 - Transmission
+- rqbit
 
 **Usenet Clients:**
 

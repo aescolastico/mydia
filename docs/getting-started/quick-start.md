@@ -70,7 +70,7 @@ On first visit, you'll be guided through creating the initial admin user.
 
 ## Step 5: Configure Your Setup
 
-1. **Add Download Clients** - Configure qBittorrent, Transmission, SABnzbd, or NZBGet
+1. **Add Download Clients** - Configure qBittorrent, Transmission, rqbit, SABnzbd, or NZBGet
 2. **Add Indexers** - Set up Prowlarr or Jackett for searching releases
 3. **Scan Your Library** - Let Mydia discover your existing media
 
