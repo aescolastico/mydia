@@ -47,7 +47,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   require Logger
 
-  alias Mydia.Downloads.TorrentParser
+  alias Mydia.Downloads.{ReleaseValidator, TorrentParser}
   alias Mydia.Indexers.{SearchResult, SearchScorer}
   alias Mydia.Indexers.Structs.{RankedResult, ScoreBreakdown}
   alias Mydia.Settings.QualityProfile
@@ -125,6 +125,7 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
     ranked =
       results
+      |> reject_invalid_releases()
       |> filter_acceptable(opts)
       |> reject_tv_releases_for_movies(media_type)
       |> reject_title_mismatches(expected_title)
@@ -379,6 +380,32 @@ defmodule Mydia.Indexers.ReleaseRanker do
       tag_bonus: round_score(tag_bonus),
       total: round_score(total_score)
     })
+  end
+
+  ## Private Functions - Release Validation Filtering
+
+  # Drop releases the ReleaseValidator flags as invalid/fake/malicious before
+  # anything else runs. This is the enforcement point for the validator: it only
+  # *detects* bad releases, so without this stage a flagged release (e.g. a
+  # malware torrent named "...h264-ETHEL.exe") still flows through scoring and
+  # can be selected and grabbed. The validator is otherwise consulted deep inside
+  # TorrentParser.parse, where the title-mismatch check discards its error and
+  # keeps the release. Reject here so a suspicious release never reaches a
+  # download client.
+  defp reject_invalid_releases(results) do
+    Enum.filter(results, fn result ->
+      case ReleaseValidator.validate_release(result.title) do
+        {:ok, _name} ->
+          true
+
+        {:error, reason} ->
+          Logger.warning(
+            "[ReleaseRanker] Filtered out (invalid release: #{reason}): #{result.title}"
+          )
+
+          false
+      end
+    end)
   end
 
   ## Private Functions - Media Type Filtering

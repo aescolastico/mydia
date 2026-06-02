@@ -148,6 +148,58 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
   # Tests for rank_all/2
 
+  describe "rank_all/2 rejects malicious releases" do
+    test "drops a release with a suspicious executable extension before scoring" do
+      # The exact malware filename from the production incident: a 1.3GB PE32
+      # executable padded to look like a 1080p video release. Before this fix it
+      # scored highest and was grabbed; the validator only logged a warning.
+      malware =
+        build_result(%{
+          title: "Your.Friends.and.Neighbors.S02E05.1080p.WEB.h264-ETHEL.exe",
+          seeders: 500
+        })
+
+      legit =
+        build_result(%{
+          title: "Your.Friends.and.Neighbors.S02E05.1080p.WEB.h264-GROUP.mkv",
+          seeders: 5
+        })
+
+      ranked = ReleaseRanker.rank_all([malware, legit])
+
+      titles = Enum.map(ranked, & &1.result.title)
+      refute "Your.Friends.and.Neighbors.S02E05.1080p.WEB.h264-ETHEL.exe" in titles
+      assert "Your.Friends.and.Neighbors.S02E05.1080p.WEB.h264-GROUP.mkv" in titles
+    end
+
+    test "select_best_result never returns a suspicious executable release" do
+      malware =
+        build_result(%{
+          title: "Your.Friends.and.Neighbors.S02E08.1080p.WEB.h264-ETHEL.scr",
+          seeders: 999
+        })
+
+      legit =
+        build_result(%{
+          title: "Your.Friends.and.Neighbors.S02E08.1080p.WEB.h264-GROUP.mkv",
+          seeders: 1
+        })
+
+      best = ReleaseRanker.select_best_result([malware, legit])
+
+      assert best.result.title == "Your.Friends.and.Neighbors.S02E08.1080p.WEB.h264-GROUP.mkv"
+    end
+
+    test "returns empty when every candidate is a suspicious executable" do
+      results = [
+        build_result(%{title: "From.S04E06.1080p.WEB.h264-ETHEL.exe", seeders: 500}),
+        build_result(%{title: "From.S04E06.1080p.WEB.h264-ETHEL.scr", seeders: 400})
+      ]
+
+      assert ReleaseRanker.rank_all(results) == []
+    end
+  end
+
   describe "rank_all/2" do
     test "returns all results sorted by score" do
       results = build_results()
