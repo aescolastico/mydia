@@ -107,7 +107,19 @@ Configure multiple clients using numbered variables (`<N>` = 1, 2, 3, etc.):
 | `DOWNLOAD_CLIENT_<N>_CATEGORY` | Default category | - |
 | `DOWNLOAD_CLIENT_<N>_DOWNLOAD_DIRECTORY` | Download directory | - |
 
-**Client Types:** `qbittorrent`, `transmission`, `sabnzbd`, `nzbget`
+**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `sabnzbd`, `nzbget`
+
+Example rqbit client:
+
+```bash
+DOWNLOAD_CLIENT_1_NAME=rqbit
+DOWNLOAD_CLIENT_1_TYPE=rqbit
+DOWNLOAD_CLIENT_1_HOST=rqbit
+DOWNLOAD_CLIENT_1_PORT=3030
+# Optional, when rqbit HTTP basic auth is enabled
+DOWNLOAD_CLIENT_1_USERNAME=admin
+DOWNLOAD_CLIENT_1_PASSWORD=adminpass
+```
 
 ## Indexers
 

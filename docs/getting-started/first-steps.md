@@ -23,6 +23,7 @@ Navigate to **Admin > Download Clients** to add your download clients.
 
 - qBittorrent
 - Transmission
+- rqbit
 
 **Usenet Clients:**
 

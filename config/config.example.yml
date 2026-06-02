@@ -258,6 +258,21 @@ download_clients:
   #   password: "transmission"
   #   download_directory: "/downloads"
 
+  # rqbit example (commented out)
+  # Mydia connects to a separately running `rqbit server` over HTTP.
+  # rqbit has no category, label, or tag support.
+  # - name: "rqbit"
+  #   type: "rqbit"
+  #   enabled: true
+  #   priority: 2
+  #   host: "localhost"
+  #   port: 3030
+  #   use_ssl: false
+  #   # Optional: HTTP basic auth, when enabled on the rqbit server
+  #   username: "admin"
+  #   password: "adminpass"
+  #   download_directory: "/downloads"
+
   # HTTP download client example (commented out)
   # - name: "HTTP Downloader"
   #   type: "http"
