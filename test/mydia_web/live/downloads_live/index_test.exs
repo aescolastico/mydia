@@ -209,4 +209,31 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       assert Downloads.count_completed() == 1
     end
   end
+
+  describe "batch action authorization" do
+    test "a readonly user cannot batch-delete downloads", %{conn: conn} do
+      download = completed_download("Alpha Movie")
+      readonly = user_fixture(%{role: "readonly"})
+      conn = log_in_user(conn, readonly)
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+
+      render_click(view, "toggle_select", %{"id" => download.id})
+      render_click(view, "batch_delete", %{})
+
+      # The download is untouched — the gate blocked the destructive handler.
+      assert Downloads.count_completed() == 1
+    end
+
+    test "an admin can batch-delete downloads", %{conn: conn} do
+      download = completed_download("Alpha Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+
+      render_click(view, "toggle_select", %{"id" => download.id})
+      render_click(view, "batch_delete", %{})
+
+      assert Downloads.count_completed() == 0
+    end
+  end
 end

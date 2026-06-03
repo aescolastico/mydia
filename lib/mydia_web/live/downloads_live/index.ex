@@ -330,98 +330,106 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   def handle_event("batch_retry", _params, socket) do
-    selected_ids = MapSet.to_list(socket.assigns.selected_ids)
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      selected_ids = MapSet.to_list(socket.assigns.selected_ids)
 
-    results =
-      Enum.map(selected_ids, fn id ->
-        try do
-          download = Downloads.get_download!(id, preload: [:media_item, :episode])
+      results =
+        Enum.map(selected_ids, fn id ->
+          try do
+            download = Downloads.get_download!(id, preload: [:media_item, :episode])
 
-          # Check if this is an import failure or download failure
-          if download.import_last_error do
-            # Import failure - retry import
-            case Downloads.update_download(download, %{
-                   import_retry_count: 0,
-                   import_last_error: nil,
-                   import_next_retry_at: nil,
-                   import_failed_at: nil
-                 }) do
-              {:ok, updated} ->
-                %{
-                  "download_id" => updated.id,
-                  "save_path" => nil,
-                  "cleanup_client" => true,
-                  "use_hardlinks" => true,
-                  "move_files" => false
-                }
-                |> Mydia.Jobs.MediaImport.new()
-                |> Oban.insert()
+            # Check if this is an import failure or download failure
+            if download.import_last_error do
+              # Import failure - retry import
+              case Downloads.update_download(download, %{
+                     import_retry_count: 0,
+                     import_last_error: nil,
+                     import_next_retry_at: nil,
+                     import_failed_at: nil
+                   }) do
+                {:ok, updated} ->
+                  %{
+                    "download_id" => updated.id,
+                    "save_path" => nil,
+                    "cleanup_client" => true,
+                    "use_hardlinks" => true,
+                    "move_files" => false
+                  }
+                  |> Mydia.Jobs.MediaImport.new()
+                  |> Oban.insert()
 
-              error ->
-                error
+                error ->
+                  error
+              end
+            else
+              # Download failure - retry download
+              metadata = DownloadMetadata.from_map(download.metadata)
+
+              search_result = %Mydia.Indexers.SearchResult{
+                download_url: download.download_url,
+                title: download.title,
+                indexer: download.indexer,
+                size: metadata.size,
+                seeders: metadata.seeders,
+                leechers: metadata.leechers,
+                quality: metadata.quality
+              }
+
+              opts =
+                []
+                |> maybe_add_opt(:media_item_id, download.media_item_id)
+                |> maybe_add_opt(:episode_id, download.episode_id)
+                |> maybe_add_opt(:client_name, download.download_client)
+
+              Downloads.delete_download(download)
+              Downloads.initiate_download(search_result, opts)
             end
-          else
-            # Download failure - retry download
-            metadata = DownloadMetadata.from_map(download.metadata)
-
-            search_result = %Mydia.Indexers.SearchResult{
-              download_url: download.download_url,
-              title: download.title,
-              indexer: download.indexer,
-              size: metadata.size,
-              seeders: metadata.seeders,
-              leechers: metadata.leechers,
-              quality: metadata.quality
-            }
-
-            opts =
-              []
-              |> maybe_add_opt(:media_item_id, download.media_item_id)
-              |> maybe_add_opt(:episode_id, download.episode_id)
-              |> maybe_add_opt(:client_name, download.download_client)
-
-            Downloads.delete_download(download)
-            Downloads.initiate_download(search_result, opts)
+          rescue
+            _ -> {:error, :failed}
           end
-        rescue
-          _ -> {:error, :failed}
-        end
-      end)
+        end)
 
-    success_count = Enum.count(results, fn {status, _} -> status == :ok end)
+      success_count = Enum.count(results, fn {status, _} -> status == :ok end)
 
-    {:noreply,
-     socket
-     |> assign(:selected_ids, MapSet.new())
-     |> assign(:selection_mode, false)
-     |> put_flash(:info, "#{success_count} item(s) retried")
-     |> load_downloads()}
+      {:noreply,
+       socket
+       |> assign(:selected_ids, MapSet.new())
+       |> assign(:selection_mode, false)
+       |> put_flash(:info, "#{success_count} item(s) retried")
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
   end
 
   def handle_event("batch_delete", _params, socket) do
-    selected_ids = MapSet.to_list(socket.assigns.selected_ids)
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      selected_ids = MapSet.to_list(socket.assigns.selected_ids)
 
-    results =
-      Enum.map(selected_ids, fn id ->
-        try do
-          download = Downloads.get_download!(id)
-          # Try to remove from client (ignore errors)
-          _ = Downloads.cancel_download(download, delete_files: true)
-          # Delete from database
-          Downloads.delete_download(download)
-        rescue
-          _ -> {:error, :failed}
-        end
-      end)
+      results =
+        Enum.map(selected_ids, fn id ->
+          try do
+            download = Downloads.get_download!(id)
+            # Try to remove from client (ignore errors)
+            _ = Downloads.cancel_download(download, delete_files: true)
+            # Delete from database
+            Downloads.delete_download(download)
+          rescue
+            _ -> {:error, :failed}
+          end
+        end)
 
-    success_count = Enum.count(results, fn {status, _} -> status == :ok end)
+      success_count = Enum.count(results, fn {status, _} -> status == :ok end)
 
-    {:noreply,
-     socket
-     |> assign(:selected_ids, MapSet.new())
-     |> assign(:selection_mode, false)
-     |> put_flash(:info, "#{success_count} download(s) removed")
-     |> load_downloads()}
+      {:noreply,
+       socket
+       |> assign(:selected_ids, MapSet.new())
+       |> assign(:selection_mode, false)
+       |> put_flash(:info, "#{success_count} download(s) removed")
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
   end
 
   def handle_event("open_clear_completed_modal", _params, socket) do
