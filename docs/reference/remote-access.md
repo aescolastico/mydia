@@ -2,6 +2,12 @@
 
 Remote access allows the Mydia mobile app to connect to your Mydia instance from anywhere, even when your server is behind NAT or a firewall.
 
+## Get the Mobile App (iOS Beta)
+
+The Mydia player is in open beta on TestFlight. Install the [TestFlight app](https://apps.apple.com/app/testflight/id899247664) on your iPhone or iPad, then join the beta. New builds reach you automatically as they ship.
+
+[Join the iOS Beta](https://testflight.apple.com/join/KFSYxaQP){ .md-button .md-button--primary }
+
 ## How It Works
 
 Mydia uses **p2p** for decentralized peer-to-peer connectivity:

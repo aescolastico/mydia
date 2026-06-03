@@ -22,9 +22,15 @@ platform :ios do
       output_name: "Mydia Player.ipa"
     )
 
-    # Upload to TestFlight
+    # Upload to TestFlight and distribute to the public "Beta" external group.
+    # External distribution requires the build to finish processing, so we can't
+    # skip waiting here. The first build of each new version goes through Apple's
+    # Beta App Review before public-link testers can install it.
     upload_to_testflight(
-      skip_waiting_for_build_processing: true
+      distribute_external: true,
+      groups: ["Beta"],
+      changelog: "Automated beta build.",
+      notify_external_testers: false
     )
   end
 

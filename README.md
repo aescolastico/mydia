@@ -2,6 +2,7 @@
 
 [![Test & Quality](https://github.com/getmydia/mydia/actions/workflows/test.yml/badge.svg)](https://github.com/getmydia/mydia/actions/workflows/test.yml)
 [![Documentation](https://github.com/getmydia/mydia/actions/workflows/docs.yml/badge.svg)](https://docs.mydia.dev)
+[![TestFlight](https://img.shields.io/badge/TestFlight-Join%20iOS%20Beta-0D96F6?logo=apple&logoColor=white)](https://testflight.apple.com/join/KFSYxaQP)
 
 **Your personal media companion, built with Phoenix LiveView**
 
@@ -64,6 +65,14 @@ Open http://localhost:4000 and create your admin account.
 - **SSO** - Local auth + OIDC/OpenID Connect
 - **Import Lists** - Sync from TMDB watchlists, popular, trending (experimental)
 - **Real-Time UI** - Phoenix LiveView with instant updates
+
+## Mobile App (iOS Beta)
+
+The Mydia player is in open beta on TestFlight. On an iPhone or iPad with the [TestFlight app](https://apps.apple.com/app/testflight/id899247664) installed:
+
+**[Join the iOS Beta →](https://testflight.apple.com/join/KFSYxaQP)**
+
+New builds reach testers automatically as they ship.
 
 ## Documentation
 
