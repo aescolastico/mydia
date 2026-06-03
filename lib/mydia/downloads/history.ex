@@ -30,6 +30,18 @@ defmodule Mydia.Downloads.History do
     |> Repo.all()
   end
 
+  @doc """
+  Counts imported downloads — the set `clear_all_completed/1` would remove.
+
+  Used to show a scope-accurate blast radius before the user confirms a
+  destructive "delete files from disk" clear.
+  """
+  def count_completed do
+    Download
+    |> where([d], not is_nil(d.imported_at))
+    |> Repo.aggregate(:count)
+  end
+
   def list_downloads_with_status(opts \\ []) do
     # Get all download records from database
     # Preload episode.media_item to get parent show info for episode downloads

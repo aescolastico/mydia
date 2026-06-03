@@ -6,6 +6,8 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
   import Mydia.DownloadsFixtures
   import Mydia.MediaFixtures
 
+  alias Mydia.Downloads
+
   setup %{conn: conn} do
     admin = admin_user_fixture()
     %{conn: log_in_user(conn, admin), admin: admin}
@@ -112,6 +114,99 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       html = view |> element("#downloads-sort-form") |> render_change(%{"sort_by" => "bogus"})
       assert html =~ ~s(value="added_desc")
       assert has_element?(view, "#downloads-sort option[value='added_desc'][selected]")
+    end
+  end
+
+  describe "clear completed modal" do
+    test "opens with the delete-files checkbox off and a scope-accurate count", %{conn: conn} do
+      completed_download("Alpha Movie")
+      completed_download("Beta Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+
+      refute has_element?(view, "#clear-completed-modal[open]")
+
+      html =
+        view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      assert has_element?(view, "#clear-completed-modal[open]")
+      assert html =~ "2 completed download(s)"
+      # Default (unchecked) confirm button is non-destructive.
+      assert html =~ "Clear Completed"
+      refute html =~ "Clear and Delete Files"
+    end
+
+    test "checking the box switches the confirm button to destructive", %{conn: conn} do
+      completed_download("Alpha Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      html =
+        view |> element("#clear-completed-form") |> render_change(%{"delete_files" => "true"})
+
+      assert html =~ "Clear and Delete Files"
+      assert html =~ "btn-error"
+      assert html =~ "cannot be undone"
+    end
+
+    test "reopening the modal resets the checkbox", %{conn: conn} do
+      completed_download("Alpha Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+      view |> element("#clear-completed-form") |> render_change(%{"delete_files" => "true"})
+
+      view
+      |> element(".modal-action button[phx-click='close_clear_completed_modal']")
+      |> render_click()
+
+      html =
+        view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      assert html =~ "Clear and Delete Files" == false
+      assert html =~ "Clear Completed"
+    end
+
+    test "submitting without the box clears without deleting files", %{conn: conn} do
+      completed_download("Alpha Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      html = view |> element("#clear-completed-form") |> render_submit(%{})
+
+      assert html =~ "completed download(s) cleared"
+      refute html =~ "files deleted from disk"
+      assert Downloads.count_completed() == 0
+    end
+
+    test "submitting with the box checked reports files deleted", %{conn: conn} do
+      completed_download("Alpha Movie")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      html =
+        view |> element("#clear-completed-form") |> render_submit(%{"delete_files" => "true"})
+
+      assert html =~ "cleared and files deleted from disk"
+      assert Downloads.count_completed() == 0
+    end
+
+    test "a readonly user cannot clear completed downloads", %{conn: conn} do
+      completed_download("Alpha Movie")
+      readonly = user_fixture(%{role: "readonly"})
+      conn = log_in_user(conn, readonly)
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
+
+      html =
+        view |> element("#clear-completed-form") |> render_submit(%{"delete_files" => "true"})
+
+      assert html =~ "do not have permission"
+      assert Downloads.count_completed() == 1
     end
   end
 end

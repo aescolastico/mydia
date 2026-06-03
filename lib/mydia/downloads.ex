@@ -289,6 +289,12 @@ defmodule Mydia.Downloads do
   defdelegate clear_all_completed(opts \\ []), to: Mydia.Downloads.Queue
 
   @doc """
+  Counts imported downloads that `clear_all_completed/1` would clear.
+  """
+  @spec count_completed() :: non_neg_integer()
+  defdelegate count_completed(), to: Mydia.Downloads.History
+
+  @doc """
   Checks for duplicate downloads (active downloads or existing media files).
   """
   defdelegate check_for_duplicate_download(search_result, opts), to: Mydia.Downloads.Queue

@@ -75,6 +75,10 @@ defmodule MydiaWeb.DownloadsLive.Index do
      |> assign(:selection_mode, false)
      |> assign(:page, 0)
      |> assign(:has_more, true)
+     # Clear-completed modal state
+     |> assign(:show_clear_modal, false)
+     |> assign(:delete_files, false)
+     |> assign(:clearable_count, 0)
      # Issues tab state
      |> assign(:issues_counts, %{unmatched: 0, unresolved: 0, other: 0})
      |> assign(:search_open_for, nil)
@@ -420,16 +424,49 @@ defmodule MydiaWeb.DownloadsLive.Index do
      |> load_downloads()}
   end
 
-  def handle_event("clear_completed", _params, socket) do
+  def handle_event("open_clear_completed_modal", _params, socket) do
+    # Opening the modal is non-destructive, so it is ungated (the button renders
+    # for everyone, matching prior behavior). The destructive submit is gated.
+    {:noreply,
+     socket
+     |> assign(:show_clear_modal, true)
+     |> assign(:delete_files, false)
+     |> assign(:clearable_count, Downloads.count_completed())}
+  end
+
+  def handle_event("close_clear_completed_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_clear_modal, false)
+     |> assign(:delete_files, false)}
+  end
+
+  def handle_event("toggle_delete_files", params, socket) do
+    {:noreply, assign(socket, :delete_files, Map.get(params, "delete_files") == "true")}
+  end
+
+  def handle_event("clear_completed", params, socket) do
     with :ok <- Authorization.authorize_manage_downloads(socket) do
-      {:ok, count} = Downloads.clear_all_completed()
+      # Phoenix checkboxes submit the string "true" (or omit the key); coerce to
+      # a real boolean so the adapter's [delete_files: boolean()] contract holds.
+      delete_files = Map.get(params, "delete_files") == "true"
+      {:ok, count} = Downloads.clear_all_completed(delete_files: delete_files)
+
+      message =
+        if delete_files do
+          "#{count} completed download(s) cleared and files deleted from disk"
+        else
+          "#{count} completed download(s) cleared"
+        end
 
       {:noreply,
        socket
-       |> put_flash(:info, "#{count} completed download(s) cleared")
+       |> assign(:show_clear_modal, false)
+       |> assign(:delete_files, false)
+       |> put_flash(:info, message)
        |> load_downloads()}
     else
-      {:unauthorized, socket} -> {:noreply, socket}
+      {:unauthorized, socket} -> {:noreply, assign(socket, :show_clear_modal, false)}
     end
   end
 
