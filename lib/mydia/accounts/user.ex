@@ -108,6 +108,20 @@ defmodule Mydia.Accounts.User do
   end
 
   @doc """
+  Changeset for updating only a user's role.
+
+  Used by admins to change a user's role without re-validating other
+  fields. This is required for OIDC-created users, which have a `nil`
+  username and would otherwise fail the local `changeset/2` validations.
+  """
+  def role_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:role])
+    |> validate_required([:role])
+    |> validate_inclusion(:role, @role_values)
+  end
+
+  @doc """
   Returns the list of valid role values.
   """
   def valid_roles, do: @role_values

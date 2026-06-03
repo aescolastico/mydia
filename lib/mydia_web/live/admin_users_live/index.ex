@@ -175,7 +175,7 @@ defmodule MydiaWeb.AdminUsersLive.Index do
     if changeset.valid? do
       validated_data = Ecto.Changeset.apply_changes(changeset)
 
-      case Accounts.update_user(user, %{role: validated_data.role}) do
+      case Accounts.update_user_role(user, %{role: validated_data.role}) do
         {:ok, _updated_user} ->
           {:noreply,
            socket

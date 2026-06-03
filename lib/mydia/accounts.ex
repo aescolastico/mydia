@@ -151,6 +151,19 @@ defmodule Mydia.Accounts do
   end
 
   @doc """
+  Updates only a user's role.
+
+  Unlike `update_user/2`, this does not re-validate the full local
+  changeset, so it works for OIDC-created users (which have a `nil`
+  username). Intended for admin-driven role changes.
+  """
+  def update_user_role(%User{} = user, attrs) do
+    user
+    |> User.role_changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
   Updates user's last login timestamp.
   """
   def update_last_login(%User{} = user) do
