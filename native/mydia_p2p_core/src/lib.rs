@@ -1029,7 +1029,7 @@ async fn monitor_connection_type(
                 PathEvent::Opened { .. }
                 | PathEvent::Closed { .. }
                 | PathEvent::Selected { .. } => true,
-                PathEvent::Lagged { missed } => {
+                PathEvent::Lagged { missed, .. } => {
                     tracing::warn!(
                         "PathEvent stream lagged for {} (missed {}), resyncing from snapshot",
                         peer_id,
