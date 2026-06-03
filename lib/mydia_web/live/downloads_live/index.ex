@@ -11,6 +11,13 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   @default_sort "added_desc"
 
+  # While a download is in flight, its progress (debrid swarm %, local fetch %)
+  # is synthesized live from the client/provider on each poll and is NOT
+  # persisted to the DB. PubSub broadcasts only fire on DB row changes, so
+  # without a periodic re-render the bar freezes at whatever it showed at page
+  # load. This timer re-polls + re-renders the Queue while work is active.
+  @progress_refresh_interval_ms 3_000
+
   # Sort options offered per tab. Real-time keys (progress, speeds, ETA, ratio)
   # only exist after client-status enrichment, so sorting runs in the LiveView
   # over the enriched list (see apply_sorting/2), not in the DB query.
@@ -64,6 +71,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
     # Subscribe to download updates for real-time progress
     if connected?(socket) do
       PubSub.subscribe(Mydia.PubSub, "downloads")
+      schedule_progress_refresh()
     end
 
     {:ok,
@@ -694,7 +702,29 @@ defmodule MydiaWeb.DownloadsLive.Index do
     {:noreply, socket |> maybe_refresh_clearable_count() |> load_downloads()}
   end
 
+  # Periodic live-progress refresh. Reschedules unconditionally so it resumes
+  # when the operator switches back to the Queue or a new download starts, but
+  # only re-polls clients when the Queue tab actually has active work — idle
+  # tabs cost nothing.
+  def handle_info(:refresh_progress, socket) do
+    schedule_progress_refresh()
+
+    socket =
+      if socket.assigns.active_tab == :queue and not socket.assigns.downloads_empty? and
+           not socket.assigns.selection_mode do
+        load_downloads(socket)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   # Private functions
+
+  defp schedule_progress_refresh do
+    Process.send_after(self(), :refresh_progress, @progress_refresh_interval_ms)
+  end
 
   # Keeps the Clear Completed modal's blast-radius count fresh if a background
   # update lands while the (destructive) modal is open. The submit flash always
@@ -918,6 +948,14 @@ defmodule MydiaWeb.DownloadsLive.Index do
   defp format_progress(nil), do: 0.0
   defp format_progress(progress), do: Float.round(progress * 1.0, 1)
 
+  # A percentage is only meaningful when the client is reporting a real
+  # byte-for-byte transfer. Provider-side waits — debrid magnet conversion,
+  # queueing for a download slot ("queued"), or remote packaging
+  # ("checking") — have no measurable percentage. Rendering a 0%-filled bar
+  # there reads as "stuck"; these phases get an indeterminate (animated) bar
+  # plus the phase label instead of a frozen "0%".
+  defp progress_indeterminate?(download), do: download.status in ["queued", "checking"]
+
   defp get_metadata_value(download, key) do
     metadata_map = download.metadata || %{}
 
@@ -947,6 +985,17 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "paused" -> "badge-warning"
       "stalled" -> "badge-warning"
       _ -> "badge-ghost"
+    end
+  end
+
+  # Color modifier for the DaisyUI `status` dot shown at the start of each row.
+  defp status_dot_class(status) do
+    case status do
+      s when s in ["downloading", "seeding", "completed", "imported"] -> "status-success"
+      s when s in ["failed", "missing"] -> "status-error"
+      s when s in ["cancelled", "stalled", "paused"] -> "status-warning"
+      s when s in ["checking", "queued"] -> "status-info"
+      _ -> "status-neutral"
     end
   end
 
