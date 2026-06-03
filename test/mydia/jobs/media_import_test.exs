@@ -767,7 +767,19 @@ defmodule Mydia.Jobs.MediaImportTest do
       download_clients: download_clients
     }
 
+    # Capture and restore the prior value. `:runtime_config` is global
+    # Application state (test_helper.exs forces empty download_clients at boot);
+    # leaving an enabled client here leaks into later tests, e.g. DownloadsLive,
+    # whose queue-tab filter then hides the completed downloads they seed.
+    previous = Application.get_env(:mydia, :runtime_config)
     Application.put_env(:mydia, :runtime_config, config)
+
+    on_exit(fn ->
+      case previous do
+        nil -> Application.delete_env(:mydia, :runtime_config)
+        value -> Application.put_env(:mydia, :runtime_config, value)
+      end
+    end)
   end
 
   defp build_test_client_config do
