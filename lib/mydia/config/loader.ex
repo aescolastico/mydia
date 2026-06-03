@@ -264,8 +264,20 @@ defmodule Mydia.Config.Loader do
       |> put_if_present(:api_key, System.get_env("#{prefix}API_KEY"))
       |> put_if_present(:category, System.get_env("#{prefix}CATEGORY"))
       |> put_if_present(:download_directory, System.get_env("#{prefix}DOWNLOAD_DIRECTORY"))
+      |> put_download_client_connection_settings(prefix)
     end)
     |> Enum.reject(&(&1 == %{}))
+  end
+
+  # Assemble the `connection_settings` map from env vars. Some adapters store
+  # config here rather than in top-level columns — notably debrid clients,
+  # whose provider lives at `connection_settings["provider"]`
+  # (DOWNLOAD_CLIENT_<N>_PROVIDER). Add further keys here as adapters need them.
+  # Keys are strings to match how adapters and validations read the map.
+  defp put_download_client_connection_settings(map, prefix) do
+    settings = put_if_present(%{}, "provider", System.get_env("#{prefix}PROVIDER"))
+
+    if settings == %{}, do: map, else: Map.put(map, :connection_settings, settings)
   end
 
   defp load_indexers_env do
