@@ -450,14 +450,14 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   def handle_event("toggle_delete_files", params, socket) do
-    {:noreply, assign(socket, :delete_files, Map.get(params, "delete_files") == "true")}
+    {:noreply, assign(socket, :delete_files, delete_files?(params))}
   end
 
   def handle_event("clear_completed", params, socket) do
     with :ok <- Authorization.authorize_manage_downloads(socket) do
       # Phoenix checkboxes submit the string "true" (or omit the key); coerce to
       # a real boolean so the adapter's [delete_files: boolean()] contract holds.
-      delete_files = Map.get(params, "delete_files") == "true"
+      delete_files = delete_files?(params)
       {:ok, count} = Downloads.clear_all_completed(delete_files: delete_files)
 
       message =
@@ -687,14 +687,23 @@ defmodule MydiaWeb.DownloadsLive.Index do
   def handle_info({:download_updated, _download_id}, socket) do
     # Reload downloads when we receive an update
     # In a real implementation, we might want to just update the specific download
-    {:noreply, load_downloads(socket)}
+    {:noreply, socket |> maybe_refresh_clearable_count() |> load_downloads()}
   end
 
   def handle_info({:search_completed, _media_item_id, _stats}, socket) do
-    {:noreply, load_downloads(socket)}
+    {:noreply, socket |> maybe_refresh_clearable_count() |> load_downloads()}
   end
 
   # Private functions
+
+  # Keeps the Clear Completed modal's blast-radius count fresh if a background
+  # update lands while the (destructive) modal is open. The submit flash always
+  # reports the authoritative recomputed count regardless.
+  defp maybe_refresh_clearable_count(%{assigns: %{show_clear_modal: true}} = socket) do
+    assign(socket, :clearable_count, Downloads.count_completed())
+  end
+
+  defp maybe_refresh_clearable_count(socket), do: socket
 
   defp reload_stream(socket) do
     case socket.assigns.active_tab do
@@ -709,6 +718,9 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   defp maybe_add_opt(opts, _key, nil), do: opts
   defp maybe_add_opt(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # Phoenix checkboxes submit "true" when checked and omit the key when not.
+  defp delete_files?(params), do: Map.get(params, "delete_files") == "true"
 
   defp load_downloads(socket) do
     case socket.assigns.active_tab do

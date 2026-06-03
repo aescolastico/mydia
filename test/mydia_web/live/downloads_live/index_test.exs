@@ -164,7 +164,7 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       html =
         view |> element("button[phx-click='open_clear_completed_modal']") |> render_click()
 
-      assert html =~ "Clear and Delete Files" == false
+      refute html =~ "Clear and Delete Files"
       assert html =~ "Clear Completed"
     end
 
@@ -234,6 +234,21 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       render_click(view, "batch_delete", %{})
 
       assert Downloads.count_completed() == 0
+    end
+
+    test "a readonly user cannot batch-retry downloads", %{conn: conn} do
+      download = completed_download("Alpha Movie")
+      readonly = user_fixture(%{role: "readonly"})
+      conn = log_in_user(conn, readonly)
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+
+      render_click(view, "toggle_select", %{"id" => download.id})
+      render_click(view, "batch_retry", %{})
+
+      # batch_retry deletes-and-reinitiates on success; the gate must leave the
+      # record untouched for a readonly user.
+      assert Downloads.count_completed() == 1
     end
   end
 end
