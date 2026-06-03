@@ -1,5 +1,10 @@
 defmodule MydiaWeb.DownloadsLive.IndexTest do
-  use MydiaWeb.ConnCase, async: true
+  # Not async: a connected LiveView mount runs in a separate process from the
+  # test. Under PostgreSQL with async: true the sandbox is non-shared, so that
+  # process can't see the rows this test inserts, the download list renders
+  # empty, and the sort control (gated on rows existing) never appears. Shared
+  # mode (the non-async default) makes the inserted rows visible to the mount.
+  use MydiaWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import Mydia.AccountsFixtures
