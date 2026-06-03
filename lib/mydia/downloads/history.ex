@@ -191,18 +191,32 @@ defmodule Mydia.Downloads.History do
         config = config_to_map(client_config)
         client_downloads = Map.get(downloads_by_client, client_config.name, %{})
 
-        case Client.list_torrents(adapter, config, downloads: client_downloads) do
-          {:ok, torrents} ->
-            torrents_map =
-              torrents
-              |> Enum.map(fn torrent -> {torrent.id, torrent} end)
-              |> Map.new()
+        try do
+          case Client.list_torrents(adapter, config, downloads: client_downloads) do
+            {:ok, torrents} ->
+              torrents_map =
+                torrents
+                |> Enum.map(fn torrent -> {torrent.id, torrent} end)
+                |> Map.new()
 
-            {client_config.name, {:reachable, torrents_map}}
+              {client_config.name, {:reachable, torrents_map}}
 
-          {:error, error} ->
-            Logger.warning(
-              "Failed to fetch torrents from #{client_config.name}: #{inspect(error)}"
+            {:error, error} ->
+              Logger.warning(
+                "Failed to fetch torrents from #{client_config.name}: #{inspect(error)}"
+              )
+
+              {client_config.name, :unreachable}
+          end
+        rescue
+          # A buggy or mis-registered adapter (e.g. a module that doesn't
+          # implement list_torrents/2) must not crash the caller — that would
+          # take down the whole Downloads LiveView for every other client too.
+          # Degrade to :unreachable, same as an explicit {:error, _}.
+          exception ->
+            Logger.error(
+              "Adapter #{inspect(adapter)} for client #{client_config.name} " <>
+                "(type=#{client_config.type}) raised: #{Exception.message(exception)}"
             )
 
             {client_config.name, :unreachable}
