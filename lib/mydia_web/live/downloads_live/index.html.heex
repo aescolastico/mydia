@@ -70,6 +70,29 @@
       </button>
     </div>
 
+    <%!-- Sort control (Queue/Completed tabs, non-empty only) --%>
+    <%= if @active_tab != :issues and not @downloads_empty? do %>
+      <div class="flex justify-end mb-4">
+        <form phx-change="sort" id="downloads-sort-form">
+          <label class="sr-only" for="downloads-sort">Sort downloads</label>
+          <select
+            id="downloads-sort"
+            name="sort_by"
+            class="select select-bordered select-sm w-full sm:w-auto"
+            title="Sort downloads"
+          >
+            <option
+              :for={{value, label} <- sort_options(@active_tab)}
+              value={value}
+              selected={@sort_by == value}
+            >
+              {label}
+            </option>
+          </select>
+        </form>
+      </div>
+    <% end %>
+
     <%!-- Batch action bar --%>
     <%= if MapSet.size(@selected_ids) > 0 do %>
       <div class="alert mb-4 shadow-lg">
