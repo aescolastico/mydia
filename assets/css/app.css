@@ -6,6 +6,11 @@
 @source "../js";
 @source "../../lib/mydia_web";
 
+/* DaisyUI `status` dot colors are selected at runtime (downloads_live status
+   indicator), so the variant classes never appear literally in markup the
+   scanner can see. Safelist them so they're always built. */
+@source inline("status-{success,error,warning,info,neutral}");
+
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */
 @plugin "../vendor/heroicons";

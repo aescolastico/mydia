@@ -114,7 +114,17 @@ defmodule Mydia.Config.Schema do
       field :name, :string
 
       field :type, Ecto.Enum,
-        values: [:qbittorrent, :transmission, :rqbit, :rtorrent, :http, :sabnzbd, :nzbget]
+        values: [
+          :qbittorrent,
+          :transmission,
+          :rqbit,
+          :rtorrent,
+          :http,
+          :sabnzbd,
+          :nzbget,
+          :blackhole,
+          :debrid
+        ]
 
       field :enabled, :boolean, default: true
       field :priority, :integer, default: 1
@@ -127,6 +137,7 @@ defmodule Mydia.Config.Schema do
       field :api_key, :string
       field :category, :string
       field :download_directory, :string
+      field :connection_settings, :map, default: %{}
     end
 
     embeds_many :indexers, Indexer, on_replace: :delete, primary_key: false do
@@ -326,9 +337,10 @@ defmodule Mydia.Config.Schema do
       :password,
       :api_key,
       :category,
-      :download_directory
+      :download_directory,
+      :connection_settings
     ])
-    |> validate_required([:name, :type, :host, :port])
+    |> validate_required([:name, :type])
     |> validate_inclusion(:type, [
       :qbittorrent,
       :transmission,
@@ -336,10 +348,45 @@ defmodule Mydia.Config.Schema do
       :rtorrent,
       :http,
       :sabnzbd,
-      :nzbget
+      :nzbget,
+      :blackhole,
+      :debrid
     ])
+    |> validate_download_client_by_type()
     |> validate_number(:port, greater_than: 0, less_than: 65536)
     |> validate_number(:priority, greater_than: 0)
+  end
+
+  # Network clients need host/port; hostless ones (blackhole, debrid) don't.
+  # Debrid additionally needs an api_key and a recognised provider.
+  defp validate_download_client_by_type(changeset) do
+    case get_field(changeset, :type) do
+      :debrid ->
+        changeset
+        |> validate_required([:api_key])
+        |> validate_debrid_provider()
+
+      :blackhole ->
+        changeset
+
+      _network_client ->
+        validate_required(changeset, [:host, :port])
+    end
+  end
+
+  defp validate_debrid_provider(changeset) do
+    providers = Mydia.Settings.DownloadClientConfig.debrid_providers()
+    provider = get_field(changeset, :connection_settings)["provider"]
+
+    if provider in providers do
+      changeset
+    else
+      add_error(
+        changeset,
+        :connection_settings,
+        "must include provider (one of: #{Enum.join(providers, ", ")})"
+      )
+    end
   end
 
   defp indexer_changeset(schema, attrs) do

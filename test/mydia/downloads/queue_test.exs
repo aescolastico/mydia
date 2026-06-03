@@ -9,9 +9,14 @@ defmodule Mydia.Downloads.QueueTest do
   use Mydia.DataCase, async: false
 
   alias Mydia.Downloads.Queue
+  alias Mydia.Downloads.Client.Registry
+  alias Mydia.Downloads.Download
+  alias Mydia.Repo
   alias Mydia.Settings.DownloadClientConfig
 
   import Mydia.MediaFixtures
+  import Mydia.DownloadsFixtures
+  import Mydia.SettingsFixtures
 
   describe "resolve_content_type/1" do
     test "episode_id present -> tv" do
@@ -209,6 +214,124 @@ defmodule Mydia.Downloads.QueueTest do
       Mydia.Downloads.Client in behaviours
     rescue
       _ -> false
+    end
+  end
+
+  # Adapter that records the opts passed to remove_torrent/3 so we can prove the
+  # delete_files flag reaches the client. The existing MockAdapter in
+  # downloads_test.exs discards opts, so we need our own capturing stub here.
+  defmodule CaptureAdapter do
+    @behaviour Mydia.Downloads.Client
+
+    @impl true
+    def supported_protocols, do: [:torrent]
+    @impl true
+    def test_connection(_config), do: {:ok, %{version: "1.0.0", api_version: "1.0"}}
+    @impl true
+    def add_torrent(_config, _torrent, _opts), do: {:ok, "capture-id"}
+    @impl true
+    def get_status(_config, _client_id), do: {:ok, %{}}
+    @impl true
+    def list_torrents(_config, _opts), do: {:ok, []}
+    @impl true
+    def pause_torrent(_config, _client_id), do: :ok
+    @impl true
+    def resume_torrent(_config, _client_id), do: :ok
+
+    @impl true
+    def remove_torrent(_config, client_id, opts) do
+      if pid = Application.get_env(:mydia, :queue_capture_pid) do
+        send(pid, {:remove_torrent_called, client_id, opts})
+      end
+
+      :ok
+    end
+  end
+
+  describe "clear_completed/2 + clear_all_completed/1 delete_files plumbing" do
+    setup do
+      original =
+        case Registry.get_adapter(:qbittorrent) do
+          {:ok, adapter} -> adapter
+          {:error, _} -> nil
+        end
+
+      Registry.register(:qbittorrent, CaptureAdapter)
+      Application.put_env(:mydia, :queue_capture_pid, self())
+
+      on_exit(fn ->
+        Application.delete_env(:mydia, :queue_capture_pid)
+        if original, do: Registry.register(:qbittorrent, original)
+      end)
+
+      config =
+        download_client_config_fixture(%{
+          name: "capture-client",
+          type: "qbittorrent",
+          enabled: true
+        })
+
+      %{config: config}
+    end
+
+    defp imported_download(config) do
+      download_fixture(%{
+        download_client: config.name,
+        imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+    end
+
+    test "clear_completed/2 with delete_files: true sets the delete flag on the adapter", %{
+      config: config
+    } do
+      download = imported_download(config)
+
+      assert {:ok, _} = Queue.clear_completed(download, delete_files: true)
+
+      assert_received {:remove_torrent_called, _client_id, opts}
+      assert Keyword.get(opts, :delete_files) == true
+    end
+
+    test "clear_completed/2 without delete_files does not set the delete flag", %{config: config} do
+      download = imported_download(config)
+
+      assert {:ok, _} = Queue.clear_completed(download)
+
+      assert_received {:remove_torrent_called, _client_id, opts}
+      refute Keyword.get(opts, :delete_files) == true
+    end
+
+    test "clear_completed/2 deletes the DB record even when delete_files is true", %{
+      config: config
+    } do
+      download = imported_download(config)
+
+      assert {:ok, _} = Queue.clear_completed(download, delete_files: true)
+      assert Repo.get(Download, download.id) == nil
+    end
+
+    test "clear_all_completed/1 forwards delete_files to each imported download", %{
+      config: config
+    } do
+      _d1 = imported_download(config)
+      _d2 = imported_download(config)
+
+      assert {:ok, 2} = Queue.clear_all_completed(delete_files: true)
+
+      assert_received {:remove_torrent_called, _id1, opts1}
+      assert_received {:remove_torrent_called, _id2, opts2}
+      assert Keyword.get(opts1, :delete_files) == true
+      assert Keyword.get(opts2, :delete_files) == true
+    end
+
+    test "clear_all_completed/1 only targets imported downloads", %{config: config} do
+      imported = imported_download(config)
+      active = download_fixture(%{download_client: config.name})
+
+      assert {:ok, 1} = Queue.clear_all_completed(delete_files: true)
+
+      assert Repo.get(Download, imported.id) == nil
+      assert Repo.get(Download, active.id) != nil
     end
   end
 end

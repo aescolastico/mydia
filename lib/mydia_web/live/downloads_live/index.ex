@@ -9,21 +9,84 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   @items_per_page 50
 
+  @default_sort "added_desc"
+
+  # While a download is in flight, its progress (debrid swarm %, local fetch %)
+  # is synthesized live from the client/provider on each poll and is NOT
+  # persisted to the DB. PubSub broadcasts only fire on DB row changes, so
+  # without a periodic re-render the bar freezes at whatever it showed at page
+  # load. This timer re-polls + re-renders the Queue while work is active.
+  @progress_refresh_interval_ms 3_000
+
+  # Sort options offered per tab. Real-time keys (progress, speeds, ETA, ratio)
+  # only exist after client-status enrichment, so sorting runs in the LiveView
+  # over the enriched list (see apply_sorting/2), not in the DB query.
+  @shared_sort_options [
+    {"added_desc", "Newest first"},
+    {"added_asc", "Oldest first"},
+    {"name_asc", "Name (A-Z)"},
+    {"name_desc", "Name (Z-A)"},
+    {"status_asc", "Status"},
+    {"size_desc", "Size (largest)"},
+    {"size_asc", "Size (smallest)"}
+  ]
+
+  @queue_sort_options [
+    {"progress_desc", "Progress (most)"},
+    {"progress_asc", "Progress (least)"},
+    {"dlspeed_desc", "Download speed"},
+    {"eta_asc", "ETA (soonest)"}
+  ]
+
+  @completed_sort_options [
+    {"ratio_desc", "Ratio (highest)"},
+    {"ratio_asc", "Ratio (lowest)"},
+    {"ulspeed_desc", "Upload speed"},
+    {"imported_desc", "Imported (newest)"},
+    {"imported_asc", "Imported (oldest)"}
+  ]
+
+  @allowed_sort_fields (@shared_sort_options ++ @queue_sort_options ++ @completed_sort_options)
+                       |> Enum.map(&elem(&1, 0))
+
+  # Rank for status sorting so states group sensibly (active work first) rather
+  # than sorting alphabetically. Unknown statuses fall to the end.
+  @status_rank %{
+    "downloading" => 0,
+    "checking" => 1,
+    "queued" => 2,
+    "paused" => 3,
+    "stalled" => 4,
+    "seeding" => 5,
+    "completed" => 6,
+    "imported" => 7,
+    "cancelled" => 8,
+    "failed" => 9,
+    "missing" => 10,
+    "unknown" => 11
+  }
+
   @impl true
   def mount(_params, _session, socket) do
     # Subscribe to download updates for real-time progress
     if connected?(socket) do
       PubSub.subscribe(Mydia.PubSub, "downloads")
+      schedule_progress_refresh()
     end
 
     {:ok,
      socket
      |> assign(:page_title, "Activity")
      |> assign(:active_tab, :queue)
+     |> assign(:sort_by, @default_sort)
      |> assign(:selected_ids, MapSet.new())
      |> assign(:selection_mode, false)
      |> assign(:page, 0)
      |> assign(:has_more, true)
+     # Clear-completed modal state
+     |> assign(:show_clear_modal, false)
+     |> assign(:delete_files, false)
+     |> assign(:clearable_count, 0)
      # Issues tab state
      |> assign(:issues_counts, %{unmatched: 0, unresolved: 0, other: 0})
      |> assign(:search_open_for, nil)
@@ -52,11 +115,26 @@ defmodule MydiaWeb.DownloadsLive.Index do
     {:noreply,
      socket
      |> assign(:active_tab, tab_atom)
+     # Reset to the default sort: a tab-specific sort (e.g. ratio on completed)
+     # is not a valid option on the new tab.
+     |> assign(:sort_by, @default_sort)
      |> assign(:selected_ids, MapSet.new())
      |> assign(:selection_mode, false)
      |> assign(:page, 0)
      |> load_downloads()}
   end
+
+  def handle_event("sort", %{"sort_by" => sort_by}, socket)
+      when sort_by in @allowed_sort_fields do
+    {:noreply,
+     socket
+     |> assign(:sort_by, sort_by)
+     |> assign(:page, 0)
+     |> load_downloads()}
+  end
+
+  # Unknown sort value: fall back to the current sort rather than raising.
+  def handle_event("sort", _params, socket), do: {:noreply, socket}
 
   def handle_event("toggle_select", %{"id" => id}, socket) do
     selected_ids =
@@ -260,110 +338,151 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   def handle_event("batch_retry", _params, socket) do
-    selected_ids = MapSet.to_list(socket.assigns.selected_ids)
-
-    results =
-      Enum.map(selected_ids, fn id ->
-        try do
-          download = Downloads.get_download!(id, preload: [:media_item, :episode])
-
-          # Check if this is an import failure or download failure
-          if download.import_last_error do
-            # Import failure - retry import
-            case Downloads.update_download(download, %{
-                   import_retry_count: 0,
-                   import_last_error: nil,
-                   import_next_retry_at: nil,
-                   import_failed_at: nil
-                 }) do
-              {:ok, updated} ->
-                %{
-                  "download_id" => updated.id,
-                  "save_path" => nil,
-                  "cleanup_client" => true,
-                  "use_hardlinks" => true,
-                  "move_files" => false
-                }
-                |> Mydia.Jobs.MediaImport.new()
-                |> Oban.insert()
-
-              error ->
-                error
-            end
-          else
-            # Download failure - retry download
-            metadata = DownloadMetadata.from_map(download.metadata)
-
-            search_result = %Mydia.Indexers.SearchResult{
-              download_url: download.download_url,
-              title: download.title,
-              indexer: download.indexer,
-              size: metadata.size,
-              seeders: metadata.seeders,
-              leechers: metadata.leechers,
-              quality: metadata.quality
-            }
-
-            opts =
-              []
-              |> maybe_add_opt(:media_item_id, download.media_item_id)
-              |> maybe_add_opt(:episode_id, download.episode_id)
-              |> maybe_add_opt(:client_name, download.download_client)
-
-            Downloads.delete_download(download)
-            Downloads.initiate_download(search_result, opts)
-          end
-        rescue
-          _ -> {:error, :failed}
-        end
-      end)
-
-    success_count = Enum.count(results, fn {status, _} -> status == :ok end)
-
-    {:noreply,
-     socket
-     |> assign(:selected_ids, MapSet.new())
-     |> assign(:selection_mode, false)
-     |> put_flash(:info, "#{success_count} item(s) retried")
-     |> load_downloads()}
-  end
-
-  def handle_event("batch_delete", _params, socket) do
-    selected_ids = MapSet.to_list(socket.assigns.selected_ids)
-
-    results =
-      Enum.map(selected_ids, fn id ->
-        try do
-          download = Downloads.get_download!(id)
-          # Try to remove from client (ignore errors)
-          _ = Downloads.cancel_download(download, delete_files: true)
-          # Delete from database
-          Downloads.delete_download(download)
-        rescue
-          _ -> {:error, :failed}
-        end
-      end)
-
-    success_count = Enum.count(results, fn {status, _} -> status == :ok end)
-
-    {:noreply,
-     socket
-     |> assign(:selected_ids, MapSet.new())
-     |> assign(:selection_mode, false)
-     |> put_flash(:info, "#{success_count} download(s) removed")
-     |> load_downloads()}
-  end
-
-  def handle_event("clear_completed", _params, socket) do
     with :ok <- Authorization.authorize_manage_downloads(socket) do
-      {:ok, count} = Downloads.clear_all_completed()
+      selected_ids = MapSet.to_list(socket.assigns.selected_ids)
+
+      results =
+        Enum.map(selected_ids, fn id ->
+          try do
+            download = Downloads.get_download!(id, preload: [:media_item, :episode])
+
+            # Check if this is an import failure or download failure
+            if download.import_last_error do
+              # Import failure - retry import
+              case Downloads.update_download(download, %{
+                     import_retry_count: 0,
+                     import_last_error: nil,
+                     import_next_retry_at: nil,
+                     import_failed_at: nil
+                   }) do
+                {:ok, updated} ->
+                  %{
+                    "download_id" => updated.id,
+                    "save_path" => nil,
+                    "cleanup_client" => true,
+                    "use_hardlinks" => true,
+                    "move_files" => false
+                  }
+                  |> Mydia.Jobs.MediaImport.new()
+                  |> Oban.insert()
+
+                error ->
+                  error
+              end
+            else
+              # Download failure - retry download
+              metadata = DownloadMetadata.from_map(download.metadata)
+
+              search_result = %Mydia.Indexers.SearchResult{
+                download_url: download.download_url,
+                title: download.title,
+                indexer: download.indexer,
+                size: metadata.size,
+                seeders: metadata.seeders,
+                leechers: metadata.leechers,
+                quality: metadata.quality
+              }
+
+              opts =
+                []
+                |> maybe_add_opt(:media_item_id, download.media_item_id)
+                |> maybe_add_opt(:episode_id, download.episode_id)
+                |> maybe_add_opt(:client_name, download.download_client)
+
+              Downloads.delete_download(download)
+              Downloads.initiate_download(search_result, opts)
+            end
+          rescue
+            _ -> {:error, :failed}
+          end
+        end)
+
+      success_count = Enum.count(results, fn {status, _} -> status == :ok end)
 
       {:noreply,
        socket
-       |> put_flash(:info, "#{count} completed download(s) cleared")
+       |> assign(:selected_ids, MapSet.new())
+       |> assign(:selection_mode, false)
+       |> put_flash(:info, "#{success_count} item(s) retried")
        |> load_downloads()}
     else
       {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("batch_delete", _params, socket) do
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      selected_ids = MapSet.to_list(socket.assigns.selected_ids)
+
+      results =
+        Enum.map(selected_ids, fn id ->
+          try do
+            download = Downloads.get_download!(id)
+            # Try to remove from client (ignore errors)
+            _ = Downloads.cancel_download(download, delete_files: true)
+            # Delete from database
+            Downloads.delete_download(download)
+          rescue
+            _ -> {:error, :failed}
+          end
+        end)
+
+      success_count = Enum.count(results, fn {status, _} -> status == :ok end)
+
+      {:noreply,
+       socket
+       |> assign(:selected_ids, MapSet.new())
+       |> assign(:selection_mode, false)
+       |> put_flash(:info, "#{success_count} download(s) removed")
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("open_clear_completed_modal", _params, socket) do
+    # Opening the modal is non-destructive, so it is ungated (the button renders
+    # for everyone, matching prior behavior). The destructive submit is gated.
+    {:noreply,
+     socket
+     |> assign(:show_clear_modal, true)
+     |> assign(:delete_files, false)
+     |> assign(:clearable_count, Downloads.count_completed())}
+  end
+
+  def handle_event("close_clear_completed_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_clear_modal, false)
+     |> assign(:delete_files, false)}
+  end
+
+  def handle_event("toggle_delete_files", params, socket) do
+    {:noreply, assign(socket, :delete_files, delete_files?(params))}
+  end
+
+  def handle_event("clear_completed", params, socket) do
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      # Phoenix checkboxes submit the string "true" (or omit the key); coerce to
+      # a real boolean so the adapter's [delete_files: boolean()] contract holds.
+      delete_files = delete_files?(params)
+      {:ok, count} = Downloads.clear_all_completed(delete_files: delete_files)
+
+      message =
+        if delete_files do
+          "#{count} completed download(s) cleared and files deleted from disk"
+        else
+          "#{count} completed download(s) cleared"
+        end
+
+      {:noreply,
+       socket
+       |> assign(:show_clear_modal, false)
+       |> assign(:delete_files, false)
+       |> put_flash(:info, message)
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, assign(socket, :show_clear_modal, false)}
     end
   end
 
@@ -576,14 +695,45 @@ defmodule MydiaWeb.DownloadsLive.Index do
   def handle_info({:download_updated, _download_id}, socket) do
     # Reload downloads when we receive an update
     # In a real implementation, we might want to just update the specific download
-    {:noreply, load_downloads(socket)}
+    {:noreply, socket |> maybe_refresh_clearable_count() |> load_downloads()}
   end
 
   def handle_info({:search_completed, _media_item_id, _stats}, socket) do
-    {:noreply, load_downloads(socket)}
+    {:noreply, socket |> maybe_refresh_clearable_count() |> load_downloads()}
+  end
+
+  # Periodic live-progress refresh. Reschedules unconditionally so it resumes
+  # when the operator switches back to the Queue or a new download starts, but
+  # only re-polls clients when the Queue tab actually has active work — idle
+  # tabs cost nothing.
+  def handle_info(:refresh_progress, socket) do
+    schedule_progress_refresh()
+
+    socket =
+      if socket.assigns.active_tab == :queue and not socket.assigns.downloads_empty? and
+           not socket.assigns.selection_mode do
+        load_downloads(socket)
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   # Private functions
+
+  defp schedule_progress_refresh do
+    Process.send_after(self(), :refresh_progress, @progress_refresh_interval_ms)
+  end
+
+  # Keeps the Clear Completed modal's blast-radius count fresh if a background
+  # update lands while the (destructive) modal is open. The submit flash always
+  # reports the authoritative recomputed count regardless.
+  defp maybe_refresh_clearable_count(%{assigns: %{show_clear_modal: true}} = socket) do
+    assign(socket, :clearable_count, Downloads.count_completed())
+  end
+
+  defp maybe_refresh_clearable_count(socket), do: socket
 
   defp reload_stream(socket) do
     case socket.assigns.active_tab do
@@ -599,6 +749,9 @@ defmodule MydiaWeb.DownloadsLive.Index do
   defp maybe_add_opt(opts, _key, nil), do: opts
   defp maybe_add_opt(opts, key, value), do: Keyword.put(opts, key, value)
 
+  # Phoenix checkboxes submit "true" when checked and omit the key when not.
+  defp delete_files?(params), do: Map.get(params, "delete_files") == "true"
+
   defp load_downloads(socket) do
     case socket.assigns.active_tab do
       :issues ->
@@ -612,7 +765,9 @@ defmodule MydiaWeb.DownloadsLive.Index do
           end
 
         # Get all matching downloads for the current tab with real-time status from clients
-        all_downloads = Downloads.list_downloads_with_status(filter: filter)
+        all_downloads =
+          Downloads.list_downloads_with_status(filter: filter)
+          |> apply_sorting(socket.assigns.sort_by)
 
         # Apply pagination
         page = socket.assigns.page
@@ -679,7 +834,58 @@ defmodule MydiaWeb.DownloadsLive.Index do
       end
 
     Downloads.list_downloads_with_status(filter: filter)
+    |> apply_sorting(socket.assigns.sort_by)
   end
+
+  # Sorts the enriched download list by the active `sort_by` selection. Runs in
+  # the LiveView (not the DB) because real-time keys (progress, speeds, ETA,
+  # ratio) only exist after client-status enrichment. Missing values are guarded
+  # so they group deterministically rather than scatter or raise.
+  defp apply_sorting(downloads, sort_by) do
+    case sort_by do
+      "added_desc" -> Enum.sort_by(downloads, & &1.inserted_at, {:desc, DateTime})
+      "added_asc" -> Enum.sort_by(downloads, & &1.inserted_at, {:asc, DateTime})
+      "name_asc" -> Enum.sort_by(downloads, &sort_name/1, :asc)
+      "name_desc" -> Enum.sort_by(downloads, &sort_name/1, :desc)
+      "status_asc" -> Enum.sort_by(downloads, &status_rank/1, :asc)
+      "size_desc" -> Enum.sort_by(downloads, &(&1.size || 0), :desc)
+      "size_asc" -> Enum.sort_by(downloads, &(&1.size || 0), :asc)
+      "progress_desc" -> Enum.sort_by(downloads, &(&1.progress || 0.0), :desc)
+      "progress_asc" -> Enum.sort_by(downloads, &(&1.progress || 0.0), :asc)
+      "dlspeed_desc" -> Enum.sort_by(downloads, &(&1.download_speed || 0), :desc)
+      "ulspeed_desc" -> Enum.sort_by(downloads, &(&1.upload_speed || 0), :desc)
+      "ratio_desc" -> Enum.sort_by(downloads, &(&1.ratio || 0.0), :desc)
+      "ratio_asc" -> Enum.sort_by(downloads, &(&1.ratio || 0.0), :asc)
+      "eta_asc" -> Enum.sort_by(downloads, &eta_sort_key/1, :asc)
+      "imported_desc" -> Enum.sort_by(downloads, &imported_sort_key/1, {:desc, DateTime})
+      "imported_asc" -> Enum.sort_by(downloads, &imported_sort_key/1, {:asc, DateTime})
+      _ -> Enum.sort_by(downloads, & &1.inserted_at, {:desc, DateTime})
+    end
+  end
+
+  defp sort_name(download), do: String.downcase(get_display_title(download) || "")
+
+  defp status_rank(download), do: Map.get(@status_rank, download.status, 99)
+
+  # ETA may be nil, an integer (seconds remaining), or a DateTime. Normalize to
+  # an integer so a single comparator works; nil sorts last (soonest first).
+  defp eta_sort_key(download) do
+    case download.eta do
+      nil -> 9_999_999_999
+      %DateTime{} = dt -> DateTime.diff(dt, DateTime.utc_now(), :second)
+      seconds when is_integer(seconds) -> seconds
+      _ -> 9_999_999_999
+    end
+  end
+
+  # imported_at is always present on the completed tab, but guard nil so the
+  # comparator never raises if called on a mixed list.
+  defp imported_sort_key(download), do: download.imported_at || download.inserted_at
+
+  # Sort options available for the given tab. Shared keys apply to every tab;
+  # queue- and completed-specific keys are only meaningful there.
+  defp sort_options(:completed), do: @shared_sort_options ++ @completed_sort_options
+  defp sort_options(_tab), do: @shared_sort_options ++ @queue_sort_options
 
   # View helpers
 
@@ -742,6 +948,14 @@ defmodule MydiaWeb.DownloadsLive.Index do
   defp format_progress(nil), do: 0.0
   defp format_progress(progress), do: Float.round(progress * 1.0, 1)
 
+  # A percentage is only meaningful when the client is reporting a real
+  # byte-for-byte transfer. Provider-side waits — debrid magnet conversion,
+  # queueing for a download slot ("queued"), or remote packaging
+  # ("checking") — have no measurable percentage. Rendering a 0%-filled bar
+  # there reads as "stuck"; these phases get an indeterminate (animated) bar
+  # plus the phase label instead of a frozen "0%".
+  defp progress_indeterminate?(download), do: download.status in ["queued", "checking"]
+
   defp get_metadata_value(download, key) do
     metadata_map = download.metadata || %{}
 
@@ -771,6 +985,17 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "paused" -> "badge-warning"
       "stalled" -> "badge-warning"
       _ -> "badge-ghost"
+    end
+  end
+
+  # Color modifier for the DaisyUI `status` dot shown at the start of each row.
+  defp status_dot_class(status) do
+    case status do
+      s when s in ["downloading", "seeding", "completed", "imported"] -> "status-success"
+      s when s in ["failed", "missing"] -> "status-error"
+      s when s in ["cancelled", "stalled", "paused"] -> "status-warning"
+      s when s in ["checking", "queued"] -> "status-info"
+      _ -> "status-neutral"
     end
   end
 
