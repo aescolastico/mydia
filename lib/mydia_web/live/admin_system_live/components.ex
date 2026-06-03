@@ -430,10 +430,14 @@ defmodule MydiaWeb.AdminSystemLive.Components do
           "Unknown Media"
       end
 
+    user = assigns.progress.user
+
     assigns =
       assigns
       |> assign(:poster_path, poster_path)
       |> assign(:title, title)
+      |> assign(:username, (user && user.username) || "Unknown")
+      |> assign(:avatar_url, user && user.avatar_url)
 
     ~H"""
     <div class="p-3 flex items-center gap-3 hover:bg-base-200/50 transition-colors">
@@ -447,7 +451,7 @@ defmodule MydiaWeb.AdminSystemLive.Components do
         <div class="avatar placeholder">
           <div class="bg-base-300 text-base-content rounded-full w-8">
             <span class="text-xs">
-              {(@progress.user.username || "?") |> String.slice(0, 1) |> String.upcase()}
+              {@username |> String.slice(0, 1) |> String.upcase()}
             </span>
           </div>
         </div>
@@ -455,14 +459,14 @@ defmodule MydiaWeb.AdminSystemLive.Components do
       <div class="flex-1 min-w-0">
         <div class="text-sm font-medium truncate" title={@title}>{@title}</div>
         <div class="text-xs opacity-50 flex items-center gap-1">
-          <%= if @progress.user.avatar_url do %>
+          <%= if @avatar_url do %>
             <div class="avatar">
               <div class="w-4 rounded-full">
-                <img src={@progress.user.avatar_url} alt={@progress.user.username} />
+                <img src={@avatar_url} alt={@username} />
               </div>
             </div>
           <% end %>
-          <span>{@progress.user.username || "Unknown"}</span>
+          <span>{@username}</span>
         </div>
       </div>
       <div class="text-xs opacity-40 whitespace-nowrap">
