@@ -1,16 +1,26 @@
 defmodule Mydia.Downloads.JobManagerTest do
   use Mydia.DataCase, async: false
 
-  # These tests require FFmpeg to be installed
-  @moduletag :requires_ffmpeg
-
+  alias Mydia.Downloads.BlockingTranscoder
   alias Mydia.Downloads.JobManager
 
+  # Drive the JobManager with a deterministic transcoder whose jobs stay alive
+  # until explicitly stopped/finished. With the real FFmpeg transcoder a
+  # 1-second test clip completes faster than a test can fill capacity, so the
+  # slot a queueing assertion expects to be occupied intermittently freed up.
   setup do
+    previous = Application.get_env(:mydia, :transcoder_module)
+    Application.put_env(:mydia, :transcoder_module, BlockingTranscoder)
+
     cleanup_jobs()
 
     on_exit(fn ->
       cleanup_jobs()
+
+      case previous do
+        nil -> Application.delete_env(:mydia, :transcoder_module)
+        mod -> Application.put_env(:mydia, :transcoder_module, mod)
+      end
     end)
 
     :ok
@@ -335,17 +345,15 @@ defmodule Mydia.Downloads.JobManagerTest do
   end
 
   describe "automatic queue processing" do
-    @tag :slow
     test "automatically starts queued jobs when slots become available" do
       test_pid = self()
 
-      # Create very short test videos that transcode quickly
       input1 = create_minimal_test_video()
       input2 = create_minimal_test_video()
       input3 = create_minimal_test_video()
 
       # Start 2 jobs (at capacity)
-      {:ok, _pid1} =
+      {:ok, pid1} =
         JobManager.start_or_queue_job(
           media_file_id: "file1",
           resolution: :p720,
@@ -376,19 +384,17 @@ defmodule Mydia.Downloads.JobManagerTest do
       # Third job should be queued
       assert {:ok, :queued} = JobManager.get_job_status("file3", :p720)
 
-      # Wait for one of the first jobs to complete
-      assert_receive {:completed, completed_id}, 10_000
-      assert completed_id in ["file1", "file2"]
+      # Finish the first job, freeing a slot
+      BlockingTranscoder.finish(pid1)
+      assert_receive {:completed, "file1"}, 5_000
 
       # Give the manager a moment to process the queue
-      Process.sleep(200)
+      Process.sleep(100)
 
-      # Third job should now be running (or completed if it was very fast)
-      status = JobManager.get_job_status("file3", :p720)
-      assert status == {:ok, :running} or status == {:error, :not_found}
+      # Third job should now be promoted from the queue to running
+      assert {:ok, :running} = JobManager.get_job_status("file3", :p720)
 
-      # Clean up (files that might still be running)
-      JobManager.cancel_job("file1", :p720)
+      # Clean up still-running jobs
       JobManager.cancel_job("file2", :p720)
       JobManager.cancel_job("file3", :p720)
 
@@ -401,38 +407,16 @@ defmodule Mydia.Downloads.JobManagerTest do
 
   # Helper functions
 
+  # The JobManager test transcoder (BlockingTranscoder) ignores the input
+  # contents, so an empty placeholder file is enough — no FFmpeg required.
   defp create_test_video do
     create_minimal_test_video()
   end
 
   defp create_minimal_test_video do
-    # Create a minimal 1-second test video for actual transcoding tests
-    output_path = "/tmp/test_video_#{System.unique_integer([:positive])}.mp4"
-
-    # Use FFmpeg to create a 1-second test video
-    # This is a solid color video with no audio, very quick to create and transcode
-    System.cmd("ffmpeg", [
-      "-f",
-      "lavfi",
-      "-i",
-      "color=c=blue:s=320x240:d=1",
-      "-f",
-      "lavfi",
-      "-i",
-      "anullsrc=r=48000:cl=stereo",
-      "-t",
-      "1",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "ultrafast",
-      "-c:a",
-      "aac",
-      "-y",
-      output_path
-    ])
-
-    output_path
+    path = "/tmp/test_video_#{System.unique_integer([:positive])}.mp4"
+    File.write!(path, "")
+    path
   end
 
   defp create_temp_output_path do

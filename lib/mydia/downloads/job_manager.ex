@@ -243,7 +243,7 @@ defmodule Mydia.Downloads.JobManager do
           # Only try to stop if process is still alive
           if Process.alive?(job_info.pid) do
             try do
-              FfmpegMp4Transcoder.stop_transcoding(job_info.pid)
+              transcoder().stop_transcoding(job_info.pid)
             catch
               :exit, _ -> :ok
             end
@@ -389,7 +389,7 @@ defmodule Mydia.Downloads.JobManager do
         # Not registered, proceed
 
         # Start the transcoder
-        case FfmpegMp4Transcoder.start_transcoding(opts) do
+        case transcoder().start_transcoding(opts) do
           {:ok, pid} ->
             # Unlink from the transcoder process - we use Process.monitor instead
             # to avoid crashing the JobManager when a transcoder exits abnormally
@@ -406,7 +406,7 @@ defmodule Mydia.Downloads.JobManager do
 
               {:error, {:already_registered, _existing_pid}} ->
                 # Stop the transcoder we just started
-                FfmpegMp4Transcoder.stop_transcoding(pid)
+                transcoder().stop_transcoding(pid)
                 {:error, :already_registered}
             end
 
@@ -463,6 +463,12 @@ defmodule Mydia.Downloads.JobManager do
         # No more queued jobs
         state
     end
+  end
+
+  # Transcoder module, resolvable via config so tests can substitute a
+  # deterministic stand-in. Defaults to the real FFmpeg transcoder.
+  defp transcoder do
+    Application.get_env(:mydia, :transcoder_module, FfmpegMp4Transcoder)
   end
 
   # Log job completion or failure
