@@ -17,6 +17,7 @@ defmodule Mydia.Media.MediaItem do
           tmdb_id: integer() | nil,
           tvdb_id: integer() | nil,
           imdb_id: String.t() | nil,
+          metadata_source: atom() | nil,
           metadata: Mydia.Metadata.Structs.MediaMetadata.t() | nil,
           monitored: boolean(),
           monitoring_preset: atom(),
@@ -43,6 +44,10 @@ defmodule Mydia.Media.MediaItem do
     field :tmdb_id, :integer
     field :tvdb_id, :integer
     field :imdb_id, :string
+    # Authoritative provider that supplied this item's current metadata
+    # (tv_show only; movies stay nil). Source of truth for provider-aware
+    # refresh — not inferred from tvdb_id/tmdb_id presence.
+    field :metadata_source, Ecto.Enum, values: [:tvdb, :tmdb]
     field :metadata, Mydia.Media.MetadataType
     field :monitored, :boolean, default: true
 
@@ -77,6 +82,7 @@ defmodule Mydia.Media.MediaItem do
       :tmdb_id,
       :tvdb_id,
       :imdb_id,
+      :metadata_source,
       :metadata,
       :monitored,
       :monitoring_preset,
@@ -84,6 +90,7 @@ defmodule Mydia.Media.MediaItem do
     ])
     |> validate_required([:type, :title])
     |> validate_inclusion(:type, @type_values)
+    |> validate_inclusion(:metadata_source, [:tvdb, :tmdb])
     |> validate_number(:year, greater_than: 1800, less_than: 2200)
     |> validate_year_for_movies()
     |> unique_constraint(:tmdb_id)
