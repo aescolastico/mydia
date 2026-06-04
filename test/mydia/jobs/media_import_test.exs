@@ -10,6 +10,15 @@ defmodule Mydia.Jobs.MediaImportTest do
 
   @moduletag :tmp_dir
 
+  # `chmod 000` does not restrict the root user, so a permission-denied path is
+  # unobservable when the suite runs as root (as it does in some Docker images).
+  # Tests that depend on it are skipped there rather than asserting behaviour
+  # that cannot occur.
+  @running_as_root (case System.cmd("id", ["-u"]) do
+                      {out, 0} -> String.trim(out) == "0"
+                      _ -> false
+                    end)
+
   describe "Args.parse/1" do
     test "parses save_path from job args" do
       args = MediaImport.Args.parse(%{"download_id" => "123", "save_path" => "/downloads/movie"})
@@ -690,6 +699,7 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
 
     @tag :tmp_dir
+    @tag skip: @running_as_root and "chmod 000 does not restrict root; path stays accessible"
     test "cancels inaccessible path after the third attempt and clears retry metadata",
          %{tmp_dir: tmp_dir} do
       media_item =
