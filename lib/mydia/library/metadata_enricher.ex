@@ -168,7 +168,9 @@ defmodule Mydia.Library.MetadataEnricher do
   defp create_new_media_item(provider_id, media_type, match_result, config) do
     Logger.debug("Creating new media item", provider_id: provider_id, type: media_type)
 
-    case fetch_full_metadata(provider_id, media_type, config) do
+    provider_type = Map.get(match_result, :provider_type, :tmdb)
+
+    case fetch_full_metadata(provider_id, media_type, config, provider_type) do
       {:ok, full_metadata} ->
         attrs = build_media_item_attrs(full_metadata, media_type, match_result)
 
@@ -202,9 +204,15 @@ defmodule Mydia.Library.MetadataEnricher do
         provider_id: provider_id
       )
 
-      case fetch_full_metadata(provider_id, media_type, config) do
+      # Preserve the existing item's provider so re-enrichment fetches from the
+      # same source it was matched against.
+      provider_type = existing_item.metadata_source || existing_item_provider_type(existing_item)
+
+      case fetch_full_metadata(provider_id, media_type, config, provider_type) do
         {:ok, full_metadata} ->
-          attrs = build_media_item_attrs(full_metadata, media_type, %{})
+          attrs =
+            build_media_item_attrs(full_metadata, media_type, %{provider_type: provider_type})
+
           Media.update_media_item(existing_item, attrs, reason: "Metadata enriched")
 
         {:error, reason} ->
@@ -218,18 +226,35 @@ defmodule Mydia.Library.MetadataEnricher do
     end
   end
 
-  defp fetch_full_metadata(provider_id, media_type, config) do
+  defp fetch_full_metadata(provider_id, media_type, config, provider_type) do
     fetch_opts = [
       media_type: media_type,
       append_to_response: ["credits", "images", "videos", "keywords"]
     ]
 
+    # For TV shows, fetch from the provider that supplied the match so a
+    # TMDB-matched show is not fetched from the TVDB endpoint (and vice versa).
+    fetch_opts =
+      if media_type == :tv_show && provider_type in [:tvdb, :tmdb] do
+        Keyword.put(fetch_opts, :provider, provider_type)
+      else
+        fetch_opts
+      end
+
     Metadata.fetch_by_id_cached(config, provider_id, fetch_opts)
   end
 
+  # Infer the provider a stored item was matched against, for items predating
+  # the metadata_source column. Mirrors the historical TVDB-precedence rule.
+  defp existing_item_provider_type(%{tvdb_id: tvdb_id}) when not is_nil(tvdb_id), do: :tvdb
+  defp existing_item_provider_type(%{tmdb_id: tmdb_id}) when not is_nil(tmdb_id), do: :tmdb
+  defp existing_item_provider_type(_), do: :tmdb
+
   defp build_media_item_attrs(metadata, media_type, match_result) do
     provider_id = String.to_integer(to_string(metadata.provider_id))
-    provider_type = Map.get(match_result, :provider_type, metadata.provider || :tmdb)
+
+    raw_provider_type = Map.get(match_result, :provider_type, metadata.provider || :tmdb)
+    provider_type = normalize_provider_type(raw_provider_type, metadata)
 
     attrs = %{
       type: media_type_to_string(media_type),
@@ -243,14 +268,31 @@ defmodule Mydia.Library.MetadataEnricher do
 
     # Set the appropriate provider ID field
     attrs =
-      if provider_type == :tvdb || (media_type == :tv_show && metadata.provider == :tvdb) do
+      if provider_type == :tvdb do
         Map.put(attrs, :tvdb_id, provider_id)
       else
         Map.put(attrs, :tmdb_id, provider_id)
       end
 
+    # Record provenance for TV shows so provider-aware refresh can detect a
+    # source/library mismatch. Movies leave metadata_source nil.
+    attrs =
+      if media_type == :tv_show do
+        Map.put(attrs, :metadata_source, provider_type)
+      else
+        attrs
+      end
+
     maybe_add_quality_profile(attrs, match_result)
   end
+
+  # Normalize any provider signal to a concrete :tvdb / :tmdb value. Search
+  # results from the relay carry provider: :metadata_relay for TMDB, which must
+  # map to :tmdb rather than leak through as an invalid metadata_source.
+  defp normalize_provider_type(:tvdb, _metadata), do: :tvdb
+  defp normalize_provider_type(:tmdb, _metadata), do: :tmdb
+  defp normalize_provider_type(_other, %{provider: :tvdb}), do: :tvdb
+  defp normalize_provider_type(_other, _metadata), do: :tmdb
 
   defp media_type_to_string(:movie), do: "movie"
   defp media_type_to_string(:tv_show), do: "tv_show"

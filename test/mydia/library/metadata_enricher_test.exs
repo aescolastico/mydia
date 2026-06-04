@@ -392,4 +392,97 @@ defmodule Mydia.Library.MetadataEnricherTest do
 
   defp media_type_to_string(:movie), do: "movie"
   defp media_type_to_string(:tv_show), do: "tv_show"
+
+  describe "metadata_source stamping for new TV shows" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "stamps :tmdb when the show was matched via TMDB", %{bypass: bypass, config: config} do
+      # Unique id keeps the metadata cache key unique so the fetch hits Bypass.
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tv_body(id, "TMDB Sourced Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tmdb,
+        title: "TMDB Sourced Show",
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.type == "tv_show"
+      assert media_item.metadata_source == :tmdb
+      assert media_item.tmdb_id == id
+      assert is_nil(media_item.tvdb_id)
+    end
+
+    test "stamps :tvdb when the show was matched via TVDB", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tvdb/series/#{id}/extended", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tvdb_body(id, "TVDB Sourced Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tvdb,
+        title: "TVDB Sourced Show",
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.type == "tv_show"
+      assert media_item.metadata_source == :tvdb
+      assert media_item.tvdb_id == id
+      assert is_nil(media_item.tmdb_id)
+    end
+  end
+
+  defp tv_body(id, name) do
+    %{
+      "id" => id,
+      "name" => name,
+      "overview" => "test overview",
+      "first_air_date" => "2010-01-01",
+      "number_of_seasons" => 1,
+      "number_of_episodes" => 1,
+      "genres" => [],
+      "seasons" => [],
+      "credits" => %{"cast" => [], "crew" => []}
+    }
+  end
+
+  defp tvdb_body(id, name) do
+    %{
+      "data" => %{
+        "id" => id,
+        "tvdb_id" => id,
+        "name" => name,
+        "overview" => "test overview",
+        "first_air_date" => "2010-01-01",
+        "genres" => [],
+        "seasons" => []
+      }
+    }
+  end
 end
