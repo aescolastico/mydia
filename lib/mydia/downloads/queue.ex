@@ -422,7 +422,7 @@ defmodule Mydia.Downloads.Queue do
           "move_files" => false
         }
         |> Mydia.Jobs.MediaImport.new()
-        |> Oban.insert()
+        |> insert_job()
 
         {:ok, updated}
 
@@ -480,7 +480,7 @@ defmodule Mydia.Downloads.Queue do
            "move_files" => false
          }
          |> Mydia.Jobs.MediaImport.new()
-         |> Oban.insert() do
+         |> insert_job() do
       {:ok, _job} -> {:ok, download}
       {:error, changeset} -> {:error, changeset}
     end
