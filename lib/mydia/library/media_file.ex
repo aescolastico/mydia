@@ -98,6 +98,21 @@ defmodule Mydia.Library.MediaFile do
   def absolute_path(%__MODULE__{}), do: nil
 
   @doc """
+  Returns true when a media item / episode is compatible with a library path type.
+
+  Shared rule behind both the changeset-level validation and pre-flight checks
+  (e.g. download re-match), so the two cannot drift. `media_item_type` is the
+  item's `type` ("movie" / "tv_show") or nil; `has_episode?` is whether an
+  `episode_id` is being set. `:mixed` accepts everything; movies are rejected
+  from `:series` paths and episodes from `:movies` paths.
+  """
+  @spec library_type_compatible?(atom(), String.t() | nil, boolean()) :: boolean()
+  def library_type_compatible?(:mixed, _media_item_type, _has_episode?), do: true
+  def library_type_compatible?(:movies, _media_item_type, true), do: false
+  def library_type_compatible?(:series, "movie", _has_episode?), do: false
+  def library_type_compatible?(_library_type, _media_item_type, _has_episode?), do: true
+
+  @doc """
   Changeset for creating or updating a media file.
   """
   def changeset(media_file, attrs) do
@@ -282,36 +297,31 @@ defmodule Mydia.Library.MediaFile do
         changeset
 
       library_path ->
-        cond do
-          # If library is :mixed, allow both types
-          library_path.type == :mixed ->
-            changeset
+        media_item_type = media_item_id && get_media_type_for_item(media_item_id)
 
-          # Movie in :series library
-          not is_nil(media_item_id) and library_path.type == :series ->
-            media_type = get_media_type_for_item(media_item_id)
-
-            if media_type == "movie" do
+        if library_type_compatible?(library_path.type, media_item_type, not is_nil(episode_id)) do
+          changeset
+        else
+          cond do
+            # Movie in :series library
+            not is_nil(media_item_id) and library_path.type == :series ->
               add_error(
                 changeset,
                 :media_item_id,
                 "cannot add movies to a library path configured for TV series only (path: #{library_path.path})"
               )
-            else
+
+            # TV episode in :movies library
+            not is_nil(episode_id) and library_path.type == :movies ->
+              add_error(
+                changeset,
+                :episode_id,
+                "cannot add TV episodes to a library path configured for movies only (path: #{library_path.path})"
+              )
+
+            true ->
               changeset
-            end
-
-          # TV show in :movies library
-          not is_nil(episode_id) and library_path.type == :movies ->
-            add_error(
-              changeset,
-              :episode_id,
-              "cannot add TV episodes to a library path configured for movies only (path: #{library_path.path})"
-            )
-
-          # All other cases are valid
-          true ->
-            changeset
+          end
         end
     end
   end

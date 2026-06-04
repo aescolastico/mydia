@@ -593,7 +593,8 @@ defmodule Mydia.Jobs.MediaImport do
     end)
   end
 
-  defp determine_library_path(download) do
+  @doc false
+  def determine_library_path(download) do
     # If download has a direct library_path association (specialized libraries),
     # use that directly
     if download.library_path do

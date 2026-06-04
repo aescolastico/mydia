@@ -7,6 +7,7 @@ defmodule Mydia.Downloads.QueueTest do
   they are the unit-of-change for U3 (#124 + #129).
   """
   use Mydia.DataCase, async: false
+  use Oban.Testing, repo: Mydia.Repo
 
   alias Mydia.Downloads.Queue
   alias Mydia.Downloads.Client.Registry
@@ -332,6 +333,90 @@ defmodule Mydia.Downloads.QueueTest do
 
       assert Repo.get(Download, imported.id) == nil
       assert Repo.get(Download, active.id) != nil
+    end
+  end
+
+  describe "rematch_imported_download/3" do
+    setup do
+      library = library_path_fixture(%{type: "movies", monitored: true})
+      movie = media_item_fixture(%{type: "movie", title: "Right Movie"})
+
+      download =
+        download_fixture(%{
+          media_item_id: movie.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      _media_file =
+        media_file_fixture(%{
+          media_item_id: movie.id,
+          library_path_id: library.id,
+          metadata: %{"imported_from_download_id" => download.id}
+        })
+
+      %{library: library, movie: movie, download: download}
+    end
+
+    test "rejects a download that is not imported yet", %{movie: movie} do
+      download = download_fixture(%{media_item_id: movie.id, imported_at: nil})
+      assert {:error, :not_imported} = Queue.rematch_imported_download(download, movie.id)
+    end
+
+    test "rejects a partial-pack / unresolved download", %{movie: movie} do
+      download =
+        download_fixture(%{
+          media_item_id: movie.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          match_status: "partial_pack"
+        })
+
+      assert {:error, :not_single_target} = Queue.rematch_imported_download(download, movie.id)
+    end
+
+    test "no-ops when the target is unchanged", %{download: download, movie: movie} do
+      assert {:ok, :unchanged} = Queue.rematch_imported_download(download, movie.id)
+      refute_enqueued(worker: Mydia.Jobs.MediaRematch)
+    end
+
+    test "refuses a pack (provenance resolves to multiple files)", %{
+      library: library,
+      download: download
+    } do
+      other_movie = media_item_fixture(%{type: "movie", title: "Other"})
+
+      # A second imported file under the same download id makes this a pack.
+      media_file_fixture(%{
+        media_item_id: download.media_item_id,
+        library_path_id: library.id,
+        metadata: %{"imported_from_download_id" => download.id}
+      })
+
+      assert {:error, :multiple_files} =
+               Queue.rematch_imported_download(download, other_movie.id)
+
+      refute_enqueued(worker: Mydia.Jobs.MediaRematch)
+    end
+
+    test "errors when no compatible destination library exists", %{download: download} do
+      # Re-match the movie download to a TV episode while only a :movies library
+      # is monitored — there is no series destination, so it is rejected pre-move.
+      episode = episode_fixture(%{season_number: 1, episode_number: 3})
+      show_id = episode.media_item_id
+
+      assert {:error, :no_library_path} =
+               Queue.rematch_imported_download(download, show_id, episode.id)
+
+      refute_enqueued(worker: Mydia.Jobs.MediaRematch)
+    end
+
+    test "enqueues a re-match job and persists the new target", %{download: download} do
+      new_movie = media_item_fixture(%{type: "movie", title: "Corrected Movie"})
+
+      assert {:ok, :enqueued} = Queue.rematch_imported_download(download, new_movie.id)
+      assert_enqueued(worker: Mydia.Jobs.MediaRematch, args: %{"download_id" => download.id})
+
+      reloaded = Repo.get(Download, download.id)
+      assert reloaded.media_item_id == new_movie.id
     end
   end
 end

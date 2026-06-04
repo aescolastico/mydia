@@ -2002,6 +2002,29 @@ defmodule Mydia.Library do
   end
 
   @doc """
+  Lists the media files imported from a given download.
+
+  Located by the collision-free `imported_from_download_id` provenance key — the
+  download's primary key, written into `metadata` at import time. The
+  `(download_client, download_client_id)` pair is deliberately NOT used as the
+  key: download clients recycle torrent/nzb IDs, so that pair is unique only at a
+  single instant, not over the file's lifetime, and would surface the wrong file.
+
+  Excludes trashed files. Pass `preload:` to preload associations.
+  """
+  @spec list_media_files_for_download(Mydia.Downloads.Download.t(), keyword()) :: [MediaFile.t()]
+  def list_media_files_for_download(download, opts \\ []) do
+    query =
+      from f in MediaFile,
+        where: ^Mydia.DB.json_equals(:metadata, "$.imported_from_download_id", download.id),
+        where: is_nil(f.trashed_at)
+
+    query
+    |> maybe_preload(opts[:preload])
+    |> Repo.all()
+  end
+
+  @doc """
   Refreshes file metadata for all media files in the library.
 
   This can be a long-running operation. Returns the count of successfully refreshed files.

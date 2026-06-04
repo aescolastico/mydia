@@ -333,6 +333,14 @@ defmodule Mydia.Downloads do
   defdelegate resolve_file_mappings(download, mappings), to: Mydia.Downloads.Queue
 
   @doc """
+  Re-matches an already-imported download to a corrected movie or episode,
+  enqueuing a MediaRematch job to move + relink the file. See
+  `Mydia.Downloads.Queue.rematch_imported_download/3` for return values.
+  """
+  defdelegate rematch_imported_download(download, media_item_id, episode_id \\ nil),
+    to: Mydia.Downloads.Queue
+
+  @doc """
   Dismisses (deletes) a download from the Issues tab.
   """
   defdelegate dismiss_download(download), to: Mydia.Downloads.Queue

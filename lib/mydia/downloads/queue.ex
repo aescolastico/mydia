@@ -486,6 +486,112 @@ defmodule Mydia.Downloads.Queue do
     end
   end
 
+  @doc """
+  Re-matches an already-imported download to a corrected movie or episode.
+
+  Validates lifecycle, scope, and library-type compatibility before any mutation,
+  then enqueues `Mydia.Jobs.MediaRematch` to move + relink the file. Single-target
+  only: a download whose provenance resolves to multiple imported files (a pack)
+  is refused.
+
+  Returns:
+    * `{:ok, :enqueued}` — a re-match job was scheduled
+    * `{:ok, :unchanged}` — the target already matches; nothing to do
+    * `{:error, :not_imported}` — not imported yet (use in-flight correction)
+    * `{:error, :not_single_target}` — partial_pack / unresolved_files / unmatched
+    * `{:error, :multiple_files}` — pack: per-file re-match not supported
+    * `{:error, :no_imported_file}` — could not locate the imported file
+    * `{:error, :no_library_path}` — no monitored, compatible destination library
+    * `{:error, :library_type_mismatch}` — target type incompatible with library
+  """
+  def rematch_imported_download(%Download{} = download, media_item_id, episode_id \\ nil) do
+    cond do
+      is_nil(download.imported_at) ->
+        {:error, :not_imported}
+
+      not is_nil(download.match_status) ->
+        {:error, :not_single_target}
+
+      download.media_item_id == media_item_id and download.episode_id == episode_id ->
+        {:ok, :unchanged}
+
+      true ->
+        do_rematch(download, media_item_id, episode_id)
+    end
+  end
+
+  defp do_rematch(download, media_item_id, episode_id) do
+    media_item = media_item_id && Repo.get(MediaItem, media_item_id)
+    episode = episode_id && Repo.get(Episode, episode_id)
+
+    with {:ok, _file} <- locate_single_imported_file(download),
+         {:ok, library_path} <- resolve_rematch_destination(media_item, episode),
+         :ok <- ensure_type_compatible(library_path, media_item, episode_id) do
+      case History.update_download(download, %{
+             media_item_id: media_item_id,
+             episode_id: episode_id
+           }) do
+        {:ok, updated} ->
+          %{"download_id" => updated.id}
+          |> Mydia.Jobs.MediaRematch.new()
+          |> insert_job()
+
+          {:ok, :enqueued}
+
+        {:error, _changeset} = error ->
+          error
+      end
+    end
+  end
+
+  # Insert an Oban job, falling back to a direct Repo insert when Oban's engine
+  # is disabled (test mode). Mirrors the pattern in DownloadMonitor.
+  defp insert_job(changeset) do
+    Oban.insert(changeset)
+  rescue
+    RuntimeError -> Repo.insert(changeset)
+  end
+
+  defp locate_single_imported_file(download) do
+    case Mydia.Library.list_media_files_for_download(download) do
+      [%MediaFile{} = file] -> {:ok, file}
+      [] -> {:error, :no_imported_file}
+      _multiple -> {:error, :multiple_files}
+    end
+  end
+
+  defp resolve_rematch_destination(media_item, episode) do
+    # Build a probe reflecting the NEW target so determine_library_path resolves
+    # the correct destination (the download row still holds the old target here).
+    probe = %Download{
+      media_item_id: media_item && media_item.id,
+      media_item: media_item,
+      episode_id: episode && episode.id,
+      episode: episode,
+      library_path: nil,
+      library_path_id: nil
+    }
+
+    case Mydia.Jobs.MediaImport.determine_library_path(probe) do
+      nil -> {:error, :no_library_path}
+      library_path -> {:ok, library_path}
+    end
+  end
+
+  defp ensure_type_compatible(library_path, media_item, episode_id) do
+    media_item_type = media_item && media_item.type
+
+    if MediaFile.library_type_compatible?(
+         library_path.type,
+         media_item_type,
+         not is_nil(episode_id)
+       ) do
+      :ok
+    else
+      {:error, :library_type_mismatch}
+    end
+  end
+
   def dismiss_download(%Download{} = download) do
     History.delete_download(download)
   end
