@@ -354,4 +354,102 @@ defmodule Mydia.Library.FileOrganizerTest do
       assert {:error, :no_media_item} = FileOrganizer.organize_file(media_file, dry_run: true)
     end
   end
+
+  describe "place_file/3" do
+    @describetag :tmp_dir
+
+    defp write_file(path, contents) do
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, contents)
+      path
+    end
+
+    test "hardlink keeps the source by default (import mode)", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "data")
+      dest = Path.join(tmp, "lib/Movie (2020)/movie.mkv")
+
+      assert {:ok, :hardlink} = FileOrganizer.place_file(source, dest, use_hardlinks: true)
+      assert File.exists?(source)
+      assert File.read!(dest) == "data"
+    end
+
+    test "hardlink removes the source when requested (reorganize mode)", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "data")
+      dest = Path.join(tmp, "lib/Movie (2020)/movie.mkv")
+
+      assert {:ok, :hardlink} =
+               FileOrganizer.place_file(source, dest,
+                 use_hardlinks: true,
+                 remove_source_after_hardlink: true
+               )
+
+      refute File.exists?(source)
+      assert File.read!(dest) == "data"
+    end
+
+    test "copy fallback leaves the source in place", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "data")
+      dest = Path.join(tmp, "lib/movie.mkv")
+
+      assert {:ok, :copy} =
+               FileOrganizer.place_file(source, dest, use_hardlinks: false, fallback: :copy)
+
+      assert File.exists?(source)
+      assert File.read!(dest) == "data"
+    end
+
+    test "move fallback removes the source", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "data")
+      dest = Path.join(tmp, "lib/movie.mkv")
+
+      assert {:ok, :move} =
+               FileOrganizer.place_file(source, dest, use_hardlinks: false, fallback: :move)
+
+      refute File.exists?(source)
+      assert File.read!(dest) == "data"
+    end
+
+    test "source == dest short-circuits to :skip", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "lib/movie.mkv"), "data")
+
+      assert {:ok, :skip} = FileOrganizer.place_file(source, source)
+      assert File.read!(source) == "data"
+    end
+
+    test "expected_size match treats an existing dest as already placed", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "newdata")
+      dest = write_file(Path.join(tmp, "lib/movie.mkv"), "olddata")
+      size = byte_size("olddata")
+
+      assert {:ok, :exists} = FileOrganizer.place_file(source, dest, expected_size: size)
+      # Untouched — same-size existing dest is adopted, not overwritten.
+      assert File.read!(dest) == "olddata"
+    end
+
+    test "expected_size mismatch re-places a stale/partial dest", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "complete-data")
+      dest = write_file(Path.join(tmp, "lib/movie.mkv"), "partial")
+
+      assert {:ok, action} =
+               FileOrganizer.place_file(source, dest,
+                 use_hardlinks: false,
+                 fallback: :copy,
+                 expected_size: byte_size("complete-data")
+               )
+
+      assert action in [:copy, :hardlink, :move]
+      assert File.read!(dest) == "complete-data"
+    end
+
+    test "confine_to rejects a destination outside the library root", %{tmp_dir: tmp} do
+      source = write_file(Path.join(tmp, "src/movie.mkv"), "data")
+      root = Path.join(tmp, "lib")
+      escaping_dest = Path.join(tmp, "lib/../outside/movie.mkv")
+
+      assert {:error, {:path_escape, _}} =
+               FileOrganizer.place_file(source, escaping_dest, confine_to: root)
+
+      refute File.exists?(Path.join(tmp, "outside/movie.mkv"))
+    end
+  end
 end

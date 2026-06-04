@@ -770,7 +770,8 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
-  defp build_destination_path(download, library_path) when is_struct(library_path, LibraryPath) do
+  @doc false
+  def build_destination_path(download, library_path) when is_struct(library_path, LibraryPath) do
     # Use FileOrganizer for category-aware destination paths when auto_organize is enabled
     cond do
       # Movie with auto_organize enabled
@@ -819,7 +820,7 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   # Legacy clause for string library_root (used internally)
-  defp build_destination_path(download, library_root) when is_binary(library_root) do
+  def build_destination_path(download, library_root) when is_binary(library_root) do
     cond do
       # TV episode
       download.episode && download.media_item ->
@@ -852,7 +853,8 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   # Helper to build category-aware base path for TV series
-  defp build_series_base_path(media_item, library_path) do
+  @doc false
+  def build_series_base_path(media_item, library_path) do
     if library_path.auto_organize do
       FileOrganizer.destination_path(media_item, library_path)
     else
@@ -1186,7 +1188,7 @@ defmodule Mydia.Jobs.MediaImport do
     File.mkdir_p!(dest_dir)
 
     # Generate filename (optionally renamed with TRaSH format)
-    final_filename = generate_filename(download, episode, file.name, args)
+    final_filename = generate_filename(download, episode, file.name, args.rename_files)
     dest_path = Path.join(dest_dir, final_filename)
 
     # Check if file already exists
@@ -1258,61 +1260,27 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp copy_or_move_file(source, dest, %Args{} = args) do
-    # Priority: hardlink > move > copy
-    cond do
-      # Try hardlink first if enabled and on same filesystem
-      args.use_hardlinks && same_filesystem?(source, dest) ->
-        case File.ln(source, dest) do
-          :ok ->
-            Logger.debug("Created hardlink", from: source, to: dest)
-            :ok
+    # Import keeps the source file (seeding) after a hardlink, so
+    # remove_source_after_hardlink stays false. Non-hardlink fallback is move
+    # only when move_files is set, otherwise copy.
+    case FileOrganizer.place_file(source, dest,
+           use_hardlinks: args.use_hardlinks,
+           fallback: if(args.move_files, do: :move, else: :copy)
+         ) do
+      {:ok, action} ->
+        Logger.debug("Placed file", from: source, to: dest, action: action)
+        :ok
 
-          {:error, reason} ->
-            Logger.warning("Hardlink failed, falling back to copy",
-              from: source,
-              to: dest,
-              reason: inspect(reason)
-            )
-
-            # Fallback to copy
-            File.cp(source, dest)
-        end
-
-      # Move file if requested
-      args.move_files ->
-        case File.rename(source, dest) do
-          :ok ->
-            Logger.debug("Moved file", from: source, to: dest)
-            :ok
-
-          {:error, :exdev} ->
-            # Cross-device move not supported, fall back to copy + delete
-            with :ok <- File.cp(source, dest),
-                 :ok <- File.rm(source) do
-              Logger.debug("Moved file via copy+delete", from: source, to: dest)
-              :ok
-            end
-
-          error ->
-            error
-        end
-
-      # Default to copy
-      true ->
-        case File.cp(source, dest) do
-          :ok ->
-            Logger.debug("Copied file", from: source, to: dest)
-            :ok
-
-          error ->
-            error
-        end
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp generate_filename(download, episode, original_filename, %Args{} = args) do
+  @doc false
+  def generate_filename(download, episode, original_filename, rename_files?)
+      when is_boolean(rename_files?) do
     # Only rename if explicitly enabled (default: false for safety)
-    if args.rename_files do
+    if rename_files? do
       # Parse quality information from download title or original filename
       quality_info =
         QualityParser.parse(download.title || original_filename)
@@ -1344,41 +1312,6 @@ defmodule Mydia.Jobs.MediaImport do
     else
       # Renaming disabled - use original filename
       original_filename
-    end
-  end
-
-  defp same_filesystem?(path1, path2) do
-    # Use File.stat!/1 to check if both paths are on the same device
-    # path2 might not exist yet, so check its parent directory
-    with %{device: dev1} <- File.stat(path1),
-         parent_path2 = Path.dirname(path2),
-         %{device: dev2} <- File.stat(parent_path2) do
-      same = dev1 == dev2
-
-      if same do
-        Logger.debug("Paths on same filesystem",
-          path1: path1,
-          path2: path2,
-          device: dev1
-        )
-      else
-        Logger.debug("Paths on different filesystems, hardlink not possible",
-          path1: path1,
-          path2: path2,
-          device1: dev1,
-          device2: dev2
-        )
-      end
-
-      same
-    else
-      _ ->
-        Logger.debug("Could not determine filesystem, assuming different",
-          path1: path1,
-          path2: path2
-        )
-
-        false
     end
   end
 

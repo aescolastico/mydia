@@ -242,7 +242,113 @@ defmodule Mydia.Library.FileOrganizer do
     end
   end
 
+  @doc """
+  Places a file at `dest` from `source` without touching the database.
+
+  Chooses the cheapest safe operation — a hardlink on the same filesystem, then a
+  configurable move/copy fallback — and returns the action taken. Performs **no**
+  database writes; callers own the `MediaFile` record. This is the shared
+  primitive behind both import (keep the source for seeding) and reorganize /
+  re-match (move the file into place), so the two paths cannot drift.
+
+  ## Options
+
+    * `:use_hardlinks` (default `true`) — try a hardlink first on the same filesystem.
+    * `:fallback` (`:move` | `:copy`, default `:copy`) — operation used when a
+      hardlink is not taken. `:move` renames (cross-device falls back to copy+delete);
+      `:copy` leaves the source in place.
+    * `:remove_source_after_hardlink` (default `false`) — when a hardlink succeeds,
+      remove the source so a single path remains. Import keeps the source (seeding);
+      reorganize removes it.
+    * `:confine_to` — when set to a directory, the expanded `dest` must be a
+      descendant of it, otherwise `{:error, {:path_escape, dest}}` is returned
+      before any filesystem mutation.
+    * `:expected_size` — when set, an existing `dest` whose size matches is treated
+      as already-placed (`{:ok, :exists}`); a size mismatch (e.g. a truncated file
+      from a crashed copy) removes the stale file and re-places.
+
+  ## Returns
+
+    * `{:ok, :hardlink | :move | :copy}` — the file was placed
+    * `{:ok, :skip}` — `source` and `dest` are the same path
+    * `{:ok, :exists}` — `dest` already present with a matching `:expected_size`
+    * `{:error, reason}`
+  """
+  @spec place_file(String.t(), String.t(), keyword()) ::
+          {:ok, :hardlink | :move | :copy | :skip | :exists} | {:error, any()}
+  def place_file(source, dest, opts \\ []) do
+    with :ok <- confine(dest, Keyword.get(opts, :confine_to)) do
+      cond do
+        source == dest ->
+          {:ok, :skip}
+
+        Keyword.has_key?(opts, :expected_size) and File.exists?(dest) ->
+          if file_size(dest) == Keyword.fetch!(opts, :expected_size) do
+            {:ok, :exists}
+          else
+            # Stale/partial destination (e.g. a crashed copy) — drop it and re-place.
+            _ = File.rm(dest)
+            do_place(source, dest, opts)
+          end
+
+        true ->
+          do_place(source, dest, opts)
+      end
+    end
+  end
+
   # Private functions
+
+  defp do_place(source, dest, opts) do
+    use_hardlinks = Keyword.get(opts, :use_hardlinks, true)
+    fallback = Keyword.get(opts, :fallback, :copy)
+    remove_source? = Keyword.get(opts, :remove_source_after_hardlink, false)
+
+    with :ok <- File.mkdir_p(Path.dirname(dest)) do
+      if use_hardlinks and same_filesystem?(source, dest) do
+        case File.ln(source, dest) do
+          :ok ->
+            if remove_source?, do: File.rm(source)
+            {:ok, :hardlink}
+
+          {:error, _reason} ->
+            # Hardlink failed despite same-filesystem detection — fall back safely.
+            do_fallback(source, dest, fallback)
+        end
+      else
+        do_fallback(source, dest, fallback)
+      end
+    end
+  end
+
+  defp do_fallback(source, dest, :move), do: do_move_file(source, dest)
+
+  defp do_fallback(source, dest, :copy) do
+    case File.cp(source, dest) do
+      :ok -> {:ok, :copy}
+      {:error, reason} -> {:error, {:copy_failed, reason}}
+    end
+  end
+
+  defp confine(_dest, nil), do: :ok
+
+  defp confine(dest, root) do
+    expanded = Path.expand(dest)
+    root_expanded = Path.expand(root)
+
+    if expanded == root_expanded or String.starts_with?(expanded, root_expanded <> "/") do
+      :ok
+    else
+      {:error, {:path_escape, dest}}
+    end
+  end
+
+  defp file_size(path) do
+    case File.stat(path) do
+      {:ok, %{size: size}} -> size
+      _ -> nil
+    end
+  end
 
   defp preload_associations(%MediaFile{} = media_file) do
     media_file
@@ -342,34 +448,13 @@ defmodule Mydia.Library.FileOrganizer do
   end
 
   defp move_or_copy_file(source, dest, use_hardlinks, force_move) do
-    cond do
-      # Try hardlink first if enabled and on same filesystem
-      use_hardlinks && same_filesystem?(source, dest) ->
-        case File.ln(source, dest) do
-          :ok ->
-            # Remove original file after successful hardlink
-            File.rm(source)
-            {:ok, :hardlink}
-
-          {:error, _reason} when force_move ->
-            # Fallback to move
-            do_move_file(source, dest)
-
-          {:error, reason} ->
-            {:error, {:hardlink_failed, reason}}
-        end
-
-      # Move file
-      force_move ->
-        do_move_file(source, dest)
-
-      # Copy only
-      true ->
-        case File.cp(source, dest) do
-          :ok -> {:ok, :copy}
-          {:error, reason} -> {:error, {:copy_failed, reason}}
-        end
-    end
+    # Reorganize removes the source after a successful hardlink (single path),
+    # and uses move (not copy) as the non-hardlink fallback when force_move.
+    place_file(source, dest,
+      use_hardlinks: use_hardlinks,
+      fallback: if(force_move, do: :move, else: :copy),
+      remove_source_after_hardlink: true
+    )
   end
 
   defp do_move_file(source, dest) do
