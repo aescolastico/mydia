@@ -150,6 +150,23 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
               </div>
             </div>
 
+            <%!-- TV Metadata Source (only for series/mixed) --%>
+            <%= if to_string(@library_path_form[:type].value) in ["series", "mixed"] do %>
+              <div class="grid grid-cols-6 gap-3">
+                <div class="col-span-6 md:col-span-3">
+                  <.input
+                    field={@library_path_form[:tv_metadata_source]}
+                    type="select"
+                    label="TV Metadata Source"
+                    options={[{"TheTVDB", "tvdb"}, {"TMDB", "tmdb"}]}
+                  />
+                  <p class="text-xs text-base-content/50 mt-1">
+                    Provider for TV show metadata. Existing shows keep their data until refreshed.
+                  </p>
+                </div>
+              </div>
+            <% end %>
+
             <div class="divider my-1"></div>
 
             <%!-- Options Section --%>
