@@ -37,8 +37,8 @@ defmodule Mydia.Jobs.MediaRematch do
   require Logger
 
   alias Mydia.{Downloads, Library, Repo}
-  alias Mydia.Library.{FileOrganizer, MediaFile}
   alias Mydia.Jobs.MediaImport
+  alias Mydia.Library.{FileOrganizer, MediaFile}
   alias Mydia.MediaServer.Notifier, as: MediaServerNotifier
 
   @impl Oban.Worker
@@ -145,41 +145,41 @@ defmodule Mydia.Jobs.MediaRematch do
       current = Repo.get(MediaFile, media_file.id)
 
       cond do
-        is_nil(current) ->
-          Repo.rollback(:media_file_gone)
-
-        not is_nil(current.trashed_at) ->
-          Repo.rollback(:media_file_trashed)
-
-        current.relative_path != media_file.relative_path or
-            current.library_path_id != media_file.library_path_id ->
-          Repo.rollback(:media_file_moved)
-
-        true ->
-          # A racing scan may have created a row at the destination path; adopt it
-          # (delete the duplicate) so we do not leave two rows for one file.
-          adopt_destination_duplicate(library_path.id, new_rel, current.id)
-
-          parent =
-            if download.episode_id do
-              %{episode_id: download.episode_id, media_item_id: nil}
-            else
-              %{media_item_id: download.media_item_id, episode_id: nil}
-            end
-
-          attrs =
-            Map.merge(%{relative_path: new_rel, library_path_id: library_path.id}, parent)
-
-          case Library.update_media_file(current, attrs) do
-            {:ok, updated} ->
-              stamp_provenance(download, media_file)
-              updated
-
-            {:error, changeset} ->
-              Repo.rollback({:relink_failed, changeset})
-          end
+        is_nil(current) -> Repo.rollback(:media_file_gone)
+        not is_nil(current.trashed_at) -> Repo.rollback(:media_file_trashed)
+        path_drifted?(current, media_file) -> Repo.rollback(:media_file_moved)
+        true -> apply_relink(download, current, media_file, library_path, new_rel)
       end
     end)
+  end
+
+  defp path_drifted?(current, snapshot) do
+    current.relative_path != snapshot.relative_path or
+      current.library_path_id != snapshot.library_path_id
+  end
+
+  defp apply_relink(download, current, old_media_file, library_path, new_rel) do
+    # A racing scan may have created a row at the destination path; adopt it
+    # (delete the duplicate) so we do not leave two rows for one file.
+    adopt_destination_duplicate(library_path.id, new_rel, current.id)
+
+    parent =
+      if download.episode_id do
+        %{episode_id: download.episode_id, media_item_id: nil}
+      else
+        %{media_item_id: download.media_item_id, episode_id: nil}
+      end
+
+    attrs = Map.merge(%{relative_path: new_rel, library_path_id: library_path.id}, parent)
+
+    case Library.update_media_file(current, attrs) do
+      {:ok, updated} ->
+        stamp_provenance(download, old_media_file)
+        updated
+
+      {:error, changeset} ->
+        Repo.rollback({:relink_failed, changeset})
+    end
   end
 
   defp adopt_destination_duplicate(library_path_id, relative_path, keep_id) do
