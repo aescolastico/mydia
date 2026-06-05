@@ -1182,6 +1182,170 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Switches a TV show to a different metadata provider and reconciles its episodes.
+
+  Safe by construction:
+
+    * The new provider's show metadata and all season episode data are fetched
+      and validated **before** anything is deleted, so a failed/empty fetch
+      leaves the show's existing episodes untouched (it is never left
+      episode-less).
+    * The destructive swap (delete old episodes, set the new provider id, clear
+      the old one, recreate episodes from the pre-fetched data, re-link files)
+      runs in a single `Repo.transaction` with no network calls inside it.
+    * Files are captured before the wipe and re-stamped with `media_item_id` so
+      `match_files_to_episodes/1` can re-link them by filename. Files that no
+      longer parse to a known episode stay attached to the show rather than
+      orphaned.
+
+  Episode-level watch progress and download history reference episodes with
+  `ON DELETE SET NULL`, so a switch resets that per-episode state (the caller is
+  expected to warn the operator).
+
+  Returns `{:ok, media_item}` with the reconciled show, or `{:error, reason}`
+  (leaving existing data intact on failure).
+  """
+  @spec adopt_provider_switch(MediaItem.t(), struct(), atom(), map() | nil) ::
+          {:ok, MediaItem.t()} | {:error, term()}
+  def adopt_provider_switch(media_item, candidate, target_provider, config \\ nil)
+
+  def adopt_provider_switch(
+        %MediaItem{type: "tv_show"} = item,
+        candidate,
+        target_provider,
+        config
+      ) do
+    config = config || Mydia.Metadata.default_relay_config()
+    new_id = to_string(candidate.provider_id)
+
+    # Step 1 + 2 (no mutation): validate the new show metadata and pre-fetch all
+    # season episode data into memory.
+    with {:ok, metadata} <-
+           Mydia.Metadata.fetch_by_id(config, new_id,
+             media_type: :tv_show,
+             provider: target_provider,
+             append_to_response: ["credits", "images", "videos", "keywords"]
+           ),
+         {:ok, season_datas} <-
+           prefetch_provider_seasons(new_id, target_provider, metadata.seasons || [], config) do
+      # Step 3 (transactional, no network): wipe + swap + recreate + re-link.
+      result =
+        Repo.transaction(fn ->
+          file_ids = linked_media_file_ids(item)
+
+          Repo.delete_all(from(e in Episode, where: e.media_item_id == ^item.id))
+
+          {:ok, updated} =
+            update_media_item(
+              item,
+              provider_switch_attrs(target_provider, new_id, metadata),
+              reason: "Provider switched to #{target_provider}"
+            )
+
+          Enum.each(season_datas, fn season_data ->
+            upsert_episodes_from_season(updated, season_data,
+              monitor_fn: fn season_num, air_date ->
+                should_monitor_new_episode?(updated, season_num, air_date)
+              end
+            )
+          end)
+
+          # Re-attach captured files to the show so re-linking can find them,
+          # then re-link by filename. Files that don't parse stay on the show.
+          Repo.update_all(
+            from(mf in Mydia.Library.MediaFile, where: mf.id in ^file_ids),
+            set: [media_item_id: updated.id, episode_id: nil]
+          )
+
+          Mydia.Library.match_files_to_episodes(updated.id)
+
+          get_media_item!(updated.id)
+        end)
+
+      case result do
+        {:ok, reconciled} -> {:ok, reconciled}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  def adopt_provider_switch(%MediaItem{type: type}, _candidate, _target, _config) do
+    {:error, {:invalid_type, "Expected tv_show, got #{type}"}}
+  end
+
+  defp prefetch_provider_seasons(provider_id, target_provider, seasons, config) do
+    has_tvdb = target_provider == :tvdb
+
+    season_datas =
+      seasons
+      |> Enum.map(fn season ->
+        fetch_opts =
+          if has_tvdb do
+            case Map.get(season, :tvdb_season_id) do
+              nil -> []
+              tvdb_season_id -> [tvdb_season_id: tvdb_season_id]
+            end
+          else
+            []
+          end
+
+        case Mydia.Metadata.fetch_season_cached(
+               config,
+               to_string(provider_id),
+               season.season_number,
+               fetch_opts
+             ) do
+          {:ok, season_data} -> season_data
+          {:error, _reason} -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    total_episodes =
+      Enum.reduce(season_datas, 0, fn sd, acc -> acc + length(sd.episodes || []) end)
+
+    if total_episodes > 0, do: {:ok, season_datas}, else: {:error, :no_episodes}
+  end
+
+  defp linked_media_file_ids(%MediaItem{id: id}) do
+    alias Mydia.Library.MediaFile
+
+    episode_linked =
+      from mf in MediaFile,
+        join: e in Episode,
+        on: mf.episode_id == e.id,
+        where: e.media_item_id == ^id,
+        select: mf.id
+
+    direct =
+      from mf in MediaFile,
+        where: mf.media_item_id == ^id,
+        select: mf.id
+
+    (Repo.all(episode_linked) ++ Repo.all(direct)) |> Enum.uniq()
+  end
+
+  defp provider_switch_attrs(:tvdb, new_id, metadata) do
+    %{
+      tvdb_id: String.to_integer(new_id),
+      tmdb_id: nil,
+      metadata_source: :tvdb,
+      metadata: metadata,
+      seasons_refreshed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    }
+  end
+
+  defp provider_switch_attrs(:tmdb, new_id, metadata) do
+    %{
+      tmdb_id: String.to_integer(new_id),
+      tvdb_id: nil,
+      metadata_source: :tmdb,
+      metadata: metadata,
+      seasons_refreshed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    }
+  end
+
+  @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
 
   This function is useful for:

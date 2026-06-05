@@ -1117,4 +1117,157 @@ defmodule Mydia.MediaTest do
       }
     end
   end
+
+  describe "adopt_provider_switch/4 (U7)" do
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Switch Show",
+          year: 2010,
+          tvdb_id: 555,
+          metadata_source: :tvdb
+        })
+
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+
+      old_episode =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+
+      media_file =
+        media_file_fixture(%{
+          episode_id: old_episode.id,
+          library_path_id: lib.id,
+          relative_path: "Switch Show/Season 01/Switch.Show.S01E01.1080p.mkv"
+        })
+
+      # Unique id per test: the metadata cache is keyed by provider_id and
+      # persists across tests, so a fixed id would leak cached season data.
+      new_id = System.unique_integer([:positive])
+
+      candidate = %Mydia.Metadata.Structs.SearchResult{
+        provider_id: to_string(new_id),
+        provider: :metadata_relay,
+        media_type: :tv_show,
+        title: "Switch Show",
+        year: 2010
+      }
+
+      %{
+        bypass: bypass,
+        config: config,
+        item: item,
+        old_episode: old_episode,
+        media_file: media_file,
+        candidate: candidate,
+        new_id: new_id
+      }
+    end
+
+    test "swaps provider ids, recreates episodes, and re-links files", ctx do
+      stub_tmdb_show(ctx.bypass, ctx.new_id, "Switch Show", 2010)
+      stub_tmdb_season(ctx.bypass, ctx.new_id, 1, [1, 2])
+
+      assert {:ok, reconciled} =
+               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+
+      # Provider ids swapped; provenance updated.
+      assert reconciled.tmdb_id == ctx.new_id
+      assert is_nil(reconciled.tvdb_id)
+      assert reconciled.metadata_source == :tmdb
+
+      # Episodes recreated under the new provider's numbering.
+      episodes = Media.list_episodes(reconciled.id)
+      numbers = episodes |> Enum.map(& &1.episode_number) |> Enum.sort()
+      assert numbers == [1, 2]
+
+      # The old episode row is gone (wiped, not left parallel).
+      assert is_nil(Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id))
+
+      # The previously episode-linked file is still attached to the show
+      # (re-linked by filename), not orphaned with both ids null.
+      media_file = Mydia.Repo.get(Mydia.Library.MediaFile, ctx.media_file.id)
+      refute is_nil(media_file)
+      refute is_nil(media_file.episode_id) and is_nil(media_file.media_item_id)
+
+      relinked = Mydia.Repo.get(Mydia.Media.Episode, media_file.episode_id)
+      assert relinked.season_number == 1
+      assert relinked.episode_number == 1
+    end
+
+    test "a failed new-provider fetch leaves existing episodes intact", ctx do
+      Bypass.expect(ctx.bypass, "GET", "/tmdb/tv/shows/#{ctx.new_id}", fn conn ->
+        Plug.Conn.resp(conn, 404, "{}")
+      end)
+
+      assert {:error, _reason} =
+               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+
+      # No mutation: old episode and provider ids untouched.
+      assert Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id)
+      item = Media.get_media_item!(ctx.item.id)
+      assert item.tvdb_id == 555
+      assert is_nil(item.tmdb_id)
+      assert item.metadata_source == :tvdb
+    end
+
+    test "an empty season set aborts without wiping episodes", ctx do
+      stub_tmdb_show(ctx.bypass, ctx.new_id, "Switch Show", 2010)
+      stub_tmdb_season(ctx.bypass, ctx.new_id, 1, [])
+
+      assert {:error, :no_episodes} =
+               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+
+      assert Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id)
+    end
+
+    defp stub_tmdb_show(bypass, id, name, year) do
+      body = %{
+        "id" => id,
+        "name" => name,
+        "first_air_date" => "#{year}-01-01",
+        "overview" => "x",
+        "credits" => %{"cast" => [], "crew" => []},
+        "genres" => [],
+        "seasons" => [%{"season_number" => 1, "name" => "Season 1"}]
+      }
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(body))
+      end)
+    end
+
+    defp stub_tmdb_season(bypass, id, season_number, episode_numbers) do
+      episodes =
+        Enum.map(episode_numbers, fn n ->
+          %{
+            "season_number" => season_number,
+            "episode_number" => n,
+            "name" => "Episode #{n}",
+            "air_date" => "2010-01-0#{n}"
+          }
+        end)
+
+      body = %{"season_number" => season_number, "episodes" => episodes}
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{id}/#{season_number}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(body))
+      end)
+    end
+  end
 end
