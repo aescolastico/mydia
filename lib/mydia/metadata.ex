@@ -208,8 +208,11 @@ defmodule Mydia.Metadata do
     media_type = Keyword.get(opts, :media_type, :movie)
     append = Keyword.get(opts, :append_to_response, []) |> Enum.sort() |> Enum.join(",")
     language = Keyword.get(opts, :language, "en-US")
+    # Include the provider so numerically-overlapping TVDB/TMDB ids never share a
+    # cache entry (e.g. TVDB series 603 vs TMDB movie 603).
+    provider = Keyword.get(opts, :provider, type)
 
-    cache_key = "fetch_by_id:#{provider_id}:#{media_type}:#{language}:#{append}"
+    cache_key = "fetch_by_id:#{provider}:#{provider_id}:#{media_type}:#{language}:#{append}"
 
     Cache.fetch(
       cache_key,
