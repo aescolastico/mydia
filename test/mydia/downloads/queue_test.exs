@@ -259,6 +259,28 @@ defmodule Mydia.Downloads.QueueTest do
       assert Queue.check_for_active_download(search_result(nil), show.id, nil) == :ok
     end
 
+    test "an active unscoped TV download DOES block re-submitting the same release URL" do
+      show = media_item_fixture(%{type: "tv_show", title: "The Boys"})
+      url = "magnet:?xt=urn:btih:same-release-#{System.unique_integer([:positive])}"
+
+      active_download(show.id, %{title: "The Boys S03 1080p", download_url: url, metadata: %{}})
+
+      # Same release double-clicked: episode_id nil, no season metadata, but the
+      # exact download_url already has an active download.
+      result = %SearchResult{
+        download_url: url,
+        title: "The Boys S03 1080p",
+        indexer: "test",
+        size: 1_000_000_000,
+        seeders: 10,
+        leechers: 5,
+        metadata: nil
+      }
+
+      assert Queue.check_for_active_download(result, show.id, nil) ==
+               {:error, :duplicate_download}
+    end
+
     test "an active S02 season-pack download does NOT block an S03 season-pack request" do
       show = media_item_fixture(%{type: "tv_show", title: "The Boys"})
 
