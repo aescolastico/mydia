@@ -343,16 +343,19 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
 
         <%!-- Badges + Actions --%>
         <div class="flex flex-wrap items-center gap-2">
-          <span class={["badge badge-sm", library_type_badge_class(@library_path.type)]}>
-            <.icon name={library_type_icon(@library_path.type)} class="w-3 h-3 mr-1" />
-            {library_type_display(@library_path.type)}
-          </span>
           <%= if @metadata_source do %>
-            <span class="badge badge-sm badge-ghost tooltip" data-tip="Metadata source">
+            <span
+              class={["badge badge-sm tooltip", metadata_source_badge_class(@metadata_source)]}
+              data-tip="Metadata source"
+            >
               <.icon name="hero-circle-stack" class="w-3 h-3 mr-1" />
               {metadata_source_display(@metadata_source)}
             </span>
           <% end %>
+          <span class={["badge badge-sm", library_type_badge_class(@library_path.type)]}>
+            <.icon name={library_type_icon(@library_path.type)} class="w-3 h-3 mr-1" />
+            {library_type_display(@library_path.type)}
+          </span>
           <span class={[
             "badge badge-sm",
             if(@library_path.monitored, do: "badge-success", else: "badge-ghost")
@@ -494,6 +497,11 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
 
   defp metadata_source_display(:tmdb), do: "TMDB"
   defp metadata_source_display(:tvdb), do: "TVDB"
+
+  # Provider-distinct colors, chosen to avoid clashing with the type badges
+  # (info/accent/secondary) and the green "Monitored" badge.
+  defp metadata_source_badge_class(:tmdb), do: "badge-info"
+  defp metadata_source_badge_class(:tvdb), do: "badge-primary"
 
   # Renders only the category paths section (when auto-organize is enabled).
   # Used by the compact library path modal.
