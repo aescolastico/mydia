@@ -5,6 +5,7 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
   import Phoenix.LiveView, only: [put_flash: 3, start_async: 3]
 
   alias Mydia.Media
+  alias Mydia.Media.ProviderSwitch
   alias Mydia.Library
   alias Mydia.Downloads
   alias MydiaWeb.Live.Authorization
@@ -20,9 +21,20 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
   def refresh_metadata(_params, socket) do
     media_item = socket.assigns.media_item
 
-    case Media.provider_refresh_decision(media_item) do
-      {:reidentify, target} -> start_reidentify(media_item, target, socket)
-      :refetch -> do_standard_refresh(media_item, socket)
+    case ProviderSwitch.provider_refresh_decision(media_item) do
+      {:reidentify, target} ->
+        # Search + adopt do network I/O; run them async so the LiveView socket
+        # is never blocked (a multi-season switch can take many seconds).
+        {:noreply,
+         socket
+         |> assign(:reidentifying, true)
+         |> put_flash(:info, "Re-identifying on #{provider_label(target)}...")
+         |> start_async(:reidentify_search, fn ->
+           {target, ProviderSwitch.find_reidentify_candidate(media_item, target)}
+         end)}
+
+      :refetch ->
+        do_standard_refresh(media_item, socket)
     end
   end
 
@@ -40,7 +52,14 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
       )
 
     if candidate do
-      apply_reidentify(media_item, candidate, target, socket)
+      {:noreply,
+       socket
+       |> assign(:show_reidentify_modal, false)
+       |> assign(:reidentifying, true)
+       |> put_flash(:info, "Switching to #{provider_label(target)}...")
+       |> start_async(:reidentify_adopt, fn ->
+         {target, ProviderSwitch.adopt_provider_switch(media_item, candidate, target)}
+       end)}
     else
       {:noreply,
        socket
@@ -57,50 +76,73 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
      |> assign(:reidentify_provider, nil)}
   end
 
-  # The library provider differs from the show's stored source: search the target
-  # provider and either adopt a confident match or open the manual picker.
-  defp start_reidentify(media_item, target, socket) do
-    case Media.find_reidentify_candidate(media_item, target) do
-      {:confident, candidate} ->
-        apply_reidentify(media_item, candidate, target, socket)
+  # async result: provider re-identification search
+  def handle_reidentify_search_async({:ok, {target, {:confident, candidate}}}, socket) do
+    media_item = socket.assigns.media_item
 
-      {:needs_picker, candidates} ->
-        {:noreply,
-         socket
-         |> assign(:reidentify_provider, target)
-         |> assign(:reidentify_candidates, candidates)
-         |> assign(:show_reidentify_modal, true)}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Could not search #{provider_label(target)}: #{inspect(reason)}"
-         )}
-    end
+    {:noreply,
+     start_async(socket, :reidentify_adopt, fn ->
+       {target, ProviderSwitch.adopt_provider_switch(media_item, candidate, target)}
+     end)}
   end
 
-  defp apply_reidentify(media_item, candidate, target, socket) do
-    case Media.adopt_provider_switch(media_item, candidate, target) do
-      {:ok, _updated} ->
-        {:noreply,
-         socket
-         |> assign(:media_item, load_media_item(media_item.id))
-         |> assign(:show_reidentify_modal, false)
-         |> assign(:reidentify_candidates, [])
-         |> put_flash(
-           :info,
-           "Switched to #{provider_label(target)}. Episodes were re-matched; " <>
-             "episode-level watch history was reset."
-         )}
+  def handle_reidentify_search_async({:ok, {target, {:needs_picker, candidates}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:reidentify_provider, target)
+     |> assign(:reidentify_candidates, candidates)
+     |> assign(:show_reidentify_modal, true)}
+  end
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:show_reidentify_modal, false)
-         |> put_flash(:error, "Provider switch failed: #{inspect(reason)}")}
-    end
+  def handle_reidentify_search_async({:ok, {target, {:error, reason}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Could not search #{provider_label(target)}: #{inspect(reason)}")}
+  end
+
+  def handle_reidentify_search_async({:exit, reason}, socket) do
+    Logger.error("Re-identification search crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Re-identification failed unexpectedly")}
+  end
+
+  # async result: provider switch (adopt)
+  def handle_reidentify_adopt_async({:ok, {target, {:ok, _updated}}}, socket) do
+    media_item = socket.assigns.media_item
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:show_reidentify_modal, false)
+     |> assign(:reidentify_candidates, [])
+     |> assign(:media_item, load_media_item(media_item.id))
+     |> put_flash(
+       :info,
+       "Switched to #{provider_label(target)}. Episodes were re-matched; " <>
+         "episode-level watch history was reset."
+     )}
+  end
+
+  def handle_reidentify_adopt_async({:ok, {_target, {:error, reason}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:show_reidentify_modal, false)
+     |> put_flash(:error, "Provider switch failed: #{inspect(reason)}")}
+  end
+
+  def handle_reidentify_adopt_async({:exit, reason}, socket) do
+    Logger.error("Provider switch crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Provider switch failed unexpectedly")}
   end
 
   defp do_standard_refresh(media_item, socket) do
@@ -145,7 +187,7 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
   # When a show's files span libraries with different providers, re-identification
   # is skipped; tell the operator so the no-op switch isn't confusing.
   defp ambiguous_note(media_item) do
-    case Media.resolve_library_provider(media_item) do
+    case ProviderSwitch.resolve_library_provider(media_item) do
       :ambiguous ->
         " (provider re-identification skipped: this show's files span libraries with different sources)"
 

@@ -985,7 +985,7 @@ defmodule Mydia.MediaTest do
       lib = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
       media_file_fixture(%{media_item_id: item.id, library_path_id: lib.id})
 
-      assert Media.resolve_library_provider(item) == {:ok, :tvdb}
+      assert Mydia.Media.ProviderSwitch.resolve_library_provider(item) == {:ok, :tvdb}
     end
 
     test "finds the library for an episode-linked file (media_item_id nil)" do
@@ -994,7 +994,7 @@ defmodule Mydia.MediaTest do
       episode = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
       media_file_fixture(%{episode_id: episode.id, library_path_id: lib.id})
 
-      assert Media.resolve_library_provider(item) == {:ok, :tmdb}
+      assert Mydia.Media.ProviderSwitch.resolve_library_provider(item) == {:ok, :tmdb}
     end
 
     test "is :ambiguous when files span libraries with different providers" do
@@ -1005,12 +1005,12 @@ defmodule Mydia.MediaTest do
       episode = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
       media_file_fixture(%{episode_id: episode.id, library_path_id: tmdb_lib.id})
 
-      assert Media.resolve_library_provider(item) == :ambiguous
+      assert Mydia.Media.ProviderSwitch.resolve_library_provider(item) == :ambiguous
     end
 
     test "is :none when the show is in no series/mixed library" do
       item = media_item_fixture(%{type: "tv_show", title: "Show D"})
-      assert Media.resolve_library_provider(item) == :none
+      assert Mydia.Media.ProviderSwitch.resolve_library_provider(item) == :none
     end
   end
 
@@ -1020,12 +1020,12 @@ defmodule Mydia.MediaTest do
 
     test "re-fetches when stored source matches the library provider" do
       item = decision_tv_in_library(:tvdb, :tvdb)
-      assert Media.provider_refresh_decision(item) == :refetch
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
     end
 
     test "re-identifies when the library provider differs from stored source" do
       item = decision_tv_in_library(:tvdb, :tmdb)
-      assert Media.provider_refresh_decision(item) == {:reidentify, :tmdb}
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == {:reidentify, :tmdb}
     end
 
     test "re-fetches (no re-identify) when libraries are ambiguous" do
@@ -1036,17 +1036,17 @@ defmodule Mydia.MediaTest do
       ep = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
       media_file_fixture(%{episode_id: ep.id, library_path_id: b.id})
 
-      assert Media.provider_refresh_decision(item) == :refetch
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
     end
 
     test "re-fetches when metadata_source is nil (pre-feature item)" do
       item = decision_tv_in_library(nil, :tmdb)
-      assert Media.provider_refresh_decision(item) == :refetch
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
     end
 
     test "movies always re-fetch" do
       item = media_item_fixture(%{type: "movie", title: "A Movie", year: 2020})
-      assert Media.provider_refresh_decision(item) == :refetch
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
     end
 
     defp decision_tv_in_library(metadata_source, lib_provider) do
@@ -1088,7 +1088,9 @@ defmodule Mydia.MediaTest do
         |> Plug.Conn.resp(200, Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002)))
       end)
 
-      assert {:confident, candidate} = Media.find_reidentify_candidate(item, :tmdb, config)
+      assert {:confident, candidate} =
+               Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
+
       assert candidate.provider_id == "9001"
     end
 
@@ -1105,7 +1107,9 @@ defmodule Mydia.MediaTest do
         )
       end)
 
-      assert {:needs_picker, candidates} = Media.find_reidentify_candidate(item, :tmdb, config)
+      assert {:needs_picker, candidates} =
+               Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
+
       assert length(candidates) == 1
     end
 
@@ -1180,7 +1184,12 @@ defmodule Mydia.MediaTest do
       stub_tmdb_season(ctx.bypass, ctx.new_id, 1, [1, 2])
 
       assert {:ok, reconciled} =
-               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(
+                 ctx.item,
+                 ctx.candidate,
+                 :tmdb,
+                 ctx.config
+               )
 
       # Provider ids swapped; provenance updated.
       assert reconciled.tmdb_id == ctx.new_id
@@ -1212,7 +1221,12 @@ defmodule Mydia.MediaTest do
       end)
 
       assert {:error, _reason} =
-               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(
+                 ctx.item,
+                 ctx.candidate,
+                 :tmdb,
+                 ctx.config
+               )
 
       # No mutation: old episode and provider ids untouched.
       assert Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id)
@@ -1227,7 +1241,12 @@ defmodule Mydia.MediaTest do
       stub_tmdb_season(ctx.bypass, ctx.new_id, 1, [])
 
       assert {:error, :no_episodes} =
-               Media.adopt_provider_switch(ctx.item, ctx.candidate, :tmdb, ctx.config)
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(
+                 ctx.item,
+                 ctx.candidate,
+                 :tmdb,
+                 ctx.config
+               )
 
       assert Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id)
     end
@@ -1348,7 +1367,7 @@ defmodule Mydia.MediaTest do
       }
 
       assert {:error, _reason} =
-               Media.adopt_provider_switch(item, candidate, :tmdb, config)
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(item, candidate, :tmdb, config)
 
       # Nothing wiped: original episode and provider id intact.
       assert Mydia.Repo.get(Mydia.Media.Episode, old_episode.id)
@@ -1413,7 +1432,7 @@ defmodule Mydia.MediaTest do
 
       # Returns an error instead of raising/crashing.
       assert {:error, _reason} =
-               Media.adopt_provider_switch(item, candidate, :tmdb, config)
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(item, candidate, :tmdb, config)
 
       # Transaction rolled back: original episode and provider id intact.
       assert Mydia.Repo.get(Mydia.Media.Episode, old_episode.id)
@@ -1440,7 +1459,7 @@ defmodule Mydia.MediaTest do
       end)
 
       assert {:needs_picker, [_ | _]} =
-               Media.find_reidentify_candidate(item, :tmdb, config)
+               Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
     end
   end
 end

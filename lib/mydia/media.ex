@@ -1051,327 +1051,6 @@ defmodule Mydia.Media do
   end
 
   @doc """
-  Resolves the TV metadata provider configured for the libraries a show lives in.
-
-  A show's files may be linked directly (`media_files.media_item_id`) or through
-  episodes (`episodes -> media_files`); both paths are considered. Returns:
-
-    * `{:ok, :tvdb | :tmdb}` - all of the show's series/mixed libraries agree
-    * `:ambiguous` - libraries disagree on the provider
-    * `:none` - the show is not in any series/mixed library
-  """
-  @spec resolve_library_provider(MediaItem.t()) :: {:ok, atom()} | :ambiguous | :none
-  def resolve_library_provider(%MediaItem{} = media_item) do
-    case media_item |> library_providers_for_item() |> Enum.uniq() do
-      [] -> :none
-      [single] -> {:ok, single}
-      _ -> :ambiguous
-    end
-  end
-
-  defp library_providers_for_item(%MediaItem{id: id}) do
-    direct =
-      from mf in Mydia.Library.MediaFile,
-        join: lp in Mydia.Settings.LibraryPath,
-        on: mf.library_path_id == lp.id,
-        where: mf.media_item_id == ^id and lp.type in [:series, :mixed],
-        select: lp.tv_metadata_source,
-        distinct: true
-
-    episodic =
-      from mf in Mydia.Library.MediaFile,
-        join: lp in Mydia.Settings.LibraryPath,
-        on: mf.library_path_id == lp.id,
-        join: e in Mydia.Media.Episode,
-        on: mf.episode_id == e.id,
-        where: e.media_item_id == ^id and lp.type in [:series, :mixed],
-        select: lp.tv_metadata_source,
-        distinct: true
-
-    (Repo.all(direct) ++ Repo.all(episodic)) |> Enum.reject(&is_nil/1)
-  end
-
-  @doc """
-  Decides whether a TV show refresh should re-fetch from its current provider or
-  re-identify against a different one.
-
-  Returns `:refetch` when the show's library provider matches the stored
-  `metadata_source` (or is unknown/ambiguous), or `{:reidentify, target}` when
-  the library provider differs and the show should be re-identified against
-  `target`.
-  """
-  @spec provider_refresh_decision(MediaItem.t()) :: :refetch | {:reidentify, atom()}
-  def provider_refresh_decision(%MediaItem{type: "tv_show"} = media_item) do
-    case resolve_library_provider(media_item) do
-      {:ok, lib_provider} ->
-        cond do
-          is_nil(media_item.metadata_source) -> :refetch
-          media_item.metadata_source == lib_provider -> :refetch
-          true -> {:reidentify, lib_provider}
-        end
-
-      # Ambiguous or no library: behave as a same-provider re-fetch.
-      _ ->
-        :refetch
-    end
-  end
-
-  def provider_refresh_decision(%MediaItem{}), do: :refetch
-
-  @doc """
-  Searches the target provider for a show and decides whether the best match is
-  confident enough to adopt automatically.
-
-  Read-only: this does not mutate the item. Returns:
-
-    * `{:confident, %SearchResult{}}` - near-exact title and matching year; the
-      caller may adopt it via `adopt_provider_switch/3`
-    * `{:needs_picker, [%SearchResult{}]}` - ranked candidates for a manual pick
-    * `{:error, reason}` - search failed
-  """
-  @spec find_reidentify_candidate(MediaItem.t(), atom(), map() | nil) ::
-          {:confident, struct()} | {:needs_picker, [struct()]} | {:error, term()}
-  def find_reidentify_candidate(%MediaItem{} = media_item, target_provider, config \\ nil) do
-    config = config || Mydia.Metadata.default_relay_config()
-
-    base_opts = [media_type: :tv_show, provider: target_provider]
-    search_opts = if media_item.year, do: [{:year, media_item.year} | base_opts], else: base_opts
-
-    case Mydia.Metadata.search(config, media_item.title, search_opts) do
-      {:ok, results} when results != [] ->
-        rank_reidentify_candidates(results, media_item)
-
-      {:ok, []} when not is_nil(media_item.year) ->
-        # Retry without the year filter before giving up.
-        case Mydia.Metadata.search(config, media_item.title, base_opts) do
-          {:ok, results} when results != [] -> rank_reidentify_candidates(results, media_item)
-          {:ok, []} -> {:needs_picker, []}
-          {:error, reason} -> {:error, reason}
-        end
-
-      {:ok, []} ->
-        {:needs_picker, []}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp rank_reidentify_candidates(results, media_item) do
-    ranked =
-      results
-      |> Enum.map(fn result -> {result, calculate_title_match_score(result, media_item)} end)
-      |> Enum.sort_by(fn {_result, score} -> score end, :desc)
-      |> Enum.map(fn {result, _score} -> result end)
-
-    best = List.first(ranked)
-
-    if best && confident_reidentify_match?(best, media_item) do
-      {:confident, best}
-    else
-      {:needs_picker, ranked}
-    end
-  end
-
-  # Conservative gate for the silent, destructive auto-adopt: require a near-exact
-  # normalized title AND a real year match (both years present, within 1).
-  # Anything looser — including a missing year on either side, where a title-only
-  # match could silently re-point a show at the wrong provider — routes to the
-  # manual picker instead.
-  defp confident_reidentify_match?(candidate, media_item) do
-    not is_nil(media_item.year) and not is_nil(candidate.year) and
-      exact_title_match?(candidate.title, media_item.title) and
-      year_matches?(candidate.year, media_item.year)
-  end
-
-  @doc """
-  Switches a TV show to a different metadata provider and reconciles its episodes.
-
-  Safe by construction:
-
-    * The new provider's show metadata and all season episode data are fetched
-      and validated **before** anything is deleted, so a failed/empty fetch
-      leaves the show's existing episodes untouched (it is never left
-      episode-less).
-    * The destructive swap (delete old episodes, set the new provider id, clear
-      the old one, recreate episodes from the pre-fetched data, re-link files)
-      runs in a single `Repo.transaction` with no network calls inside it.
-    * Files are captured before the wipe and re-stamped with `media_item_id` so
-      `match_files_to_episodes/1` can re-link them by filename. Files that no
-      longer parse to a known episode stay attached to the show rather than
-      orphaned.
-
-  Episode-level watch progress and download history reference episodes with
-  `ON DELETE SET NULL`, so a switch resets that per-episode state (the caller is
-  expected to warn the operator).
-
-  Returns `{:ok, media_item}` with the reconciled show, or `{:error, reason}`
-  (leaving existing data intact on failure).
-  """
-  @spec adopt_provider_switch(MediaItem.t(), struct(), atom(), map() | nil) ::
-          {:ok, MediaItem.t()} | {:error, term()}
-  def adopt_provider_switch(media_item, candidate, target_provider, config \\ nil)
-
-  def adopt_provider_switch(
-        %MediaItem{type: "tv_show"} = item,
-        candidate,
-        target_provider,
-        config
-      ) do
-    config = config || Mydia.Metadata.default_relay_config()
-    new_id = to_string(candidate.provider_id)
-
-    # Step 1 + 2 (no mutation): validate the new show metadata and pre-fetch all
-    # season episode data into memory.
-    with {:ok, metadata} <-
-           Mydia.Metadata.fetch_by_id(config, new_id,
-             media_type: :tv_show,
-             provider: target_provider,
-             append_to_response: ["credits", "images", "videos", "keywords"]
-           ),
-         {:ok, season_datas} <-
-           prefetch_provider_seasons(new_id, target_provider, metadata.seasons || [], config) do
-      # Step 3 (transactional, no network): wipe + swap + recreate + re-link.
-      result =
-        Repo.transaction(fn ->
-          file_ids = linked_media_file_ids(item)
-
-          Repo.delete_all(from(e in Episode, where: e.media_item_id == ^item.id))
-
-          # Roll back (preserving the just-deleted episodes) instead of raising a
-          # MatchError if the new provider id collides with another show's
-          # unique constraint — the caller expects {:error, reason}, not a crash.
-          updated =
-            case update_media_item(
-                   item,
-                   provider_switch_attrs(target_provider, new_id, metadata),
-                   reason: "Provider switched to #{target_provider}"
-                 ) do
-              {:ok, updated} -> updated
-              {:error, changeset} -> Repo.rollback({:provider_switch_update_failed, changeset})
-            end
-
-          Enum.each(season_datas, fn season_data ->
-            upsert_episodes_from_season(updated, season_data,
-              monitor_fn: fn season_num, air_date ->
-                should_monitor_new_episode?(updated, season_num, air_date)
-              end
-            )
-          end)
-
-          # Re-attach captured files to the show so re-linking can find them,
-          # then re-link by filename. Files that don't parse stay on the show.
-          Repo.update_all(
-            from(mf in Mydia.Library.MediaFile, where: mf.id in ^file_ids),
-            set: [media_item_id: updated.id, episode_id: nil]
-          )
-
-          Mydia.Library.match_files_to_episodes(updated.id)
-
-          get_media_item!(updated.id)
-        end)
-
-      case result do
-        {:ok, reconciled} -> {:ok, reconciled}
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
-
-  def adopt_provider_switch(%MediaItem{type: type}, _candidate, _target, _config) do
-    {:error, {:invalid_type, "Expected tv_show, got #{type}"}}
-  end
-
-  defp prefetch_provider_seasons(provider_id, target_provider, seasons, config) do
-    has_tvdb = target_provider == :tvdb
-
-    # All-or-nothing: abort the whole switch if ANY season fails to fetch. A
-    # transient relay error must never let the caller delete the show's existing
-    # episodes and recreate only the subset that happened to fetch successfully.
-    result =
-      Enum.reduce_while(seasons, {:ok, []}, fn season, {:ok, acc} ->
-        season_fetch_opts =
-          if has_tvdb do
-            # A TVDB-target season with no tvdb_season_id would route to the TMDB
-            # endpoint with a TVDB id (wrong data / 404), so treat it as a hard
-            # failure rather than silently fetching from the wrong provider.
-            case Map.get(season, :tvdb_season_id) do
-              nil -> :error
-              tvdb_season_id -> {:ok, [tvdb_season_id: tvdb_season_id]}
-            end
-          else
-            {:ok, []}
-          end
-
-        case season_fetch_opts do
-          :error ->
-            {:halt, {:error, {:missing_tvdb_season_id, season.season_number}}}
-
-          {:ok, opts} ->
-            case Mydia.Metadata.fetch_season_cached(
-                   config,
-                   to_string(provider_id),
-                   season.season_number,
-                   opts
-                 ) do
-              {:ok, season_data} ->
-                {:cont, {:ok, [season_data | acc]}}
-
-              {:error, reason} ->
-                {:halt, {:error, {:season_fetch_failed, season.season_number, reason}}}
-            end
-        end
-      end)
-
-    with {:ok, season_datas} <- result do
-      season_datas = Enum.reverse(season_datas)
-
-      total_episodes =
-        Enum.reduce(season_datas, 0, fn sd, acc -> acc + length(sd.episodes || []) end)
-
-      if total_episodes > 0, do: {:ok, season_datas}, else: {:error, :no_episodes}
-    end
-  end
-
-  defp linked_media_file_ids(%MediaItem{id: id}) do
-    alias Mydia.Library.MediaFile
-
-    episode_linked =
-      from mf in MediaFile,
-        join: e in Episode,
-        on: mf.episode_id == e.id,
-        where: e.media_item_id == ^id,
-        select: mf.id
-
-    direct =
-      from mf in MediaFile,
-        where: mf.media_item_id == ^id,
-        select: mf.id
-
-    (Repo.all(episode_linked) ++ Repo.all(direct)) |> Enum.uniq()
-  end
-
-  defp provider_switch_attrs(:tvdb, new_id, metadata) do
-    %{
-      tvdb_id: String.to_integer(new_id),
-      tmdb_id: nil,
-      metadata_source: :tvdb,
-      metadata: metadata,
-      seasons_refreshed_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    }
-  end
-
-  defp provider_switch_attrs(:tmdb, new_id, metadata) do
-    %{
-      tmdb_id: String.to_integer(new_id),
-      tvdb_id: nil,
-      metadata_source: :tmdb,
-      metadata: metadata,
-      seasons_refreshed_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    }
-  end
-
-  @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
 
   This function is useful for:
@@ -1806,7 +1485,7 @@ defmodule Mydia.Media do
 
   # Determines if a new episode should be monitored based on the media_item's monitoring preset.
   # This is used when creating new episodes during metadata refresh.
-  defp should_monitor_new_episode?(media_item, season_number, air_date) do
+  def should_monitor_new_episode?(media_item, season_number, air_date) do
     # If the media_item itself isn't monitored, don't monitor episodes
     if media_item.monitored do
       preset = media_item.monitoring_preset || :all
@@ -2312,7 +1991,7 @@ defmodule Mydia.Media do
     end
   end
 
-  defp calculate_title_match_score(result, media_item) do
+  def calculate_title_match_score(result, media_item) do
     base_score = 0.5
     title_sim = title_similarity(result.title, media_item.title)
 
@@ -2347,12 +2026,12 @@ defmodule Mydia.Media do
     |> String.trim()
   end
 
-  defp exact_title_match?(result_title, search_title)
-       when is_binary(result_title) and is_binary(search_title) do
+  def exact_title_match?(result_title, search_title)
+      when is_binary(result_title) and is_binary(search_title) do
     normalize_title(result_title) == normalize_title(search_title)
   end
 
-  defp exact_title_match?(_result_title, _search_title), do: false
+  def exact_title_match?(_result_title, _search_title), do: false
 
   defp title_derivative_penalty(result_title, search_title)
        when is_binary(result_title) and is_binary(search_title) do
@@ -2371,14 +2050,14 @@ defmodule Mydia.Media do
 
   defp title_derivative_penalty(_result_title, _search_title), do: 0.0
 
-  defp year_matches?(result_year, nil), do: result_year != nil
-  defp year_matches?(nil, _media_year), do: false
+  def year_matches?(result_year, nil), do: result_year != nil
+  def year_matches?(nil, _media_year), do: false
 
-  defp year_matches?(result_year, media_year) when is_integer(result_year) do
+  def year_matches?(result_year, media_year) when is_integer(result_year) do
     abs(result_year - media_year) <= 1
   end
 
-  defp year_matches?(_result_year, _media_year), do: false
+  def year_matches?(_result_year, _media_year), do: false
 
   # Determines if we should skip refreshing season data based on the last refresh time
   defp should_skip_season_refresh?(%MediaItem{seasons_refreshed_at: nil}), do: false
