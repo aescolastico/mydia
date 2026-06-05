@@ -1095,12 +1095,10 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
         |> Enum.with_index()
         |> Enum.map(fn {title, idx} ->
           size =
-            cond do
-              String.contains?(title, "REMUX") or String.contains?(title, "Remux") ->
-                80 * 1024 * 1024 * 1024
-
-              true ->
-                40 * 1024 * 1024 * 1024
+            if String.contains?(title, "REMUX") or String.contains?(title, "Remux") do
+              80 * 1024 * 1024 * 1024
+            else
+              40 * 1024 * 1024 * 1024
             end
 
           build_result(%{title: title, size: size, seeders: 150 - idx * 20})

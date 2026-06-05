@@ -30,9 +30,8 @@ defmodule Mydia.Config.Loader do
     with {:ok, yaml_config} <- load_yaml(config_file),
          {:ok, db_config} <- load_database_config(),
          env_config <- load_env(),
-         merged <- merge_all_configs(yaml_config, db_config, env_config),
-         {:ok, validated} <- validate(merged) do
-      {:ok, validated}
+         merged <- merge_all_configs(yaml_config, db_config, env_config) do
+      validate(merged)
     end
   end
 

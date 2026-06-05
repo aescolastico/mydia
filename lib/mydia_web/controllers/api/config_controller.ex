@@ -136,51 +136,49 @@ defmodule MydiaWeb.Api.ConfigController do
     - 404: No database override exists for this setting
   """
   def delete(conn, %{"key" => key}) do
-    cond do
-      is_env_var_setting?(key) ->
-        conn
-        |> put_status(:forbidden)
-        |> json(%{
-          error:
-            "Cannot delete setting controlled by environment variable. " <>
-              "Remove the environment variable to allow UI/API configuration."
-        })
+    if is_env_var_setting?(key) do
+      conn
+      |> put_status(:forbidden)
+      |> json(%{
+        error:
+          "Cannot delete setting controlled by environment variable. " <>
+            "Remove the environment variable to allow UI/API configuration."
+      })
+    else
+      case Settings.get_config_setting_by_key(key) do
+        nil ->
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: "No database override exists for this setting"})
 
-      true ->
-        case Settings.get_config_setting_by_key(key) do
-          nil ->
-            conn
-            |> put_status(:not_found)
-            |> json(%{error: "No database override exists for this setting"})
+        setting ->
+          case Settings.delete_config_setting(setting) do
+            {:ok, _deleted} ->
+              Logger.info("Configuration setting override removed", key: key)
 
-          setting ->
-            case Settings.delete_config_setting(setting) do
-              {:ok, _deleted} ->
-                Logger.info("Configuration setting override removed", key: key)
+              # Get the new value after deletion (will fall back to YAML/default)
+              path = parse_config_key(key)
+              runtime_config = Settings.get_runtime_config()
+              fallback_value = get_in(runtime_config, path_to_access_keys(path))
 
-                # Get the new value after deletion (will fall back to YAML/default)
-                path = parse_config_key(key)
-                runtime_config = Settings.get_runtime_config()
-                fallback_value = get_in(runtime_config, path_to_access_keys(path))
+              json(conn, %{
+                message: "Database override removed, setting will use YAML config or default",
+                key: key,
+                new_value: serialize_value(fallback_value),
+                new_source: "yaml_or_default"
+              })
 
-                json(conn, %{
-                  message: "Database override removed, setting will use YAML config or default",
-                  key: key,
-                  new_value: serialize_value(fallback_value),
-                  new_source: "yaml_or_default"
-                })
+            {:error, reason} ->
+              Logger.error("Failed to delete config setting",
+                key: key,
+                reason: inspect(reason)
+              )
 
-              {:error, reason} ->
-                Logger.error("Failed to delete config setting",
-                  key: key,
-                  reason: inspect(reason)
-                )
-
-                conn
-                |> put_status(:unprocessable_entity)
-                |> json(%{error: "Failed to delete setting: #{inspect(reason)}"})
-            end
-        end
+              conn
+              |> put_status(:unprocessable_entity)
+              |> json(%{error: "Failed to delete setting: #{inspect(reason)}"})
+          end
+      end
     end
   end
 

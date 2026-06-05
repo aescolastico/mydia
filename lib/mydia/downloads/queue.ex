@@ -822,20 +822,18 @@ defmodule Mydia.Downloads.Queue do
     client_name = Keyword.get(opts, :client_name)
     download_type = Keyword.get(opts, :download_type)
 
-    cond do
-      # Use specific client if requested
-      client_name ->
-        case find_client_by_name(client_name) do
-          nil -> {:error, {:client_not_found, client_name}}
-          client -> {:ok, client}
-        end
-
+    # Use specific client if requested
+    if client_name do
+      case find_client_by_name(client_name) do
+        nil -> {:error, {:client_not_found, client_name}}
+        client -> {:ok, client}
+      end
+    else
       # Otherwise select by priority, filtered by download type
-      true ->
-        case select_client_by_priority(download_type) do
-          nil -> {:error, :no_clients_configured}
-          client -> {:ok, client}
-        end
+      case select_client_by_priority(download_type) do
+        nil -> {:error, :no_clients_configured}
+        client -> {:ok, client}
+      end
     end
   end
 
@@ -847,8 +845,7 @@ defmodule Mydia.Downloads.Queue do
   defp select_client_by_priority(download_type) do
     client =
       Settings.list_download_client_configs()
-      |> Enum.filter(& &1.enabled)
-      |> Enum.filter(&supports_download_type?(&1, download_type))
+      |> Enum.filter(&(&1.enabled and supports_download_type?(&1, download_type)))
       |> Enum.sort_by(& &1.priority, :asc)
       |> List.first()
 
@@ -1093,11 +1090,10 @@ defmodule Mydia.Downloads.Queue do
         encoded_path =
           path
           |> String.split("/")
-          |> Enum.map(fn segment ->
+          |> Enum.map_join("/", fn segment ->
             # URI.encode/2 encodes special characters but preserves already-encoded ones
             URI.encode(segment, &URI.char_unreserved?/1)
           end)
-          |> Enum.join("/")
 
         URI.to_string(%{uri | path: encoded_path})
     end
@@ -1179,10 +1175,7 @@ defmodule Mydia.Downloads.Queue do
   defp download_via_flaresolverr(url, cookies) do
     alias Mydia.Indexers.FlareSolverr
 
-    if not FlareSolverr.enabled?() do
-      Logger.error("FlareSolverr required but not enabled/configured")
-      {:error, {:download_failed, "FlareSolverr required but not configured"}}
-    else
+    if FlareSolverr.enabled?() do
       # Pass cookies to FlareSolverr request
       flaresolverr_opts =
         if cookies != [] do
@@ -1207,6 +1200,9 @@ defmodule Mydia.Downloads.Queue do
           Logger.error("FlareSolverr download failed: #{inspect(reason)}")
           {:error, {:download_failed, "FlareSolverr error: #{inspect(reason)}"}}
       end
+    else
+      Logger.error("FlareSolverr required but not enabled/configured")
+      {:error, {:download_failed, "FlareSolverr required but not configured"}}
     end
   end
 

@@ -709,28 +709,26 @@ defmodule Mydia.Jobs.MediaImport do
     metadata = download.metadata || %{}
     expected_count = metadata["episode_count"]
 
-    cond do
-      not is_integer(expected_count) or expected_count <= 0 ->
-        nil
+    if not is_integer(expected_count) or expected_count <= 0 do
+      nil
+    else
+      actual_count =
+        imported_files
+        |> Enum.map(& &1.episode_id)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> length()
 
-      true ->
-        actual_count =
-          imported_files
-          |> Enum.map(& &1.episode_id)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
-          |> length()
+      if actual_count < expected_count do
+        Logger.warning("Season pack delivered fewer episodes than promised",
+          download_id: download.id,
+          title: download.title,
+          expected_episode_count: expected_count,
+          matched_episode_count: actual_count
+        )
 
-        if actual_count < expected_count do
-          Logger.warning("Season pack delivered fewer episodes than promised",
-            download_id: download.id,
-            title: download.title,
-            expected_episode_count: expected_count,
-            matched_episode_count: actual_count
-          )
-
-          "partial_pack"
-        end
+        "partial_pack"
+      end
     end
   end
 
@@ -1523,14 +1521,12 @@ defmodule Mydia.Jobs.MediaImport do
     # Attempt is 1-indexed, but we want 0-indexed for the schedule
     index = attempt - 1
 
-    cond do
-      # For attempts within our schedule, use the configured value
-      index < length(@backoff_schedule) ->
-        Enum.at(@backoff_schedule, index)
-
+    # For attempts within our schedule, use the configured value
+    if index < length(@backoff_schedule) do
+      Enum.at(@backoff_schedule, index)
+    else
       # For attempts beyond our schedule, use the last value (24 hours)
-      true ->
-        List.last(@backoff_schedule)
+      List.last(@backoff_schedule)
     end
   end
 

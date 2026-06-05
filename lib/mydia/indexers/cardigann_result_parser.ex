@@ -1205,9 +1205,8 @@ defmodule Mydia.Indexers.CardigannResultParser do
   defp extract_json_raw_value(row, field_config) when is_map(field_config) do
     selector = Map.get(field_config, :selector) || Map.get(field_config, "selector")
 
-    with {:ok, raw_value} <- get_json_value_by_selector(row, selector),
-         {:ok, str_value} <- ensure_string(raw_value) do
-      {:ok, str_value}
+    with {:ok, raw_value} <- get_json_value_by_selector(row, selector) do
+      ensure_string(raw_value)
     end
   end
 
@@ -1216,17 +1215,15 @@ defmodule Mydia.Indexers.CardigannResultParser do
     filters = Map.get(field_config, :filters) || Map.get(field_config, "filters", [])
     text_template = Map.get(field_config, :text) || Map.get(field_config, "text")
 
-    cond do
-      # Text-based field: render template with .Result context
-      is_binary(text_template) and text_template != "" ->
-        compute_text_field(field_config, %{}, template_context)
-
+    # Text-based field: render template with .Result context
+    if is_binary(text_template) and text_template != "" do
+      compute_text_field(field_config, %{}, template_context)
+    else
       # Selector-based field: extract value then apply filters
-      true ->
-        with {:ok, raw_value} <- get_json_value_by_selector(row, selector),
-             {:ok, str_value} <- ensure_string(raw_value) do
-          apply_filters(str_value, filters, template_context)
-        end
+      with {:ok, raw_value} <- get_json_value_by_selector(row, selector),
+           {:ok, str_value} <- ensure_string(raw_value) do
+        apply_filters(str_value, filters, template_context)
+      end
     end
   end
 

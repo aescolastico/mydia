@@ -61,8 +61,7 @@ defmodule MydiaWeb.AddMediaLive.Index do
   defp load_library_paths(socket, type) do
     paths =
       Settings.list_library_paths()
-      |> Enum.filter(&(&1.type == type or &1.type == :mixed))
-      |> Enum.filter(& &1.monitored)
+      |> Enum.filter(&((&1.type == type or &1.type == :mixed) and &1.monitored))
 
     assign(socket, :library_paths, paths)
   end
@@ -481,8 +480,7 @@ defmodule MydiaWeb.AddMediaLive.Index do
         String.replace(acc_msg, "%{#{key}}", to_string(value))
       end)
     end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
+    |> Enum.map_join("; ", fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
   end
 
   defp get_poster_url(result) do

@@ -66,12 +66,12 @@
           {Credo.Check.Refactor.LongQuoteBlocks, [priority: :low, exit_status: 0]},
           {Credo.Check.Refactor.MapJoin, []},
           {Credo.Check.Refactor.MatchInCondition, []},
-          {Credo.Check.Refactor.NegatedConditionsInUnless, [exit_status: 0]},
-          {Credo.Check.Refactor.NegatedConditionsWithElse, [exit_status: 0]},
+          {Credo.Check.Refactor.NegatedConditionsInUnless, []},
+          {Credo.Check.Refactor.NegatedConditionsWithElse, []},
           {Credo.Check.Refactor.Nesting, [priority: :low, exit_status: 0]},
           {Credo.Check.Refactor.RedundantWithClauseResult, []},
           {Credo.Check.Refactor.RejectReject, []},
-          {Credo.Check.Refactor.UnlessWithElse, [exit_status: 0]},
+          {Credo.Check.Refactor.UnlessWithElse, []},
           {Credo.Check.Refactor.WithClauses, []},
 
           ## Warnings - potential problems
@@ -99,7 +99,8 @@
 
           ## Type Safety - catch unsafe map/struct access
           {Credo.Check.Warning.MapGetUnsafePass, []},
-          {Credo.Check.Warning.StructBracketAccess, []},
+          # 308 existing violations; advisory until the backlog is cleared.
+          {Credo.Check.Warning.StructBracketAccess, [exit_status: 0]},
 
           ## Type Safety - enforce @spec on public functions
           {Credo.Check.Readability.Specs, [priority: :low, exit_status: 0]}

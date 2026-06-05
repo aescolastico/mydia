@@ -567,11 +567,12 @@ defmodule MydiaWeb.AdminImportListsLive.Index do
   we show it as "pending" so the user can re-add it.
   """
   def display_status(item) do
-    cond do
-      # If status is "added" but not in library, treat as pending
-      item.status == "added" and not item.in_library -> "pending"
+    # If status is "added" but not in library, treat as pending
+    if item.status == "added" and not item.in_library do
+      "pending"
+    else
       # Otherwise use the stored status
-      true -> item.status
+      item.status
     end
   end
 end

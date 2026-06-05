@@ -95,10 +95,7 @@ defmodule Mydia.Library.PhashGeneratorTest do
 
     @tag :requires_ffmpeg
     test "generates phash from valid video file" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video()
 
         case PhashGenerator.generate_from_path(video_path) do
@@ -113,15 +110,15 @@ defmodule Mydia.Library.PhashGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "generates consistent hashes for same video" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video()
 
         case {PhashGenerator.generate_from_path(video_path),
@@ -136,15 +133,15 @@ defmodule Mydia.Library.PhashGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "generates similar hashes for similar videos" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create two similar videos (same color, different duration)
         video1 = create_test_video(color: "blue", duration: 2)
         video2 = create_test_video(color: "blue", duration: 3)
@@ -163,15 +160,15 @@ defmodule Mydia.Library.PhashGeneratorTest do
 
         File.rm(video1)
         File.rm(video2)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "generates different hashes for different videos" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create two visually different videos with patterns (not solid colors)
         # Solid colors produce all-zero hashes since no adjacent pixel differences
         video1 = create_test_video_with_pattern("testsrc", duration: 2)
@@ -189,6 +186,9 @@ defmodule Mydia.Library.PhashGeneratorTest do
 
         File.rm(video1)
         File.rm(video2)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
   end

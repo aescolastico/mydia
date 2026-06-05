@@ -89,8 +89,9 @@ defmodule Mix.Tasks.Mydia.NfoExport do
 
   defp get_library_paths(nil, false) do
     Settings.list_library_paths()
-    |> Enum.filter(& &1.write_nfo)
-    |> Enum.filter(&(&1.type in [:movies, :series, :mixed]))
+    |> Enum.filter(fn path ->
+      path.write_nfo and path.type in [:movies, :series, :mixed]
+    end)
   end
 
   defp get_library_paths(nil, true) do

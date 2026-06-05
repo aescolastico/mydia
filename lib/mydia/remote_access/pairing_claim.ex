@@ -114,11 +114,10 @@ defmodule Mydia.RemoteAccess.PairingClaim do
 
     random_bytes
     |> :binary.bin_to_list()
-    |> Enum.map(fn byte ->
+    |> Enum.map_join("", fn byte ->
       # Use modulo to map byte value to character index
       Enum.at(chars, rem(byte, count))
     end)
-    |> Enum.join()
   end
 
   # Format code by inserting a dash in the middle for readability

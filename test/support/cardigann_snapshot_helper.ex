@@ -113,9 +113,8 @@ defmodule Mydia.CardigannSnapshotHelper do
       base_path
       |> File.ls!()
       |> Enum.map(&Path.join(base_path, &1))
-      |> Enum.filter(&File.dir?/1)
       |> Enum.filter(fn dir ->
-        File.exists?(Path.join(dir, "definition.yml"))
+        File.dir?(dir) and File.exists?(Path.join(dir, "definition.yml"))
       end)
       |> Enum.sort()
     else

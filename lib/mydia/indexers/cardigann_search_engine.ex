@@ -303,10 +303,9 @@ defmodule Mydia.Indexers.CardigannSearchEngine do
   defp append_query_params(url, params) do
     query_string =
       params
-      |> Enum.map(fn {k, v} ->
+      |> Enum.map_join("&", fn {k, v} ->
         "#{URI.encode_www_form(to_string(k))}=#{URI.encode_www_form(to_string(v))}"
       end)
-      |> Enum.join("&")
 
     if String.contains?(url, "?") do
       "#{url}&#{query_string}"

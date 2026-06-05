@@ -70,13 +70,7 @@ defmodule Mydia.Jobs.MediaServerWatchedSync do
     user_id = args.user_id
     config = Settings.get_media_server_config!(config_id)
 
-    unless config.enabled && watched_sync_enabled?(config) do
-      Logger.debug(
-        "Skipping watched sync for #{config.name}: disabled or sync_watched not enabled"
-      )
-
-      {:ok, :skipped}
-    else
+    if config.enabled && watched_sync_enabled?(config) do
       direction = get_sync_direction(config)
 
       Logger.info("Starting watched sync (#{direction}) for #{config.name}, user #{user_id}")
@@ -97,6 +91,12 @@ defmodule Mydia.Jobs.MediaServerWatchedSync do
             {:error, reason}
         end
       end
+    else
+      Logger.debug(
+        "Skipping watched sync for #{config.name}: disabled or sync_watched not enabled"
+      )
+
+      {:ok, :skipped}
     end
   end
 

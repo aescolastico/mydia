@@ -1422,12 +1422,11 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       ranking_info =
         ranked
         |> Enum.with_index(1)
-        |> Enum.map(fn {r, idx} ->
+        |> Enum.map_join("\n", fn {r, idx} ->
           "  #{idx}. Score: #{Float.round(r.score, 1)} | Seeders: #{r.result.seeders} | #{r.result.title}\n" <>
             "     Quality: #{inspect(r.breakdown.quality)} | Seeders Score: #{inspect(r.breakdown.seeders)} | " <>
             "Size: #{inspect(r.breakdown.size)} | Title: #{inspect(r.breakdown.title_match)}"
         end)
-        |> Enum.join("\n")
 
       # Basic assertions for unified scoring
 

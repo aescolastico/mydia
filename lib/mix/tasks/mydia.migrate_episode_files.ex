@@ -101,9 +101,7 @@ defmodule Mix.Tasks.Mydia.MigrateEpisodeFiles do
     file_path = MediaFile.absolute_path(media_file)
 
     # Check if file exists
-    if not File.exists?(file_path) do
-      {:missing, %{file: file_path, show: show.title}}
-    else
+    if File.exists?(file_path) do
       # Parse the filename
       parsed = FileParser.parse(Path.basename(file_path))
 
@@ -171,6 +169,8 @@ defmodule Mix.Tasks.Mydia.MigrateEpisodeFiles do
           end
         end
       end
+    else
+      {:missing, %{file: file_path, show: show.title}}
     end
   end
 
