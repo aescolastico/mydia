@@ -39,22 +39,6 @@ defmodule Mydia.Books do
   end
 
   @doc """
-  Gets an author by OpenLibrary ID.
-  """
-  @spec get_author_by_openlibrary(binary()) :: Author.t() | nil
-  def get_author_by_openlibrary(openlibrary_id) do
-    Repo.get_by(Author, openlibrary_id: openlibrary_id)
-  end
-
-  @doc """
-  Gets an author by Goodreads ID.
-  """
-  @spec get_author_by_goodreads(binary()) :: Author.t() | nil
-  def get_author_by_goodreads(goodreads_id) do
-    Repo.get_by(Author, goodreads_id: goodreads_id)
-  end
-
-  @doc """
   Creates an author.
   """
   @spec create_author(map()) :: {:ok, Author.t()} | {:error, Ecto.Changeset.t()}
@@ -62,16 +46,6 @@ defmodule Mydia.Books do
     %Author{}
     |> Author.changeset(attrs)
     |> Repo.insert()
-  end
-
-  @doc """
-  Updates an author.
-  """
-  @spec update_author(Author.t(), map()) :: {:ok, Author.t()} | {:error, Ecto.Changeset.t()}
-  def update_author(%Author{} = author, attrs) do
-    author
-    |> Author.changeset(attrs)
-    |> Repo.update()
   end
 
   @doc """
@@ -147,14 +121,6 @@ defmodule Mydia.Books do
   @spec get_book_by_isbn13(binary()) :: Book.t() | nil
   def get_book_by_isbn13(isbn13) do
     Repo.get_by(Book, isbn13: isbn13)
-  end
-
-  @doc """
-  Gets a book by OpenLibrary ID.
-  """
-  @spec get_book_by_openlibrary(binary()) :: Book.t() | nil
-  def get_book_by_openlibrary(openlibrary_id) do
-    Repo.get_by(Book, openlibrary_id: openlibrary_id)
   end
 
   @doc """
