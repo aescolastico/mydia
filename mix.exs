@@ -1,6 +1,48 @@
-# Build-time quality helpers (behaviour-callback predicate for mix_unused).
-# Kept outside lib/ so it ships nowhere and is not itself dead-code analysed.
-Code.require_file("mix_quality.ex", __DIR__)
+# Build-time quality helper for mix_unused. Defined here (not under lib/) so it
+# ships nowhere, is not itself dead-code analysed, and is always present when
+# mix.exs is evaluated - including the Docker `mix deps.get --only prod` layer,
+# which copies only mix.exs/mix.lock.
+defmodule MydiaQuality do
+  @moduledoc false
+
+  @doc """
+  True when `{module, fun, arity}` is a behaviour callback implemented by
+  `module` - that is, `module` declares `@behaviour B` and `{fun, arity}` is
+  one of `B`'s callbacks.
+
+  Behaviour callbacks are dispatched by the framework that owns the behaviour
+  (Guardian, Plug, telemetry, the app's own `@behaviour`s), so static export
+  analysis cannot see the call site and flags them as unused. This predicate is
+  a rule about tool blindness: it auto-covers every current and future callback
+  implementation rather than enumerating individual findings.
+  """
+  @spec behaviour_callback?({module(), atom(), arity()}) :: boolean()
+  def behaviour_callback?({module, fun, arity}) do
+    module
+    |> implemented_behaviours()
+    |> Enum.any?(&callback?(&1, fun, arity))
+  end
+
+  defp implemented_behaviours(module) do
+    if Code.ensure_loaded?(module) do
+      module.module_info(:attributes)
+      |> Keyword.get_values(:behaviour)
+      |> List.flatten()
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp callback?(behaviour, fun, arity) do
+    Code.ensure_loaded?(behaviour) and
+      function_exported?(behaviour, :behaviour_info, 1) and
+      {fun, arity} in behaviour.behaviour_info(:callbacks)
+  rescue
+    _ -> false
+  end
+end
 
 defmodule Mydia.MixProject do
   use Mix.Project
@@ -39,11 +81,14 @@ defmodule Mydia.MixProject do
 
   # The mix_unused `:unused` compiler adds tracing overhead and prints a large
   # advisory report, so it only runs when UNUSED_CHECK=true (set by the
-  # dead-code CI step). Normal dev/CI compiles are unaffected.
+  # dead-code CI step). Normal dev/CI compiles are unaffected. It is gated to
+  # dev/test because mix_unused is a dev/test-only dependency, and prepended
+  # because that is the order under which it actually emits its analysis in
+  # this version (appending it after Mix.compilers/0 yields no report).
   defp compilers do
     base = [:phoenix_live_view] ++ Mix.compilers()
 
-    if System.get_env("UNUSED_CHECK") == "true" do
+    if System.get_env("UNUSED_CHECK") == "true" and Mix.env() in [:dev, :test] do
       [:unused | base]
     else
       base

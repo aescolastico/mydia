@@ -344,10 +344,6 @@ defmodule MydiaWeb.FeatureCase do
   end
 
   @doc """
-  Waits for any of the given texts to appear on the page.
-  Returns true if any text is found, false after all attempts exhausted.
-  """
-  @doc """
   Pushes a LiveView event by injecting a temporary hidden button with phx-click
   attributes and clicking it. More reliable than direct JS API calls because
   Phoenix LiveView automatically binds phx-click handlers on new DOM elements.

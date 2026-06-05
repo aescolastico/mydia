@@ -26,7 +26,7 @@ Every finding from a gate gets exactly one of these:
 1. **Rule-shaped ignore.** The tool is structurally blind here (the call site
    is generated, dynamically dispatched, or a framework callback). Express the
    blindness as a regex or predicate so it covers every present and future
-   case. Example: the behaviour-callback predicate in `mix_quality.ex`.
+   case. Example: the behaviour-callback predicate (`MydiaQuality`) in `mix.exs`.
 2. **Fix it.** The finding is real and the check is precise. Refactor the code,
    or delete it if it is dead. Do not suppress it.
 3. **Retire the check.** The check is majority false-positive by construction
