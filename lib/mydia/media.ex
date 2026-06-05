@@ -1006,19 +1006,15 @@ defmodule Mydia.Media do
     - `{:ok, media_item}` - Updated media item
     - `{:error, reason}` - Error reason
   """
-  @spec refresh_metadata(MediaItem.t()) :: {:ok, MediaItem.t()} | {:error, term()}
-  def refresh_metadata(%MediaItem{} = media_item) do
+  @spec refresh_metadata(MediaItem.t(), map() | nil) ::
+          {:ok, MediaItem.t()} | {:error, term()}
+  def refresh_metadata(%MediaItem{} = media_item, config \\ nil) do
     alias Mydia.Metadata
 
-    config = Metadata.default_relay_config()
+    config = config || Metadata.default_relay_config()
     media_type = if media_item.type == "tv_show", do: :tv_show, else: :movie
 
-    {provider_id, provider_source} =
-      cond do
-        media_item.tvdb_id -> {to_string(media_item.tvdb_id), :tvdb}
-        media_item.tmdb_id -> {to_string(media_item.tmdb_id), :tmdb}
-        true -> {nil, nil}
-      end
+    {provider_id, provider_source} = refresh_provider_preference(media_item)
 
     if is_nil(provider_id) do
       {:error, :missing_provider_id}
@@ -1049,6 +1045,29 @@ defmodule Mydia.Media do
       end
     end
   end
+
+  # Resolve the `{provider_id, provider_source}` a refresh should fetch from.
+  #
+  # `metadata_source` is the authoritative provenance recorded when an item was
+  # matched under per-library provider selection, so it wins even when a
+  # back-filled id for the other provider is also present (e.g. a TMDB-sourced
+  # show that carries a discovered `tvdb_id`). Only when it is absent do we fall
+  # back to the legacy TVDB-precedence rule (prefer `tvdb_id`, then `tmdb_id`).
+  defp refresh_provider_preference(%MediaItem{metadata_source: :tmdb, tmdb_id: tmdb_id})
+       when not is_nil(tmdb_id),
+       do: {to_string(tmdb_id), :tmdb}
+
+  defp refresh_provider_preference(%MediaItem{metadata_source: :tvdb, tvdb_id: tvdb_id})
+       when not is_nil(tvdb_id),
+       do: {to_string(tvdb_id), :tvdb}
+
+  defp refresh_provider_preference(%MediaItem{tvdb_id: tvdb_id}) when not is_nil(tvdb_id),
+    do: {to_string(tvdb_id), :tvdb}
+
+  defp refresh_provider_preference(%MediaItem{tmdb_id: tmdb_id}) when not is_nil(tmdb_id),
+    do: {to_string(tmdb_id), :tmdb}
+
+  defp refresh_provider_preference(%MediaItem{}), do: {nil, nil}
 
   @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
@@ -1085,27 +1104,28 @@ defmodule Mydia.Media do
     season_monitoring = Keyword.get(opts, :season_monitoring, "all")
     config = Metadata.default_relay_config()
 
-    # Get provider ID - prefer tvdb_id for TV shows, fall back to tmdb_id
-    # Track the provider source so we route to the correct API
+    # Resolve the provider to fetch from. `metadata_source` (when set) is the
+    # authoritative provenance; only fall back to the legacy TVDB-precedence
+    # rule and the stored metadata provider_id when it is absent.
     {provider_id, provider_source} =
-      cond do
-        media_item.tvdb_id ->
-          {to_string(media_item.tvdb_id), :tvdb}
-
-        media_item.tmdb_id ->
-          {to_string(media_item.tmdb_id), :tmdb}
-
-        true ->
+      case refresh_provider_preference(media_item) do
+        {nil, nil} ->
           case media_item.metadata do
             %{"provider_id" => id} when is_binary(id) -> {id, :tmdb}
             _ -> {nil, nil}
           end
+
+        pair ->
+          pair
       end
 
-    # If we have a TMDB ID but no TVDB ID, try to discover the TVDB ID
-    # so we can use the preferred TVDB provider for TV shows
+    # If we have a TMDB ID but no TVDB ID, try to discover the TVDB ID so we can
+    # use the preferred TVDB provider for TV shows. Skip this when the show has
+    # an explicit `metadata_source` — a TMDB-sourced show must not be silently
+    # switched to TVDB on refresh.
     {provider_id, provider_source, media_item} =
-      if provider_source == :tmdb and is_nil(media_item.tvdb_id) do
+      if provider_source == :tmdb and is_nil(media_item.tvdb_id) and
+           is_nil(media_item.metadata_source) do
         maybe_discover_tvdb_id(media_item, provider_id, config)
       else
         {provider_id, provider_source, media_item}
@@ -1485,7 +1505,7 @@ defmodule Mydia.Media do
 
   # Determines if a new episode should be monitored based on the media_item's monitoring preset.
   # This is used when creating new episodes during metadata refresh.
-  defp should_monitor_new_episode?(media_item, season_number, air_date) do
+  def should_monitor_new_episode?(media_item, season_number, air_date) do
     # If the media_item itself isn't monitored, don't monitor episodes
     if media_item.monitored do
       preset = media_item.monitoring_preset || :all
@@ -1991,7 +2011,7 @@ defmodule Mydia.Media do
     end
   end
 
-  defp calculate_title_match_score(result, media_item) do
+  def calculate_title_match_score(result, media_item) do
     base_score = 0.5
     title_sim = title_similarity(result.title, media_item.title)
 
@@ -2026,12 +2046,12 @@ defmodule Mydia.Media do
     |> String.trim()
   end
 
-  defp exact_title_match?(result_title, search_title)
-       when is_binary(result_title) and is_binary(search_title) do
+  def exact_title_match?(result_title, search_title)
+      when is_binary(result_title) and is_binary(search_title) do
     normalize_title(result_title) == normalize_title(search_title)
   end
 
-  defp exact_title_match?(_result_title, _search_title), do: false
+  def exact_title_match?(_result_title, _search_title), do: false
 
   defp title_derivative_penalty(result_title, search_title)
        when is_binary(result_title) and is_binary(search_title) do
@@ -2050,14 +2070,14 @@ defmodule Mydia.Media do
 
   defp title_derivative_penalty(_result_title, _search_title), do: 0.0
 
-  defp year_matches?(result_year, nil), do: result_year != nil
-  defp year_matches?(nil, _media_year), do: false
+  def year_matches?(result_year, nil), do: result_year != nil
+  def year_matches?(nil, _media_year), do: false
 
-  defp year_matches?(result_year, media_year) when is_integer(result_year) do
+  def year_matches?(result_year, media_year) when is_integer(result_year) do
     abs(result_year - media_year) <= 1
   end
 
-  defp year_matches?(_result_year, _media_year), do: false
+  def year_matches?(_result_year, _media_year), do: false
 
   # Determines if we should skip refreshing season data based on the last refresh time
   defp should_skip_season_refresh?(%MediaItem{seasons_refreshed_at: nil}), do: false

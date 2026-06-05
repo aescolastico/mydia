@@ -22,6 +22,37 @@ defmodule Mydia.Settings.LibraryPaths do
     RC.merge_with_runtime_config(db_paths, &RC.get_runtime_library_paths/0, :path)
   end
 
+  @tv_library_types [:series, :mixed]
+
+  @doc """
+  Derives the TV metadata source implied by the configured libraries.
+
+  Discover-add has no specific library at add-time (a media item relates to a
+  library only through its files, which a discover-added item has none of yet),
+  so the provider is derived across enabled `:series`/`:mixed` libraries:
+
+    * unanimous source → that source
+    * no TV libraries → `:tvdb` (schema default)
+    * libraries disagree → `nil` (conflict; caller leaves provenance unstamped
+      and lets the scan path establish it later)
+
+  Runtime/env-configured libraries carry the schema default `:tvdb`, so they
+  participate as `:tvdb`.
+  """
+  @spec derive_tv_metadata_source() :: :tvdb | :tmdb | nil
+  def derive_tv_metadata_source do
+    list_library_paths()
+    |> Enum.filter(&(&1.type in @tv_library_types))
+    |> Enum.map(& &1.tv_metadata_source)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> case do
+      [] -> :tvdb
+      [single] -> single
+      _multiple -> nil
+    end
+  end
+
   def get_library_path!(id, opts \\ [])
 
   def get_library_path!(id, opts) when is_binary(id) do

@@ -599,6 +599,14 @@ defmodule Mydia.Settings do
   defdelegate list_library_paths(opts \\ []), to: Mydia.Settings.LibraryPaths
 
   @doc """
+  Derives the TV metadata source implied by the configured `:series`/`:mixed`
+  libraries: unanimous source, `:tvdb` when none configured, or `nil` on
+  conflict. See `Mydia.Settings.LibraryPaths.derive_tv_metadata_source/0`.
+  """
+  @spec derive_tv_metadata_source() :: :tvdb | :tmdb | nil
+  defdelegate derive_tv_metadata_source(), to: Mydia.Settings.LibraryPaths
+
+  @doc """
   Gets a library path by ID.
 
   Accepts both database IDs (integers) and runtime identifiers (strings starting

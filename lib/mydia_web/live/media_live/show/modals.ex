@@ -85,6 +85,64 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   end
 
   @doc """
+  Provider re-identification picker.
+
+  Shown when a provider switch could not auto-match the show confidently. Lets
+  the operator pick the correct show on the target provider, with copy warning
+  that confirming re-matches episodes and resets episode watch history.
+  """
+  attr :provider, :atom, required: true
+  attr :candidates, :list, required: true
+
+  def reidentify_modal(assigns) do
+    ~H"""
+    <div id="reidentify-modal" class="modal modal-open">
+      <div class="modal-box max-w-xl">
+        <h3 class="font-bold text-lg mb-1">Re-identify on {provider_label(@provider)}</h3>
+        <p class="text-sm opacity-75 mb-4">
+          Pick the correct show. Confirming re-matches episodes from {provider_label(@provider)} and
+          resets episode-level watch history for this show.
+        </p>
+
+        <%= if @candidates == [] do %>
+          <div class="alert alert-warning mb-4">
+            <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
+            <span>No results found on {provider_label(@provider)}.</span>
+          </div>
+        <% else %>
+          <div class="space-y-2 max-h-80 overflow-y-auto mb-2">
+            <button
+              :for={candidate <- @candidates}
+              type="button"
+              phx-click="select_reidentify_candidate"
+              phx-value-provider_id={to_string(candidate.provider_id)}
+              class="btn btn-ghost h-auto w-full justify-start normal-case text-left p-3 rounded-lg border-2 border-base-300 hover:border-primary hover:bg-primary/5"
+            >
+              <div class="font-medium">
+                {candidate.title}
+                <span :if={candidate.year} class="opacity-60 font-normal">({candidate.year})</span>
+              </div>
+              <div class="text-xs opacity-50 font-mono mt-0.5">
+                {provider_label(@provider)} ID {to_string(candidate.provider_id)}
+              </div>
+            </button>
+          </div>
+        <% end %>
+
+        <div class="modal-action">
+          <button type="button" phx-click="cancel_reidentify" class="btn btn-ghost">
+            Cancel
+          </button>
+        </div>
+      </div>
+      <div class="modal-backdrop" phx-click="cancel_reidentify"></div>
+    </div>
+    """
+  end
+
+  defp provider_label(provider), do: MydiaWeb.MediaLive.Show.Helpers.provider_label(provider)
+
+  @doc """
   File delete confirmation modal for removing a media file record.
   """
   attr :file_to_delete, :map, required: true

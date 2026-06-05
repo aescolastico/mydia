@@ -79,7 +79,10 @@ defmodule Mydia.MetadataTest do
 
     on_exit(fn ->
       Cache.clear()
-      Provider.Registry.clear()
+      # The registry is global process state; restore the default providers
+      # instead of leaving :metadata_relay (etc.) unregistered for subsequent
+      # tests in the suite (e.g. MetadataEnricherTest).
+      Mydia.Metadata.register_providers()
     end)
 
     :ok

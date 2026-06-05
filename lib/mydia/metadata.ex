@@ -144,9 +144,13 @@ defmodule Mydia.Metadata do
     year = Keyword.get(opts, :year)
     language = Keyword.get(opts, :language, "en-US")
     page = Keyword.get(opts, :page, 1)
+    # Include the provider so a TV title searched under TVDB and under TMDB
+    # never share a cache entry (per-library provider routing). Mirrors the
+    # provider-aware key in fetch_by_id_cached/3.
+    provider = Keyword.get(opts, :provider, type)
 
     # Create a stable cache key from query and options
-    cache_key = "search:#{query}:#{media_type}:#{year}:#{language}:#{page}"
+    cache_key = "search:#{provider}:#{query}:#{media_type}:#{year}:#{language}:#{page}"
 
     # Cache for 1 hour
     Cache.fetch(
@@ -208,8 +212,11 @@ defmodule Mydia.Metadata do
     media_type = Keyword.get(opts, :media_type, :movie)
     append = Keyword.get(opts, :append_to_response, []) |> Enum.sort() |> Enum.join(",")
     language = Keyword.get(opts, :language, "en-US")
+    # Include the provider so numerically-overlapping TVDB/TMDB ids never share a
+    # cache entry (e.g. TVDB series 603 vs TMDB movie 603).
+    provider = Keyword.get(opts, :provider, type)
 
-    cache_key = "fetch_by_id:#{provider_id}:#{media_type}:#{language}:#{append}"
+    cache_key = "fetch_by_id:#{provider}:#{provider_id}:#{media_type}:#{language}:#{append}"
 
     Cache.fetch(
       cache_key,

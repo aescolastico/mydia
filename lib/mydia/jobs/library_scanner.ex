@@ -1066,8 +1066,14 @@ defmodule Mydia.Jobs.LibraryScanner do
   end
 
   defp match_file_to_existing_items(media_file, file_info, metadata_config, _parsed) do
+    # Use the library's configured TV metadata source for new matches.
+    provider = media_file.library_path && media_file.library_path.tv_metadata_source
+
     # Try to match the file to metadata
-    case MetadataMatcher.match_file(file_info.path, config: metadata_config) do
+    case MetadataMatcher.match_file(file_info.path,
+           config: metadata_config,
+           provider: provider
+         ) do
       {:ok, match_result} ->
         Logger.info("Matched media file",
           path: file_info.path,

@@ -32,5 +32,53 @@ defmodule Mydia.Settings.LibraryPathTest do
       assert changeset.valid?
       assert Ecto.Changeset.get_change(changeset, :auto_rename) == true
     end
+
+    test "tv_metadata_source defaults to :tvdb" do
+      assert %LibraryPath{}.tv_metadata_source == :tvdb
+    end
+
+    test "accepts :tmdb as tv_metadata_source" do
+      changeset =
+        LibraryPath.changeset(%LibraryPath{}, %{
+          path: "/media/anime",
+          type: "series",
+          tv_metadata_source: :tmdb
+        })
+
+      assert changeset.valid?
+      assert Ecto.Changeset.get_change(changeset, :tv_metadata_source) == :tmdb
+    end
+
+    test "accepts :tvdb as tv_metadata_source" do
+      changeset =
+        LibraryPath.changeset(%LibraryPath{tv_metadata_source: :tmdb}, %{
+          path: "/media/series",
+          type: "series",
+          tv_metadata_source: :tvdb
+        })
+
+      assert changeset.valid?
+      assert Ecto.Changeset.get_change(changeset, :tv_metadata_source) == :tvdb
+    end
+
+    test "rejects an unknown tv_metadata_source" do
+      changeset =
+        LibraryPath.changeset(%LibraryPath{}, %{
+          path: "/media/series",
+          type: "series",
+          tv_metadata_source: "imdb"
+        })
+
+      refute changeset.valid?
+      assert Keyword.has_key?(changeset.errors, :tv_metadata_source)
+    end
+
+    test "defaults to :tvdb when omitted from attrs" do
+      changeset =
+        LibraryPath.changeset(%LibraryPath{}, %{path: "/media/series", type: "series"})
+
+      assert changeset.valid?
+      assert Ecto.Changeset.get_field(changeset, :tv_metadata_source) == :tvdb
+    end
   end
 end

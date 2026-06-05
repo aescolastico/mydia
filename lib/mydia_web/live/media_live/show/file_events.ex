@@ -5,6 +5,7 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
   import Phoenix.LiveView, only: [put_flash: 3, start_async: 3]
 
   alias Mydia.Media
+  alias Mydia.Media.ProviderSwitch
   alias Mydia.Library
   alias Mydia.Downloads
   alias MydiaWeb.Live.Authorization
@@ -13,13 +14,138 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
     only: [load_media_item: 1, load_transcode_jobs: 1]
 
   import MydiaWeb.MediaLive.Show.Helpers,
-    only: [get_season_media_files: 2, refresh_files: 1]
+    only: [get_season_media_files: 2, refresh_files: 1, provider_label: 1]
 
   require Logger
 
   def refresh_metadata(_params, socket) do
     media_item = socket.assigns.media_item
 
+    case ProviderSwitch.provider_refresh_decision(media_item) do
+      {:reidentify, target} ->
+        # Search + adopt do network I/O; run them async so the LiveView socket
+        # is never blocked (a multi-season switch can take many seconds).
+        {:noreply,
+         socket
+         |> assign(:reidentifying, true)
+         |> put_flash(:info, "Re-identifying on #{provider_label(target)}...")
+         |> start_async(:reidentify_search, fn ->
+           {target, ProviderSwitch.find_reidentify_candidate(media_item, target)}
+         end)}
+
+      :refetch ->
+        do_standard_refresh(media_item, socket)
+    end
+  end
+
+  @doc """
+  Adopts a manually-selected re-identification candidate from the picker modal.
+  """
+  def select_reidentify_candidate(%{"provider_id" => provider_id}, socket) do
+    media_item = socket.assigns.media_item
+    target = socket.assigns.reidentify_provider
+
+    candidate =
+      Enum.find(
+        socket.assigns.reidentify_candidates,
+        &(to_string(&1.provider_id) == provider_id)
+      )
+
+    if candidate do
+      {:noreply,
+       socket
+       |> assign(:show_reidentify_modal, false)
+       |> assign(:reidentifying, true)
+       |> put_flash(:info, "Switching to #{provider_label(target)}...")
+       |> start_async(:reidentify_adopt, fn ->
+         {target, ProviderSwitch.adopt_provider_switch(media_item, candidate, target)}
+       end)}
+    else
+      {:noreply,
+       socket
+       |> assign(:show_reidentify_modal, false)
+       |> put_flash(:error, "That selection is no longer available")}
+    end
+  end
+
+  def cancel_reidentify(_params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_reidentify_modal, false)
+     |> assign(:reidentify_candidates, [])
+     |> assign(:reidentify_provider, nil)}
+  end
+
+  # async result: provider re-identification search
+  def handle_reidentify_search_async({:ok, {target, {:confident, candidate}}}, socket) do
+    media_item = socket.assigns.media_item
+
+    {:noreply,
+     start_async(socket, :reidentify_adopt, fn ->
+       {target, ProviderSwitch.adopt_provider_switch(media_item, candidate, target)}
+     end)}
+  end
+
+  def handle_reidentify_search_async({:ok, {target, {:needs_picker, candidates}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:reidentify_provider, target)
+     |> assign(:reidentify_candidates, candidates)
+     |> assign(:show_reidentify_modal, true)}
+  end
+
+  def handle_reidentify_search_async({:ok, {target, {:error, reason}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Could not search #{provider_label(target)}: #{inspect(reason)}")}
+  end
+
+  def handle_reidentify_search_async({:exit, reason}, socket) do
+    Logger.error("Re-identification search crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Re-identification failed unexpectedly")}
+  end
+
+  # async result: provider switch (adopt)
+  def handle_reidentify_adopt_async({:ok, {target, {:ok, _updated}}}, socket) do
+    media_item = socket.assigns.media_item
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:show_reidentify_modal, false)
+     |> assign(:reidentify_candidates, [])
+     |> assign(:media_item, load_media_item(media_item.id))
+     |> put_flash(
+       :info,
+       "Switched to #{provider_label(target)}. Episodes were re-matched; " <>
+         "episode-level watch history was reset."
+     )}
+  end
+
+  def handle_reidentify_adopt_async({:ok, {_target, {:error, reason}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> assign(:show_reidentify_modal, false)
+     |> put_flash(:error, "Provider switch failed: #{inspect(reason)}")}
+  end
+
+  def handle_reidentify_adopt_async({:exit, reason}, socket) do
+    Logger.error("Provider switch crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:reidentifying, false)
+     |> put_flash(:error, "Provider switch failed unexpectedly")}
+  end
+
+  defp do_standard_refresh(media_item, socket) do
     metadata_result = Media.refresh_metadata(media_item)
 
     case {media_item.type, metadata_result} do
@@ -29,7 +155,10 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
             {:noreply,
              socket
              |> assign(:media_item, load_media_item(media_item.id))
-             |> put_flash(:info, "Refreshed metadata: #{count} episodes updated")}
+             |> put_flash(
+               :info,
+               "Refreshed metadata: #{count} episodes updated#{ambiguous_note(media_item)}"
+             )}
 
           {:error, reason} ->
             {:noreply,
@@ -52,6 +181,18 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
 
       {_, {:error, reason}} ->
         {:noreply, put_flash(socket, :error, "Failed to refresh metadata: #{inspect(reason)}")}
+    end
+  end
+
+  # When a show's files span libraries with different providers, re-identification
+  # is skipped; tell the operator so the no-op switch isn't confusing.
+  defp ambiguous_note(media_item) do
+    case ProviderSwitch.resolve_library_provider(media_item) do
+      :ambiguous ->
+        " (provider re-identification skipped: this show's files span libraries with different sources)"
+
+      _ ->
+        ""
     end
   end
 

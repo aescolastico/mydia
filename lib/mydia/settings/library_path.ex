@@ -26,6 +26,7 @@ defmodule Mydia.Settings.LibraryPath do
           auto_import: boolean(),
           write_nfo: boolean(),
           auto_rename: boolean(),
+          tv_metadata_source: atom() | nil,
           quality_profile:
             Mydia.Settings.QualityProfile.t() | nil | Ecto.Association.NotLoaded.t(),
           quality_profile_id: binary() | nil,
@@ -37,6 +38,10 @@ defmodule Mydia.Settings.LibraryPath do
 
   @path_types [:movies, :series, :mixed, :music, :books, :adult]
   @scan_statuses [:success, :failed, :in_progress]
+  @tv_metadata_sources [:tvdb, :tmdb]
+
+  @doc "Valid TV metadata source providers for series/mixed libraries."
+  def tv_metadata_sources, do: @tv_metadata_sources
 
   schema "library_paths" do
     field :path, :string
@@ -60,6 +65,8 @@ defmodule Mydia.Settings.LibraryPath do
     field :write_nfo, :boolean, default: false
     # Enable/disable automatic file renaming on import (TRaSH Guides format)
     field :auto_rename, :boolean, default: true
+    # Metadata provider for TV shows in this library (series/mixed only)
+    field :tv_metadata_source, Ecto.Enum, values: @tv_metadata_sources, default: :tvdb
 
     belongs_to :quality_profile, Mydia.Settings.QualityProfile
     belongs_to :updated_by, Mydia.Accounts.User
@@ -88,10 +95,12 @@ defmodule Mydia.Settings.LibraryPath do
       :auto_organize,
       :auto_import,
       :write_nfo,
-      :auto_rename
+      :auto_rename,
+      :tv_metadata_source
     ])
     |> validate_required([:path, :type])
     |> validate_inclusion(:type, @path_types)
+    |> validate_inclusion(:tv_metadata_source, @tv_metadata_sources)
     |> validate_number(:scan_interval, greater_than: 0)
     |> validate_category_paths()
     |> unique_constraint(:path)

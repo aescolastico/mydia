@@ -491,7 +491,8 @@ defmodule Mydia.Library.MetadataMatcher do
 
     # Search for the series (without specific episode constraints)
     search_opts =
-      [media_type: :tv_show] |> Keyword.merge(Keyword.take(opts, [:language, :include_adult]))
+      [media_type: :tv_show]
+      |> Keyword.merge(Keyword.take(opts, [:language, :include_adult, :provider]))
 
     normalized_title = normalize_search_query(parsed.title)
 
@@ -514,8 +515,10 @@ defmodule Mydia.Library.MetadataMatcher do
                 to_string(series.provider_id)
               )
 
-            # Use the provider from search result
-            provider_type = series.provider || :tvdb
+            # Normalize the search result's provider to a concrete TV source.
+            # TVDB results carry provider: :tvdb; TMDB results carry
+            # provider: :metadata_relay, which maps to :tmdb.
+            provider_type = if series.provider == :tvdb, do: :tvdb, else: :tmdb
 
             {:ok,
              MatchResult.new(
@@ -680,7 +683,7 @@ defmodule Mydia.Library.MetadataMatcher do
 
     base_opts
     |> add_if_present(:year, parsed.year)
-    |> Keyword.merge(Keyword.take(opts, [:language, :include_adult]))
+    |> Keyword.merge(Keyword.take(opts, [:language, :include_adult, :provider]))
   end
 
   defp add_if_present(opts, _key, nil), do: opts
@@ -754,8 +757,10 @@ defmodule Mydia.Library.MetadataMatcher do
             to_string(best_match.provider_id)
           )
 
-        # Use the provider from search result (e.g., :tvdb for TV show searches)
-        provider_type = best_match.provider || :tvdb
+        # Normalize the search result's provider to a concrete TV source.
+        # TVDB results carry provider: :tvdb; TMDB results carry
+        # provider: :metadata_relay, which maps to :tmdb.
+        provider_type = if best_match.provider == :tvdb, do: :tvdb, else: :tmdb
 
         {:ok,
          MatchResult.new(

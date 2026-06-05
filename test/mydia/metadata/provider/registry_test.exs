@@ -52,6 +52,12 @@ defmodule Mydia.Metadata.Provider.RegistryTest do
   setup do
     # Clear registry before each test to ensure clean state
     Registry.clear()
+
+    # The registry is global process state; restore the default providers
+    # afterward so this test does not leave :metadata_relay (etc.) unregistered
+    # for subsequent tests in the suite.
+    on_exit(fn -> Mydia.Metadata.register_providers() end)
+
     :ok
   end
 

@@ -78,6 +78,11 @@ defmodule MydiaWeb.MediaLive.Show do
      |> assign(:download_to_delete, nil)
      |> assign(:show_download_details_modal, false)
      |> assign(:download_details, nil)
+     # Provider re-identification picker state
+     |> assign(:show_reidentify_modal, false)
+     |> assign(:reidentify_candidates, [])
+     |> assign(:reidentify_provider, nil)
+     |> assign(:reidentifying, false)
      # Manual search modal state
      |> assign(:show_manual_search_modal, false)
      |> assign(:manual_search_query, "")
@@ -157,6 +162,12 @@ defmodule MydiaWeb.MediaLive.Show do
 
   def handle_event("refresh_metadata", params, socket),
     do: FileEvents.refresh_metadata(params, socket)
+
+  def handle_event("select_reidentify_candidate", params, socket),
+    do: FileEvents.select_reidentify_candidate(params, socket)
+
+  def handle_event("cancel_reidentify", params, socket),
+    do: FileEvents.cancel_reidentify(params, socket)
 
   def handle_event("refresh_all_file_metadata", params, socket),
     do: FileEvents.refresh_all_file_metadata(params, socket)
@@ -511,6 +522,12 @@ defmodule MydiaWeb.MediaLive.Show do
 
   def handle_async(:refresh_files, result, socket),
     do: FileEvents.handle_refresh_files_async(result, socket)
+
+  def handle_async(:reidentify_search, result, socket),
+    do: FileEvents.handle_reidentify_search_async(result, socket)
+
+  def handle_async(:reidentify_adopt, result, socket),
+    do: FileEvents.handle_reidentify_adopt_async(result, socket)
 
   def handle_async(:rescan_season_files, result, socket),
     do: FileEvents.handle_rescan_season_files_async(result, socket)

@@ -378,4 +378,47 @@ defmodule Mydia.Metadata.Provider.RelayTest do
       assert is_list(metadata.genres)
     end
   end
+
+  describe "search/3 with provider routing" do
+    test "TV search with provider: :tmdb returns results via the TMDB endpoint" do
+      assert {:ok, results} =
+               Relay.search(@config, "Breaking Bad", media_type: :tv_show, provider: :tmdb)
+
+      assert is_list(results)
+      assert length(results) > 0
+
+      first_result = List.first(results)
+      assert first_result.media_type == :tv_show
+      assert String.contains?(String.downcase(first_result.title), "breaking")
+    end
+
+    test "TV search with provider: :tvdb returns results via the TVDB endpoint" do
+      assert {:ok, results} =
+               Relay.search(@config, "Breaking Bad", media_type: :tv_show, provider: :tvdb)
+
+      assert is_list(results)
+      assert length(results) > 0
+
+      first_result = List.first(results)
+      assert first_result.media_type == :tv_show
+      assert String.contains?(String.downcase(first_result.title), "breaking")
+    end
+
+    test "TV search without a provider opt defaults to TVDB (back-compat)" do
+      assert {:ok, results} = Relay.search(@config, "Breaking Bad", media_type: :tv_show)
+
+      assert is_list(results)
+      assert length(results) > 0
+      assert List.first(results).media_type == :tv_show
+    end
+
+    test "movie search ignores provider and uses TMDB" do
+      assert {:ok, results} =
+               Relay.search(@config, "The Matrix", media_type: :movie, provider: :tvdb)
+
+      assert is_list(results)
+      assert length(results) > 0
+      assert List.first(results).media_type == :movie
+    end
+  end
 end
