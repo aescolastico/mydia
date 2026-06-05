@@ -206,6 +206,9 @@
   <%= if @show_download_details_modal && @download_details do %>
     <Modals.download_details_modal download_details={@download_details} />
   <% end %>
+  <%= if @show_reidentify_modal do %>
+    <Modals.reidentify_modal provider={@reidentify_provider} candidates={@reidentify_candidates} />
+  <% end %>
   <%= if @show_manual_search_modal do %>
     <Modals.manual_search_modal
       manual_search_context={@manual_search_context}
