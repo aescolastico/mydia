@@ -239,6 +239,11 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
     EpisodeStatus.status_icon(status)
   end
 
+  @doc "Human-readable label for a TV metadata provider."
+  def provider_label(:tvdb), do: "TheTVDB"
+  def provider_label(:tmdb), do: "TMDB"
+  def provider_label(other), do: to_string(other)
+
   def episode_status_details(episode) do
     EpisodeStatus.status_details(episode)
   end

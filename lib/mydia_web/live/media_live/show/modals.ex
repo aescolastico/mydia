@@ -116,7 +116,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
               type="button"
               phx-click="select_reidentify_candidate"
               phx-value-provider_id={to_string(candidate.provider_id)}
-              class="w-full text-left p-3 rounded-lg border-2 border-base-300 hover:border-primary hover:bg-primary/5 transition-all"
+              class="btn btn-ghost h-auto w-full justify-start normal-case text-left p-3 rounded-lg border-2 border-base-300 hover:border-primary hover:bg-primary/5"
             >
               <div class="font-medium">
                 {candidate.title}
@@ -140,9 +140,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
     """
   end
 
-  defp provider_label(:tvdb), do: "TheTVDB"
-  defp provider_label(:tmdb), do: "TMDB"
-  defp provider_label(other), do: to_string(other)
+  defp provider_label(provider), do: MydiaWeb.MediaLive.Show.Helpers.provider_label(provider)
 
   @doc """
   File delete confirmation modal for removing a media file record.

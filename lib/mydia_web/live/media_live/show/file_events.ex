@@ -13,7 +13,7 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
     only: [load_media_item: 1, load_transcode_jobs: 1]
 
   import MydiaWeb.MediaLive.Show.Helpers,
-    only: [get_season_media_files: 2, refresh_files: 1]
+    only: [get_season_media_files: 2, refresh_files: 1, provider_label: 1]
 
   require Logger
 
@@ -153,10 +153,6 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
         ""
     end
   end
-
-  defp provider_label(:tvdb), do: "TheTVDB"
-  defp provider_label(:tmdb), do: "TMDB"
-  defp provider_label(other), do: to_string(other)
 
   def refresh_all_file_metadata(_params, socket) do
     media_item = socket.assigns.media_item

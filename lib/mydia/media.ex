@@ -1174,10 +1174,13 @@ defmodule Mydia.Media do
   end
 
   # Conservative gate for the silent, destructive auto-adopt: require a near-exact
-  # normalized title AND a matching year (within 1). Anything looser routes to the
-  # manual picker rather than silently re-pointing a show at the wrong provider.
+  # normalized title AND a real year match (both years present, within 1).
+  # Anything looser — including a missing year on either side, where a title-only
+  # match could silently re-point a show at the wrong provider — routes to the
+  # manual picker instead.
   defp confident_reidentify_match?(candidate, media_item) do
-    exact_title_match?(candidate.title, media_item.title) and
+    not is_nil(media_item.year) and not is_nil(candidate.year) and
+      exact_title_match?(candidate.title, media_item.title) and
       year_matches?(candidate.year, media_item.year)
   end
 
@@ -1235,12 +1238,18 @@ defmodule Mydia.Media do
 
           Repo.delete_all(from(e in Episode, where: e.media_item_id == ^item.id))
 
-          {:ok, updated} =
-            update_media_item(
-              item,
-              provider_switch_attrs(target_provider, new_id, metadata),
-              reason: "Provider switched to #{target_provider}"
-            )
+          # Roll back (preserving the just-deleted episodes) instead of raising a
+          # MatchError if the new provider id collides with another show's
+          # unique constraint — the caller expects {:error, reason}, not a crash.
+          updated =
+            case update_media_item(
+                   item,
+                   provider_switch_attrs(target_provider, new_id, metadata),
+                   reason: "Provider switched to #{target_provider}"
+                 ) do
+              {:ok, updated} -> updated
+              {:error, changeset} -> Repo.rollback({:provider_switch_update_failed, changeset})
+            end
 
           Enum.each(season_datas, fn season_data ->
             upsert_episodes_from_season(updated, season_data,
@@ -1276,35 +1285,52 @@ defmodule Mydia.Media do
   defp prefetch_provider_seasons(provider_id, target_provider, seasons, config) do
     has_tvdb = target_provider == :tvdb
 
-    season_datas =
-      seasons
-      |> Enum.map(fn season ->
-        fetch_opts =
+    # All-or-nothing: abort the whole switch if ANY season fails to fetch. A
+    # transient relay error must never let the caller delete the show's existing
+    # episodes and recreate only the subset that happened to fetch successfully.
+    result =
+      Enum.reduce_while(seasons, {:ok, []}, fn season, {:ok, acc} ->
+        season_fetch_opts =
           if has_tvdb do
+            # A TVDB-target season with no tvdb_season_id would route to the TMDB
+            # endpoint with a TVDB id (wrong data / 404), so treat it as a hard
+            # failure rather than silently fetching from the wrong provider.
             case Map.get(season, :tvdb_season_id) do
-              nil -> []
-              tvdb_season_id -> [tvdb_season_id: tvdb_season_id]
+              nil -> :error
+              tvdb_season_id -> {:ok, [tvdb_season_id: tvdb_season_id]}
             end
           else
-            []
+            {:ok, []}
           end
 
-        case Mydia.Metadata.fetch_season_cached(
-               config,
-               to_string(provider_id),
-               season.season_number,
-               fetch_opts
-             ) do
-          {:ok, season_data} -> season_data
-          {:error, _reason} -> nil
+        case season_fetch_opts do
+          :error ->
+            {:halt, {:error, {:missing_tvdb_season_id, season.season_number}}}
+
+          {:ok, opts} ->
+            case Mydia.Metadata.fetch_season_cached(
+                   config,
+                   to_string(provider_id),
+                   season.season_number,
+                   opts
+                 ) do
+              {:ok, season_data} ->
+                {:cont, {:ok, [season_data | acc]}}
+
+              {:error, reason} ->
+                {:halt, {:error, {:season_fetch_failed, season.season_number, reason}}}
+            end
         end
       end)
-      |> Enum.reject(&is_nil/1)
 
-    total_episodes =
-      Enum.reduce(season_datas, 0, fn sd, acc -> acc + length(sd.episodes || []) end)
+    with {:ok, season_datas} <- result do
+      season_datas = Enum.reverse(season_datas)
 
-    if total_episodes > 0, do: {:ok, season_datas}, else: {:error, :no_episodes}
+      total_episodes =
+        Enum.reduce(season_datas, 0, fn sd, acc -> acc + length(sd.episodes || []) end)
+
+      if total_episodes > 0, do: {:ok, season_datas}, else: {:error, :no_episodes}
+    end
   end
 
   defp linked_media_file_ids(%MediaItem{id: id}) do

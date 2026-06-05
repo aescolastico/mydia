@@ -1270,4 +1270,177 @@ defmodule Mydia.MediaTest do
       end)
     end
   end
+
+  describe "provider switch edge cases (review fixes)" do
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "a partial season-fetch failure aborts the switch without wiping episodes",
+         %{bypass: bypass, config: config} do
+      new_id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Partial Show",
+          year: 2010,
+          tvdb_id: 444,
+          metadata_source: :tvdb
+        })
+
+      old_episode =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+
+      # Show reports TWO seasons.
+      show_body = %{
+        "id" => new_id,
+        "name" => "Partial Show",
+        "first_air_date" => "2010-01-01",
+        "credits" => %{"cast" => [], "crew" => []},
+        "genres" => [],
+        "seasons" => [
+          %{"season_number" => 1, "name" => "S1"},
+          %{"season_number" => 2, "name" => "S2"}
+        ]
+      }
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(show_body))
+      end)
+
+      # Season 1 succeeds; season 2 errors (relay 500).
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}/1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "season_number" => 1,
+            "episodes" => [%{"season_number" => 1, "episode_number" => 1, "name" => "E1"}]
+          })
+        )
+      end)
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}/2", fn conn ->
+        Plug.Conn.resp(conn, 500, "boom")
+      end)
+
+      candidate = %Mydia.Metadata.Structs.SearchResult{
+        provider_id: to_string(new_id),
+        provider: :metadata_relay,
+        media_type: :tv_show,
+        title: "Partial Show",
+        year: 2010
+      }
+
+      assert {:error, _reason} =
+               Media.adopt_provider_switch(item, candidate, :tmdb, config)
+
+      # Nothing wiped: original episode and provider id intact.
+      assert Mydia.Repo.get(Mydia.Media.Episode, old_episode.id)
+      reloaded = Media.get_media_item!(item.id)
+      assert reloaded.tvdb_id == 444
+      assert is_nil(reloaded.tmdb_id)
+    end
+
+    test "a provider-id collision returns an error and preserves episodes",
+         %{bypass: bypass, config: config} do
+      new_id = System.unique_integer([:positive])
+
+      # Another show already owns the target tmdb_id -> unique_constraint.
+      media_item_fixture(%{type: "tv_show", title: "Incumbent", tmdb_id: new_id})
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Collider",
+          year: 2010,
+          tvdb_id: 333,
+          metadata_source: :tvdb
+        })
+
+      old_episode =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+
+      show_body = %{
+        "id" => new_id,
+        "name" => "Collider",
+        "first_air_date" => "2010-01-01",
+        "credits" => %{"cast" => [], "crew" => []},
+        "genres" => [],
+        "seasons" => [%{"season_number" => 1, "name" => "S1"}]
+      }
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(show_body))
+      end)
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}/1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "season_number" => 1,
+            "episodes" => [%{"season_number" => 1, "episode_number" => 1, "name" => "E1"}]
+          })
+        )
+      end)
+
+      candidate = %Mydia.Metadata.Structs.SearchResult{
+        provider_id: to_string(new_id),
+        provider: :metadata_relay,
+        media_type: :tv_show,
+        title: "Collider",
+        year: 2010
+      }
+
+      # Returns an error instead of raising/crashing.
+      assert {:error, _reason} =
+               Media.adopt_provider_switch(item, candidate, :tmdb, config)
+
+      # Transaction rolled back: original episode and provider id intact.
+      assert Mydia.Repo.get(Mydia.Media.Episode, old_episode.id)
+      reloaded = Media.get_media_item!(item.id)
+      assert reloaded.tvdb_id == 333
+    end
+
+    test "a yearless show never auto-adopts (routes to the picker)",
+         %{bypass: bypass, config: config} do
+      # No year on the stored item -> title-only match must NOT be confident.
+      item = media_item_fixture(%{type: "tv_show", title: "Yearless Show"})
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "results" => [
+              %{"id" => 5150, "name" => "Yearless Show", "first_air_date" => "1999-01-01"}
+            ]
+          })
+        )
+      end)
+
+      assert {:needs_picker, [_ | _]} =
+               Media.find_reidentify_candidate(item, :tmdb, config)
+    end
+  end
 end

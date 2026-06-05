@@ -115,9 +115,9 @@ defmodule Mydia.Metadata.Provider.Relay do
       provider = Keyword.get(opts, :provider)
 
       # TV shows route to TVDB by default; an explicit `provider: :tmdb` forces
-      # TMDB. Movies always use TMDB. Absent a provider opt, behavior is
-      # unchanged (TV -> TVDB), preserving existing callers.
-      if provider == :tvdb || (media_type == :tv_show && provider != :tmdb) do
+      # TMDB. Movies always use TMDB regardless of provider. Absent a provider
+      # opt, behavior is unchanged (TV -> TVDB), preserving existing callers.
+      if media_type == :tv_show && provider != :tmdb do
         search_tvdb(config, query, opts)
       else
         search_tmdb(config, query, opts)
