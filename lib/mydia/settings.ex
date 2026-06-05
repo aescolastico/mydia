@@ -703,6 +703,30 @@ defmodule Mydia.Settings do
   defdelegate delete_config_setting(config_setting), to: Mydia.Settings.RuntimeConfig
 
   @doc """
+  Resolves the source (`:env` / `:database` / `:default`) of a config key for UI
+  display. Pass the prefetched `all_db_settings` map to avoid per-key N+1 lookups.
+  """
+  @spec config_source(String.t() | nil, String.t(), %{optional(String.t()) => ConfigSetting.t()}) ::
+          :env | :database | :default
+  defdelegate config_source(env_var_name, key, all_db_settings), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Creates or updates a `ConfigSetting` by key from an attrs map (or struct)
+  carrying `:key`, `:value`, `:category`, and optionally `:updated_by_id`.
+  """
+  @spec upsert_config_setting(map() | struct()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate upsert_config_setting(attrs), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Parses a stored or submitted config-setting value into a boolean, accepting the
+  lenient truthy tokens (`"true"`, `"1"`, `"yes"`, `"on"`) that DB rows and form
+  params may carry. The canonical parser for config-setting booleans.
+  """
+  @spec parse_setting_boolean(term()) :: boolean()
+  defdelegate parse_setting_boolean(value), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
   Loads database configuration settings and converts them to a nested map structure.
 
   Converts flat ConfigSetting records (e.g., key: "server.port", value: "8080")

@@ -19,11 +19,18 @@
         library_indexer_stats={@library_indexer_stats}
         cardigann_enabled={@cardigann_enabled}
         recently_disabled_indexer={@recently_disabled_indexer}
-        flaresolverr_available={
-          @flaresolverr_status.configured and @flaresolverr_status.status != :disabled
-        }
+        flaresolverr={@flaresolverr}
+        flaresolverr_status={@flaresolverr_status}
       />
     </div>
+
+    <%!-- FlareSolverr Edit Modal --%>
+    <%= if @flaresolverr_modal_open do %>
+      <MydiaWeb.AdminIndexersLive.FlareSolverrComponents.flaresolverr_modal
+        form={@flaresolverr_form}
+        sources={@flaresolverr_sources}
+      />
+    <% end %>
 
     <%!-- Indexer Modal --%>
     <%= if assigns[:show_indexer_modal] do %>

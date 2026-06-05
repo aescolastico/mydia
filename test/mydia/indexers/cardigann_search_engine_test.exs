@@ -4,7 +4,6 @@ defmodule Mydia.Indexers.CardigannSearchEngineTest do
   alias Mydia.Indexers.CardigannSearchEngine
   alias Mydia.Indexers.CardigannDefinition.Parsed
   alias Mydia.Indexers.Adapter.Error
-  alias Mydia.Indexers.FlareSolverr
 
   describe "build_search_url/2" do
     test "builds URL with simple keyword substitution" do
@@ -565,47 +564,8 @@ defmodule Mydia.Indexers.CardigannSearchEngineTest do
       assert {:error, _} = CardigannSearchEngine.execute_search(definition, [query: "test"], %{})
     end
 
-    test "flaresolverr enabled check respects global config", %{definition: _definition} do
-      # Save original config
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      # Disable FlareSolverr globally
-      Application.put_env(:mydia, :flaresolverr, enabled: false, url: "http://localhost:8191")
-
-      # Even with enabled: true in opts, should not use FlareSolverr
-      refute FlareSolverr.enabled?()
-
-      # Restore original config
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
-    end
-
-    test "flaresolverr enabled check requires URL", %{definition: _definition} do
-      # Save original config
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      # Enable but without URL
-      Application.put_env(:mydia, :flaresolverr, enabled: true, url: nil)
-      refute FlareSolverr.enabled?()
-
-      # Enable with empty URL
-      Application.put_env(:mydia, :flaresolverr, enabled: true, url: "")
-      refute FlareSolverr.enabled?()
-
-      # Enable with valid URL
-      Application.put_env(:mydia, :flaresolverr, enabled: true, url: "http://localhost:8191")
-      assert FlareSolverr.enabled?()
-
-      # Restore original config
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
-    end
+    # FlareSolverr.enabled?/0 gating (config presence, URL required) is covered in
+    # Mydia.Indexers.FlareSolverrTest, which drives the layered runtime config.
   end
 
   describe "Cloudflare challenge detection" do

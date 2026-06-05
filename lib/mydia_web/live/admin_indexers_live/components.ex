@@ -3,6 +3,7 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
   use MydiaWeb, :html
 
   alias Mydia.Settings
+  alias MydiaWeb.AdminIndexersLive.FlareSolverrComponents
 
   @doc """
   Renders the Indexers tab content.
@@ -14,7 +15,8 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
   attr :library_indexer_stats, :map, required: true
   attr :cardigann_enabled, :boolean, required: true
   attr :recently_disabled_indexer, :any, default: nil
-  attr :flaresolverr_available, :boolean, default: false
+  attr :flaresolverr, :map, default: %{enabled: false, url: nil, configured: false, env?: false}
+  attr :flaresolverr_status, :map, default: %{configured: false, status: :loading}
 
   def indexers_tab(assigns) do
     # Calculate total count of enabled indexers
@@ -27,6 +29,10 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
 
     ~H"""
     <div class="p-4 sm:p-6 space-y-6">
+      <FlareSolverrComponents.flaresolverr_row
+        flaresolverr={@flaresolverr}
+        flaresolverr_status={@flaresolverr_status}
+      />
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h2 class="text-lg font-semibold flex items-center gap-2">
           <.icon name="hero-magnifying-glass" class="w-5 h-5 opacity-60" /> Indexers
@@ -281,7 +287,7 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
                       </div>
 
                       <%!-- FlareSolverr toggle with label --%>
-                      <%= if @flaresolverr_available do %>
+                      <%= if @flaresolverr_status.configured and @flaresolverr_status.status != :disabled do %>
                         <div class="flex items-center gap-1.5">
                           <div
                             class="tooltip tooltip-left"
