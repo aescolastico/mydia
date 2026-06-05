@@ -1,3 +1,7 @@
+# Build-time quality helpers (behaviour-callback predicate for mix_unused).
+# Kept outside lib/ so it ships nowhere and is not itself dead-code analysed.
+Code.require_file("mix_quality.ex", __DIR__)
+
 defmodule Mydia.MixProject do
   use Mix.Project
 
@@ -11,7 +15,8 @@ defmodule Mydia.MixProject do
       aliases: aliases(),
       deps: deps(),
       licenses: ["AGPL-3.0-or-later"],
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      compilers: compilers(),
+      unused: [ignore: unused_ignore()],
       listeners: [Phoenix.CodeReloader],
       # Enforce warnings as errors to maintain code quality
       warnings_as_errors: Mix.env() != :prod,
@@ -29,6 +34,58 @@ defmodule Mydia.MixProject do
         ],
         plt_local_path: ".dialyzer"
       ]
+    ]
+  end
+
+  # The mix_unused `:unused` compiler adds tracing overhead and prints a large
+  # advisory report, so it only runs when UNUSED_CHECK=true (set by the
+  # dead-code CI step). Normal dev/CI compiles are unaffected.
+  defp compilers do
+    base = [:phoenix_live_view] ++ Mix.compilers()
+
+    if System.get_env("UNUSED_CHECK") == "true" do
+      [:unused | base]
+    else
+      base
+    end
+  end
+
+  # Patterns excluded from mix_unused's unused-export analysis.
+  #
+  # Every entry here is a RULE describing a place static export analysis is
+  # structurally blind (dynamic dispatch, macro-generated references, framework
+  # callbacks) - never a list of specific dead functions we want to keep. A
+  # rule auto-covers future code; a finding-list is grandfathering. Real dead
+  # code is deleted, not listed here.
+  #
+  # Module regexes match against `inspect(module)`, e.g. "Mydia.Repo.Migrations.Foo".
+  defp unused_ignore do
+    [
+      # Ecto migration callbacks (change/0, up/0, down/0) run by the migrator
+      {~r/^Mydia\.Repo\.Migrations\./, :_, :_},
+      # Generated reflection/introspection helpers (__absinthe_*__, __schema__, ...)
+      {:_, ~r/^__/, :_},
+      # Absinthe schema + resolvers referenced inside `field`/`resolve` macros
+      {~r/^MydiaWeb\.Schema\./, :_, :_},
+      # Phoenix Router generated route helpers and pipelines
+      {~r/^MydiaWeb\.Router/, :_, :_},
+      # Plug callbacks invoked by the Plug pipeline
+      {:_, :init, 1},
+      {:_, :call, 2},
+      # Phoenix controller actions: dispatched by Phoenix.Controller's action
+      # plug via apply(controller, action, [conn, params]) - the router names
+      # the action as an atom, so the call site is invisible to static analysis.
+      {~r/Controller$/, :_, 2},
+      # `use MydiaWeb, :live_view | :controller | :html | ...` entrypoints,
+      # invoked as MydiaWeb.<which>() by the using macro.
+      {MydiaWeb, :_, 0},
+      # OTP dispatch: supervisors call child_spec/1, which calls start_link/1
+      {:_, :child_spec, 1},
+      {:_, :start_link, 1},
+      # Behaviour callbacks dispatched by the owning framework (Guardian, Plug,
+      # telemetry, the app's own @behaviours). Predicate, not a name list, so it
+      # auto-covers every current and future implementation.
+      &MydiaQuality.behaviour_callback?/1
     ]
   end
 
@@ -148,7 +205,8 @@ defmodule Mydia.MixProject do
       {:bypass, "~> 2.1", only: :test},
       {:wallaby, "~> 0.30", only: :test, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
+      {:mix_unused, "~> 0.4", only: [:dev, :test], runtime: false}
     ]
   end
 
