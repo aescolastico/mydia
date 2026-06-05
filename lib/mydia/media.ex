@@ -1006,11 +1006,12 @@ defmodule Mydia.Media do
     - `{:ok, media_item}` - Updated media item
     - `{:error, reason}` - Error reason
   """
-  @spec refresh_metadata(MediaItem.t()) :: {:ok, MediaItem.t()} | {:error, term()}
-  def refresh_metadata(%MediaItem{} = media_item) do
+  @spec refresh_metadata(MediaItem.t(), map() | nil) ::
+          {:ok, MediaItem.t()} | {:error, term()}
+  def refresh_metadata(%MediaItem{} = media_item, config \\ nil) do
     alias Mydia.Metadata
 
-    config = Metadata.default_relay_config()
+    config = config || Metadata.default_relay_config()
     media_type = if media_item.type == "tv_show", do: :tv_show, else: :movie
 
     {provider_id, provider_source} = refresh_provider_preference(media_item)

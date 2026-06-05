@@ -1463,25 +1463,27 @@ defmodule Mydia.MediaTest do
     end
   end
 
-  describe "refresh_metadata/1 provider routing (U6)" do
+  describe "refresh_metadata/2 provider routing (U6)" do
     import Mydia.MediaFixtures
 
     setup do
       bypass = Bypass.open()
-      previous = System.get_env("METADATA_RELAY_URL")
-      System.put_env("METADATA_RELAY_URL", "http://localhost:#{bypass.port}")
 
-      on_exit(fn ->
-        case previous do
-          nil -> System.delete_env("METADATA_RELAY_URL")
-          value -> System.put_env("METADATA_RELAY_URL", value)
-        end
-      end)
+      # Inject the relay config directly so this test never mutates the global
+      # METADATA_RELAY_URL env var (which would race concurrent async tests).
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
 
-      %{bypass: bypass}
+      %{bypass: bypass, config: config}
     end
 
-    test "a TMDB-sourced show with a back-filled tvdb_id refreshes from TMDB", %{bypass: bypass} do
+    test "a TMDB-sourced show with a back-filled tvdb_id refreshes from TMDB", %{
+      bypass: bypass,
+      config: config
+    } do
       # metadata_source is :tmdb but a discovered tvdb_id is also present; the
       # legacy rule would prefer TVDB. Only the TMDB endpoint is stubbed, so a
       # wrong-provider fetch hits an unstubbed TVDB path and fails (404).
@@ -1511,7 +1513,7 @@ defmodule Mydia.MediaTest do
         )
       end)
 
-      assert {:ok, _updated} = Mydia.Media.refresh_metadata(item)
+      assert {:ok, _updated} = Mydia.Media.refresh_metadata(item, config)
     end
   end
 end
