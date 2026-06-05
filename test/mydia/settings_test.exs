@@ -1,6 +1,8 @@
 defmodule Mydia.SettingsTest do
   use Mydia.DataCase, async: false
 
+  import Mydia.SettingsFixtures
+
   alias Mydia.Settings
   alias Mydia.Settings.{QualityProfile, DefaultMetadataPreferences}
 
@@ -2662,6 +2664,46 @@ defmodule Mydia.SettingsTest do
         |> Enum.filter(&(&1.key == "media.default_quality_profile_id"))
 
       assert length(settings) == 1
+    end
+  end
+
+  describe "derive_tv_metadata_source/0" do
+    test "returns :tvdb when no series/mixed libraries exist" do
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "returns the source of a single series library" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
+    end
+
+    test "returns the source of a single mixed library" do
+      library_path_fixture(%{type: "mixed", tv_metadata_source: :tvdb})
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "returns the unanimous source across agreeing libraries" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      library_path_fixture(%{type: "mixed", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
+    end
+
+    test "returns nil when libraries disagree" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == nil
+    end
+
+    test "excludes disabled libraries from derivation" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb, disabled: true})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "ignores movies libraries" do
+      library_path_fixture(%{type: "movies"})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
     end
   end
 end
