@@ -498,10 +498,12 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   defp metadata_source_display(:tmdb), do: "TMDB"
   defp metadata_source_display(:tvdb), do: "TVDB"
 
-  # Provider-distinct colors, chosen to avoid clashing with the type badges
-  # (info/accent/secondary) and the green "Monitored" badge.
-  defp metadata_source_badge_class(:tmdb), do: "badge-info"
-  defp metadata_source_badge_class(:tvdb), do: "badge-primary"
+  # Provider-distinct colors. `primary` and `neutral` are the only semantic
+  # badge colors not used by the type badges (info/accent/secondary/success/
+  # warning/error) or the green "Monitored" badge, so the source badge can never
+  # match the type badge it sits next to.
+  defp metadata_source_badge_class(:tmdb), do: "badge-primary"
+  defp metadata_source_badge_class(:tvdb), do: "badge-neutral"
 
   # Renders only the category paths section (when auto-organize is enabled).
   # Used by the compact library path modal.
