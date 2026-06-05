@@ -16,7 +16,7 @@
         excluded: [~r"/_build/", ~r"/deps/", ~r"/node_modules/"]
       },
       plugins: [],
-      requires: ["lib/credo/check/warning/struct_bracket_access.ex"],
+      requires: [],
       strict: false,
       parse_timeout: 5000,
       color: true,
@@ -97,10 +97,14 @@
           {Credo.Check.Warning.UnusedTupleOperation, []},
           {Credo.Check.Warning.WrongTestFileExtension, []},
 
-          ## Type Safety - catch unsafe map/struct access
+          ## Type Safety - catch unsafe map/struct access.
+          ## StructBracketAccess was retired here: a syntax-level check cannot
+          ## tell a struct (where x[:key] raises) from a map (where it is
+          ## correct), so it was majority false-positive at 308 sites. The
+          ## compiler's set-theoretic type checker carries types and flags
+          ## provable struct-field misuse precisely; it is enforced via
+          ## `mix compile --warnings-as-errors`.
           {Credo.Check.Warning.MapGetUnsafePass, []},
-          # 308 existing violations; advisory until the backlog is cleared.
-          {Credo.Check.Warning.StructBracketAccess, [exit_status: 0]},
 
           ## Type Safety - enforce @spec on public functions
           {Credo.Check.Readability.Specs, [priority: :low, exit_status: 0]}
