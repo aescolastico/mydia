@@ -65,6 +65,15 @@ jobs:
       - name: Check formatting
         run: mix format --check-formatted
 
+      # Guard against re-grandfathering: a Credo check must be enabled-and-
+      # gating or `false`, never `exit_status: 0`. See CONTRIBUTING.md.
+      - name: Forbid Credo grandfathering
+        run: |
+          if grep -n "exit_status: 0" .credo.exs; then
+            echo "::error::exit_status: 0 found in .credo.exs - fix the finding or disable the check with false (see CONTRIBUTING.md)"
+            exit 1
+          fi
+
       - name: Run Credo
         run: mix credo --strict
 
