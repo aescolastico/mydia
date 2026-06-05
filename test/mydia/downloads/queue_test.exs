@@ -217,6 +217,116 @@ defmodule Mydia.Downloads.QueueTest do
     end
   end
 
+  describe "check_for_active_download/3 — cross-season duplicate blocking" do
+    # Regression for the production bug where starting a Season 3 download for a
+    # show reported `:duplicate_download` because an unrelated, still-active
+    # Season 2 download existed. A TV show legitimately has many concurrent
+    # downloads across seasons/episodes, so an active download for the show must
+    # not, by itself, make a *different* request a duplicate. This mirrors the
+    # tv_show carve-out already present in check_for_existing_media_files/3.
+    #
+    # download_fixture/1 uses download_client: "test-client", which has no
+    # registered client config, so verify_single_download_in_client/1 treats it
+    # as :active (assume-active-on-unknown-client). That makes these fixtures a
+    # faithful stand-in for a genuinely in-progress download.
+
+    alias Mydia.Indexers.SearchResult
+    alias Mydia.Indexers.Structs.SearchResultMetadata
+
+    defp search_result(metadata) do
+      %SearchResult{
+        download_url: "magnet:?xt=urn:btih:req-#{System.unique_integer([:positive])}",
+        title: "Requested Release",
+        indexer: "test",
+        size: 1_000_000_000,
+        seeders: 10,
+        leechers: 5,
+        metadata: metadata
+      }
+    end
+
+    defp active_download(media_item_id, attrs) do
+      download_fixture(Map.merge(%{media_item_id: media_item_id}, attrs))
+    end
+
+    test "an active unscoped TV download does NOT block another unscoped request for the same show" do
+      show = media_item_fixture(%{type: "tv_show", title: "The Boys"})
+
+      active_download(show.id, %{title: "The Boys Season 2 S02 1080p", metadata: %{}})
+
+      # Mirrors the season-download UI path before it tagged season metadata:
+      # episode_id nil, no season_pack metadata.
+      assert Queue.check_for_active_download(search_result(nil), show.id, nil) == :ok
+    end
+
+    test "an active S02 season-pack download does NOT block an S03 season-pack request" do
+      show = media_item_fixture(%{type: "tv_show", title: "The Boys"})
+
+      active_download(show.id, %{
+        title: "The Boys S02 COMPLETE 1080p",
+        metadata: %{season_pack: true, season_number: 2}
+      })
+
+      result = search_result(%SearchResultMetadata{season_pack: true, season_number: 3})
+
+      assert Queue.check_for_active_download(result, show.id, nil) == :ok
+    end
+
+    test "an active S03 season-pack download DOES block a duplicate S03 season-pack request" do
+      show = media_item_fixture(%{type: "tv_show", title: "The Boys"})
+
+      active_download(show.id, %{
+        title: "The Boys S03 COMPLETE 1080p",
+        metadata: %{season_pack: true, season_number: 3}
+      })
+
+      result = search_result(%SearchResultMetadata{season_pack: true, season_number: 3})
+
+      assert Queue.check_for_active_download(result, show.id, nil) ==
+               {:error, :duplicate_download}
+    end
+
+    test "an active download for one episode does NOT block a different episode" do
+      show = media_item_fixture(%{type: "tv_show"})
+      ep_a = episode_fixture(%{media_item_id: show.id, season_number: 3, episode_number: 1})
+      ep_b = episode_fixture(%{media_item_id: show.id, season_number: 3, episode_number: 2})
+
+      active_download(show.id, %{title: "S03E01", episode_id: ep_a.id})
+
+      assert Queue.check_for_active_download(search_result(nil), show.id, ep_b.id) == :ok
+    end
+
+    test "an active download for an episode DOES block a duplicate request for the same episode" do
+      show = media_item_fixture(%{type: "tv_show"})
+      ep = episode_fixture(%{media_item_id: show.id, season_number: 3, episode_number: 1})
+
+      active_download(show.id, %{title: "S03E01", episode_id: ep.id})
+
+      assert Queue.check_for_active_download(search_result(nil), show.id, ep.id) ==
+               {:error, :duplicate_download}
+    end
+
+    test "an active movie download DOES block another request for the same movie" do
+      movie = media_item_fixture(%{type: "movie"})
+
+      active_download(movie.id, %{title: "The Movie 1080p", metadata: %{}})
+
+      assert Queue.check_for_active_download(search_result(nil), movie.id, nil) ==
+               {:error, :duplicate_download}
+    end
+
+    test "a completed download does NOT block a new request (only active ones count)" do
+      movie = media_item_fixture(%{type: "movie"})
+
+      active_download(movie.id, %{
+        title: "The Movie 1080p",
+        completed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+
+      assert Queue.check_for_active_download(search_result(nil), movie.id, nil) == :ok
+    end
+  end
+
   # Adapter that records the opts passed to remove_torrent/3 so we can prove the
   # delete_files flag reaches the client. The existing MockAdapter in
   # downloads_test.exs discards opts, so we need our own capturing stub here.

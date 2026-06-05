@@ -260,6 +260,14 @@ defmodule Mydia.Downloads.Queue do
             ^Mydia.DB.json_integer_equals(:metadata, "$.season_number", season_number)
           )
 
+        # Unscoped TV show request (no episode_id, not a season pack): a TV show
+        # legitimately has many concurrent downloads across seasons/episodes, so
+        # an active download for the show doesn't make THIS request a duplicate.
+        # Without season/episode scoping we can't prove a conflict, so allow it.
+        # Mirrors the tv_show carve-out in check_for_existing_media_files/3.
+        media_item_id && tv_show?(media_item_id) ->
+          :allow
+
         # For movies or other media, check if there's an active download for this media_item
         media_item_id ->
           where(base_query, [d], d.media_item_id == ^media_item_id)
@@ -270,6 +278,21 @@ defmodule Mydia.Downloads.Queue do
           where(base_query, [d], d.download_url == ^search_result.download_url)
       end
 
+    if query == :allow do
+      :ok
+    else
+      check_active_downloads(query, search_result, media_item_id, episode_id)
+    end
+  end
+
+  defp tv_show?(media_item_id) do
+    case Repo.get(MediaItem, media_item_id) do
+      %MediaItem{type: "tv_show"} -> true
+      _ -> false
+    end
+  end
+
+  defp check_active_downloads(query, search_result, media_item_id, episode_id) do
     active_downloads = Repo.all(query)
 
     if active_downloads == [] do

@@ -7,6 +7,7 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
   alias Mydia.Media
   alias Mydia.Downloads
   alias Mydia.Indexers.SearchResult
+  alias Mydia.Indexers.Structs.SearchResultMetadata
   alias MydiaWeb.Live.Authorization
 
   import MydiaWeb.MediaLive.Show.Loaders,
@@ -244,16 +245,21 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
       media_item = socket.assigns.media_item
       context = socket.assigns.manual_search_context
 
-      {media_item_id, episode_id} =
+      {media_item_id, episode_id, metadata} =
         case context do
           %{type: :episode, episode_id: ep_id} ->
-            {media_item.id, ep_id}
+            {media_item.id, ep_id, nil}
 
-          %{type: :season, season_number: _season_num} ->
-            {media_item.id, nil}
+          %{type: :season, season_number: season_num} ->
+            # Tag the request as a season pack so duplicate detection and
+            # category routing are scoped to this season rather than the whole
+            # show. Without this, an active download for a *different* season
+            # falsely reports :duplicate_download.
+            {media_item.id, nil,
+             %SearchResultMetadata{season_pack: true, season_number: season_num}}
 
           _ ->
-            {media_item.id, nil}
+            {media_item.id, nil, nil}
         end
 
       search_result = %SearchResult{
@@ -263,7 +269,8 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
         size: parse_int(size),
         seeders: parse_int(seeders),
         leechers: parse_int(leechers),
-        quality: quality
+        quality: quality,
+        metadata: metadata
       }
 
       opts =
