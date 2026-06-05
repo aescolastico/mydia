@@ -19,7 +19,9 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
      |> assign(:active_tab, :indexers)
      |> assign(:cardigann_enabled, CardigannFeatureFlags.enabled?())
      |> assign(:flaresolverr_status, %{configured: false, status: :loading})
-     |> assign(:flaresolverr_errors, %{})
+     |> assign(:flaresolverr_modal_open, false)
+     |> assign(:flaresolverr_sources, %{})
+     |> assign(:flaresolverr_form, nil)
      |> init_library_assigns()
      |> load_data()
      |> maybe_load_flaresolverr_status()}
@@ -666,14 +668,53 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
   end
 
   @impl true
-  def handle_event("toggle_flaresolverr_setting", %{"key" => key} = params, socket) do
-    next_value = Map.get(params, "next_value", "true")
-    {:noreply, save_flaresolverr_setting(socket, key, next_value)}
+  def handle_event("edit_flaresolverr", _params, socket) do
+    {values, sources} = flaresolverr_values_and_sources()
+
+    params = %{
+      "enabled" => values.enabled,
+      "url" => values.url,
+      "timeout" => values.timeout,
+      "max_timeout" => values.max_timeout
+    }
+
+    {:noreply,
+     socket
+     |> assign(:flaresolverr_modal_open, true)
+     |> assign(:flaresolverr_sources, sources)
+     |> assign(:flaresolverr_form, to_form(flaresolverr_changeset(params), as: :flaresolverr))}
   end
 
   @impl true
-  def handle_event("update_flaresolverr_setting", %{"key" => key, "value" => value}, socket) do
-    {:noreply, save_flaresolverr_setting(socket, key, value)}
+  def handle_event("validate_flaresolverr", %{"flaresolverr" => params}, socket) do
+    changeset = params |> flaresolverr_changeset() |> Map.put(:action, :validate)
+    {:noreply, assign(socket, :flaresolverr_form, to_form(changeset, as: :flaresolverr))}
+  end
+
+  @impl true
+  def handle_event("save_flaresolverr", %{"flaresolverr" => params}, socket) do
+    case Ecto.Changeset.apply_action(flaresolverr_changeset(params), :insert) do
+      {:ok, data} ->
+        persist_flaresolverr(
+          data,
+          socket.assigns.flaresolverr_sources,
+          socket.assigns.current_user.id
+        )
+
+        {:noreply,
+         socket
+         |> assign(:flaresolverr_modal_open, false)
+         |> put_flash(:info, "FlareSolverr settings saved")
+         |> load_data()}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :flaresolverr_form, to_form(changeset, as: :flaresolverr))}
+    end
+  end
+
+  @impl true
+  def handle_event("close_flaresolverr_modal", _params, socket) do
+    {:noreply, assign(socket, :flaresolverr_modal_open, false)}
   end
 
   ## Indexer Library Events (flattened from IndexerLibraryComponent)
@@ -833,7 +874,7 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     |> assign(:library_config_testing, false)
     |> assign(:library_config_test_result, nil)
     |> assign_new(:recently_disabled_indexer, fn -> nil end)
-    |> assign_flaresolverr_fields()
+    |> assign_flaresolverr()
   end
 
   defp reload_library_indexers(socket) do
@@ -885,75 +926,57 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     end
   end
 
-  ## FlareSolverr global config panel
+  ## FlareSolverr global config (row + edit modal)
 
-  defp assign_flaresolverr_fields(socket) do
-    errors = Map.get(socket.assigns, :flaresolverr_errors, %{})
-    assign(socket, :flaresolverr_fields, build_flaresolverr_fields(errors))
+  @flaresolverr_specs [
+    {:enabled, "FLARESOLVERR_ENABLED", "flaresolverr.enabled", :boolean},
+    {:url, "FLARESOLVERR_URL", "flaresolverr.url", :string},
+    {:timeout, "FLARESOLVERR_TIMEOUT", "flaresolverr.timeout", :integer},
+    {:max_timeout, "FLARESOLVERR_MAX_TIMEOUT", "flaresolverr.max_timeout", :integer}
+  ]
+
+  @flaresolverr_types %{
+    enabled: :boolean,
+    url: :string,
+    timeout: :integer,
+    max_timeout: :integer
+  }
+
+  defp assign_flaresolverr(socket) do
+    {values, sources} = flaresolverr_values_and_sources()
+
+    summary = %{
+      enabled: values.enabled || false,
+      url: values.url,
+      configured: is_binary(values.url) and values.url != "",
+      env?: Enum.any?(Map.values(sources), &(&1 == :env))
+    }
+
+    assign(socket, :flaresolverr, summary)
   end
 
-  defp build_flaresolverr_fields(errors) do
+  # Returns `{values, sources}` for the four flaresolverr.* keys. Display values
+  # come from the DB side when a row exists (so a save reflects without an app
+  # restart); env- and default-sourced fields use the effective runtime config.
+  defp flaresolverr_values_and_sources do
     config = Settings.get_runtime_config()
     config = if is_struct(config), do: config, else: Mydia.Config.Schema.defaults()
     fs = config.flaresolverr || %Mydia.Config.Schema.FlareSolverr{}
     all_db = Settings.list_config_settings() |> Map.new(&{&1.key, &1})
 
-    [
-      flaresolverr_field(all_db, errors, "FLARESOLVERR_ENABLED", "flaresolverr.enabled", %{
-        label: "Enabled",
-        type: :boolean,
-        fallback: fs.enabled
-      }),
-      flaresolverr_field(all_db, errors, "FLARESOLVERR_URL", "flaresolverr.url", %{
-        label: "URL",
-        type: :string,
-        fallback: fs.url || "",
-        placeholder: "http://flaresolverr:8191"
-      }),
-      flaresolverr_field(all_db, errors, "FLARESOLVERR_TIMEOUT", "flaresolverr.timeout", %{
-        label: "Timeout (ms)",
-        type: :integer,
-        fallback: fs.timeout
-      }),
-      flaresolverr_field(
-        all_db,
-        errors,
-        "FLARESOLVERR_MAX_TIMEOUT",
-        "flaresolverr.max_timeout",
-        %{
-          label: "Max Timeout (ms)",
-          type: :integer,
-          fallback: fs.max_timeout
-        }
-      )
-    ]
-  end
+    Enum.reduce(@flaresolverr_specs, {%{}, %{}}, fn {field, env_var, key, type},
+                                                    {values, sources} ->
+      source = Settings.config_source(env_var, key, all_db)
+      fallback = Map.get(fs, field)
 
-  defp flaresolverr_field(all_db, errors, env_var, key, opts) do
-    source = Settings.config_source(env_var, key, all_db)
-    fallback = opts.fallback
+      value =
+        case source do
+          :database -> parse_flaresolverr_value(Map.get(all_db, key).value, type, fallback)
+          _ -> fallback
+        end
 
-    # Display values read from the DB side so an inline save reflects without an
-    # app restart; env/default values come from the effective runtime config.
-    value =
-      case source do
-        :database -> parse_flaresolverr_value(Map.get(all_db, key).value, opts.type, fallback)
-        _ -> fallback
-      end
-
-    field = %{
-      key: key,
-      label: opts.label,
-      type: opts.type,
-      source: source,
-      value: value,
-      placeholder: Map.get(opts, :placeholder, "")
-    }
-
-    case Map.get(errors, key) do
-      nil -> field
-      %{message: message, value: entered} -> Map.merge(field, %{error: message, value: entered})
-    end
+      {Map.put(values, field, value), Map.put(sources, key, source)}
+    end)
   end
 
   defp parse_flaresolverr_value(raw, :boolean, _fallback),
@@ -968,55 +991,34 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
 
   defp parse_flaresolverr_value(raw, :string, _fallback), do: to_string(raw)
 
-  defp save_flaresolverr_setting(socket, key, raw_value) do
-    case validate_flaresolverr_value(key, raw_value) do
-      {:ok, normalized} ->
-        attrs = %{
+  defp flaresolverr_changeset(params) do
+    changeset =
+      {%{}, @flaresolverr_types}
+      |> Ecto.Changeset.cast(params, Map.keys(@flaresolverr_types))
+      |> Ecto.Changeset.validate_number(:timeout, greater_than: 0)
+      |> Ecto.Changeset.validate_number(:max_timeout, greater_than: 0)
+
+    if Ecto.Changeset.get_field(changeset, :enabled) do
+      Ecto.Changeset.validate_required(changeset, [:url])
+    else
+      changeset
+    end
+  end
+
+  # Persist each editable field; env-sourced keys are read-only (env wins at
+  # runtime) so they are skipped.
+  defp persist_flaresolverr(data, sources, user_id) do
+    Enum.each(@flaresolverr_specs, fn {field, _env_var, key, _type} ->
+      if Map.get(sources, key) != :env do
+        Settings.upsert_config_setting(%{
           key: key,
-          value: normalized,
+          value: to_string(Map.get(data, field)),
           category: :flaresolverr,
-          updated_by_id: socket.assigns.current_user.id
-        }
-
-        case Settings.upsert_config_setting(attrs) do
-          {:ok, _setting} ->
-            socket
-            |> assign(:flaresolverr_errors, Map.delete(socket.assigns.flaresolverr_errors, key))
-            |> assign_flaresolverr_fields()
-
-          {:error, changeset} ->
-            MydiaLogger.log_error(:liveview, "Failed to save FlareSolverr setting",
-              error: changeset,
-              operation: :save_flaresolverr_setting,
-              setting_key: key,
-              user_id: socket.assigns.current_user.id
-            )
-
-            put_flaresolverr_error(socket, key, raw_value, "Could not save setting")
-        end
-
-      {:error, message} ->
-        put_flaresolverr_error(socket, key, raw_value, message)
-    end
+          updated_by_id: user_id
+        })
+      end
+    end)
   end
-
-  defp put_flaresolverr_error(socket, key, value, message) do
-    errors = Map.put(socket.assigns.flaresolverr_errors, key, %{message: message, value: value})
-
-    socket
-    |> assign(:flaresolverr_errors, errors)
-    |> assign_flaresolverr_fields()
-  end
-
-  defp validate_flaresolverr_value(key, value)
-       when key in ["flaresolverr.timeout", "flaresolverr.max_timeout"] do
-    case Integer.parse(String.trim(to_string(value))) do
-      {int, ""} when int > 0 -> {:ok, to_string(int)}
-      _ -> {:error, "Must be a positive whole number"}
-    end
-  end
-
-  defp validate_flaresolverr_value(_key, value), do: {:ok, to_string(value)}
 
   defp init_library_assigns(socket) do
     socket

@@ -221,83 +221,76 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
       %{conn: conn}
     end
 
-    test "renders the panel with explanatory copy, always visible when unconfigured", %{
-      conn: conn
-    } do
+    test "renders the FlareSolverr row, always visible when unconfigured", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       assert has_element?(view, "#flaresolverr-panel")
-      assert render(view) =~ "solves Cloudflare challenges"
+      assert render(view) =~ "FlareSolverr"
+      assert render(view) =~ "not configured"
+      assert has_element?(view, ~s{button[phx-click="edit_flaresolverr"]})
     end
 
-    test "env-sourced URL renders read-only with an ENV badge", %{conn: conn} do
+    test "env-sourced config shows an ENV badge on the row", %{conn: conn} do
       System.put_env("FLARESOLVERR_URL", "http://env-flaresolverr:8191")
 
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
-      panel = element(view, "#flaresolverr-panel") |> render()
-      assert panel =~ "ENV"
-
-      # No editable input is rendered for an env-sourced field
-      refute has_element?(
-               view,
-               ~s{#flaresolverr-panel input[phx-blur="update_flaresolverr_setting"][phx-value-key="flaresolverr.url"]}
-             )
+      assert render(element(view, "#flaresolverr-panel")) =~ "ENV"
     end
 
-    test "db-sourced URL renders an editable input with a DB badge", %{conn: conn} do
-      {:ok, _} =
-        Settings.upsert_config_setting(%{
-          key: "flaresolverr.url",
-          value: "http://db-flaresolverr:8191",
-          category: :flaresolverr
-        })
-
-      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
-
-      assert has_element?(
-               view,
-               ~s{input[phx-blur="update_flaresolverr_setting"][phx-value-key="flaresolverr.url"]}
-             )
-
-      assert render(view) =~ "DB"
-    end
-
-    test "saving a timeout upserts the setting and flips its source to DB", %{conn: conn} do
+    test "Edit opens a modal form with the four config fields", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       view
-      |> element(~s{input[phx-value-key="flaresolverr.timeout"]})
-      |> render_blur(%{"key" => "flaresolverr.timeout", "value" => "90000"})
-
-      setting = Settings.get_config_setting_by_key("flaresolverr.timeout")
-      assert setting.value == "90000"
-      assert setting.category == :flaresolverr
-    end
-
-    test "toggling enabled upserts the flaresolverr.enabled setting", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
-
-      view
-      |> element(~s{input[phx-value-key="flaresolverr.enabled"]})
+      |> element(~s{button[phx-click="edit_flaresolverr"]})
       |> render_click()
 
-      assert Settings.get_config_setting_by_key("flaresolverr.enabled")
+      assert has_element?(view, "#flaresolverr-form")
+      assert has_element?(view, ~s{#flaresolverr-form input[name="flaresolverr[url]"]})
+      assert has_element?(view, ~s{#flaresolverr-form input[name="flaresolverr[timeout]"]})
     end
 
-    test "invalid timeout shows an inline error and writes no setting", %{conn: conn} do
+    test "saving the modal form upserts the settings", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+
+      view
+      |> form("#flaresolverr-form",
+        flaresolverr: %{
+          enabled: "true",
+          url: "http://flaresolverr:8191",
+          timeout: "60000",
+          max_timeout: "120000"
+        }
+      )
+      |> render_submit()
+
+      url = Settings.get_config_setting_by_key("flaresolverr.url")
+      assert url.value == "http://flaresolverr:8191"
+      assert url.category == :flaresolverr
+      assert Settings.get_config_setting_by_key("flaresolverr.timeout").value == "60000"
+      refute has_element?(view, "#flaresolverr-form")
+    end
+
+    test "invalid timeout shows a validation error and writes no setting", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
 
       html =
         view
-        |> element(~s{input[phx-value-key="flaresolverr.timeout"]})
-        |> render_blur(%{"key" => "flaresolverr.timeout", "value" => "not-a-number"})
+        |> form("#flaresolverr-form",
+          flaresolverr: %{enabled: "false", url: "", timeout: "0", max_timeout: "120000"}
+        )
+        |> render_submit()
 
-      assert html =~ "Must be a positive whole number"
+      assert html =~ "must be greater than 0"
       assert is_nil(Settings.get_config_setting_by_key("flaresolverr.timeout"))
+      assert has_element?(view, "#flaresolverr-form")
     end
 
-    test "Test Connection is handled without crashing", %{conn: conn} do
+    test "Test Connection from the row is handled without crashing", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
       view
