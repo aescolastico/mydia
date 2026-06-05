@@ -68,6 +68,14 @@ jobs:
       - name: Run Credo
         run: mix credo --strict
 
+      # Advisory by design, not grandfathering. mix_unused's export analysis
+      # cannot trace framework dispatch (controller actions, HEEx components,
+      # behaviour callbacks, runtime dispatch); rule-shaped ignores in mix.exs
+      # cover the structural blind spots, and provably-dead code is deleted at
+      # the source. The irreducible residual is intentional public API plus
+      # default-argument arity artifacts, which cannot be driven to a principled
+      # zero on a Phoenix app without deleting live code. So this step reports
+      # for awareness but does not block. See CONTRIBUTING.md ("Quality gates").
       - name: Dead code report (advisory)
         run: UNUSED_CHECK=true mix compile --force
         continue-on-error: true
