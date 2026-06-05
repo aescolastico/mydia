@@ -2025,6 +2025,31 @@ defmodule Mydia.Library do
   end
 
   @doc """
+  Counts non-trashed imported files per download, keyed by `imported_from_download_id`.
+
+  Batched companion to `list_media_files_for_download/1` for callers that need to
+  know how many files a set of downloads imported without an N+1 query — e.g. the
+  Downloads LiveView deciding whether a completed row is single-file (re-match
+  eligible) or a pack. Returns `%{download_id => count}`; downloads with no
+  imported files are simply absent from the map.
+  """
+  @spec count_imported_files_by_download([binary()]) :: %{binary() => non_neg_integer()}
+  def count_imported_files_by_download([]), do: %{}
+
+  def count_imported_files_by_download(download_ids) when is_list(download_ids) do
+    ids = Enum.map(download_ids, &to_string/1)
+
+    from(f in MediaFile,
+      where: is_nil(f.trashed_at),
+      where: json_extract(f.metadata, "$.imported_from_download_id") in ^ids,
+      group_by: json_extract(f.metadata, "$.imported_from_download_id"),
+      select: {json_extract(f.metadata, "$.imported_from_download_id"), count(f.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
   Refreshes file metadata for all media files in the library.
 
   This can be a long-running operation. Returns the count of successfully refreshed files.

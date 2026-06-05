@@ -55,7 +55,12 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     # true  = client confirmed the torrent is there
     # false = client confirmed the torrent is gone
     # nil   = client unreachable; presence unknown
-    :in_client?
+    :in_client?,
+    # Whether a completed download is eligible for post-import re-match: exactly
+    # one non-trashed imported file (packs resolve to several and can't be
+    # re-matched as a unit). Computed per-tab in the LiveView; nil when not
+    # evaluated (e.g. queue/issues rows, where the action isn't offered).
+    :rematch_eligible?
   ]
 
   @type t :: %__MODULE__{
@@ -96,7 +101,8 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           import_failed_at: DateTime.t() | nil,
           last_progress_at: DateTime.t() | nil,
           last_known_bytes: integer() | nil,
-          in_client?: boolean() | nil
+          in_client?: boolean() | nil,
+          rematch_eligible?: boolean() | nil
         }
 
   @doc """

@@ -314,6 +314,39 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
              )
     end
 
+    test "Re-match action is hidden for a fully-imported multi-file pack", %{conn: conn} do
+      # A season pack imports successfully, so MediaImport clears match_status to
+      # nil — but it resolves to several imported files and can't be re-matched as
+      # a unit. The action must stay hidden even though match_status is nil.
+      library = library_path_fixture(%{type: "series", monitored: true})
+      show = media_item_fixture(%{type: "tv_show", title: "Some Show"})
+
+      download =
+        download_fixture(%{
+          media_item_id: show.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      for episode <- 1..2 do
+        {:ok, _file} =
+          Library.create_media_file(%{
+            relative_path: "Some Show/S01E0#{episode}.mkv",
+            library_path_id: library.id,
+            media_item_id: show.id,
+            size: 100,
+            metadata: %{"imported_from_download_id" => download.id}
+          })
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "switch_tab", %{"tab" => "completed"})
+
+      refute has_element?(
+               view,
+               "button[phx-click='open_match_modal'][phx-value-id='#{download.id}'][phx-value-mode='postimport']"
+             )
+    end
+
     test "re-matching a movie enqueues the job and persists the new target", %{conn: conn} do
       download = imported_movie_with_file("Wrong Title")
       new_movie = media_item_fixture(%{type: "movie", title: "Corrected Title"})

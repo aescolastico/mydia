@@ -174,8 +174,12 @@ defmodule Mydia.Jobs.MediaRematch do
 
     case Library.update_media_file(current, attrs) do
       {:ok, updated} ->
-        stamp_provenance(download, old_media_file)
-        updated
+        # Provenance is part of the re-match contract; a failed stamp must roll
+        # back the relink so callers can retry rather than half-update.
+        case stamp_provenance(download, old_media_file) do
+          {:ok, _} -> updated
+          {:error, changeset} -> Repo.rollback({:provenance_failed, changeset})
+        end
 
       {:error, changeset} ->
         Repo.rollback({:relink_failed, changeset})

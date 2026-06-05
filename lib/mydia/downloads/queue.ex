@@ -414,17 +414,21 @@ defmodule Mydia.Downloads.Queue do
 
     case History.update_download(download, attrs) do
       {:ok, updated} ->
-        %{
-          "download_id" => updated.id,
-          "save_path" => save_path,
-          "cleanup_client" => true,
-          "use_hardlinks" => true,
-          "move_files" => false
-        }
-        |> Mydia.Jobs.MediaImport.new()
-        |> insert_job()
+        job_result =
+          %{
+            "download_id" => updated.id,
+            "save_path" => save_path,
+            "cleanup_client" => true,
+            "use_hardlinks" => true,
+            "move_files" => false
+          }
+          |> Mydia.Jobs.MediaImport.new()
+          |> insert_job()
 
-        {:ok, updated}
+        case job_result do
+          {:ok, _job} -> {:ok, updated}
+          {:error, _changeset} = error -> error
+        end
 
       {:error, _changeset} = error ->
         error
@@ -532,11 +536,12 @@ defmodule Mydia.Downloads.Queue do
              episode_id: episode_id
            }) do
         {:ok, updated} ->
-          %{"download_id" => updated.id}
-          |> Mydia.Jobs.MediaRematch.new()
-          |> insert_job()
-
-          {:ok, :enqueued}
+          case %{"download_id" => updated.id}
+               |> Mydia.Jobs.MediaRematch.new()
+               |> insert_job() do
+            {:ok, _job} -> {:ok, :enqueued}
+            {:error, _changeset} = error -> error
+          end
 
         {:error, _changeset} = error ->
           error

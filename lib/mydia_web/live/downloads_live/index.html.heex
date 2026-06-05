@@ -332,7 +332,7 @@
                 </button>
               <% @active_tab == :completed -> %>
                 <button
-                  :if={is_nil(download.match_status)}
+                  :if={is_nil(download.match_status) and download.rematch_eligible?}
                   type="button"
                   class="btn btn-square btn-ghost btn-sm"
                   phx-click="open_match_modal"

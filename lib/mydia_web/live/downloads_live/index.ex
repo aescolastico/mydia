@@ -3,6 +3,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
   alias Mydia.Downloads
   alias Mydia.Downloads.Structs.DownloadMetadata
   alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library
   alias Mydia.Media
   alias Phoenix.PubSub
   alias MydiaWeb.Live.Authorization
@@ -835,7 +836,13 @@ defmodule MydiaWeb.DownloadsLive.Index do
         # Apply pagination
         page = socket.assigns.page
         offset = page * @items_per_page
-        paginated_downloads = all_downloads |> Enum.drop(offset) |> Enum.take(@items_per_page)
+
+        paginated_downloads =
+          all_downloads
+          |> Enum.drop(offset)
+          |> Enum.take(@items_per_page)
+          |> annotate_rematch_eligibility(tab)
+
         has_more = length(all_downloads) > offset + @items_per_page
 
         # Determine if we need to append or reset stream
@@ -950,7 +957,26 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
     Downloads.list_downloads_with_status(filter: filter)
     |> apply_sorting(socket.assigns.sort_by)
+    |> annotate_rematch_eligibility(socket.assigns.active_tab)
   end
+
+  # Stamps `rematch_eligible?` on completed-tab rows: a row is eligible only when
+  # it resolves to exactly one non-trashed imported file. Packs resolve to several
+  # files and can't be re-matched as a unit, so the Completed-tab action must stay
+  # hidden for them even though their `match_status` is nil. Other tabs don't offer
+  # the action, so the flag is left nil to avoid a needless query.
+  defp annotate_rematch_eligibility(downloads, :completed) do
+    counts =
+      downloads
+      |> Enum.map(& &1.id)
+      |> Library.count_imported_files_by_download()
+
+    Enum.map(downloads, fn download ->
+      %{download | rematch_eligible?: Map.get(counts, download.id, 0) == 1}
+    end)
+  end
+
+  defp annotate_rematch_eligibility(downloads, _tab), do: downloads
 
   # Sorts the enriched download list by the active `sort_by` selection. Runs in
   # the LiveView (not the DB) because real-time keys (progress, speeds, ETA,

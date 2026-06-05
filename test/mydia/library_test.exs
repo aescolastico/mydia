@@ -908,4 +908,56 @@ defmodule Mydia.LibraryTest do
       assert Library.list_media_files_for_download(download) == []
     end
   end
+
+  describe "count_imported_files_by_download/1" do
+    test "counts non-trashed files per download, omitting downloads with none" do
+      lib = library_path_fixture(%{type: "movies"})
+      movie = Mydia.MediaFixtures.media_item_fixture(%{type: "movie"})
+
+      single = Ecto.UUID.generate()
+      pack = Ecto.UUID.generate()
+      none = Ecto.UUID.generate()
+
+      {:ok, _} =
+        Library.create_media_file(%{
+          relative_path: "single.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          metadata: %{"imported_from_download_id" => single}
+        })
+
+      for n <- 1..2 do
+        {:ok, _} =
+          Library.create_media_file(%{
+            relative_path: "pack#{n}.mkv",
+            library_path_id: lib.id,
+            media_item_id: movie.id,
+            size: 100,
+            metadata: %{"imported_from_download_id" => pack}
+          })
+      end
+
+      # A trashed file must not be counted.
+      {:ok, _} =
+        Library.create_media_file(%{
+          relative_path: "pack-trashed.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          trashed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          metadata: %{"imported_from_download_id" => pack}
+        })
+
+      counts = Library.count_imported_files_by_download([single, pack, none])
+
+      assert counts[single] == 1
+      assert counts[pack] == 2
+      refute Map.has_key?(counts, none)
+    end
+
+    test "returns an empty map for an empty id list" do
+      assert Library.count_imported_files_by_download([]) == %{}
+    end
+  end
 end

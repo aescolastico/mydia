@@ -283,12 +283,21 @@ defmodule Mydia.Library.FileOrganizer do
           {:ok, :skip}
 
         Keyword.has_key?(opts, :expected_size) and File.exists?(dest) ->
-          if file_size(dest) == Keyword.fetch!(opts, :expected_size) do
-            {:ok, :exists}
-          else
-            # Stale/partial destination (e.g. a crashed copy) — drop it and re-place.
-            _ = File.rm(dest)
-            do_place(source, dest, opts)
+          cond do
+            file_size(dest) == Keyword.fetch!(opts, :expected_size) ->
+              {:ok, :exists}
+
+            not File.exists?(source) ->
+              # Stale/partial dest but the source is gone (e.g. a retry where only
+              # dest survived) — refuse rather than delete the only remaining copy.
+              {:error, {:size_mismatch_no_source, dest}}
+
+            true ->
+              # Stale/partial destination (e.g. a crashed copy) — drop it and re-place.
+              case File.rm(dest) do
+                :ok -> do_place(source, dest, opts)
+                {:error, reason} -> {:error, {:rm_failed, dest, reason}}
+              end
           end
 
         true ->
@@ -308,8 +317,14 @@ defmodule Mydia.Library.FileOrganizer do
       if use_hardlinks and same_filesystem?(source, dest) do
         case File.ln(source, dest) do
           :ok ->
-            if remove_source?, do: File.rm(source)
-            {:ok, :hardlink}
+            if remove_source? do
+              case File.rm(source) do
+                :ok -> {:ok, :hardlink}
+                {:error, reason} -> {:error, {:source_rm_failed, source, reason}}
+              end
+            else
+              {:ok, :hardlink}
+            end
 
           {:error, _reason} ->
             # Hardlink failed despite same-filesystem detection — fall back safely.
