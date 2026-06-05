@@ -138,5 +138,38 @@ defmodule MydiaWeb.AdminLibraryPathsLiveTest do
 
       refute html =~ "TV Metadata Source"
     end
+
+    test "shows the metadata source badge for series/mixed libraries in the list", %{
+      conn: conn,
+      token: token
+    } do
+      {:ok, series} =
+        Mydia.Settings.create_library_path(%{
+          path: "/tmp/series_#{System.unique_integer([:positive])}",
+          type: "series",
+          tv_metadata_source: "tmdb"
+        })
+
+      {:ok, _movie} =
+        Mydia.Settings.create_library_path(%{
+          path: "/tmp/movies_#{System.unique_integer([:positive])}",
+          type: "movies"
+        })
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:guardian_default_token, token)
+        |> put_req_header("authorization", "Bearer #{token}")
+
+      {:ok, view, _html} = live(conn, ~p"/admin/config/library-paths")
+
+      # The series library shows a metadata-source badge reflecting its provider.
+      assert has_element?(view, ~s{[data-tip="TV metadata source"]}, "TMDB")
+      # The movie library has no metadata-source badge.
+      refute has_element?(view, ~s{[data-tip="TV metadata source"]}, "TVDB")
+
+      on_exit(fn -> Mydia.Settings.delete_library_path(series) end)
+    end
   end
 end

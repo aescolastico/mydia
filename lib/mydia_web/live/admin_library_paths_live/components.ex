@@ -337,6 +337,15 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
             <.icon name={library_type_icon(@library_path.type)} class="w-3 h-3 mr-1" />
             {library_type_display(@library_path.type)}
           </span>
+          <%= if @library_path.type in [:series, :mixed] do %>
+            <span
+              class="badge badge-sm badge-ghost tooltip"
+              data-tip="TV metadata source"
+            >
+              <.icon name="hero-circle-stack" class="w-3 h-3 mr-1" />
+              {tv_metadata_source_display(@library_path.tv_metadata_source)}
+            </span>
+          <% end %>
           <span class={[
             "badge badge-sm",
             if(@library_path.monitored, do: "badge-success", else: "badge-ghost")
@@ -464,6 +473,10 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   defp library_type_display(:books), do: "Books"
   defp library_type_display(:adult), do: "Adult"
   defp library_type_display(type), do: to_string(type)
+
+  defp tv_metadata_source_display(:tmdb), do: "TMDB"
+  # nil falls back to the schema default (:tvdb), e.g. runtime/env-only paths.
+  defp tv_metadata_source_display(_), do: "TVDB"
 
   # Renders only the category paths section (when auto-organize is enabled).
   # Used by the compact library path modal.
