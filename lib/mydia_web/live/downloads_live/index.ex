@@ -3,6 +3,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
   alias Mydia.Downloads
   alias Mydia.Downloads.Structs.DownloadMetadata
   alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library
   alias Mydia.Media
   alias Phoenix.PubSub
   alias MydiaWeb.Live.Authorization
@@ -93,6 +94,8 @@ defmodule MydiaWeb.DownloadsLive.Index do
      |> assign(:library_search_value, "")
      |> assign(:library_search_results, [])
      |> assign(:episodes_by_media_item, %{})
+     # Match / re-match modal state (in-flight correction + post-import re-match)
+     |> assign(:match_modal, nil)
      # Initialize all streams
      |> stream(:downloads, [])
      |> stream(:unmatched_downloads, [])
@@ -607,6 +610,67 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
+  # --- Match / re-match modal (in-flight correction + post-import re-match) ---
+
+  def handle_event("open_match_modal", %{"id" => id, "mode" => mode}, socket)
+      when mode in ["inflight", "postimport"] do
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      {:noreply,
+       assign(socket, :match_modal, %{
+         download_id: id,
+         mode: String.to_existing_atom(mode),
+         query: "",
+         results: [],
+         selected: nil,
+         episodes: []
+       })}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("close_match_modal", _params, socket) do
+    {:noreply, assign(socket, :match_modal, nil)}
+  end
+
+  def handle_event("match_modal_search", %{"q" => query}, socket) do
+    results =
+      if String.length(query) >= 2 do
+        Media.list_media_items(search: query) |> Enum.take(10)
+      else
+        []
+      end
+
+    {:noreply,
+     update(socket, :match_modal, fn modal ->
+       %{modal | query: query, results: results}
+     end)}
+  end
+
+  def handle_event(
+        "match_modal_pick_item",
+        %{"media_item_id" => media_item_id, "type" => type, "title" => title},
+        socket
+      ) do
+    if type == "tv_show" do
+      # TV: choose the specific episode in a second step.
+      episodes = Media.list_episodes(media_item_id)
+
+      {:noreply,
+       update(socket, :match_modal, fn modal ->
+         %{modal | selected: %{id: media_item_id, title: title}, episodes: episodes}
+       end)}
+    else
+      # Movie: submit immediately.
+      submit_match(socket, media_item_id, nil)
+    end
+  end
+
+  def handle_event("match_modal_pick_episode", %{"episode_id" => episode_id}, socket) do
+    %{selected: %{id: media_item_id}} = socket.assigns.match_modal
+    submit_match(socket, media_item_id, episode_id)
+  end
+
   def handle_event("refresh_suggestions", %{"id" => download_id}, socket) do
     with :ok <- Authorization.authorize_manage_downloads(socket) do
       download = Downloads.get_download!(download_id)
@@ -772,7 +836,13 @@ defmodule MydiaWeb.DownloadsLive.Index do
         # Apply pagination
         page = socket.assigns.page
         offset = page * @items_per_page
-        paginated_downloads = all_downloads |> Enum.drop(offset) |> Enum.take(@items_per_page)
+
+        paginated_downloads =
+          all_downloads
+          |> Enum.drop(offset)
+          |> Enum.take(@items_per_page)
+          |> annotate_rematch_eligibility(tab)
+
         has_more = length(all_downloads) > offset + @items_per_page
 
         # Determine if we need to append or reset stream
@@ -825,6 +895,58 @@ defmodule MydiaWeb.DownloadsLive.Index do
     |> stream(:other_issues, other, reset: true)
   end
 
+  defp submit_match(socket, media_item_id, episode_id) do
+    with :ok <- Authorization.authorize_manage_downloads(socket) do
+      modal = socket.assigns.match_modal
+      download = Downloads.get_download!(modal.download_id)
+
+      {flash_kind, message} =
+        case modal.mode do
+          :inflight ->
+            case Downloads.manually_match_download(download, media_item_id, episode_id) do
+              {:ok, _} -> {:info, "Match updated — the import will use the corrected match."}
+              {:error, _} -> {:error, "Failed to update the match."}
+            end
+
+          :postimport ->
+            case Downloads.rematch_imported_download(download, media_item_id, episode_id) do
+              {:ok, :enqueued} ->
+                {:info, "Re-match queued — the file will be moved and relinked."}
+
+              {:ok, :unchanged} ->
+                {:info, "Already matched to that title."}
+
+              {:error, reason} ->
+                {:error, friendly_rematch_error(reason)}
+            end
+        end
+
+      {:noreply,
+       socket
+       |> assign(:match_modal, nil)
+       |> put_flash(flash_kind, message)
+       |> load_downloads()}
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  defp friendly_rematch_error(:not_imported), do: "This download hasn't imported yet."
+
+  defp friendly_rematch_error(reason) when reason in [:not_single_target, :multiple_files],
+    do: "This download has multiple files; per-file re-match isn't supported yet."
+
+  defp friendly_rematch_error(:no_imported_file),
+    do: "Couldn't find the imported file for this download."
+
+  defp friendly_rematch_error(:no_library_path),
+    do: "No matching library is configured for that title's type."
+
+  defp friendly_rematch_error(:library_type_mismatch),
+    do: "That title's type doesn't match an available library."
+
+  defp friendly_rematch_error(_), do: "Re-match failed."
+
   defp get_current_downloads(socket) do
     filter =
       case socket.assigns.active_tab do
@@ -835,7 +957,26 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
     Downloads.list_downloads_with_status(filter: filter)
     |> apply_sorting(socket.assigns.sort_by)
+    |> annotate_rematch_eligibility(socket.assigns.active_tab)
   end
+
+  # Stamps `rematch_eligible?` on completed-tab rows: a row is eligible only when
+  # it resolves to exactly one non-trashed imported file. Packs resolve to several
+  # files and can't be re-matched as a unit, so the Completed-tab action must stay
+  # hidden for them even though their `match_status` is nil. Other tabs don't offer
+  # the action, so the flag is left nil to avoid a needless query.
+  defp annotate_rematch_eligibility(downloads, :completed) do
+    counts =
+      downloads
+      |> Enum.map(& &1.id)
+      |> Library.count_imported_files_by_download()
+
+    Enum.map(downloads, fn download ->
+      %{download | rematch_eligible?: Map.get(counts, download.id, 0) == 1}
+    end)
+  end
+
+  defp annotate_rematch_eligibility(downloads, _tab), do: downloads
 
   # Sorts the enriched download list by the active `sort_by` selection. Runs in
   # the LiveView (not the DB) because real-time keys (progress, speeds, ETA,

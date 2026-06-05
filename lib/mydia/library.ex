@@ -2002,6 +2002,54 @@ defmodule Mydia.Library do
   end
 
   @doc """
+  Lists the media files imported from a given download.
+
+  Located by the collision-free `imported_from_download_id` provenance key — the
+  download's primary key, written into `metadata` at import time. The
+  `(download_client, download_client_id)` pair is deliberately NOT used as the
+  key: download clients recycle torrent/nzb IDs, so that pair is unique only at a
+  single instant, not over the file's lifetime, and would surface the wrong file.
+
+  Excludes trashed files. Pass `preload:` to preload associations.
+  """
+  @spec list_media_files_for_download(Mydia.Downloads.Download.t(), keyword()) :: [MediaFile.t()]
+  def list_media_files_for_download(download, opts \\ []) do
+    query =
+      from f in MediaFile,
+        where: ^Mydia.DB.json_equals(:metadata, "$.imported_from_download_id", download.id),
+        where: is_nil(f.trashed_at)
+
+    query
+    |> maybe_preload(opts[:preload])
+    |> Repo.all()
+  end
+
+  @doc """
+  Counts non-trashed imported files per download, keyed by `imported_from_download_id`.
+
+  Batched companion to `list_media_files_for_download/1` for callers that need to
+  know how many files a set of downloads imported without an N+1 query — e.g. the
+  Downloads LiveView deciding whether a completed row is single-file (re-match
+  eligible) or a pack. Returns `%{download_id => count}`; downloads with no
+  imported files are simply absent from the map.
+  """
+  @spec count_imported_files_by_download([binary()]) :: %{binary() => non_neg_integer()}
+  def count_imported_files_by_download([]), do: %{}
+
+  def count_imported_files_by_download(download_ids) when is_list(download_ids) do
+    ids = Enum.map(download_ids, &to_string/1)
+
+    from(f in MediaFile,
+      where: is_nil(f.trashed_at),
+      where: json_extract(f.metadata, "$.imported_from_download_id") in ^ids,
+      group_by: json_extract(f.metadata, "$.imported_from_download_id"),
+      select: {json_extract(f.metadata, "$.imported_from_download_id"), count(f.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
   Refreshes file metadata for all media files in the library.
 
   This can be a long-running operation. Returns the count of successfully refreshed files.

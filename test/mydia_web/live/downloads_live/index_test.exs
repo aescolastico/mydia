@@ -5,13 +5,16 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
   # empty, and the sort control (gated on rows existing) never appears. Shared
   # mode (the non-async default) makes the inserted rows visible to the mount.
   use MydiaWeb.ConnCase, async: false
+  use Oban.Testing, repo: Mydia.Repo
 
   import Phoenix.LiveViewTest
   import Mydia.AccountsFixtures
   import Mydia.DownloadsFixtures
   import Mydia.MediaFixtures
+  import Mydia.SettingsFixtures
 
   alias Mydia.Downloads
+  alias Mydia.Library
 
   setup %{conn: conn} do
     admin = admin_user_fixture()
@@ -254,6 +257,150 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       # batch_retry deletes-and-reinitiates on success; the gate must leave the
       # record untouched for a readonly user.
       assert Downloads.count_completed() == 1
+    end
+  end
+
+  describe "post-import re-match (U4)" do
+    defp imported_movie_with_file(old_title) do
+      library = library_path_fixture(%{type: "movies", monitored: true})
+      old = media_item_fixture(%{type: "movie", title: old_title})
+
+      download =
+        download_fixture(%{
+          media_item_id: old.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      {:ok, _media_file} =
+        Library.create_media_file(%{
+          relative_path: "#{old_title}/movie.mkv",
+          library_path_id: library.id,
+          media_item_id: old.id,
+          size: 100,
+          metadata: %{"imported_from_download_id" => download.id}
+        })
+
+      download
+    end
+
+    test "Re-match action is shown for an eligible imported row", %{conn: conn} do
+      download = imported_movie_with_file("Wrong Title")
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "switch_tab", %{"tab" => "completed"})
+
+      assert has_element?(
+               view,
+               "button[phx-click='open_match_modal'][phx-value-id='#{download.id}'][phx-value-mode='postimport']"
+             )
+    end
+
+    test "Re-match action is hidden for an ineligible (partial_pack) row", %{conn: conn} do
+      movie = media_item_fixture(%{type: "movie", title: "Pack"})
+
+      download =
+        download_fixture(%{
+          media_item_id: movie.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          match_status: "partial_pack"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "switch_tab", %{"tab" => "completed"})
+
+      refute has_element?(
+               view,
+               "button[phx-click='open_match_modal'][phx-value-id='#{download.id}']"
+             )
+    end
+
+    test "Re-match action is hidden for a fully-imported multi-file pack", %{conn: conn} do
+      # A season pack imports successfully, so MediaImport clears match_status to
+      # nil — but it resolves to several imported files and can't be re-matched as
+      # a unit. The action must stay hidden even though match_status is nil.
+      library = library_path_fixture(%{type: "series", monitored: true})
+      show = media_item_fixture(%{type: "tv_show", title: "Some Show"})
+
+      download =
+        download_fixture(%{
+          media_item_id: show.id,
+          imported_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      for episode <- 1..2 do
+        {:ok, _file} =
+          Library.create_media_file(%{
+            relative_path: "Some Show/S01E0#{episode}.mkv",
+            library_path_id: library.id,
+            media_item_id: show.id,
+            size: 100,
+            metadata: %{"imported_from_download_id" => download.id}
+          })
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "switch_tab", %{"tab" => "completed"})
+
+      refute has_element?(
+               view,
+               "button[phx-click='open_match_modal'][phx-value-id='#{download.id}'][phx-value-mode='postimport']"
+             )
+    end
+
+    test "re-matching a movie enqueues the job and persists the new target", %{conn: conn} do
+      download = imported_movie_with_file("Wrong Title")
+      new_movie = media_item_fixture(%{type: "movie", title: "Corrected Title"})
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "switch_tab", %{"tab" => "completed"})
+      render_click(view, "open_match_modal", %{"id" => download.id, "mode" => "postimport"})
+
+      assert has_element?(view, "#match-modal")
+
+      render_change(view, "match_modal_search", %{"q" => "Corrected"})
+
+      html =
+        render_click(view, "match_modal_pick_item", %{
+          "media_item_id" => new_movie.id,
+          "type" => "movie",
+          "title" => new_movie.title
+        })
+
+      assert html =~ "Re-match queued"
+      assert_enqueued(worker: Mydia.Jobs.MediaRematch, args: %{"download_id" => download.id})
+      assert Downloads.get_download!(download.id).media_item_id == new_movie.id
+    end
+  end
+
+  describe "in-flight match correction (U3)" do
+    test "Change match action is shown on an active (not-imported) row", %{conn: conn} do
+      movie = media_item_fixture(%{type: "movie", title: "Active Movie"})
+      download = download_fixture(%{media_item_id: movie.id, imported_at: nil})
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+
+      assert has_element?(
+               view,
+               "button[phx-click='open_match_modal'][phx-value-id='#{download.id}'][phx-value-mode='inflight']"
+             )
+    end
+
+    test "changing the match on an in-flight download persists the new target", %{conn: conn} do
+      movie = media_item_fixture(%{type: "movie", title: "Active Movie"})
+      new_movie = media_item_fixture(%{type: "movie", title: "Better Match"})
+      download = download_fixture(%{media_item_id: movie.id, imported_at: nil})
+
+      {:ok, view, _html} = live(conn, ~p"/downloads")
+      render_click(view, "open_match_modal", %{"id" => download.id, "mode" => "inflight"})
+      render_change(view, "match_modal_search", %{"q" => "Better"})
+
+      render_click(view, "match_modal_pick_item", %{
+        "media_item_id" => new_movie.id,
+        "type" => "movie",
+        "title" => new_movie.title
+      })
+
+      assert Downloads.get_download!(download.id).media_item_id == new_movie.id
     end
   end
 end
