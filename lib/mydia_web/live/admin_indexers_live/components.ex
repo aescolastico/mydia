@@ -15,6 +15,8 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
   attr :cardigann_enabled, :boolean, required: true
   attr :recently_disabled_indexer, :any, default: nil
   attr :flaresolverr_available, :boolean, default: false
+  attr :flaresolverr_fields, :list, default: []
+  attr :flaresolverr_status, :map, default: %{configured: false, status: :loading}
 
   def indexers_tab(assigns) do
     # Calculate total count of enabled indexers
@@ -27,6 +29,7 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
 
     ~H"""
     <div class="p-4 sm:p-6 space-y-6">
+      <.flaresolverr_panel fields={@flaresolverr_fields} flaresolverr_status={@flaresolverr_status} />
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h2 class="text-lg font-semibold flex items-center gap-2">
           <.icon name="hero-magnifying-glass" class="w-5 h-5 opacity-60" /> Indexers
@@ -345,6 +348,212 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
     </div>
     """
   end
+
+  @doc """
+  Renders the unified FlareSolverr panel shown at the top of the Indexers tab.
+
+  Combines the global FlareSolverr config (the four `flaresolverr.*` fields with
+  ENV/DB/Default source badges and env read-only treatment), the health pill,
+  version/sessions or error, a Test Connection action, and explanatory copy. It
+  always renders, including when FlareSolverr is unconfigured or disabled, so an
+  operator can reach the controls to enable it.
+
+  `fields` is a list of field maps (`:key`, `:label`, `:value`, `:type`,
+  `:source`, optional `:placeholder`). `flaresolverr_status` is the map returned
+  by `FlareSolverrStatusComponent.get_status/0` (plus the `:loading` first-paint
+  state).
+  """
+  attr :fields, :list, required: true
+  attr :flaresolverr_status, :map, required: true
+
+  def flaresolverr_panel(assigns) do
+    ~H"""
+    <div id="flaresolverr-panel" class="card bg-base-100 border border-base-300 shadow-sm">
+      <div class="card-body p-4 sm:p-6 gap-4">
+        <%!-- Header --%>
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class={[
+              "w-10 h-10 rounded-lg flex items-center justify-center",
+              fs_bg_class(@flaresolverr_status.status)
+            ]}>
+              <.icon
+                name="hero-shield-check"
+                class={"w-5 h-5 #{fs_icon_class(@flaresolverr_status.status)}"}
+              />
+            </div>
+            <div>
+              <h3 class="font-semibold text-base">FlareSolverr</h3>
+              <p class="text-xs text-base-content/60">Cloudflare bypass for protected indexers</p>
+            </div>
+          </div>
+          <div class={[
+            "px-2.5 py-1 rounded-full text-xs font-medium shrink-0",
+            fs_pill_class(@flaresolverr_status.status)
+          ]}>
+            {fs_status_label(@flaresolverr_status.status)}
+          </div>
+        </div>
+
+        <%!-- Explanatory copy (R7) --%>
+        <p class="text-sm text-base-content/70">
+          FlareSolverr is a local proxy that solves Cloudflare challenges so Mydia can reach
+          protected indexers. Enable it here, then turn on Cloudflare bypass per-indexer in the
+          list below.
+        </p>
+
+        <%!-- Config fields --%>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <.fs_field :for={field <- @fields} field={field} />
+        </div>
+
+        <%!-- Healthy stats --%>
+        <%= if @flaresolverr_status.status == :healthy do %>
+          <div class="flex items-center gap-4 text-xs text-base-content/60">
+            <span>
+              Version
+              <span class="font-semibold text-base-content/80">
+                {@flaresolverr_status[:version] || "Unknown"}
+              </span>
+            </span>
+            <span>{length(@flaresolverr_status[:sessions] || [])} active session(s)</span>
+          </div>
+        <% end %>
+
+        <%!-- Error --%>
+        <%= if @flaresolverr_status.status == :unhealthy and @flaresolverr_status[:error] do %>
+          <div class="alert alert-error text-sm py-2">
+            <.icon name="hero-exclamation-circle" class="w-4 h-4" />
+            <span>{fs_format_error(@flaresolverr_status.error)}</span>
+          </div>
+        <% end %>
+
+        <%!-- Test button --%>
+        <div class="flex justify-end">
+          <button
+            class={[
+              "btn btn-sm gap-2",
+              if(@flaresolverr_status.status == :healthy, do: "btn-ghost", else: "btn-primary")
+            ]}
+            phx-click="test_flaresolverr"
+            disabled={@flaresolverr_status.status == :loading}
+          >
+            <%= if @flaresolverr_status.status == :loading do %>
+              <span class="loading loading-spinner loading-xs"></span> Checking…
+            <% else %>
+              <.icon name="hero-signal" class="w-4 h-4" /> Test Connection
+            <% end %>
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :field, :map, required: true
+
+  defp fs_field(assigns) do
+    assigns = assign(assigns, :editable, assigns.field.source != :env)
+
+    ~H"""
+    <div class="bg-base-200/40 rounded-lg px-3 py-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-sm truncate">{@field.label}</span>
+          <.fs_source_badge source={@field.source} />
+        </div>
+        <div class="shrink-0">
+          <%= cond do %>
+            <% @field.type == :boolean and @editable -> %>
+              <label class="label cursor-pointer gap-2 p-0">
+                <span class="label-text text-xs">{if @field.value, do: "On", else: "Off"}</span>
+                <input
+                  type="checkbox"
+                  class="toggle toggle-primary toggle-sm"
+                  aria-label={@field.label}
+                  checked={@field.value}
+                  phx-click="toggle_flaresolverr_setting"
+                  phx-value-key={@field.key}
+                  phx-value-next_value={to_string(!@field.value)}
+                />
+              </label>
+            <% @field.type == :boolean -> %>
+              <span class={["badge", if(@field.value, do: "badge-success", else: "badge-ghost")]}>
+                {if @field.value, do: "Enabled", else: "Disabled"}
+              </span>
+            <% @editable -> %>
+              <label class="input input-sm input-bordered flex items-center gap-2 w-full sm:w-44">
+                <input
+                  type={if @field.type == :integer, do: "number", else: "text"}
+                  class="grow font-mono text-sm"
+                  value={@field.value || ""}
+                  placeholder={Map.get(@field, :placeholder, "")}
+                  aria-label={@field.label}
+                  phx-debounce="1000"
+                  phx-blur="update_flaresolverr_setting"
+                  phx-value-key={@field.key}
+                />
+              </label>
+            <% is_nil(@field.value) or @field.value == "" -> %>
+              <span class="badge badge-ghost badge-sm">Not set</span>
+            <% true -> %>
+              <kbd class="kbd kbd-sm font-mono">{@field.value}</kbd>
+          <% end %>
+        </div>
+      </div>
+      <%= if @field[:error] do %>
+        <p class="text-error text-xs mt-1">{@field.error}</p>
+      <% end %>
+    </div>
+    """
+  end
+
+  attr :source, :atom, required: true
+
+  defp fs_source_badge(assigns) do
+    ~H"""
+    <%= case @source do %>
+      <% :env -> %>
+        <span class="badge badge-info badge-xs">ENV</span>
+      <% :database -> %>
+        <span class="badge badge-primary badge-xs">DB</span>
+      <% _ -> %>
+        <span class="badge badge-ghost badge-xs">Default</span>
+    <% end %>
+    """
+  end
+
+  defp fs_bg_class(:healthy), do: "bg-success/10"
+  defp fs_bg_class(:unhealthy), do: "bg-error/10"
+  defp fs_bg_class(:disabled), do: "bg-base-200"
+  defp fs_bg_class(:loading), do: "bg-base-200"
+  defp fs_bg_class(_), do: "bg-warning/10"
+
+  defp fs_icon_class(:healthy), do: "text-success"
+  defp fs_icon_class(:unhealthy), do: "text-error"
+  defp fs_icon_class(:disabled), do: "text-base-content/40"
+  defp fs_icon_class(:loading), do: "text-base-content/40"
+  defp fs_icon_class(_), do: "text-warning"
+
+  defp fs_pill_class(:healthy), do: "bg-success/10 text-success"
+  defp fs_pill_class(:unhealthy), do: "bg-error/10 text-error"
+  defp fs_pill_class(:disabled), do: "bg-base-200 text-base-content/60"
+  defp fs_pill_class(:loading), do: "bg-base-200 text-base-content/60"
+  defp fs_pill_class(_), do: "bg-warning/10 text-warning"
+
+  defp fs_status_label(:healthy), do: "Healthy"
+  defp fs_status_label(:unhealthy), do: "Unhealthy"
+  defp fs_status_label(:disabled), do: "Disabled"
+  defp fs_status_label(:loading), do: "Checking…"
+  defp fs_status_label(_), do: "Unknown"
+
+  defp fs_format_error({:connection_error, reason}), do: "Connection error: #{reason}"
+  defp fs_format_error({:http_error, status, _}), do: "HTTP error: #{status}"
+  defp fs_format_error(:timeout), do: "Connection timed out"
+  defp fs_format_error(:not_configured), do: "Not configured"
+  defp fs_format_error(:disabled), do: "Service is disabled"
+  defp fs_format_error(error) when is_binary(error), do: error
+  defp fs_format_error(error), do: inspect(error)
 
   @doc """
   Renders the Indexer modal.
