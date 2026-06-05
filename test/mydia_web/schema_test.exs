@@ -54,6 +54,25 @@ defmodule MydiaWeb.SchemaTest do
       assert "nextEpisode" in field_names
     end
 
+    test "TvShow exposes metadataSource provenance" do
+      {:ok, introspection} = Schema.introspect(MydiaWeb.Schema)
+      types = introspection.data["__schema"]["types"]
+
+      tv_show_type = Enum.find(types, fn t -> t["name"] == "TvShow" end)
+      field_names = Enum.map(tv_show_type["fields"], & &1["name"])
+      assert "metadataSource" in field_names
+    end
+
+    test "LibraryPath exposes tvMetadataSource" do
+      {:ok, introspection} = Schema.introspect(MydiaWeb.Schema)
+      types = introspection.data["__schema"]["types"]
+
+      library_path_type = Enum.find(types, fn t -> t["name"] == "LibraryPath" end)
+      assert library_path_type
+      field_names = Enum.map(library_path_type["fields"], & &1["name"])
+      assert "tvMetadataSource" in field_names
+    end
+
     test "defines Episode type" do
       {:ok, introspection} = Schema.introspect(MydiaWeb.Schema)
       types = introspection.data["__schema"]["types"]

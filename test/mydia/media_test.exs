@@ -1078,14 +1078,23 @@ defmodule Mydia.MediaTest do
       %{bypass: bypass, config: config}
     end
 
-    test "returns :confident for a near-exact title and matching year",
+    test "returns :confident for a near-exact title, matching year, and matching imdb_id",
          %{bypass: bypass, config: config} do
-      item = media_item_fixture(%{type: "tv_show", title: "Ghost in the Shell", year: 2002})
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Ghost in the Shell",
+          year: 2002,
+          imdb_id: "tt0303115"
+        })
 
       Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002)))
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002, "tt0303115"))
+        )
       end)
 
       assert {:confident, candidate} =
@@ -1113,12 +1122,60 @@ defmodule Mydia.MediaTest do
       assert length(candidates) == 1
     end
 
-    defp tmdb_tv_search(id, name, year) do
-      %{
-        "results" => [
-          %{"id" => id, "name" => name, "first_air_date" => "#{year}-01-01", "overview" => "x"}
-        ]
-      }
+    test "returns :needs_picker when title+year match but imdb_id is missing on the candidate",
+         %{bypass: bypass, config: config} do
+      # Finding #3: title + year alone is no longer confident; without an
+      # imdb_id to corroborate, the operator must confirm via the picker.
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Ghost in the Shell",
+          year: 2002,
+          imdb_id: "tt0303115"
+        })
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        # No imdb_id on the candidate.
+        |> Plug.Conn.resp(200, Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002)))
+      end)
+
+      assert {:needs_picker, [_ | _]} =
+               Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
+    end
+
+    test "returns :needs_picker when title+year match but imdb_ids differ (remake guard)",
+         %{bypass: bypass, config: config} do
+      # Finding #3: a remake/reboot sharing title + year but with a different
+      # imdb_id must NOT silently auto-adopt and wipe episodes.
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Ghost in the Shell",
+          year: 2002,
+          imdb_id: "tt0303115"
+        })
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002, "tt9999999"))
+        )
+      end)
+
+      assert {:needs_picker, [_ | _]} =
+               Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
+    end
+
+    defp tmdb_tv_search(id, name, year, imdb_id \\ nil) do
+      result =
+        %{"id" => id, "name" => name, "first_air_date" => "#{year}-01-01", "overview" => "x"}
+        |> then(fn r -> if imdb_id, do: Map.put(r, "imdb_id", imdb_id), else: r end)
+
+      %{"results" => [result]}
     end
   end
 
@@ -1291,6 +1348,172 @@ defmodule Mydia.MediaTest do
     end
   end
 
+  describe "adopt_provider_switch/4 TVDB target (U7)" do
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      # Switching FROM tmdb TO tvdb: item starts as a TMDB-sourced show.
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "TVDB Show",
+          year: 2010,
+          tmdb_id: 777,
+          metadata_source: :tmdb
+        })
+
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+
+      old_episode =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+
+      media_file =
+        media_file_fixture(%{
+          episode_id: old_episode.id,
+          library_path_id: lib.id,
+          relative_path: "TVDB Show/Season 01/TVDB.Show.S01E01.1080p.mkv"
+        })
+
+      new_id = System.unique_integer([:positive])
+
+      candidate = %Mydia.Metadata.Structs.SearchResult{
+        provider_id: to_string(new_id),
+        provider: :tvdb,
+        media_type: :tv_show,
+        title: "TVDB Show",
+        year: 2010
+      }
+
+      %{
+        bypass: bypass,
+        config: config,
+        item: item,
+        old_episode: old_episode,
+        media_file: media_file,
+        candidate: candidate,
+        new_id: new_id
+      }
+    end
+
+    test "swaps to tvdb ids, recreates episodes, and re-links files", ctx do
+      tvdb_season_id = System.unique_integer([:positive])
+      stub_tvdb_show(ctx.bypass, ctx.new_id, "TVDB Show", 2010, [{1, tvdb_season_id}])
+      stub_tvdb_season(ctx.bypass, tvdb_season_id, 1, [1, 2])
+
+      assert {:ok, reconciled} =
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(
+                 ctx.item,
+                 ctx.candidate,
+                 :tvdb,
+                 ctx.config
+               )
+
+      # Provider ids swapped; provenance updated to TVDB.
+      assert reconciled.tvdb_id == ctx.new_id
+      assert is_nil(reconciled.tmdb_id)
+      assert reconciled.metadata_source == :tvdb
+
+      # Episodes recreated under the new provider's numbering.
+      episodes = Media.list_episodes(reconciled.id)
+      numbers = episodes |> Enum.map(& &1.episode_number) |> Enum.sort()
+      assert numbers == [1, 2]
+
+      # The old episode row is gone (wiped, not left parallel).
+      assert is_nil(Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id))
+
+      # The previously episode-linked file is re-linked by filename.
+      media_file = Mydia.Repo.get(Mydia.Library.MediaFile, ctx.media_file.id)
+      refute is_nil(media_file)
+      assert not is_nil(media_file.episode_id)
+    end
+
+    test "a season missing tvdb_season_id aborts without wiping episodes", ctx do
+      # Season carries no tvdb_season_id -> hard failure before any mutation.
+      stub_tvdb_show(ctx.bypass, ctx.new_id, "TVDB Show", 2010, [{1, nil}])
+
+      assert {:error, {:missing_tvdb_season_id, 1}} =
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(
+                 ctx.item,
+                 ctx.candidate,
+                 :tvdb,
+                 ctx.config
+               )
+
+      # Nothing wiped: original episode and provider id intact.
+      assert Mydia.Repo.get(Mydia.Media.Episode, ctx.old_episode.id)
+      reloaded = Media.get_media_item!(ctx.item.id)
+      assert reloaded.tmdb_id == 777
+      assert is_nil(reloaded.tvdb_id)
+      assert reloaded.metadata_source == :tmdb
+    end
+
+    # TVDB show extended endpoint. `seasons` is a list of {season_number,
+    # tvdb_season_id} tuples; a nil tvdb_season_id omits the id so the switch
+    # treats that season as un-fetchable.
+    defp stub_tvdb_show(bypass, id, name, year, seasons) do
+      season_maps =
+        Enum.map(seasons, fn {season_number, tvdb_season_id} ->
+          %{
+            "id" => tvdb_season_id,
+            "number" => season_number,
+            "name" => "Season #{season_number}",
+            "type" => %{"type" => "official"},
+            "episodeCount" => 2
+          }
+        end)
+
+      body = %{
+        "data" => %{
+          "id" => id,
+          "name" => name,
+          "firstAired" => "#{year}-01-01",
+          "year" => to_string(year),
+          "status" => %{"name" => "Ended"},
+          "seasons" => season_maps,
+          "genres" => [],
+          "episodes" => []
+        }
+      }
+
+      Bypass.expect(bypass, "GET", "/tvdb/series/#{id}/extended", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(body))
+      end)
+    end
+
+    # TVDB season extended endpoint. Episodes omit "id" so the per-episode
+    # translation enrichment fetch is skipped.
+    defp stub_tvdb_season(bypass, tvdb_season_id, season_number, episode_numbers) do
+      episodes =
+        Enum.map(episode_numbers, fn n ->
+          %{
+            "seasonNumber" => season_number,
+            "number" => n,
+            "name" => "Episode #{n}",
+            "aired" => "2010-01-0#{n}"
+          }
+        end)
+
+      body = %{"data" => %{"number" => season_number, "episodes" => episodes}}
+
+      Bypass.expect(bypass, "GET", "/tvdb/seasons/#{tvdb_season_id}/extended", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(body))
+      end)
+    end
+  end
+
   describe "provider switch edge cases (review fixes)" do
     import Mydia.MediaFixtures
     import Mydia.SettingsFixtures
@@ -1439,6 +1662,84 @@ defmodule Mydia.MediaTest do
       assert Mydia.Repo.get(Mydia.Media.Episode, old_episode.id)
       reloaded = Media.get_media_item!(item.id)
       assert reloaded.tvdb_id == 333
+    end
+
+    test "incomplete episode recreation rolls back, preserving the original episodes",
+         %{bypass: bypass, config: config} do
+      # Finding #1: upsert_episodes_from_season/3 swallows per-episode insert
+      # errors, so a payload that recreates FEWER episodes than fetched would
+      # silently commit with data loss. Here the season reports TWO episodes
+      # (expected count 2) but both share episode_number 1, so only one row
+      # persists -> the switch must roll back instead of committing a degraded
+      # show.
+      new_id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Dropper",
+          year: 2010,
+          tvdb_id: 222,
+          metadata_source: :tvdb
+        })
+
+      old_episode_a =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+
+      old_episode_b =
+        episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 2})
+
+      show_body = %{
+        "id" => new_id,
+        "name" => "Dropper",
+        "first_air_date" => "2010-01-01",
+        "credits" => %{"cast" => [], "crew" => []},
+        "genres" => [],
+        "seasons" => [%{"season_number" => 1, "name" => "S1"}]
+      }
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(show_body))
+      end)
+
+      # Two episodes fetched (expected count 2), but both collide on
+      # (season 1, episode 1) -> the second insert is swallowed and only one
+      # row persists.
+      Bypass.expect(bypass, "GET", "/tmdb/tv/shows/#{new_id}/1", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "season_number" => 1,
+            "episodes" => [
+              %{"season_number" => 1, "episode_number" => 1, "name" => "E1"},
+              %{"season_number" => 1, "episode_number" => 1, "name" => "E1 dup"}
+            ]
+          })
+        )
+      end)
+
+      candidate = %Mydia.Metadata.Structs.SearchResult{
+        provider_id: to_string(new_id),
+        provider: :metadata_relay,
+        media_type: :tv_show,
+        title: "Dropper",
+        year: 2010
+      }
+
+      assert {:error, {:incomplete_episode_recreation, 2, 1}} =
+               Mydia.Media.ProviderSwitch.adopt_provider_switch(item, candidate, :tmdb, config)
+
+      # Rolled back: original episodes and provider id preserved.
+      assert Mydia.Repo.get(Mydia.Media.Episode, old_episode_a.id)
+      assert Mydia.Repo.get(Mydia.Media.Episode, old_episode_b.id)
+      reloaded = Media.get_media_item!(item.id)
+      assert reloaded.tvdb_id == 222
+      assert is_nil(reloaded.tmdb_id)
+      assert reloaded.metadata_source == :tvdb
     end
 
     test "a yearless show never auto-adopts (routes to the picker)",

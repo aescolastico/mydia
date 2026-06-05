@@ -127,6 +127,13 @@ defmodule MydiaWeb.Schema.CommonTypes do
 
     field :auto_rename, non_null(:boolean),
       description: "Whether auto-rename on import is enabled"
+
+    @desc "Metadata provider used for TV shows in this library (tvdb or tmdb)"
+    field :tv_metadata_source, :string do
+      resolve(fn parent, _args, _res ->
+        {:ok, parent.tv_metadata_source && to_string(parent.tv_metadata_source)}
+      end)
+    end
   end
 
   @desc "Result of toggling favorite status"

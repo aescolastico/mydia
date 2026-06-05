@@ -185,6 +185,13 @@ defmodule MydiaWeb.Schema.MediaTypes do
     field :is_favorite, non_null(:boolean) do
       resolve(&MediaResolver.resolve_is_favorite/3)
     end
+
+    @desc "Metadata provider used to fetch this show's data (tvdb or tmdb)"
+    field :metadata_source, :string do
+      resolve(fn parent, _args, _res ->
+        {:ok, parent.metadata_source && to_string(parent.metadata_source)}
+      end)
+    end
   end
 
   @desc "A season of a TV show"

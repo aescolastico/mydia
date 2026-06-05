@@ -20,23 +20,33 @@ defmodule Mydia.Repo.Migrations.AddMetadataSourceToMediaItems do
 
     flush()
 
-    repo().all(
-      from(m in "media_items",
-        where: m.type == "tv_show",
-        select: %{id: m.id, tvdb_id: m.tvdb_id, tmdb_id: m.tmdb_id, metadata: m.metadata}
+    rows =
+      repo().all(
+        from(m in "media_items",
+          where: m.type == "tv_show",
+          select: %{id: m.id, tvdb_id: m.tvdb_id, tmdb_id: m.tmdb_id, metadata: m.metadata}
+        )
       )
-    )
-    |> Enum.each(fn row ->
-      case derive_source(row) do
-        nil ->
-          :ok
 
-        source ->
-          repo().update_all(
-            from(m in "media_items", where: m.id == ^row.id),
-            set: [metadata_source: source]
-          )
+    # Partition rows by derived source, skipping any that resolve to nil.
+    # Chunking at 900 keeps us inside SQLite's 999 bound-parameter ceiling
+    # (Postgres is unaffected by this limit but benefits from fewer round-trips too).
+    rows
+    |> Enum.reduce(%{"tvdb" => [], "tmdb" => []}, fn row, acc ->
+      case derive_source(row) do
+        nil -> acc
+        source -> Map.update!(acc, source, &[row.id | &1])
       end
+    end)
+    |> Enum.each(fn {source, ids} ->
+      ids
+      |> Enum.chunk_every(900)
+      |> Enum.each(fn chunk ->
+        repo().update_all(
+          from(m in "media_items", where: m.id in ^chunk),
+          set: [metadata_source: source]
+        )
+      end)
     end)
   end
 
@@ -46,7 +56,8 @@ defmodule Mydia.Repo.Migrations.AddMetadataSourceToMediaItems do
     end
   end
 
-  defp derive_source(%{tvdb_id: tvdb_id, tmdb_id: tmdb_id, metadata: metadata}) do
+  @doc false
+  def derive_source(%{tvdb_id: tvdb_id, tmdb_id: tmdb_id, metadata: metadata}) do
     provider_id = provider_id_from_metadata(metadata)
 
     cond do
@@ -58,7 +69,8 @@ defmodule Mydia.Repo.Migrations.AddMetadataSourceToMediaItems do
     end
   end
 
-  defp provider_id_from_metadata(metadata) when is_binary(metadata) and metadata != "" do
+  @doc false
+  def provider_id_from_metadata(metadata) when is_binary(metadata) and metadata != "" do
     case Jason.decode(metadata) do
       {:ok, %{"provider_id" => provider_id}} when not is_nil(provider_id) ->
         to_string(provider_id)
@@ -68,5 +80,6 @@ defmodule Mydia.Repo.Migrations.AddMetadataSourceToMediaItems do
     end
   end
 
-  defp provider_id_from_metadata(_), do: nil
+  @doc false
+  def provider_id_from_metadata(_), do: nil
 end

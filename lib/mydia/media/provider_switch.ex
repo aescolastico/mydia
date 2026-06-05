@@ -142,16 +142,29 @@ defmodule Mydia.Media.ProviderSwitch do
     end
   end
 
-  # Conservative gate for the silent, destructive auto-adopt: require a near-exact
-  # normalized title AND a real year match (both years present, within 1).
-  # Anything looser — including a missing year on either side, where a title-only
-  # match could silently re-point a show at the wrong provider — routes to the
-  # manual picker instead.
+  # Conservative gate for the silent, destructive auto-adopt. A confident match
+  # WIPES the show's episodes and per-episode watch history with no operator
+  # confirmation, so title + year alone is not enough: a remake/reboot that
+  # shares a title and (within 1) year would silently destroy the original
+  # show's state. We therefore require an additional imdb_id corroboration -
+  # both sides must carry the same canonical imdb id (e.g. "tt0903747"). When
+  # either imdb_id is missing or they differ, the match is NOT confident and
+  # falls through to the manual picker so the operator confirms the switch.
   defp confident_reidentify_match?(candidate, media_item) do
     not is_nil(media_item.year) and not is_nil(candidate.year) and
       Media.exact_title_match?(candidate.title, media_item.title) and
-      Media.year_matches?(candidate.year, media_item.year)
+      Media.year_matches?(candidate.year, media_item.year) and
+      imdb_ids_corroborate?(media_item.imdb_id, candidate.imdb_id)
   end
+
+  # imdb ids are canonical identifiers, so an exact string match is sufficient
+  # corroboration. Both sides must be present (non-nil, non-empty).
+  defp imdb_ids_corroborate?(item_imdb_id, candidate_imdb_id) do
+    present?(item_imdb_id) and present?(candidate_imdb_id) and
+      to_string(item_imdb_id) == to_string(candidate_imdb_id)
+  end
+
+  defp present?(value), do: is_binary(value) and String.trim(value) != ""
 
   @doc """
   Switches a TV show to a different metadata provider and reconciles its episodes.
@@ -198,7 +211,7 @@ defmodule Mydia.Media.ProviderSwitch do
              provider: target_provider,
              append_to_response: ["credits", "images", "videos", "keywords"]
            ),
-         {:ok, season_datas} <-
+         {:ok, season_datas, expected_episode_count} <-
            prefetch_provider_seasons(new_id, target_provider, metadata.seasons || [], config) do
       # Step 3 (transactional, no network): wipe + swap + recreate + re-link.
       result =
@@ -227,6 +240,22 @@ defmodule Mydia.Media.ProviderSwitch do
               end
             )
           end)
+
+          # `upsert_episodes_from_season/3` swallows per-episode insert errors
+          # (e.g. a duplicate episode_number hitting the unique constraint, or a
+          # malformed payload), so the recreation can silently persist FEWER
+          # episodes than were fetched. Since the old episodes are already
+          # deleted at this point, that would be silent data loss. Verify the
+          # persisted count against the expected total and roll the whole switch
+          # back if episodes went missing, preserving the original episodes.
+          actual_episode_count =
+            Repo.aggregate(from(e in Episode, where: e.media_item_id == ^updated.id), :count, :id)
+
+          if actual_episode_count < expected_episode_count do
+            Repo.rollback(
+              {:incomplete_episode_recreation, expected_episode_count, actual_episode_count}
+            )
+          end
 
           # Re-attach captured files to the show so re-linking can find them,
           # then re-link by filename. Files that don't parse stay on the show.
@@ -298,7 +327,9 @@ defmodule Mydia.Media.ProviderSwitch do
       total_episodes =
         Enum.reduce(season_datas, 0, fn sd, acc -> acc + length(sd.episodes || []) end)
 
-      if total_episodes > 0, do: {:ok, season_datas}, else: {:error, :no_episodes}
+      if total_episodes > 0,
+        do: {:ok, season_datas, total_episodes},
+        else: {:error, :no_episodes}
     end
   end
 
