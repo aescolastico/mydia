@@ -139,18 +139,25 @@ defmodule MydiaWeb.AdminLibraryPathsLiveTest do
       refute html =~ "TV Metadata Source"
     end
 
-    test "shows the metadata source badge for series/mixed libraries in the list", %{
+    test "shows a metadata source badge on every library, aligned across types", %{
       conn: conn,
       token: token
     } do
-      {:ok, series} =
+      {:ok, tmdb_series} =
         Mydia.Settings.create_library_path(%{
           path: "/tmp/series_#{System.unique_integer([:positive])}",
           type: "series",
           tv_metadata_source: "tmdb"
         })
 
-      {:ok, _movie} =
+      {:ok, tvdb_series} =
+        Mydia.Settings.create_library_path(%{
+          path: "/tmp/series_#{System.unique_integer([:positive])}",
+          type: "series",
+          tv_metadata_source: "tvdb"
+        })
+
+      {:ok, movie} =
         Mydia.Settings.create_library_path(%{
           path: "/tmp/movies_#{System.unique_integer([:positive])}",
           type: "movies"
@@ -164,12 +171,30 @@ defmodule MydiaWeb.AdminLibraryPathsLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/admin/config/library-paths")
 
-      # The series library shows a metadata-source badge reflecting its provider.
-      assert has_element?(view, ~s{[data-tip="TV metadata source"]}, "TMDB")
-      # The movie library has no metadata-source badge.
-      refute has_element?(view, ~s{[data-tip="TV metadata source"]}, "TVDB")
+      # Every library shows a source badge (scoped per row), so the badge column
+      # stays aligned across types: movies always source from TMDB, series use
+      # their configured provider.
+      assert has_element?(
+               view,
+               ~s{#library-path-#{movie.id} [data-tip="Metadata source"]},
+               "TMDB"
+             )
 
-      on_exit(fn -> Mydia.Settings.delete_library_path(series) end)
+      assert has_element?(
+               view,
+               ~s{#library-path-#{tmdb_series.id} [data-tip="Metadata source"]},
+               "TMDB"
+             )
+
+      assert has_element?(
+               view,
+               ~s{#library-path-#{tvdb_series.id} [data-tip="Metadata source"]},
+               "TVDB"
+             )
+
+      on_exit(fn ->
+        Enum.each([tmdb_series, tvdb_series, movie], &Mydia.Settings.delete_library_path/1)
+      end)
     end
   end
 end

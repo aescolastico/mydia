@@ -307,8 +307,18 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   attr :is_reclassifying, :boolean, default: false
 
   defp library_path_row(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :metadata_source,
+        library_metadata_source(
+          assigns.library_path.type,
+          assigns.library_path.tv_metadata_source
+        )
+      )
+
     ~H"""
-    <div class="p-3 sm:p-4">
+    <div id={"library-path-#{@library_path.id}"} class="p-3 sm:p-4">
       <div class="flex flex-col sm:flex-row sm:items-center gap-3">
         <%!-- Path Info --%>
         <div class="flex-1 min-w-0">
@@ -337,13 +347,10 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
             <.icon name={library_type_icon(@library_path.type)} class="w-3 h-3 mr-1" />
             {library_type_display(@library_path.type)}
           </span>
-          <%= if @library_path.type in [:series, :mixed] do %>
-            <span
-              class="badge badge-sm badge-ghost tooltip"
-              data-tip="TV metadata source"
-            >
+          <%= if @metadata_source do %>
+            <span class="badge badge-sm badge-ghost tooltip" data-tip="Metadata source">
               <.icon name="hero-circle-stack" class="w-3 h-3 mr-1" />
-              {tv_metadata_source_display(@library_path.tv_metadata_source)}
+              {metadata_source_display(@metadata_source)}
             </span>
           <% end %>
           <span class={[
@@ -474,9 +481,19 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   defp library_type_display(:adult), do: "Adult"
   defp library_type_display(type), do: to_string(type)
 
-  defp tv_metadata_source_display(:tmdb), do: "TMDB"
-  # nil falls back to the schema default (:tvdb), e.g. runtime/env-only paths.
-  defp tv_metadata_source_display(_), do: "TVDB"
+  # Where a library's metadata comes from. Movies are always sourced from TMDB;
+  # series/mixed use their configured TV provider (defaulting to TVDB for
+  # runtime/env-only paths). Returns nil for types without a relay source so no
+  # badge is rendered.
+  defp library_metadata_source(:movies, _tv_source), do: :tmdb
+
+  defp library_metadata_source(type, tv_source) when type in [:series, :mixed],
+    do: tv_source || :tvdb
+
+  defp library_metadata_source(_type, _tv_source), do: nil
+
+  defp metadata_source_display(:tmdb), do: "TMDB"
+  defp metadata_source_display(:tvdb), do: "TVDB"
 
   # Renders only the category paths section (when auto-organize is enabled).
   # Used by the compact library path modal.
