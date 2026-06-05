@@ -719,6 +719,14 @@ defmodule Mydia.Settings do
   defdelegate upsert_config_setting(attrs), to: Mydia.Settings.RuntimeConfig
 
   @doc """
+  Parses a stored or submitted config-setting value into a boolean, accepting the
+  lenient truthy tokens (`"true"`, `"1"`, `"yes"`, `"on"`) that DB rows and form
+  params may carry. The canonical parser for config-setting booleans.
+  """
+  @spec parse_setting_boolean(term()) :: boolean()
+  defdelegate parse_setting_boolean(value), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
   Loads database configuration settings and converts them to a nested map structure.
 
   Converts flat ConfigSetting records (e.g., key: "server.port", value: "8080")

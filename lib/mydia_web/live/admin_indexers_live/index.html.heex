@@ -21,15 +21,12 @@
         recently_disabled_indexer={@recently_disabled_indexer}
         flaresolverr={@flaresolverr}
         flaresolverr_status={@flaresolverr_status}
-        flaresolverr_available={
-          @flaresolverr_status.configured and @flaresolverr_status.status != :disabled
-        }
       />
     </div>
 
     <%!-- FlareSolverr Edit Modal --%>
     <%= if @flaresolverr_modal_open do %>
-      <MydiaWeb.AdminIndexersLive.Components.flaresolverr_modal
+      <MydiaWeb.AdminIndexersLive.FlareSolverrComponents.flaresolverr_modal
         form={@flaresolverr_form}
         sources={@flaresolverr_sources}
       />

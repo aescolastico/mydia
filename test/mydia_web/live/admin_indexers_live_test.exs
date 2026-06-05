@@ -208,9 +208,25 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
       start_supervised!(Mydia.Indexers.Health)
       Mydia.Indexers.register_adapters()
 
-      System.delete_env("FLARESOLVERR_URL")
-      System.delete_env("FLARESOLVERR_ENABLED")
-      on_exit(fn -> System.delete_env("FLARESOLVERR_URL") end)
+      fs_env_vars = ~w(
+        FLARESOLVERR_URL FLARESOLVERR_ENABLED FLARESOLVERR_TIMEOUT FLARESOLVERR_MAX_TIMEOUT
+      )
+
+      Enum.each(fs_env_vars, &System.delete_env/1)
+
+      # Saving reloads the cached runtime config; snapshot and restore it so the
+      # mutation does not leak into other tests.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
+
+      on_exit(fn ->
+        Enum.each(fs_env_vars, &System.delete_env/1)
+
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
+      end)
 
       conn =
         conn
@@ -224,9 +240,8 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
     test "renders the FlareSolverr row, always visible when unconfigured", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
-      assert has_element?(view, "#flaresolverr-panel")
-      assert render(view) =~ "FlareSolverr"
-      assert render(view) =~ "not configured"
+      assert has_element?(view, "#flaresolverr-panel", "FlareSolverr")
+      assert has_element?(view, "#flaresolverr-panel", "not configured")
       assert has_element?(view, ~s{button[phx-click="edit_flaresolverr"]})
     end
 
@@ -235,7 +250,7 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
 
-      assert render(element(view, "#flaresolverr-panel")) =~ "ENV"
+      assert has_element?(view, "#flaresolverr-panel .badge", "ENV")
     end
 
     test "Edit opens a modal form with the four config fields", %{conn: conn} do
@@ -271,6 +286,12 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
       assert url.category == :flaresolverr
       assert Settings.get_config_setting_by_key("flaresolverr.timeout").value == "60000"
       refute has_element?(view, "#flaresolverr-form")
+
+      # The save reloads the runtime config, so the change takes effect without a
+      # restart — FlareSolverr now reads enabled/url from the merged config.
+      config = Mydia.Indexers.FlareSolverr.config()
+      assert config.enabled == true
+      assert config.url == "http://flaresolverr:8191"
     end
 
     test "invalid timeout shows a validation error and writes no setting", %{conn: conn} do
@@ -298,6 +319,94 @@ defmodule MydiaWeb.AdminIndexersLiveTest do
       |> render_click()
 
       assert has_element?(view, "#flaresolverr-panel")
+    end
+
+    test "enabling with a blank URL shows a required-error and keeps the modal open", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+
+      view
+      |> form("#flaresolverr-form",
+        flaresolverr: %{enabled: "true", url: "", timeout: "60000", max_timeout: "120000"}
+      )
+      |> render_submit()
+
+      assert has_element?(view, "#flaresolverr-form")
+      assert is_nil(Settings.get_config_setting_by_key("flaresolverr.url"))
+    end
+
+    test "max_timeout below timeout shows a validation error and writes no setting", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+
+      html =
+        view
+        |> form("#flaresolverr-form",
+          flaresolverr: %{enabled: "false", url: "", timeout: "120000", max_timeout: "60000"}
+        )
+        |> render_submit()
+
+      assert html =~ "must be greater than or equal to timeout"
+      assert is_nil(Settings.get_config_setting_by_key("flaresolverr.max_timeout"))
+      assert has_element?(view, "#flaresolverr-form")
+    end
+
+    test "enabling is allowed and the env URL is never persisted when the URL is env-sourced",
+         %{conn: conn} do
+      System.put_env("FLARESOLVERR_URL", "http://env-flaresolverr:8191")
+
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+
+      view
+      |> form("#flaresolverr-form",
+        flaresolverr: %{enabled: "true", timeout: "60000", max_timeout: "120000"}
+      )
+      |> render_submit()
+
+      # The save is not blocked by the URL-required rule (the URL comes from env),
+      # the modal closes, and the env-sourced URL is never written to the DB.
+      refute has_element?(view, "#flaresolverr-form")
+      assert is_nil(Settings.get_config_setting_by_key("flaresolverr.url"))
+      assert Settings.get_config_setting_by_key("flaresolverr.enabled").value == "true"
+
+      # The effective config still reflects the env URL plus the saved enabled flag.
+      config = Mydia.Indexers.FlareSolverr.config()
+      assert config.enabled == true
+      assert config.url == "http://env-flaresolverr:8191"
+    end
+
+    test "Cancel closes the modal without writing a setting", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+      assert has_element?(view, "#flaresolverr-form")
+
+      view |> element(~s{button[phx-click="close_flaresolverr_modal"]}) |> render_click()
+
+      refute has_element?(view, "#flaresolverr-form")
+      assert is_nil(Settings.get_config_setting_by_key("flaresolverr.url"))
+    end
+
+    test "tolerates a non-integer timeout value stored in the database", %{conn: conn} do
+      {:ok, _} =
+        Settings.upsert_config_setting(%{
+          key: "flaresolverr.timeout",
+          value: "not-a-number",
+          category: :flaresolverr
+        })
+
+      # Should not crash on mount or when opening the edit modal; the malformed
+      # value falls back to the schema default rather than raising.
+      {:ok, view, _html} = live(conn, ~p"/admin/config/indexers")
+      view |> element(~s{button[phx-click="edit_flaresolverr"]}) |> render_click()
+
+      assert has_element?(view, "#flaresolverr-form")
     end
   end
 end

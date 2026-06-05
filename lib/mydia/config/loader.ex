@@ -57,6 +57,27 @@ defmodule Mydia.Config.Loader do
     end
   end
 
+  @doc """
+  Reloads configuration from all sources and refreshes the cached runtime config
+  in the application environment.
+
+  Use after persisting database-backed settings so the change takes effect
+  without an application restart. Returns `{:ok, config}` on success or
+  `{:error, reason}` when the merged configuration fails validation; on error the
+  previously cached config is left untouched.
+  """
+  @spec reload(keyword()) :: {:ok, Mydia.Config.Schema.t()} | {:error, term()}
+  def reload(opts \\ []) do
+    case load(opts) do
+      {:ok, config} ->
+        Application.put_env(:mydia, :runtime_config, config)
+        {:ok, config}
+
+      error ->
+        error
+    end
+  end
+
   ## Private Functions
 
   defp default_config_path do

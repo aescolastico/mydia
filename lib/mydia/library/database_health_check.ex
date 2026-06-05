@@ -142,11 +142,11 @@ defmodule Mydia.Library.DatabaseHealthCheck do
             Application.get_env(:mydia, :database_auto_repair, true)
 
           setting ->
-            parse_boolean_value(setting.value)
+            Settings.parse_setting_boolean(setting.value)
         end
 
       value ->
-        parse_boolean_value(value)
+        Settings.parse_setting_boolean(value)
     end
   end
 
@@ -172,12 +172,6 @@ defmodule Mydia.Library.DatabaseHealthCheck do
         end
     end
   end
-
-  defp parse_boolean_value("true"), do: true
-  defp parse_boolean_value("1"), do: true
-  defp parse_boolean_value("yes"), do: true
-  defp parse_boolean_value("on"), do: true
-  defp parse_boolean_value(_), do: false
 
   defp handle_issues(%{total_issues: 0}) do
     Logger.debug("[DatabaseHealthCheck] No issues detected")

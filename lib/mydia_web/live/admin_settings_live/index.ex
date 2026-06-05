@@ -101,7 +101,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         {nil, nil} ->
           case Settings.get_config_setting_by_key(key) do
             nil -> "true"
-            setting -> to_string(!parse_boolean_value(setting.value))
+            setting -> to_string(!Settings.parse_setting_boolean(setting.value))
           end
 
         {nil, value} ->
@@ -399,6 +399,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
     }
   end
 
+  # Deliberately NOT Settings.config_source/3: crash reporting is a privacy
+  # toggle that inverts the global env > DB precedence. Mydia.CrashReporter.enabled?/0
+  # gives the UI/DB setting priority over CRASH_REPORTING_ENABLED so the operator's
+  # explicit opt-out always wins, so the source badge must report :database (not
+  # :env) whenever a DB row exists. Keep this in sync with CrashReporter.enabled?/0.
   defp crash_reporting_source(all_db_settings) do
     cond do
       Map.has_key?(all_db_settings, "crash_reporting.enabled") -> :database
@@ -412,11 +417,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       nil ->
         case System.get_env("CRASH_REPORTING_ENABLED") do
           nil -> false
-          value -> parse_boolean_value(value)
+          value -> Settings.parse_setting_boolean(value)
         end
 
       setting ->
-        parse_boolean_value(setting.value)
+        Settings.parse_setting_boolean(setting.value)
     end
   end
 
@@ -436,11 +441,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
             Application.get_env(:mydia, :database_auto_repair, true)
 
           setting ->
-            parse_boolean_value(setting.value)
+            Settings.parse_setting_boolean(setting.value)
         end
 
       value ->
-        parse_boolean_value(value)
+        Settings.parse_setting_boolean(value)
     end
   end
 
@@ -465,16 +470,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         end
     end
   end
-
-  # `"on"` is accepted because LiveView used to clobber phx-value-value with the
-  # checkbox's default `value="on"` for this toggle, and existing rows may
-  # still hold that string.
-  defp parse_boolean_value(value) when is_boolean(value), do: value
-  defp parse_boolean_value("true"), do: true
-  defp parse_boolean_value("1"), do: true
-  defp parse_boolean_value("yes"), do: true
-  defp parse_boolean_value("on"), do: true
-  defp parse_boolean_value(_), do: false
 
   defp validate_config_setting(attrs) do
     types = %{

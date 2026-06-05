@@ -74,7 +74,7 @@ defmodule Mydia.Settings.RuntimeConfig do
     key = Map.get(attrs_map, :key) || Map.get(attrs_map, "key")
 
     string_attrs = %{
-      "key" => Map.get(attrs_map, :key) || Map.get(attrs_map, "key"),
+      "key" => key,
       "value" => Map.get(attrs_map, :value) || Map.get(attrs_map, "value"),
       "category" => Map.get(attrs_map, :category) || Map.get(attrs_map, "category"),
       "updated_by_id" => Map.get(attrs_map, :updated_by_id) || Map.get(attrs_map, "updated_by_id")
@@ -85,6 +85,21 @@ defmodule Mydia.Settings.RuntimeConfig do
       existing -> update_config_setting(existing, string_attrs)
     end
   end
+
+  @doc """
+  Parses a stored or submitted config-setting value into a boolean.
+
+  Accepts the lenient truthy tokens that DB rows and UI form params may carry
+  (`"true"`, `"1"`, `"yes"`, `"on"`); booleans pass through unchanged; anything
+  else (including `nil`) is `false`. This is the single canonical parser for
+  config-setting booleans — do not reintroduce per-module copies.
+  """
+  def parse_setting_boolean(value) when is_boolean(value), do: value
+  def parse_setting_boolean("true"), do: true
+  def parse_setting_boolean("1"), do: true
+  def parse_setting_boolean("yes"), do: true
+  def parse_setting_boolean("on"), do: true
+  def parse_setting_boolean(_), do: false
 
   ## Runtime Configuration Loading
 
