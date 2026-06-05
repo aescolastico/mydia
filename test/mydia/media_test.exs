@@ -975,4 +975,146 @@ defmodule Mydia.MediaTest do
       assert entry.has_downloads == false
     end
   end
+
+  describe "resolve_library_provider/1 (U6)" do
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    test "returns the provider of a directly-linked file's series library" do
+      item = media_item_fixture(%{type: "tv_show", title: "Show A"})
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      media_file_fixture(%{media_item_id: item.id, library_path_id: lib.id})
+
+      assert Media.resolve_library_provider(item) == {:ok, :tvdb}
+    end
+
+    test "finds the library for an episode-linked file (media_item_id nil)" do
+      item = media_item_fixture(%{type: "tv_show", title: "Show B"})
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      episode = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+      media_file_fixture(%{episode_id: episode.id, library_path_id: lib.id})
+
+      assert Media.resolve_library_provider(item) == {:ok, :tmdb}
+    end
+
+    test "is :ambiguous when files span libraries with different providers" do
+      item = media_item_fixture(%{type: "tv_show", title: "Show C"})
+      tvdb_lib = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      tmdb_lib = library_path_fixture(%{type: "mixed", tv_metadata_source: :tmdb})
+      media_file_fixture(%{media_item_id: item.id, library_path_id: tvdb_lib.id})
+      episode = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+      media_file_fixture(%{episode_id: episode.id, library_path_id: tmdb_lib.id})
+
+      assert Media.resolve_library_provider(item) == :ambiguous
+    end
+
+    test "is :none when the show is in no series/mixed library" do
+      item = media_item_fixture(%{type: "tv_show", title: "Show D"})
+      assert Media.resolve_library_provider(item) == :none
+    end
+  end
+
+  describe "provider_refresh_decision/1 (U6)" do
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    test "re-fetches when stored source matches the library provider" do
+      item = decision_tv_in_library(:tvdb, :tvdb)
+      assert Media.provider_refresh_decision(item) == :refetch
+    end
+
+    test "re-identifies when the library provider differs from stored source" do
+      item = decision_tv_in_library(:tvdb, :tmdb)
+      assert Media.provider_refresh_decision(item) == {:reidentify, :tmdb}
+    end
+
+    test "re-fetches (no re-identify) when libraries are ambiguous" do
+      item = media_item_fixture(%{type: "tv_show", title: "Amb", metadata_source: :tvdb})
+      a = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      b = library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      media_file_fixture(%{media_item_id: item.id, library_path_id: a.id})
+      ep = episode_fixture(%{media_item_id: item.id, season_number: 1, episode_number: 1})
+      media_file_fixture(%{episode_id: ep.id, library_path_id: b.id})
+
+      assert Media.provider_refresh_decision(item) == :refetch
+    end
+
+    test "re-fetches when metadata_source is nil (pre-feature item)" do
+      item = decision_tv_in_library(nil, :tmdb)
+      assert Media.provider_refresh_decision(item) == :refetch
+    end
+
+    test "movies always re-fetch" do
+      item = media_item_fixture(%{type: "movie", title: "A Movie", year: 2020})
+      assert Media.provider_refresh_decision(item) == :refetch
+    end
+
+    defp decision_tv_in_library(metadata_source, lib_provider) do
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Decision Show #{System.unique_integer([:positive])}",
+          metadata_source: metadata_source
+        })
+
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: lib_provider})
+      media_file_fixture(%{media_item_id: item.id, library_path_id: lib.id})
+      item
+    end
+  end
+
+  describe "find_reidentify_candidate/3 (U6)" do
+    import Mydia.MediaFixtures
+
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "returns :confident for a near-exact title and matching year",
+         %{bypass: bypass, config: config} do
+      item = media_item_fixture(%{type: "tv_show", title: "Ghost in the Shell", year: 2002})
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tmdb_tv_search(9001, "Ghost in the Shell", 2002)))
+      end)
+
+      assert {:confident, candidate} = Media.find_reidentify_candidate(item, :tmdb, config)
+      assert candidate.provider_id == "9001"
+    end
+
+    test "returns :needs_picker when no candidate matches confidently",
+         %{bypass: bypass, config: config} do
+      item = media_item_fixture(%{type: "tv_show", title: "Ghost in the Shell", year: 2002})
+
+      Bypass.expect(bypass, "GET", "/tmdb/tv/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(tmdb_tv_search(9002, "Totally Different Show", 1990))
+        )
+      end)
+
+      assert {:needs_picker, candidates} = Media.find_reidentify_candidate(item, :tmdb, config)
+      assert length(candidates) == 1
+    end
+
+    defp tmdb_tv_search(id, name, year) do
+      %{
+        "results" => [
+          %{"id" => id, "name" => name, "first_air_date" => "#{year}-01-01", "overview" => "x"}
+        ]
+      }
+    end
+  end
 end

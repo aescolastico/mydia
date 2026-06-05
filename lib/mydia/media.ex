@@ -1051,6 +1051,137 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Resolves the TV metadata provider configured for the libraries a show lives in.
+
+  A show's files may be linked directly (`media_files.media_item_id`) or through
+  episodes (`episodes -> media_files`); both paths are considered. Returns:
+
+    * `{:ok, :tvdb | :tmdb}` - all of the show's series/mixed libraries agree
+    * `:ambiguous` - libraries disagree on the provider
+    * `:none` - the show is not in any series/mixed library
+  """
+  @spec resolve_library_provider(MediaItem.t()) :: {:ok, atom()} | :ambiguous | :none
+  def resolve_library_provider(%MediaItem{} = media_item) do
+    case media_item |> library_providers_for_item() |> Enum.uniq() do
+      [] -> :none
+      [single] -> {:ok, single}
+      _ -> :ambiguous
+    end
+  end
+
+  defp library_providers_for_item(%MediaItem{id: id}) do
+    direct =
+      from mf in Mydia.Library.MediaFile,
+        join: lp in Mydia.Settings.LibraryPath,
+        on: mf.library_path_id == lp.id,
+        where: mf.media_item_id == ^id and lp.type in [:series, :mixed],
+        select: lp.tv_metadata_source,
+        distinct: true
+
+    episodic =
+      from mf in Mydia.Library.MediaFile,
+        join: lp in Mydia.Settings.LibraryPath,
+        on: mf.library_path_id == lp.id,
+        join: e in Mydia.Media.Episode,
+        on: mf.episode_id == e.id,
+        where: e.media_item_id == ^id and lp.type in [:series, :mixed],
+        select: lp.tv_metadata_source,
+        distinct: true
+
+    (Repo.all(direct) ++ Repo.all(episodic)) |> Enum.reject(&is_nil/1)
+  end
+
+  @doc """
+  Decides whether a TV show refresh should re-fetch from its current provider or
+  re-identify against a different one.
+
+  Returns `:refetch` when the show's library provider matches the stored
+  `metadata_source` (or is unknown/ambiguous), or `{:reidentify, target}` when
+  the library provider differs and the show should be re-identified against
+  `target`.
+  """
+  @spec provider_refresh_decision(MediaItem.t()) :: :refetch | {:reidentify, atom()}
+  def provider_refresh_decision(%MediaItem{type: "tv_show"} = media_item) do
+    case resolve_library_provider(media_item) do
+      {:ok, lib_provider} ->
+        cond do
+          is_nil(media_item.metadata_source) -> :refetch
+          media_item.metadata_source == lib_provider -> :refetch
+          true -> {:reidentify, lib_provider}
+        end
+
+      # Ambiguous or no library: behave as a same-provider re-fetch.
+      _ ->
+        :refetch
+    end
+  end
+
+  def provider_refresh_decision(%MediaItem{}), do: :refetch
+
+  @doc """
+  Searches the target provider for a show and decides whether the best match is
+  confident enough to adopt automatically.
+
+  Read-only: this does not mutate the item. Returns:
+
+    * `{:confident, %SearchResult{}}` - near-exact title and matching year; the
+      caller may adopt it via `adopt_provider_switch/3`
+    * `{:needs_picker, [%SearchResult{}]}` - ranked candidates for a manual pick
+    * `{:error, reason}` - search failed
+  """
+  @spec find_reidentify_candidate(MediaItem.t(), atom(), map() | nil) ::
+          {:confident, struct()} | {:needs_picker, [struct()]} | {:error, term()}
+  def find_reidentify_candidate(%MediaItem{} = media_item, target_provider, config \\ nil) do
+    config = config || Mydia.Metadata.default_relay_config()
+
+    base_opts = [media_type: :tv_show, provider: target_provider]
+    search_opts = if media_item.year, do: [{:year, media_item.year} | base_opts], else: base_opts
+
+    case Mydia.Metadata.search(config, media_item.title, search_opts) do
+      {:ok, results} when results != [] ->
+        rank_reidentify_candidates(results, media_item)
+
+      {:ok, []} when not is_nil(media_item.year) ->
+        # Retry without the year filter before giving up.
+        case Mydia.Metadata.search(config, media_item.title, base_opts) do
+          {:ok, results} when results != [] -> rank_reidentify_candidates(results, media_item)
+          {:ok, []} -> {:needs_picker, []}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:ok, []} ->
+        {:needs_picker, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp rank_reidentify_candidates(results, media_item) do
+    ranked =
+      results
+      |> Enum.map(fn result -> {result, calculate_title_match_score(result, media_item)} end)
+      |> Enum.sort_by(fn {_result, score} -> score end, :desc)
+      |> Enum.map(fn {result, _score} -> result end)
+
+    best = List.first(ranked)
+
+    if best && confident_reidentify_match?(best, media_item) do
+      {:confident, best}
+    else
+      {:needs_picker, ranked}
+    end
+  end
+
+  # Conservative gate for the silent, destructive auto-adopt: require a near-exact
+  # normalized title AND a matching year (within 1). Anything looser routes to the
+  # manual picker rather than silently re-pointing a show at the wrong provider.
+  defp confident_reidentify_match?(candidate, media_item) do
+    exact_title_match?(candidate.title, media_item.title) and
+      year_matches?(candidate.year, media_item.year)
+  end
+
+  @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
 
   This function is useful for:
