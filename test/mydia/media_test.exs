@@ -1462,4 +1462,56 @@ defmodule Mydia.MediaTest do
                Mydia.Media.ProviderSwitch.find_reidentify_candidate(item, :tmdb, config)
     end
   end
+
+  describe "refresh_metadata/1 provider routing (U6)" do
+    import Mydia.MediaFixtures
+
+    setup do
+      bypass = Bypass.open()
+      previous = System.get_env("METADATA_RELAY_URL")
+      System.put_env("METADATA_RELAY_URL", "http://localhost:#{bypass.port}")
+
+      on_exit(fn ->
+        case previous do
+          nil -> System.delete_env("METADATA_RELAY_URL")
+          value -> System.put_env("METADATA_RELAY_URL", value)
+        end
+      end)
+
+      %{bypass: bypass}
+    end
+
+    test "a TMDB-sourced show with a back-filled tvdb_id refreshes from TMDB", %{bypass: bypass} do
+      # metadata_source is :tmdb but a discovered tvdb_id is also present; the
+      # legacy rule would prefer TVDB. Only the TMDB endpoint is stubbed, so a
+      # wrong-provider fetch hits an unstubbed TVDB path and fails (404).
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "TMDB Sourced",
+          metadata_source: :tmdb,
+          tmdb_id: 12_345,
+          tvdb_id: 67_890
+        })
+
+      Bypass.expect_once(bypass, "GET", "/tmdb/tv/shows/12345", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          Jason.encode!(%{
+            "id" => 12_345,
+            "name" => "TMDB Sourced",
+            "first_air_date" => "2010-01-01",
+            "overview" => "x",
+            "credits" => %{"cast" => [], "crew" => []},
+            "genres" => [],
+            "seasons" => []
+          })
+        )
+      end)
+
+      assert {:ok, _updated} = Mydia.Media.refresh_metadata(item)
+    end
+  end
 end
