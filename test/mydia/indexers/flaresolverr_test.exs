@@ -1,8 +1,27 @@
 defmodule Mydia.Indexers.FlareSolverrTest do
-  use ExUnit.Case, async: true
+  # async: false — these tests inject FlareSolverr settings into the global
+  # :runtime_config application env, which is read across the app; running them
+  # concurrently would race other tests reading the runtime config.
+  use ExUnit.Case, async: false
 
   alias Mydia.Indexers.FlareSolverr
   alias Mydia.Indexers.FlareSolverr.Response
+
+  # Snapshot and restore the cached runtime config around every test so the
+  # per-test FlareSolverr config we inject never leaks into other tests.
+  setup do
+    original = Application.get_env(:mydia, :runtime_config)
+
+    on_exit(fn ->
+      if original do
+        Application.put_env(:mydia, :runtime_config, original)
+      else
+        Application.delete_env(:mydia, :runtime_config)
+      end
+    end)
+
+    :ok
+  end
 
   describe "Response.from_json/1" do
     test "parses successful response" do
@@ -156,65 +175,39 @@ defmodule Mydia.Indexers.FlareSolverrTest do
 
   describe "enabled?/0" do
     test "returns false when not configured" do
-      # Clear any existing config
-      original = Application.get_env(:mydia, :flaresolverr)
-      Application.delete_env(:mydia, :flaresolverr)
-
+      clear_flaresolverr_config()
       refute FlareSolverr.enabled?()
-
-      # Restore original config
-      if original, do: Application.put_env(:mydia, :flaresolverr, original)
     end
 
     test "returns false when disabled" do
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
-        enabled: false,
-        url: "http://localhost:8191"
-      )
-
+      put_flaresolverr_config(enabled: false, url: "http://localhost:8191")
       refute FlareSolverr.enabled?()
-
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
     end
 
     test "returns true when enabled with URL" do
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
-        enabled: true,
-        url: "http://localhost:8191"
-      )
-
+      put_flaresolverr_config(enabled: true, url: "http://localhost:8191")
       assert FlareSolverr.enabled?()
+    end
 
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
+    test "returns false when enabled but the URL is nil" do
+      put_flaresolverr_config(enabled: true, url: nil)
+      refute FlareSolverr.enabled?()
+    end
+
+    test "returns false when enabled but the URL is empty" do
+      put_flaresolverr_config(enabled: true, url: "")
+      refute FlareSolverr.enabled?()
     end
   end
 
   describe "config/0" do
     test "returns nil when not configured" do
-      original = Application.get_env(:mydia, :flaresolverr)
-      Application.delete_env(:mydia, :flaresolverr)
-
+      clear_flaresolverr_config()
       assert FlareSolverr.config() == nil
-
-      if original, do: Application.put_env(:mydia, :flaresolverr, original)
     end
 
     test "returns config map when configured" do
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
+      put_flaresolverr_config(
         enabled: true,
         url: "http://localhost:8191",
         timeout: 60_000,
@@ -226,51 +219,25 @@ defmodule Mydia.Indexers.FlareSolverrTest do
       assert config.url == "http://localhost:8191"
       assert config.timeout == 60_000
       assert config.max_timeout == 120_000
-
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
     end
   end
 
   describe "get/2" do
     test "returns error when not configured" do
-      original = Application.get_env(:mydia, :flaresolverr)
-      Application.delete_env(:mydia, :flaresolverr)
-
+      clear_flaresolverr_config()
       assert {:error, :not_configured} = FlareSolverr.get("https://example.com")
-
-      if original, do: Application.put_env(:mydia, :flaresolverr, original)
     end
 
     test "returns error when disabled" do
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
-        enabled: false,
-        url: "http://localhost:8191"
-      )
-
+      put_flaresolverr_config(enabled: false, url: "http://localhost:8191")
       assert {:error, :disabled} = FlareSolverr.get("https://example.com")
-
-      if original do
-        Application.put_env(:mydia, :flaresolverr, original)
-      else
-        Application.delete_env(:mydia, :flaresolverr)
-      end
     end
   end
 
   describe "post/2" do
     test "returns error when not configured" do
-      original = Application.get_env(:mydia, :flaresolverr)
-      Application.delete_env(:mydia, :flaresolverr)
-
+      clear_flaresolverr_config()
       assert {:error, :not_configured} = FlareSolverr.post("https://example.com")
-
-      if original, do: Application.put_env(:mydia, :flaresolverr, original)
     end
   end
 
@@ -279,21 +246,7 @@ defmodule Mydia.Indexers.FlareSolverrTest do
   describe "health_check/0 via HTTP" do
     setup do
       bypass = Bypass.open()
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
-        enabled: true,
-        url: "http://localhost:#{bypass.port}"
-      )
-
-      on_exit(fn ->
-        if original do
-          Application.put_env(:mydia, :flaresolverr, original)
-        else
-          Application.delete_env(:mydia, :flaresolverr)
-        end
-      end)
-
+      put_flaresolverr_config(enabled: true, url: "http://localhost:#{bypass.port}")
       %{bypass: bypass}
     end
 
@@ -340,22 +293,13 @@ defmodule Mydia.Indexers.FlareSolverrTest do
   describe "get/2 via HTTP" do
     setup do
       bypass = Bypass.open()
-      original = Application.get_env(:mydia, :flaresolverr)
 
-      Application.put_env(:mydia, :flaresolverr,
+      put_flaresolverr_config(
         enabled: true,
         url: "http://localhost:#{bypass.port}",
         timeout: 30_000,
         max_timeout: 60_000
       )
-
-      on_exit(fn ->
-        if original do
-          Application.put_env(:mydia, :flaresolverr, original)
-        else
-          Application.delete_env(:mydia, :flaresolverr)
-        end
-      end)
 
       %{bypass: bypass}
     end
@@ -435,21 +379,7 @@ defmodule Mydia.Indexers.FlareSolverrTest do
   describe "available?/0 via HTTP" do
     setup do
       bypass = Bypass.open()
-      original = Application.get_env(:mydia, :flaresolverr)
-
-      Application.put_env(:mydia, :flaresolverr,
-        enabled: true,
-        url: "http://localhost:#{bypass.port}"
-      )
-
-      on_exit(fn ->
-        if original do
-          Application.put_env(:mydia, :flaresolverr, original)
-        else
-          Application.delete_env(:mydia, :flaresolverr)
-        end
-      end)
-
+      put_flaresolverr_config(enabled: true, url: "http://localhost:#{bypass.port}")
       %{bypass: bypass}
     end
 
@@ -474,6 +404,26 @@ defmodule Mydia.Indexers.FlareSolverrTest do
       Bypass.down(bypass)
 
       refute FlareSolverr.available?()
+    end
+  end
+
+  ## Helpers — inject FlareSolverr settings into the layered runtime config.
+
+  defp put_flaresolverr_config(attrs) do
+    fs = struct(Mydia.Config.Schema.FlareSolverr, attrs)
+    Application.put_env(:mydia, :runtime_config, %{current_runtime_config() | flaresolverr: fs})
+  end
+
+  # "Not configured": no FlareSolverr embed at all, so get_config/0 reports
+  # {:error, :not_configured} (config/0 returns nil, get/post return that error).
+  defp clear_flaresolverr_config do
+    Application.put_env(:mydia, :runtime_config, %{current_runtime_config() | flaresolverr: nil})
+  end
+
+  defp current_runtime_config do
+    case Application.get_env(:mydia, :runtime_config) do
+      %Mydia.Config.Schema{} = config -> config
+      _ -> Mydia.Config.Schema.defaults()
     end
   end
 end

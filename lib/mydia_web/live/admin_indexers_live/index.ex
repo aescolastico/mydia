@@ -1012,6 +1012,10 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     end)
   end
 
+  # A missing/NULL stored value falls back to the schema default rather than
+  # coercing to a misleading empty string (or "nil") in the UI.
+  defp parse_flaresolverr_value(nil, _type, fallback), do: fallback
+
   defp parse_flaresolverr_value(raw, :boolean, _fallback),
     do: Settings.parse_setting_boolean(raw)
 
@@ -1109,7 +1113,9 @@ defmodule MydiaWeb.AdminIndexersLive.Index do
     put_flash(
       socket,
       :error,
-      "FlareSolverr settings saved, but they could not be applied without a restart. Check the logs."
+      "FlareSolverr settings saved, but the runtime config could not be reloaded because the " <>
+        "merged configuration is invalid. The change will take effect once the configuration " <>
+        "is valid. Check the logs for the validation error."
     )
   end
 
