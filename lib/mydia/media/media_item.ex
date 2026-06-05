@@ -90,7 +90,6 @@ defmodule Mydia.Media.MediaItem do
     ])
     |> validate_required([:type, :title])
     |> validate_inclusion(:type, @type_values)
-    |> validate_inclusion(:metadata_source, [:tvdb, :tmdb])
     |> validate_number(:year, greater_than: 1800, less_than: 2200)
     |> validate_year_for_movies()
     |> unique_constraint(:tmdb_id)

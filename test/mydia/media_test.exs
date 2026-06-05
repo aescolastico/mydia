@@ -1208,7 +1208,8 @@ defmodule Mydia.MediaTest do
       # (re-linked by filename), not orphaned with both ids null.
       media_file = Mydia.Repo.get(Mydia.Library.MediaFile, ctx.media_file.id)
       refute is_nil(media_file)
-      refute is_nil(media_file.episode_id) and is_nil(media_file.media_item_id)
+      # Re-linked by filename to a recreated episode (not left orphaned).
+      assert not is_nil(media_file.episode_id)
 
       relinked = Mydia.Repo.get(Mydia.Media.Episode, media_file.episode_id)
       assert relinked.season_number == 1

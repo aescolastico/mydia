@@ -96,7 +96,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
 
   def reidentify_modal(assigns) do
     ~H"""
-    <div class="modal modal-open">
+    <div id="reidentify-modal" class="modal modal-open">
       <div class="modal-box max-w-xl">
         <h3 class="font-bold text-lg mb-1">Re-identify on {provider_label(@provider)}</h3>
         <p class="text-sm opacity-75 mb-4">
