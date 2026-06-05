@@ -120,5 +120,11 @@ defmodule MydiaWeb.AdminSettingsLiveTest do
              ),
              "toggle should render checked when DB holds the legacy 'on' value"
     end
+
+    test "no longer renders a FlareSolverr settings section", %{view: view} do
+      html = render(view)
+      refute html =~ "FlareSolverr"
+      refute has_element?(view, "input[phx-value-key='flaresolverr.url']")
+    end
   end
 end

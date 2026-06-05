@@ -220,7 +220,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         Mydia.Config.Schema.defaults()
       end
 
-    flaresolverr = config.flaresolverr || %Mydia.Config.Schema.FlareSolverr{}
     metadata = config.metadata || %Mydia.Config.Schema.Metadata{}
 
     # Fetch all DB settings in one query to avoid N+1 per-key lookups
@@ -396,52 +395,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
               all_db_settings
             )
         }
-      ],
-      "FlareSolverr" => [
-        %{
-          key: "flaresolverr.enabled",
-          label: "Enabled",
-          type: :boolean,
-          value: flaresolverr.enabled,
-          source:
-            Settings.config_source(
-              "FLARESOLVERR_ENABLED",
-              "flaresolverr.enabled",
-              all_db_settings
-            )
-        },
-        %{
-          key: "flaresolverr.url",
-          label: "FlareSolverr URL",
-          type: :string,
-          value: flaresolverr.url || "",
-          source: Settings.config_source("FLARESOLVERR_URL", "flaresolverr.url", all_db_settings),
-          placeholder: "http://flaresolverr:8191"
-        },
-        %{
-          key: "flaresolverr.timeout",
-          label: "Timeout (ms)",
-          type: :integer,
-          value: flaresolverr.timeout,
-          source:
-            Settings.config_source(
-              "FLARESOLVERR_TIMEOUT",
-              "flaresolverr.timeout",
-              all_db_settings
-            )
-        },
-        %{
-          key: "flaresolverr.max_timeout",
-          label: "Max Timeout (ms)",
-          type: :integer,
-          value: flaresolverr.max_timeout,
-          source:
-            Settings.config_source(
-              "FLARESOLVERR_MAX_TIMEOUT",
-              "flaresolverr.max_timeout",
-              all_db_settings
-            )
-        }
       ]
     }
   end
@@ -553,7 +506,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       "Crash Reporting" -> :crash_reporting
       "Feedback" -> :feedback
       "Notifications" -> :notifications
-      "FlareSolverr" -> :flaresolverr
       "Library" -> :library
       _ -> :general
     end
