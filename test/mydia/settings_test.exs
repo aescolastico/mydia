@@ -2706,4 +2706,71 @@ defmodule Mydia.SettingsTest do
       assert Settings.derive_tv_metadata_source() == :tmdb
     end
   end
+
+  describe "config_source/3" do
+    @env_var "MYDIA_TEST_CONFIG_SOURCE"
+
+    setup do
+      System.delete_env(@env_var)
+      on_exit(fn -> System.delete_env(@env_var) end)
+      :ok
+    end
+
+    test "returns :env when the environment variable is set" do
+      System.put_env(@env_var, "http://example:8191")
+      assert Settings.config_source(@env_var, "flaresolverr.url", %{}) == :env
+    end
+
+    test "returns :database when no env var but the key is in the prefetched map" do
+      all_db_settings = %{"flaresolverr.url" => %{value: "http://db:8191"}}
+      assert Settings.config_source(@env_var, "flaresolverr.url", all_db_settings) == :database
+    end
+
+    test "returns :default when neither env nor the map provides the key" do
+      assert Settings.config_source(@env_var, "flaresolverr.url", %{}) == :default
+    end
+
+    test "env takes precedence over a database row" do
+      System.put_env(@env_var, "http://example:8191")
+      all_db_settings = %{"flaresolverr.url" => %{value: "http://db:8191"}}
+      assert Settings.config_source(@env_var, "flaresolverr.url", all_db_settings) == :env
+    end
+  end
+
+  describe "upsert_config_setting/1" do
+    test "creates a row when the key is absent, persisting the supplied category" do
+      assert {:ok, setting} =
+               Settings.upsert_config_setting(%{
+                 key: "flaresolverr.url",
+                 value: "http://flaresolverr:8191",
+                 category: :flaresolverr
+               })
+
+      assert setting.key == "flaresolverr.url"
+      assert setting.value == "http://flaresolverr:8191"
+      assert setting.category == :flaresolverr
+    end
+
+    test "updates the existing row without creating a duplicate" do
+      {:ok, _} =
+        Settings.upsert_config_setting(%{
+          key: "flaresolverr.timeout",
+          value: "60000",
+          category: :flaresolverr
+        })
+
+      assert {:ok, updated} =
+               Settings.upsert_config_setting(%{
+                 key: "flaresolverr.timeout",
+                 value: "90000",
+                 category: :flaresolverr
+               })
+
+      assert updated.value == "90000"
+
+      assert [_only] =
+               Settings.list_config_settings()
+               |> Enum.filter(&(&1.key == "flaresolverr.timeout"))
+    end
+  end
 end

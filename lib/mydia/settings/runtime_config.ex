@@ -43,6 +43,49 @@ defmodule Mydia.Settings.RuntimeConfig do
     Repo.delete(config_setting)
   end
 
+  @doc """
+  Resolves the source of a config value for UI display:
+
+    - `:env` when the given environment variable is set
+    - `:database` when the key has a row in the prefetched `all_db_settings` map
+    - `:default` otherwise
+
+  `all_db_settings` is a `key => ConfigSetting` map (build it once via
+  `list_config_settings/0` and pass it in) so resolving many fields does not
+  trigger an N+1 of per-key lookups.
+  """
+  def config_source(env_var_name, key, all_db_settings) do
+    cond do
+      env_var_name != nil and System.get_env(env_var_name) != nil -> :env
+      Map.has_key?(all_db_settings, key) -> :database
+      true -> :default
+    end
+  end
+
+  @doc """
+  Creates or updates a `ConfigSetting` by key.
+
+  Accepts an attrs map (or struct) carrying `:key`, `:value`, `:category`, and
+  optionally `:updated_by_id`. The caller supplies `:category` directly (e.g.
+  `:flaresolverr`); this function does not derive it from a display string.
+  """
+  def upsert_config_setting(attrs) do
+    attrs_map = if is_struct(attrs), do: Map.from_struct(attrs), else: attrs
+    key = Map.get(attrs_map, :key) || Map.get(attrs_map, "key")
+
+    string_attrs = %{
+      "key" => Map.get(attrs_map, :key) || Map.get(attrs_map, "key"),
+      "value" => Map.get(attrs_map, :value) || Map.get(attrs_map, "value"),
+      "category" => Map.get(attrs_map, :category) || Map.get(attrs_map, "category"),
+      "updated_by_id" => Map.get(attrs_map, :updated_by_id) || Map.get(attrs_map, "updated_by_id")
+    }
+
+    case get_config_setting_by_key(key) do
+      nil -> create_config_setting(string_attrs)
+      existing -> update_config_setting(existing, string_attrs)
+    end
+  end
+
   ## Runtime Configuration Loading
 
   def load_database_config do
