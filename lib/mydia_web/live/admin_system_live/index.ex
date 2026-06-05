@@ -8,7 +8,6 @@ defmodule MydiaWeb.AdminSystemLive.Index do
   alias Mydia.Playback
   alias Mydia.Downloads
   alias Mydia.System
-  alias MydiaWeb.FlareSolverrStatusComponent
 
   # Capture Mix.env at compile time since Mix is not available in releases
   @env Mix.env()
@@ -26,11 +25,9 @@ defmodule MydiaWeb.AdminSystemLive.Index do
      socket
      |> assign(:page_title, "Configuration - Status")
      |> assign(:active_tab, :status)
-     |> assign(:flaresolverr_status, %{configured: false, status: :loading})
      |> load_data()
      |> load_system_data()
-     |> load_player_data()
-     |> check_flaresolverr_async()}
+     |> load_player_data()}
   end
 
   @impl true
@@ -50,21 +47,7 @@ defmodule MydiaWeb.AdminSystemLive.Index do
 
   @impl true
   def handle_info(:refresh_system_data, socket) do
-    {:noreply,
-     socket
-     |> load_system_data()
-     |> check_flaresolverr_async()}
-  end
-
-  @impl true
-  def handle_info({ref, {:flaresolverr_status, status}}, socket) when is_reference(ref) do
-    Process.demonitor(ref, [:flush])
-    {:noreply, assign(socket, :flaresolverr_status, status)}
-  end
-
-  @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, socket) do
-    {:noreply, socket}
+    {:noreply, load_system_data(socket)}
   end
 
   @impl true
@@ -149,20 +132,6 @@ defmodule MydiaWeb.AdminSystemLive.Index do
     |> assign(:active_sessions, Streaming.list_active_sessions())
     |> assign(:active_jobs, active_jobs)
     |> assign(:recent_activity, recent_activity)
-  end
-
-  defp check_flaresolverr_async(socket) do
-    if connected?(socket) do
-      try do
-        Task.async(fn ->
-          {:flaresolverr_status, FlareSolverrStatusComponent.get_status()}
-        end)
-      rescue
-        _ -> nil
-      end
-    end
-
-    socket
   end
 
   defp build_recent_activity(job_preloads) do

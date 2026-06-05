@@ -116,6 +116,12 @@ defmodule MydiaWeb.AdminSystemLiveTest do
       assert has_element?(view, "h3", "Database")
     end
 
+    test "no longer renders the FlareSolverr External Services card", %{view: view} do
+      html = render(view)
+      refute html =~ "External Services"
+      refute html =~ "FlareSolverr"
+    end
+
     test "displays database adapter-specific information", %{view: view} do
       html = render(view)
 
