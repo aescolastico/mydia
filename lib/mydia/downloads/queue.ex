@@ -260,6 +260,16 @@ defmodule Mydia.Downloads.Queue do
             ^Mydia.DB.json_integer_equals(:metadata, "$.season_number", season_number)
           )
 
+        # Unscoped TV show request (no episode_id, not a season pack): a TV show
+        # legitimately has many concurrent downloads across seasons/episodes, so
+        # an active download for a *different* season/episode doesn't make THIS
+        # request a duplicate. Dedupe by the exact release URL instead of by
+        # media_item: different seasons have different torrent hashes (so
+        # cross-season requests are allowed), while re-submitting the same
+        # release (e.g. a double-clicked manual result) is still blocked.
+        media_item_id && tv_show?(media_item_id) ->
+          where(base_query, [d], d.download_url == ^search_result.download_url)
+
         # For movies or other media, check if there's an active download for this media_item
         media_item_id ->
           where(base_query, [d], d.media_item_id == ^media_item_id)
@@ -295,6 +305,13 @@ defmodule Mydia.Downloads.Queue do
 
           {:error, :duplicate_download}
       end
+    end
+  end
+
+  defp tv_show?(media_item_id) do
+    case Repo.get(MediaItem, media_item_id) do
+      %MediaItem{type: "tv_show"} -> true
+      _ -> false
     end
   end
 
