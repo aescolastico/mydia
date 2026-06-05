@@ -160,8 +160,10 @@ defmodule Mydia.Library.MetadataEnricher do
         create_new_media_item(provider_id, media_type, match_result, config)
 
       item ->
-        # Update existing item with latest metadata
-        update_existing_media_item(item, provider_id, media_type, config)
+        # Update existing item with latest metadata. Pass the match's resolved
+        # provider so a nil-source item can adopt it (see provenance handling
+        # in update_existing_media_item/5).
+        update_existing_media_item(item, provider_id, media_type, config, provider_type)
     end
   end
 
@@ -188,25 +190,29 @@ defmodule Mydia.Library.MetadataEnricher do
     end
   end
 
-  defp update_existing_media_item(existing_item, provider_id, media_type, config) do
+  defp update_existing_media_item(
+         existing_item,
+         provider_id,
+         media_type,
+         config,
+         match_provider_type
+       ) do
     # Skip re-fetching metadata if the item was recently updated (within the last hour)
     # This avoids redundant HTTP calls when importing multiple files for the same show
     if recently_enriched?(existing_item) do
-      Logger.debug("Skipping metadata re-fetch for recently enriched item",
-        id: existing_item.id,
-        title: existing_item.title
-      )
-
-      {:ok, existing_item}
+      maybe_stamp_recently_enriched(existing_item, media_type, match_provider_type)
     else
       Logger.debug("Updating existing media item",
         id: existing_item.id,
         provider_id: provider_id
       )
 
-      # Preserve the existing item's provider so re-enrichment fetches from the
-      # same source it was matched against.
-      provider_type = existing_item.metadata_source || existing_item_provider_type(existing_item)
+      # An explicit `metadata_source` is authoritative provenance and wins
+      # (preserve behavior from f1e4840f). Otherwise a nil-source item adopts
+      # the match's resolved provider. We never infer from id presence:
+      # maybe_discover_tvdb_id back-fills tvdb_id onto TMDB-matched shows, so
+      # id-inference would mis-stamp dual-id rows.
+      provider_type = existing_item.metadata_source || match_provider_type
 
       case fetch_full_metadata(provider_id, media_type, config, provider_type) do
         {:ok, full_metadata} ->
@@ -226,6 +232,30 @@ defmodule Mydia.Library.MetadataEnricher do
     end
   end
 
+  # Within the freshness window we skip the relay re-fetch, but a nil-source TV
+  # item must still record provenance — otherwise self-heal would silently
+  # no-op for items rescanned within the hour. Stamp only (no relay call);
+  # items that already carry a source are left untouched.
+  defp maybe_stamp_recently_enriched(
+         %{metadata_source: nil} = existing_item,
+         :tv_show,
+         provider_type
+       )
+       when not is_nil(provider_type) do
+    Media.update_media_item(existing_item, %{metadata_source: provider_type},
+      reason: "Provenance recorded"
+    )
+  end
+
+  defp maybe_stamp_recently_enriched(existing_item, _media_type, _provider_type) do
+    Logger.debug("Skipping metadata re-fetch for recently enriched item",
+      id: existing_item.id,
+      title: existing_item.title
+    )
+
+    {:ok, existing_item}
+  end
+
   defp fetch_full_metadata(provider_id, media_type, config, provider_type) do
     fetch_opts = [
       media_type: media_type,
@@ -243,12 +273,6 @@ defmodule Mydia.Library.MetadataEnricher do
 
     Metadata.fetch_by_id_cached(config, provider_id, fetch_opts)
   end
-
-  # Infer the provider a stored item was matched against, for items predating
-  # the metadata_source column. Mirrors the historical TVDB-precedence rule.
-  defp existing_item_provider_type(%{tvdb_id: tvdb_id}) when not is_nil(tvdb_id), do: :tvdb
-  defp existing_item_provider_type(%{tmdb_id: tmdb_id}) when not is_nil(tmdb_id), do: :tmdb
-  defp existing_item_provider_type(_), do: :tmdb
 
   defp build_media_item_attrs(metadata, media_type, match_result) do
     provider_id = String.to_integer(to_string(metadata.provider_id))
