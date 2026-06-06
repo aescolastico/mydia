@@ -377,8 +377,7 @@ defmodule MydiaWeb.ActivityLive.Index do
     |> String.replace("_", " ")
     |> String.replace(~r/([a-z])([A-Z])/, "\\1 \\2")
     |> String.split()
-    |> Enum.map(&String.capitalize/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &String.capitalize/1)
   end
 
   defp actor_icon(event) do

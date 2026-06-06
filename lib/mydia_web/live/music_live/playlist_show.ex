@@ -166,12 +166,10 @@ defmodule MydiaWeb.MusicLive.PlaylistShow do
   end
 
   defp get_cover_url(track) do
-    cond do
-      track.album && is_binary(track.album.cover_url) && track.album.cover_url != "" ->
-        track.album.cover_url
-
-      true ->
-        "/images/no-poster.svg"
+    if track.album && is_binary(track.album.cover_url) && track.album.cover_url != "" do
+      track.album.cover_url
+    else
+      "/images/no-poster.svg"
     end
   end
 

@@ -257,14 +257,12 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
     case episode.media_files do
       [_ | _] = files ->
         filenames =
-          files
-          |> Enum.map(fn file ->
+          Enum.map_join(files, "\n", fn file ->
             absolute_path = Mydia.Library.MediaFile.absolute_path(file)
             basename = Path.basename(absolute_path)
             resolution = file.resolution || "?"
             "• #{basename} (#{resolution})"
           end)
-          |> Enum.join("\n")
 
         "#{base_status}\n\nFiles:\n#{filenames}"
 

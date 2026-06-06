@@ -45,8 +45,7 @@ defmodule Mydia.Library.ReleaseParser.TitleAssembler do
     |> Enum.map(& &1.value)
     |> Enum.map(&strip_outer_punct/1)
     |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&smart_capitalize/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &smart_capitalize/1)
     |> nil_if_empty()
   end
 

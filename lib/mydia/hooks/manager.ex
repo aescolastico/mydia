@@ -69,10 +69,7 @@ defmodule Mydia.Hooks.Manager do
     config = Application.get_env(:mydia, :runtime_config)
     hooks_enabled = config.hooks.enabled
 
-    if not hooks_enabled do
-      Logger.info("Hooks system is disabled")
-      :ok
-    else
+    if hooks_enabled do
       hooks_path = resolve_hooks_path(config)
       Logger.info("Discovering hooks from #{hooks_path}")
 
@@ -83,6 +80,9 @@ defmodule Mydia.Hooks.Manager do
       else
         Logger.info("Hooks directory not found: #{hooks_path} (will be created on first use)")
       end
+    else
+      Logger.info("Hooks system is disabled")
+      :ok
     end
   end
 

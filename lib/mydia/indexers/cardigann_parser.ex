@@ -146,9 +146,8 @@ defmodule Mydia.Indexers.CardigannParser do
   @spec validate_definition(Parsed.t()) :: :ok | {:error, term()}
   def validate_definition(%Parsed{} = parsed) do
     with :ok <- validate_required_fields(parsed),
-         :ok <- validate_search_fields(parsed.search),
-         :ok <- validate_capabilities(parsed.capabilities) do
-      :ok
+         :ok <- validate_search_fields(parsed.search) do
+      validate_capabilities(parsed.capabilities)
     end
   end
 

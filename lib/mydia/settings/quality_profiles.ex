@@ -335,9 +335,8 @@ defmodule Mydia.Settings.QualityProfiles do
     with {:ok, content} <- fetch_import_content(source, opts),
          {:ok, data} <- parse_import_content(content),
          {:ok, validated_data} <- validate_import_schema(data),
-         {:ok, attrs} <- prepare_import_attrs(validated_data, source, opts),
-         {:ok, result} <- perform_import(attrs, dry_run) do
-      {:ok, result}
+         {:ok, attrs} <- prepare_import_attrs(validated_data, source, opts) do
+      perform_import(attrs, dry_run)
     end
   end
 
@@ -628,7 +627,6 @@ defmodule Mydia.Settings.QualityProfiles do
         opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
       end)
     end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
+    |> Enum.map_join("; ", fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
   end
 end

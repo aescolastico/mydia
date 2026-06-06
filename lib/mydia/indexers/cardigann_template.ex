@@ -621,22 +621,20 @@ defmodule Mydia.Indexers.CardigannTemplate do
     # First check if we're in a with/range context and the dot value has this key
     dot_value = Map.get(ctx, :dot)
 
+    # If we have a dot value that's a map, try to get the key from it first
     value =
-      cond do
-        # If we have a dot value that's a map, try to get the key from it first
-        is_map(dot_value) ->
-          Map.get(dot_value, key) ||
-            Map.get(dot_value, String.downcase(key)) ||
-            try do
-              Map.get(dot_value, String.to_existing_atom(key)) ||
-                Map.get(dot_value, String.downcase(key) |> String.to_existing_atom())
-            rescue
-              ArgumentError -> nil
-            end
-
+      if is_map(dot_value) do
+        Map.get(dot_value, key) ||
+          Map.get(dot_value, String.downcase(key)) ||
+          try do
+            Map.get(dot_value, String.to_existing_atom(key)) ||
+              Map.get(dot_value, String.downcase(key) |> String.to_existing_atom())
+          rescue
+            ArgumentError -> nil
+          end
+      else
         # Fall back to context lookup
-        true ->
-          nil
+        nil
       end
 
     # If not found in dot, try direct context lookup
@@ -894,10 +892,9 @@ defmodule Mydia.Indexers.CardigannTemplate do
   def url_encode(string) when is_binary(string) do
     string
     |> String.to_charlist()
-    |> Enum.map(fn char ->
+    |> Enum.map_join("", fn char ->
       if unreserved_char?(char), do: <<char>>, else: "%" <> Base.encode16(<<char>>, case: :upper)
     end)
-    |> Enum.join()
   end
 
   def url_encode(nil), do: ""

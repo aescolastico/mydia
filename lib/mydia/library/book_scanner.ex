@@ -552,23 +552,21 @@ defmodule Mydia.Library.BookScanner do
   defp parse_pdf_date(date_str) do
     # PDF dates are usually in format like "Mon Dec 25 10:30:00 2023"
     # or "D:20231225103000+00'00'"
-    cond do
-      String.starts_with?(date_str, "D:") ->
-        # PDF date format D:YYYYMMDDHHmmSS...
-        case Regex.run(~r/D:(\d{4})(\d{2})(\d{2})/, date_str) do
-          [_, year, month, day] ->
-            "#{year}-#{month}-#{day}"
+    if String.starts_with?(date_str, "D:") do
+      # PDF date format D:YYYYMMDDHHmmSS...
+      case Regex.run(~r/D:(\d{4})(\d{2})(\d{2})/, date_str) do
+        [_, year, month, day] ->
+          "#{year}-#{month}-#{day}"
 
-          _ ->
-            nil
-        end
-
-      true ->
-        # Try to extract year from other formats
-        case Regex.run(~r/\b(19|20)\d{2}\b/, date_str) do
-          [year] -> year
-          _ -> nil
-        end
+        _ ->
+          nil
+      end
+    else
+      # Try to extract year from other formats
+      case Regex.run(~r/\b(19|20)\d{2}\b/, date_str) do
+        [year] -> year
+        _ -> nil
+      end
     end
   end
 

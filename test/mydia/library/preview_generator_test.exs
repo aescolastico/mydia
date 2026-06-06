@@ -43,10 +43,7 @@ defmodule Mydia.Library.PreviewGeneratorTest do
 
     @tag :requires_ffmpeg
     test "generates preview video from valid video file", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create a test video (30 seconds to accommodate 4 segments of 3 seconds each)
         video_path = create_test_video(30)
 
@@ -76,15 +73,15 @@ defmodule Mydia.Library.PreviewGeneratorTest do
 
         # Cleanup
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "respects custom segment options", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video(30)
 
         case PreviewGenerator.generate_from_path(video_path,
@@ -109,15 +106,15 @@ defmodule Mydia.Library.PreviewGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "respects skip_start_percent and skip_end_percent options", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video(60)
 
         case PreviewGenerator.generate_from_path(video_path,
@@ -136,14 +133,14 @@ defmodule Mydia.Library.PreviewGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     test "returns error for video too short to extract segments" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create a 2 second video with 5% skip (effective ~1.8s) and request 3s segments
         # effective_duration < segment_duration triggers :video_too_short
         video_path = create_test_video(2)
@@ -158,15 +155,15 @@ defmodule Mydia.Library.PreviewGeneratorTest do
         assert {:error, :video_too_short} = result
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "generates preview with audio", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video_with_audio(30)
 
         case PreviewGenerator.generate_from_path(video_path) do
@@ -185,6 +182,9 @@ defmodule Mydia.Library.PreviewGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
   end

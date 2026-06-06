@@ -176,12 +176,10 @@ defmodule Mydia.CrashReporter.LoggerBackend do
     line = Keyword.get(metadata, :line)
     function = Keyword.get(metadata, :function)
 
-    cond do
-      file && line ->
-        [{:unknown, function || :unknown, 0, [file: file, line: line]}]
-
-      true ->
-        []
+    if file && line do
+      [{:unknown, function || :unknown, 0, [file: file, line: line]}]
+    else
+      []
     end
   end
 

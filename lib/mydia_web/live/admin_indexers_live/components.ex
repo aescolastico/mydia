@@ -1269,8 +1269,7 @@ defmodule MydiaWeb.AdminIndexersLive.Components do
     |> String.replace("_", " ")
     |> String.replace("-", " ")
     |> String.split(" ")
-    |> Enum.map(&String.capitalize/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &String.capitalize/1)
   end
 
   defp humanize_field_name(name) when is_atom(name), do: humanize_field_name(Atom.to_string(name))

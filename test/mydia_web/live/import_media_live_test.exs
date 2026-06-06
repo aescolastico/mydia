@@ -277,7 +277,7 @@ defmodule MydiaWeb.ImportMediaLiveTest do
 
       # Nothing should be filtered for mixed libraries
       assert length(compatible) == 2
-      assert length(filtered) == 0
+      assert Enum.empty?(filtered)
     end
 
     test "filter_by_library_type handles nil library_path gracefully", %{user: _user} do
@@ -299,7 +299,7 @@ defmodule MydiaWeb.ImportMediaLiveTest do
       {compatible, filtered} = filter_by_library_type(matched_files, nil)
 
       assert length(compatible) == 1
-      assert length(filtered) == 0
+      assert Enum.empty?(filtered)
     end
 
     # Helper function that mirrors the LiveView implementation

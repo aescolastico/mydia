@@ -186,7 +186,7 @@ defmodule MydiaWeb.AuthController do
   # Format Ueberauth errors for display with detailed information
   defp format_errors(errors) do
     errors
-    |> Enum.map(fn error ->
+    |> Enum.map_join(", ", fn error ->
       # Include both message and message_key for more context
       case error do
         %{message: msg, message_key: key} when key != nil ->
@@ -199,7 +199,6 @@ defmodule MydiaWeb.AuthController do
           inspect(error)
       end
     end)
-    |> Enum.join(", ")
   end
 
   # Check if OIDC is configured

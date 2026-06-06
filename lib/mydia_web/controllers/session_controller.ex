@@ -17,10 +17,7 @@ defmodule MydiaWeb.SessionController do
   def new(conn, _params) do
     # Redirect to first-time setup if no users exist
     # The setup page will offer both local admin creation and OIDC login options
-    if not Accounts.any_users_exist?() do
-      conn
-      |> redirect(to: ~p"/setup")
-    else
+    if Accounts.any_users_exist?() do
       # Check if local auth is enabled
       config = Config.get()
 
@@ -34,6 +31,9 @@ defmodule MydiaWeb.SessionController do
         |> put_flash(:error, "Local authentication is disabled")
         |> redirect(to: "/")
       end
+    else
+      conn
+      |> redirect(to: ~p"/setup")
     end
   end
 
@@ -52,11 +52,7 @@ defmodule MydiaWeb.SessionController do
     # Check if local auth is enabled
     config = Config.get()
 
-    if not config.auth.local_enabled do
-      conn
-      |> put_flash(:error, "Local authentication is disabled")
-      |> redirect(to: "/")
-    else
+    if config.auth.local_enabled do
       case Accounts.get_user_by_username(username) do
         nil ->
           conn
@@ -92,6 +88,10 @@ defmodule MydiaWeb.SessionController do
             )
           end
       end
+    else
+      conn
+      |> put_flash(:error, "Local authentication is disabled")
+      |> redirect(to: "/")
     end
   end
 end

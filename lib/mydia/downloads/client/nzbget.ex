@@ -98,10 +98,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   @impl true
   def test_connection(config) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for NZBGet")}
-    else
+    if config[:username] && config[:password] do
       do_test_connection(config)
+    else
+      {:error, Error.invalid_config("Username and password are required for NZBGet")}
     end
   end
 
@@ -305,10 +305,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   @impl true
   def pause_torrent(config, client_id) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for NZBGet")}
-    else
+    if config[:username] && config[:password] do
       do_pause(config, client_id)
+    else
+      {:error, Error.invalid_config("Username and password are required for NZBGet")}
     end
   end
 
@@ -333,10 +333,10 @@ defmodule Mydia.Downloads.Client.Nzbget do
 
   @impl true
   def resume_torrent(config, client_id) do
-    unless config[:username] && config[:password] do
-      {:error, Error.invalid_config("Username and password are required for NZBGet")}
-    else
+    if config[:username] && config[:password] do
       do_resume(config, client_id)
+    else
+      {:error, Error.invalid_config("Username and password are required for NZBGet")}
     end
   end
 

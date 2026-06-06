@@ -119,8 +119,7 @@ defmodule Mydia.Logger do
   def extract_error_message(%Ecto.Changeset{} = changeset) do
     errors =
       changeset.errors
-      |> Enum.map(fn {field, {msg, _}} -> "#{field} #{msg}" end)
-      |> Enum.join(", ")
+      |> Enum.map_join(", ", fn {field, {msg, _}} -> "#{field} #{msg}" end)
 
     "Validation failed: #{errors}"
   end
@@ -201,10 +200,9 @@ defmodule Mydia.Logger do
   defp sanitize_error_for_user(%Ecto.Changeset{} = changeset) do
     errors =
       changeset.errors
-      |> Enum.map(fn {field, {msg, _}} ->
+      |> Enum.map_join(", ", fn {field, {msg, _}} ->
         "#{humanize_field(field)} #{msg}"
       end)
-      |> Enum.join(", ")
 
     if errors == "" do
       "Please check your input and try again"

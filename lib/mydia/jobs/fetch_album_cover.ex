@@ -49,7 +49,7 @@ defmodule Mydia.Jobs.FetchAlbumCover do
 
   defp fetch_embedded_art(album) do
     # Try to get first track file path
-    # We need to preload tracks or just query one. 
+    # We need to preload tracks or just query one.
     # Music.list_tracks sorts by disc/track number, which is good.
     case Music.list_tracks(album_id: album.id) do
       tracks when tracks != [] ->

@@ -60,13 +60,34 @@ jobs:
         run: mix deps.unlock --check-unused
 
       - name: Compile
-        run: mix compile
+        run: mix compile --warnings-as-errors
 
       - name: Check formatting
         run: mix format --check-formatted
 
+      # Guard against re-grandfathering: a Credo check must be enabled-and-
+      # gating or `false`, never `exit_status: 0`. See CONTRIBUTING.md.
+      - name: Forbid Credo grandfathering
+        run: |
+          if grep -n "exit_status: 0" .credo.exs; then
+            echo "::error::exit_status: 0 found in .credo.exs - fix the finding or disable the check with false (see CONTRIBUTING.md)"
+            exit 1
+          fi
+
       - name: Run Credo
-        run: mix credo --mute-exit-status
+        run: mix credo --strict
+
+      # Advisory by design, not grandfathering. mix_unused's export analysis
+      # cannot trace framework dispatch (controller actions, HEEx components,
+      # behaviour callbacks, runtime dispatch); rule-shaped ignores in mix.exs
+      # cover the structural blind spots, and provably-dead code is deleted at
+      # the source. The irreducible residual is intentional public API plus
+      # default-argument arity artifacts, which cannot be driven to a principled
+      # zero on a Phoenix app without deleting live code. So this step reports
+      # for awareness but does not block. See CONTRIBUTING.md ("Quality gates").
+      - name: Dead code report (advisory)
+        run: UNUSED_CHECK=true mix compile --force
+        continue-on-error: true
 
       - name: Setup database
         run: mix ecto.create && mix ecto.migrate
