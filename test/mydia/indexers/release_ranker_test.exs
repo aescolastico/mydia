@@ -1599,7 +1599,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     test "rejects results where parsed title doesn't match expected title" do
       # Real-world bug: searching for "Fallout S01E04" returned
       # "Claws S01E04 Fallout 1080p..." because "Fallout" is the episode title,
-      # not the show title. TorrentParser extracts "Claws" as the show title.
+      # not the show title. ReleaseParser extracts "Claws" as the show title.
       results = [
         build_result(%{
           title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",
@@ -1664,13 +1664,16 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert length(ranked) == 1
     end
 
-    test "passes through unparseable release names (fail-open)" do
-      # This release name won't parse as TV or movie via TorrentParser,
-      # so the title mismatch filter should let it through.
-      # Note: we omit search_query to avoid reject_zero_title_match catching it.
+    test "passes through release names with no extractable title (fail-open)" do
+      # ReleaseParser returns no title for this input, so the title-mismatch
+      # filter cannot compare and lets it through (fail-open). Note: ReleaseParser
+      # is more capable than the old parser — gibberish that DOES yield a title
+      # (e.g. "abc123def456") is now correctly extracted and filtered when it
+      # differs from the expected title.
+      # We omit search_query to avoid reject_zero_title_match catching it.
       results = [
         build_result(%{
-          title: "abc123def456",
+          title: "1080p.x264.AAC",
           size: round(1.0 * @gb),
           seeders: 10,
           quality: nil
@@ -1684,7 +1687,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         )
 
       assert length(ranked) == 1,
-             "Unparseable releases should pass through (fail-open)"
+             "Releases with no extractable title should pass through (fail-open)"
     end
 
     test "skips filter when expected_title is empty string" do

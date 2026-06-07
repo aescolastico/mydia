@@ -18,8 +18,10 @@ defmodule Mydia.Downloads.UntrackedMatcher do
 
   require Logger
   alias Mydia.Downloads
-  alias Mydia.Downloads.{TorrentParser, TorrentMatcher}
+  alias Mydia.Downloads.{ReleaseIntake, TorrentMatcher}
   alias Mydia.Library
+  alias Mydia.Library.Structs.ParsedFileInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Settings
 
   @doc """
@@ -133,11 +135,14 @@ defmodule Mydia.Downloads.UntrackedMatcher do
     end)
   end
 
-  defp process_untracked_torrent(torrent) do
+  @doc false
+  # Public for testing the parse/match/route decision in isolation. Not part of
+  # the module's intended API — callers use find_and_match_untracked/0.
+  def process_untracked_torrent(torrent) do
     Logger.debug("Processing untracked torrent: #{torrent.name}")
 
-    # Parse once upfront to avoid re-parsing in error branches
-    parsed_result = TorrentParser.parse(torrent.name)
+    # Validate + parse once upfront to avoid re-parsing in error branches
+    parsed_result = ReleaseIntake.parse_release(torrent.name)
 
     case parsed_result do
       {:ok, parsed_info} ->
@@ -175,18 +180,20 @@ defmodule Mydia.Downloads.UntrackedMatcher do
             {:error, reason}
         end
 
-      {:error, :unable_to_parse} ->
-        Logger.debug("Unable to parse torrent name: #{torrent.name}")
-        create_unmatched_download(torrent, nil)
-
+      # Validator rejection (malicious / fake / password / etc.) or an
+      # unparseable name: surface the torrent as an unmatched download with no
+      # parsed info so the user can still see and manually match it. No grab is
+      # ever triggered — the torrent already lives in the client.
       {:error, reason} ->
-        Logger.warning("Failed to process untracked torrent: #{inspect(reason)}",
-          torrent_name: torrent.name
-        )
-
-        {:error, reason}
+        Logger.debug("Could not parse torrent name (#{inspect(reason)}): #{torrent.name}")
+        create_unmatched_download(torrent, nil)
     end
   end
+
+  # ParsedFileInfo nests quality in a %Quality{} struct; pull a scalar field
+  # (resolution/source/codec) for flat metadata storage.
+  defp quality_field(%{quality: %Quality{} = quality}, field), do: Map.get(quality, field)
+  defp quality_field(_parsed_info, _field), do: nil
 
   defp create_download_record(torrent, match, parsed_info) do
     attrs = %{
@@ -201,9 +208,9 @@ defmodule Mydia.Downloads.UntrackedMatcher do
         size: torrent.size,
         seeders: Map.get(torrent, :seeders),
         leechers: Map.get(torrent, :leechers),
-        quality: Map.get(parsed_info, :quality),
-        source: Map.get(parsed_info, :source),
-        codec: Map.get(parsed_info, :codec),
+        quality: quality_field(parsed_info, :resolution),
+        source: quality_field(parsed_info, :source),
+        codec: quality_field(parsed_info, :codec),
         matched_from_client: true,
         match_confidence: match.confidence,
         match_reason: match.match_reason
@@ -234,12 +241,12 @@ defmodule Mydia.Downloads.UntrackedMatcher do
         %{
           type: to_string(parsed_info.type),
           title: parsed_info.title,
-          year: Map.get(parsed_info, :year),
-          season: Map.get(parsed_info, :season),
-          episode: Map.get(parsed_info, :episode),
-          quality: Map.get(parsed_info, :quality),
-          source: Map.get(parsed_info, :source),
-          codec: Map.get(parsed_info, :codec)
+          year: parsed_info.year,
+          season: parsed_info.season,
+          episode: ParsedFileInfo.primary_episode(parsed_info),
+          quality: quality_field(parsed_info, :resolution),
+          source: quality_field(parsed_info, :source),
+          codec: quality_field(parsed_info, :codec)
         }
       end
 

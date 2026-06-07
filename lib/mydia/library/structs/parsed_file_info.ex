@@ -116,4 +116,14 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
   def new(attrs) when is_map(attrs) do
     struct!(__MODULE__, attrs)
   end
+
+  @doc """
+  The primary (first) episode number from the `episodes` list, or `nil`.
+
+  Multi-episode releases (e.g. S01E01E02) are matched on their first episode.
+  Accepts the struct or a bare episodes list.
+  """
+  def primary_episode(%__MODULE__{episodes: episodes}), do: primary_episode(episodes)
+  def primary_episode([first | _]), do: first
+  def primary_episode(_), do: nil
 end

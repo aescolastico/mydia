@@ -40,16 +40,18 @@ defmodule Mydia.Indexers.ReleaseRanker do
   - `:quality_profile` - QualityProfile struct for scoring (recommended)
   - `:media_type` - Either `:movie` or `:episode` (default: `nil`, TV filtering only applied when `:movie`)
   - `:expected_title` - Expected show/movie title for pre-ranking title validation. When provided,
-    each result is parsed with `TorrentParser` and rejected if the parsed title has a Jaro distance
+    each result is parsed with `ReleaseParser` and rejected if the parsed title has a Jaro distance
     below 0.7 from the expected title. Unparseable releases pass through (fail-open).
     Ignored when `nil` or empty/whitespace-only. (default: `nil`)
   """
 
   require Logger
 
-  alias Mydia.Downloads.{ReleaseValidator, TorrentParser}
+  alias Mydia.Downloads.ReleaseValidator
   alias Mydia.Indexers.{SearchResult, SearchScorer}
   alias Mydia.Indexers.Structs.{RankedResult, ScoreBreakdown}
+  alias Mydia.Library.ReleaseParser
+  alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Settings.QualityProfile
 
   @type ranked_result :: RankedResult.t()
@@ -388,10 +390,10 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # anything else runs. This is the enforcement point for the validator: it only
   # *detects* bad releases, so without this stage a flagged release (e.g. a
   # malware torrent named "...h264-ETHEL.exe") still flows through scoring and
-  # can be selected and grabbed. The validator is otherwise consulted deep inside
-  # TorrentParser.parse, where the title-mismatch check discards its error and
-  # keeps the release. Reject here so a suspicious release never reaches a
-  # download client.
+  # can be selected and grabbed. The title-mismatch check below
+  # (parse_and_compare/2) parses with ReleaseParser and does not validate, so
+  # this stage is the sole validation gate for ranking. Reject here so a
+  # suspicious release never reaches a download client.
   defp reject_invalid_releases(results) do
     Enum.filter(results, fn result ->
       case ReleaseValidator.validate_release(result.title) do
@@ -469,9 +471,15 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   # Parse a result's title and compare against the pre-normalized expected title.
   # Returns {:mismatch, parsed_title, distance} if below threshold, :ok otherwise.
+  #
+  # Calls ReleaseParser.parse/1 directly (not ReleaseIntake): reject_invalid_releases/1
+  # already ran the validator over the full result list upstream, so re-validating
+  # here would be a redundant double-pass. The two stages must be maintained
+  # together — if the upstream validator filter is removed, this path would need
+  # its own validation. A nil/unparseable title falls through to :ok (fail-open).
   defp parse_and_compare(result, normalized_expected) do
-    case TorrentParser.parse(result.title) do
-      {:ok, %{title: parsed_title}} when is_binary(parsed_title) ->
+    case ReleaseParser.parse(result.title) do
+      %ParsedFileInfo{title: parsed_title} when is_binary(parsed_title) ->
         distance =
           String.jaro_distance(normalized_expected, normalize_for_comparison(parsed_title))
 
