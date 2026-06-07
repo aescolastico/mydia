@@ -1,6 +1,8 @@
 defmodule MetadataRelay.CrashReportTest do
   use ExUnit.Case, async: false
 
+  import Ecto.Query
+
   alias MetadataRelay.Router
 
   setup do
@@ -17,6 +19,20 @@ defmodule MetadataRelay.CrashReportTest do
     :ets.delete_all_objects(:rate_limiter)
 
     :ok
+  end
+
+  # Submit a crash report through the full router pipeline, mirroring what a
+  # real mydia instance sends: an empty `stacktrace` plus a `metadata` map
+  # describing the crash site.
+  defp report(crash_report) do
+    Plug.Test.conn(:post, "/crashes/report", crash_report)
+    |> Plug.Conn.put_req_header("content-type", "application/json")
+    |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+    |> Router.call([])
+  end
+
+  defp stored_errors do
+    MetadataRelay.Repo.all(from(e in ErrorTracker.Error, order_by: e.id))
   end
 
   describe "POST /crashes/report" do
@@ -132,6 +148,69 @@ defmodule MetadataRelay.CrashReportTest do
       assert conn.status == 429
       assert %{"error" => "Too many requests"} = Jason.decode!(conn.resp_body)
       assert ["60"] = Plug.Conn.get_resp_header(conn, "retry-after")
+    end
+  end
+
+  describe "crash report fingerprinting" do
+    # Real mydia instances send an empty stacktrace and put the crash site in
+    # `metadata`. These reproduce the production bug where every report collapsed
+    # into a single ErrorTracker record because kind was hardcoded to
+    # "RuntimeError" and no source info was derived from `metadata`.
+    test "distinct crash sites are stored as distinct errors" do
+      assert report(%{
+               "error_type" => "RuntimeError",
+               "error_message" => "{:path_not_found, \"/downloads/complete/foo.mkv\"}",
+               "stacktrace" => [],
+               "metadata" => %{
+                 "file" => "lib/mydia/jobs/media_import.ex",
+                 "function" => "import_download/2",
+                 "line" => 299,
+                 "module" => "Elixir.Mydia.Jobs.MediaImport"
+               },
+               "version" => "0.11.1"
+             }).status == 201
+
+      assert report(%{
+               "error_type" => "RuntimeError",
+               "error_message" => "value too long for type character varying(255)",
+               "stacktrace" => [],
+               "metadata" => %{
+                 "file" => "lib/mydia/jobs/library_scanner.ex",
+                 "function" => "scan/1",
+                 "line" => 248,
+                 "module" => "Elixir.Mydia.Jobs.LibraryScanner"
+               },
+               "version" => "0.11.1"
+             }).status == 201
+
+      errors = stored_errors()
+
+      assert length(errors) == 2,
+             "expected two distinct errors, got #{length(errors)}: " <>
+               inspect(Enum.map(errors, & &1.source_line))
+
+      assert Enum.map(errors, & &1.source_line) |> Enum.uniq() |> length() == 2
+
+      assert Enum.any?(errors, &(&1.source_line =~ "media_import.ex:299"))
+      assert Enum.any?(errors, &(&1.source_line =~ "library_scanner.ex:248"))
+    end
+
+    test "the reported error_type is preserved as the error kind" do
+      assert report(%{
+               "error_type" => "CaseClauseError",
+               "error_message" => "no case clause matching: {:error, :expired}",
+               "stacktrace" => [],
+               "metadata" => %{
+                 "file" => "lib/mydia/indexers/flaresolverr.ex",
+                 "function" => "request/2",
+                 "line" => 232,
+                 "module" => "Elixir.Mydia.Indexers.Flaresolverr"
+               },
+               "version" => "0.11.1"
+             }).status == 201
+
+      assert [error] = stored_errors()
+      assert error.kind == "CaseClauseError"
     end
   end
 end

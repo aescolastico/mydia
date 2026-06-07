@@ -685,7 +685,8 @@ defmodule MetadataRelay.Router do
   defp validate_crash_report(_), do: {:error, :invalid_json}
 
   defp store_crash_report(body) do
-    # Create a runtime error from the crash report data
+    # Use the reported error type as the ErrorTracker kind so different error
+    # types are not collapsed together. The message is kept as the reason.
     error_type = Map.get(body, "error_type", "RuntimeError")
     error_message = Map.get(body, "error_message", "Unknown error")
 
@@ -696,6 +697,16 @@ defmodule MetadataRelay.Router do
       |> Enum.map(&parse_stacktrace_entry/1)
       |> Enum.filter(& &1)
 
+    # Clients typically send an empty stacktrace and describe the crash site in
+    # `metadata`. Without any source info, ErrorTracker derives the same
+    # fingerprint for every report and collapses them into a single error.
+    # Synthesize a frame from `metadata` so each crash site stays distinct.
+    stacktrace =
+      case stacktrace do
+        [] -> List.wrap(metadata_stack_frame(Map.get(body, "metadata")))
+        frames -> frames
+      end
+
     # Create context from additional metadata
     context = %{
       version: Map.get(body, "version"),
@@ -704,11 +715,9 @@ defmodule MetadataRelay.Router do
       metadata: Map.get(body, "metadata", %{})
     }
 
-    # Create exception struct
-    exception = %RuntimeError{message: "#{error_type}: #{error_message}"}
-
-    # Report to ErrorTracker
-    case ErrorTracker.report(exception, stacktrace, context) do
+    # Report to ErrorTracker as a {kind, reason} tuple so the reported
+    # error_type is preserved as the error kind.
+    case ErrorTracker.report({error_type, error_message}, stacktrace, context) do
       :noop ->
         {:error, :error_tracker_disabled}
 
@@ -717,20 +726,66 @@ defmodule MetadataRelay.Router do
     end
   end
 
+  # Build a synthetic stacktrace frame from the crash report `metadata` map.
+  # Returns nil when there is no usable source information.
+  defp metadata_stack_frame(metadata) when is_map(metadata) do
+    file = Map.get(metadata, "file")
+    line = Map.get(metadata, "line")
+
+    if file || line do
+      crash_frame(Map.get(metadata, "module"), Map.get(metadata, "function"), file, line)
+    end
+  end
+
+  defp metadata_stack_frame(_), do: nil
+
   defp parse_stacktrace_entry(%{"file" => file, "line" => line, "function" => function}) do
-    # Convert crash report format to Elixir stacktrace format
-    # Format: {module, function, arity, [file: path, line: number]}
-    location = build_location(file, line)
-    {String.to_atom(function), 0, location}
+    crash_frame(nil, function, file, line)
   end
 
   defp parse_stacktrace_entry(%{"file" => file, "line" => line}) do
-    # Minimal format without function
-    location = build_location(file, line)
-    {:unknown, 0, location}
+    crash_frame(nil, nil, file, line)
   end
 
   defp parse_stacktrace_entry(_), do: nil
+
+  # Build a stacktrace frame in the {module, function, arity, location} shape that
+  # ErrorTracker.Stacktrace.new/1 expects. The module position is always `nil`
+  # (a safe atom) because ErrorTracker passes it to Application.get_application/1,
+  # which requires an atom; we never call String.to_atom/1 on untrusted module
+  # names (atom-table exhaustion risk). The readable module name is folded into
+  # the function descriptor instead, and the file:line drives the fingerprint.
+  defp crash_frame(module, function, file, line) do
+    {name, arity} = parse_function(function)
+    {nil, qualify(module, name), arity, build_location(file, line)}
+  end
+
+  defp qualify(nil, name), do: name
+
+  defp qualify(module, name) do
+    case to_string(module) |> String.replace_prefix("Elixir.", "") do
+      "" -> name
+      mod -> "#{mod}.#{name}"
+    end
+  end
+
+  # Split a "name/arity" function descriptor (e.g. "import_download/2") into its
+  # name and integer arity. Falls back to arity 0 when the format is unexpected.
+  defp parse_function(function) when is_binary(function) do
+    case String.split(function, "/", parts: 2) do
+      [name, arity] ->
+        case Integer.parse(arity) do
+          {n, ""} -> {name, n}
+          _ -> {function, 0}
+        end
+
+      [name] ->
+        {name, 0}
+    end
+  end
+
+  defp parse_function(nil), do: {"unknown", 0}
+  defp parse_function(function), do: {to_string(function), 0}
 
   defp build_location(nil, nil), do: []
   defp build_location(nil, line), do: [line: line]
