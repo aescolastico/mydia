@@ -42,6 +42,16 @@ defmodule Mydia.Downloads.ReleaseIntakeTest do
                ReleaseIntake.parse_release("From.S04E05.1080p.WEB.h264-ETHEL.exe")
     end
 
+    test "executable extension masked by a trailing tracker tag is still rejected" do
+      # The raw final extension is ".org]"; the real ".exe" only surfaces once the
+      # tag is stripped. The validator must catch it regardless.
+      assert {:error, :suspicious_extension} =
+               ReleaseIntake.parse_release("From.S04E05.1080p.WEB.h264-ETHEL.exe[tracker.org]")
+
+      assert {:error, :suspicious_extension} =
+               ReleaseIntake.parse_release("From.S04E05.1080p.WEB.h264-ETHEL.exe【高清剧集网】")
+    end
+
     test "rejection reason is distinguishable from a no-match/empty outcome" do
       # A dropped validation gate would surface as a successful parse, not an
       # {:error, atom}. Asserting the atom shape makes the gate observable.

@@ -20,6 +20,7 @@ defmodule Mydia.Downloads.UntrackedMatcher do
   alias Mydia.Downloads
   alias Mydia.Downloads.{ReleaseIntake, TorrentMatcher}
   alias Mydia.Library
+  alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Library.Structs.Quality
   alias Mydia.Settings
 
@@ -194,9 +195,6 @@ defmodule Mydia.Downloads.UntrackedMatcher do
   defp quality_field(%{quality: %Quality{} = quality}, field), do: Map.get(quality, field)
   defp quality_field(_parsed_info, _field), do: nil
 
-  defp primary_episode([first | _]), do: first
-  defp primary_episode(_episodes), do: nil
-
   defp create_download_record(torrent, match, parsed_info) do
     attrs = %{
       indexer: "manual",
@@ -245,7 +243,7 @@ defmodule Mydia.Downloads.UntrackedMatcher do
           title: parsed_info.title,
           year: parsed_info.year,
           season: parsed_info.season,
-          episode: primary_episode(parsed_info.episodes),
+          episode: ParsedFileInfo.primary_episode(parsed_info),
           quality: quality_field(parsed_info, :resolution),
           source: quality_field(parsed_info, :source),
           codec: quality_field(parsed_info, :codec)

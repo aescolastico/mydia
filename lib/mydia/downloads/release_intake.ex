@@ -38,7 +38,9 @@ defmodule Mydia.Downloads.ReleaseIntake do
   @spec parse_release(String.t()) :: {:ok, ParsedFileInfo.t()} | {:error, atom()}
   def parse_release(name) when is_binary(name) do
     # Validate the ORIGINAL name first — the validator detects hashed releases by
-    # hex strings in brackets, so cleaning must not run before it.
+    # hex strings in brackets, so cleaning must not run before it. The validator's
+    # suspicious-extension check is tag-aware (it strips trailing bracket tags),
+    # so a `.exe` masked by a trailing tag is still rejected here.
     with {:ok, validated} <- ReleaseValidator.validate_release(name) do
       validated
       |> clean_torrent_name()

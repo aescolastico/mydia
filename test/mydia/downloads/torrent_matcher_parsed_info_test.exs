@@ -58,6 +58,22 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
       assert match.episode.id == episode.id
     end
 
+    test "multi-episode release resolves on the first episode", %{show: show, episode: episode} do
+      info =
+        parsed(
+          original_filename: "From.S04E07E08.1080p.WEB.h264-GROUP.mkv",
+          type: :tv_show,
+          title: "From",
+          season: 4,
+          episodes: [7, 8]
+        )
+
+      assert {:ok, match} = TorrentMatcher.find_match(info)
+      assert match.media_item.id == show.id
+      # Matched on the primary (first) episode.
+      assert match.episode.id == episode.id
+    end
+
     test "season pack (season set, empty episodes) matches show with no episode", %{show: show} do
       info =
         parsed(
@@ -125,6 +141,53 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
       assert match.media_item.id == show.id
       assert match.episode.id == episode.id
       assert match.confidence == 0.98
+    end
+
+    test "imdb provider matches by string imdb_id" do
+      movie =
+        insert(:media_item, %{
+          type: "movie",
+          title: "Unrelated",
+          imdb_id: "tt0133093",
+          monitored: true
+        })
+
+      info =
+        parsed(
+          original_filename: "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv",
+          type: :movie,
+          title: "The Matrix",
+          year: 1999,
+          external_provider: :imdb,
+          external_id: "tt0133093"
+        )
+
+      assert {:ok, match} = TorrentMatcher.find_match(info)
+      assert match.media_item.id == movie.id
+      assert match.confidence == 0.98
+      assert match.match_reason =~ "IMDB ID tt0133093"
+    end
+
+    test "a partially-numeric tmdb external_id is rejected (not cast to a prefix integer)" do
+      insert(:media_item, %{type: "movie", title: "Decoy", tmdb_id: 603, monitored: true})
+
+      target =
+        insert(:media_item, %{type: "movie", title: "The Matrix", year: 1999, monitored: true})
+
+      info =
+        parsed(
+          original_filename: "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv",
+          type: :movie,
+          title: "The Matrix",
+          year: 1999,
+          external_provider: :tmdb,
+          external_id: "603abc"
+        )
+
+      # "603abc" must NOT cast to 603 and ID-match the decoy; it falls back to title.
+      assert {:ok, match} = TorrentMatcher.find_match(info)
+      assert match.media_item.id == target.id
+      refute match.match_reason =~ "ID-matched"
     end
 
     test "non-numeric tvdb external_id does not crash and falls back to title" do

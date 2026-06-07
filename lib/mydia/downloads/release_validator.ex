@@ -109,13 +109,27 @@ defmodule Mydia.Downloads.ReleaseValidator do
   @suspicious_extensions ~w(.exe .scr .bat .cmd .com .msi .vbs .js .jar .pif)
 
   defp suspicious_extension?(name) do
-    ext =
-      name
-      |> String.trim()
+    trimmed = String.trim(name)
+
+    # Check the final extension of both the raw name AND a tag-stripped form.
+    # Public indexers mask a malware extension behind a trailing site tag
+    # (e.g. "From.S04E05.1080p.WEB.h264-ETHEL.exe[tracker.org]"), where the raw
+    # extension is ".org]" and the real ".exe" only surfaces once the tag is
+    # removed. Checking the stripped form closes that bypass.
+    [trimmed, strip_trailing_tags(trimmed)]
+    |> Enum.any?(fn candidate ->
+      candidate
       |> Path.extname()
       |> String.downcase()
+      |> Kernel.in(@suspicious_extensions)
+    end)
+  end
 
-    ext in @suspicious_extensions
+  # Strip one or more trailing bracket tags ([...], 【...】, {...}) from a name.
+  defp strip_trailing_tags(name) do
+    name
+    |> String.replace(~r/(?:\s*(?:\[[^\]]*\]|【[^】]*】|\{[^}]*\}))+\s*$/u, "")
+    |> String.trim()
   end
 
   # Detects hashed releases with long hex strings in brackets
