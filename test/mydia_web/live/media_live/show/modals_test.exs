@@ -49,4 +49,43 @@ defmodule MydiaWeb.MediaLive.Show.ModalsTest do
       assert html =~ "Re-identify on TheTVDB"
     end
   end
+
+  describe "file_delete_confirm_modal/1" do
+    defp file_to_delete do
+      %Mydia.Library.MediaFile{
+        relative_path: "Movie (2020)/movie.mkv",
+        size: 1_500_000_000,
+        library_path: %Mydia.Settings.LibraryPath{path: "/movies"}
+      }
+    end
+
+    test "defaults to deleting the file from disk" do
+      html =
+        render_component(&Modals.file_delete_confirm_modal/1,
+          file_to_delete: file_to_delete(),
+          delete_file_from_disk: true
+        )
+
+      # The "delete from disk" radio is pre-selected.
+      assert html =~ ~r/value="true"[^>]*checked/
+      refute html =~ ~r/value="false"[^>]*checked/
+      # Button reflects the destructive choice.
+      assert html =~ "Delete File"
+      assert html =~ ~s(phx-change="toggle_file_delete_from_disk")
+      # The old, now-inaccurate copy is gone.
+      refute html =~ "will remain on disk"
+    end
+
+    test "reflects the keep-on-disk choice when toggled off" do
+      html =
+        render_component(&Modals.file_delete_confirm_modal/1,
+          file_to_delete: file_to_delete(),
+          delete_file_from_disk: false
+        )
+
+      assert html =~ ~r/value="false"[^>]*checked/
+      refute html =~ ~r/value="true"[^>]*checked/
+      assert html =~ "Remove from Library"
+    end
+  end
 end

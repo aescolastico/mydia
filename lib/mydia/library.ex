@@ -522,11 +522,36 @@ defmodule Mydia.Library do
   end
 
   @doc """
-  Deletes a media file.
+  Deletes a media file record, optionally removing the file from disk.
+
+  When `delete_files: true`, the physical file (and its NFO sidecar) is removed
+  from disk before the database record is deleted. The database record is always
+  deleted when the record delete succeeds; a disk-removal failure is reported via
+  `{:ok, media_file, :file_delete_failed}` rather than aborting the record delete.
+
+  When `delete_files: false` (the default), only the database record is removed
+  and the file is left on disk. This preserves the original arity-1 behavior for
+  existing callers.
   """
-  @spec delete_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
-  def delete_media_file(%MediaFile{} = media_file) do
-    Repo.delete(media_file)
+  @spec delete_media_file(MediaFile.t(), keyword()) ::
+          {:ok, MediaFile.t()}
+          | {:ok, MediaFile.t(), :file_delete_failed}
+          | {:error, Ecto.Changeset.t()}
+  def delete_media_file(%MediaFile{} = media_file, opts \\ []) do
+    file_result =
+      if Keyword.get(opts, :delete_files, false) do
+        media_file
+        |> Repo.preload(:library_path)
+        |> delete_media_file_from_disk()
+      else
+        :ok
+      end
+
+    case {Repo.delete(media_file), file_result} do
+      {{:ok, deleted}, :ok} -> {:ok, deleted}
+      {{:ok, deleted}, {:error, _reason}} -> {:ok, deleted, :file_delete_failed}
+      {{:error, changeset}, _} -> {:error, changeset}
+    end
   end
 
   @doc """
