@@ -390,10 +390,10 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # anything else runs. This is the enforcement point for the validator: it only
   # *detects* bad releases, so without this stage a flagged release (e.g. a
   # malware torrent named "...h264-ETHEL.exe") still flows through scoring and
-  # can be selected and grabbed. The validator is otherwise consulted deep inside
-  # TorrentParser.parse, where the title-mismatch check discards its error and
-  # keeps the release. Reject here so a suspicious release never reaches a
-  # download client.
+  # can be selected and grabbed. The title-mismatch check below
+  # (parse_and_compare/2) parses with ReleaseParser and does not validate, so
+  # this stage is the sole validation gate for ranking. Reject here so a
+  # suspicious release never reaches a download client.
   defp reject_invalid_releases(results) do
     Enum.filter(results, fn result ->
       case ReleaseValidator.validate_release(result.title) do

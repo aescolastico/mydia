@@ -1599,7 +1599,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     test "rejects results where parsed title doesn't match expected title" do
       # Real-world bug: searching for "Fallout S01E04" returned
       # "Claws S01E04 Fallout 1080p..." because "Fallout" is the episode title,
-      # not the show title. TorrentParser extracts "Claws" as the show title.
+      # not the show title. ReleaseParser extracts "Claws" as the show title.
       results = [
         build_result(%{
           title: "Claws S01E04 Fallout 1080p AMZN WEB-DL DDP 5.1 H 264-ViSUM",

@@ -37,11 +37,29 @@ defmodule Mydia.Downloads.ReleaseIntake do
   """
   @spec parse_release(String.t()) :: {:ok, ParsedFileInfo.t()} | {:error, atom()}
   def parse_release(name) when is_binary(name) do
+    # Validate the ORIGINAL name first — the validator detects hashed releases by
+    # hex strings in brackets, so cleaning must not run before it.
     with {:ok, validated} <- ReleaseValidator.validate_release(name) do
       validated
+      |> clean_torrent_name()
       |> ReleaseParser.parse()
       |> classify_parse_result()
     end
+  end
+
+  # Strip torrent-specific noise the file-oriented ReleaseParser does not handle:
+  # tracker-site bracket tags ([47BT], [Ex-torrenty.org], [bitsearch.to]), CJK
+  # bracket blocks (【...】), and CJK season markers (第6季, 第四季). Without this
+  # these tokens bleed into the parsed title and degrade matching for releases
+  # from CJK / private-tracker sources. Ported from the retired TorrentParser.
+  defp clean_torrent_name(name) do
+    name
+    |> String.replace(~r/【[^】]*】\s*/u, "")
+    |> String.replace(~r/\[[^\]]+\]\s*/u, "")
+    |> String.replace(~r/\{[^\}]+\}\s*/u, "")
+    |> String.replace(~r/第\d+季\s*/u, "")
+    |> String.replace(~r/第[一二三四五六七八九十]+季\s*/u, "")
+    |> String.trim()
   end
 
   defp classify_parse_result(%ParsedFileInfo{type: :unknown} = info) do
