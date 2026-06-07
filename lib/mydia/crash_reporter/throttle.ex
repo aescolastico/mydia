@@ -17,6 +17,8 @@ defmodule Mydia.CrashReporter.Throttle do
   @window_ms 60_000
   @max 10
 
+  defstruct count: 0, window_start: nil, window_ms: @window_ms, max: @max
+
   # Client API
 
   def child_spec(opts) do
@@ -37,13 +39,19 @@ defmodule Mydia.CrashReporter.Throttle do
   @spec allow?(GenServer.server()) :: boolean()
   def allow?(server \\ __MODULE__) do
     GenServer.call(server, :allow)
+  catch
+    # Tower runs report_event/1 in the crashing process. If the Throttle is
+    # unavailable (not yet started, restarting), fail open rather than letting
+    # the GenServer.call exit propagate and amplify the failure: losing a crash
+    # report is worse than skipping the rate limit for it.
+    :exit, _ -> true
   end
 
   # Server callbacks
 
   @impl true
   def init(opts) do
-    state = %{
+    state = %__MODULE__{
       count: 0,
       window_start: System.monotonic_time(:millisecond),
       window_ms: Keyword.get(opts, :window_ms, @window_ms),

@@ -24,12 +24,14 @@ defmodule Mydia.CrashReporter.ThrottleTest do
   end
 
   test "resets and allows again after the window elapses" do
-    t = start_throttle(window_ms: 30, max: 2)
+    t = start_throttle(window_ms: 50, max: 2)
     assert Throttle.allow?(t)
     assert Throttle.allow?(t)
     refute Throttle.allow?(t)
 
-    Process.sleep(45)
+    # Comfortably past the 50ms window so a loaded CI scheduler can't return
+    # from sleep before the window has actually elapsed.
+    Process.sleep(120)
 
     assert Throttle.allow?(t)
   end
@@ -39,7 +41,10 @@ defmodule Mydia.CrashReporter.ThrottleTest do
 
     grants =
       1..50
-      |> Task.async_stream(fn _ -> Throttle.allow?(t) end, max_concurrency: 20)
+      |> Task.async_stream(fn _ -> Throttle.allow?(t) end,
+        max_concurrency: 20,
+        timeout: :infinity
+      )
       |> Enum.count(fn {:ok, allowed} -> allowed end)
 
     assert grants == 10

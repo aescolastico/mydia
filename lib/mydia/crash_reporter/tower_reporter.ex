@@ -81,14 +81,9 @@ defmodule Mydia.CrashReporter.TowerReporter do
 
   defp top_frame([{module, function, arity_or_args, location} | _]) do
     arity = if is_list(arity_or_args), do: length(arity_or_args), else: arity_or_args
-    file = location |> Keyword.get(:file) |> normalize_file()
+    file = location |> Keyword.get(:file) |> CrashReporter.format_file()
     {file, Keyword.get(location, :line), "#{function}/#{arity}", inspect(module)}
   end
 
   defp top_frame(_), do: {nil, nil, nil, nil}
-
-  defp normalize_file(nil), do: nil
-  defp normalize_file(file) when is_binary(file), do: file
-  defp normalize_file(file) when is_list(file), do: to_string(file)
-  defp normalize_file(file), do: inspect(file)
 end

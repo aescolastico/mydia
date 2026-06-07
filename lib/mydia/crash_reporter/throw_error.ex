@@ -8,5 +8,6 @@ defmodule Mydia.CrashReporter.ThrowError do
   defexception [:value]
 
   @impl Exception
-  def message(%__MODULE__{value: value}), do: "(throw) " <> inspect(value)
+  def message(%__MODULE__{value: value}),
+    do: "(throw) " <> inspect(value, limit: 50, printable_limit: 4096)
 end

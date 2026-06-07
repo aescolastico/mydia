@@ -39,7 +39,12 @@ defmodule Mydia.CrashReporter.TowerReporterTest do
   ]
 
   test "an :error event is reported with the exception type, message, and crash site" do
-    event(kind: :error, reason: %RuntimeError{message: "boom"}, stacktrace: @synthetic_stack)
+    event(
+      kind: :error,
+      reason: %RuntimeError{message: "boom"},
+      stacktrace: @synthetic_stack,
+      metadata: %{request_id: "req-abc"}
+    )
     |> TowerReporter.report_event()
 
     report = wait_for_report()
@@ -49,6 +54,8 @@ defmodule Mydia.CrashReporter.TowerReporterTest do
     assert report.metadata.file == "lib/mydia/synthetic.ex"
     assert report.metadata.line == 42
     assert report.metadata.function == "boom/1"
+    assert report.metadata.module == "Mydia.Synthetic"
+    assert report.metadata.request_id == "req-abc"
   end
 
   test "an :exit event gets a distinct type and formatted message" do

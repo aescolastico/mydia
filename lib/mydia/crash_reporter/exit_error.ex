@@ -10,5 +10,6 @@ defmodule Mydia.CrashReporter.ExitError do
   defexception [:reason]
 
   @impl Exception
-  def message(%__MODULE__{reason: reason}), do: "(exit) " <> inspect(reason)
+  def message(%__MODULE__{reason: reason}),
+    do: "(exit) " <> inspect(reason, limit: 50, printable_limit: 4096)
 end
