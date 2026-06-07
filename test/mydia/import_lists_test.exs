@@ -330,7 +330,7 @@ defmodule Mydia.ImportListsTest do
       assert ImportLists.count_import_list_items(import_list, "pending") == 0
 
       # Now delete the media item
-      {:ok, _} = Mydia.Media.delete_media_item(media_item)
+      {:ok, _, _} = Mydia.Media.delete_media_item(media_item)
 
       # After deletion, the item should be treated as "pending" since media is gone
       assert ImportLists.count_import_list_items(import_list, "added") == 0

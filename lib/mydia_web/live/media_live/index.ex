@@ -339,7 +339,7 @@ defmodule MydiaWeb.MediaLive.Index do
     {:noreply,
      socket
      |> assign(:show_delete_modal, true)
-     |> assign(:delete_files, false)}
+     |> assign(:delete_files, true)}
   end
 
   def handle_event("cancel_delete", _params, socket) do
@@ -362,17 +362,26 @@ defmodule MydiaWeb.MediaLive.Index do
     delete_files = socket.assigns.delete_files
 
     case Media.delete_media_items(selected_ids, delete_files: delete_files) do
-      {:ok, count} ->
+      {:ok, count, error_count} ->
         message =
-          if delete_files do
-            "#{count} #{pluralize_items(count)} deleted successfully (including files)"
-          else
-            "#{count} #{pluralize_items(count)} removed from library (files preserved)"
+          cond do
+            error_count > 0 ->
+              "#{count} #{pluralize_items(count)} deleted, but #{error_count} " <>
+                "#{pluralize_files(error_count)} could not be removed from disk. " <>
+                "Check permissions and remove them manually."
+
+            delete_files ->
+              "#{count} #{pluralize_items(count)} deleted successfully (including files)"
+
+            true ->
+              "#{count} #{pluralize_items(count)} removed from library (files preserved)"
           end
+
+        flash_kind = if error_count > 0, do: :error, else: :info
 
         {:noreply,
          socket
-         |> put_flash(:info, message)
+         |> put_flash(flash_kind, message)
          |> assign(:selection_mode, false)
          |> assign(:selected_ids, MapSet.new())
          |> assign(:show_delete_modal, false)
@@ -890,6 +899,9 @@ defmodule MydiaWeb.MediaLive.Index do
 
   defp pluralize_items(1), do: "item"
   defp pluralize_items(_), do: "items"
+
+  defp pluralize_files(1), do: "file"
+  defp pluralize_files(_), do: "files"
 
   defp maybe_add_attr(attrs, _key, nil), do: attrs
   defp maybe_add_attr(attrs, _key, ""), do: attrs

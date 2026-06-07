@@ -321,7 +321,7 @@ defmodule Mydia.Media do
   records and preserves files on disk.
   """
   @spec delete_media_item(MediaItem.t(), keyword()) ::
-          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, MediaItem.t(), non_neg_integer()} | {:error, Ecto.Changeset.t()}
   def delete_media_item(%MediaItem{} = media_item, opts \\ []) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
@@ -332,40 +332,47 @@ defmodule Mydia.Media do
     )
 
     # If we need to delete files, load all media files first
-    # (including files from episodes for TV shows)
-    if delete_files do
-      # Load media item with all media files (both direct and through episodes)
-      media_item_with_files =
-        MediaItem
-        |> where([m], m.id == ^media_item.id)
-        |> preload([:media_files, episodes: :media_files])
-        |> Repo.one!()
+    # (including files from episodes for TV shows). error_count is the number
+    # of files that could not be removed from disk; callers surface it to the
+    # user. When delete_files is false, no files are touched and it is 0.
+    error_count =
+      if delete_files do
+        # Load media item with all media files (both direct and through episodes)
+        media_item_with_files =
+          MediaItem
+          |> where([m], m.id == ^media_item.id)
+          |> preload(media_files: :library_path, episodes: [media_files: :library_path])
+          |> Repo.one!()
 
-      # Collect all media files (movie files + episode files)
-      all_media_files =
-        media_item_with_files.media_files ++
-          Enum.flat_map(media_item_with_files.episodes, & &1.media_files)
+        # Collect all media files (movie files + episode files)
+        all_media_files =
+          media_item_with_files.media_files ++
+            Enum.flat_map(media_item_with_files.episodes, & &1.media_files)
 
-      Logger.info("Attempting to delete physical files",
-        media_item_id: media_item.id,
-        file_count: length(all_media_files),
-        file_paths: Enum.map(all_media_files, & &1.path)
-      )
+        Logger.info("Attempting to delete physical files",
+          media_item_id: media_item.id,
+          file_count: length(all_media_files),
+          file_paths: Enum.map(all_media_files, & &1.path)
+        )
 
-      # Delete physical files from disk
-      {:ok, success_count, error_count} =
-        Mydia.Library.delete_media_files_from_disk(all_media_files)
+        # Delete physical files from disk
+        {:ok, success_count, error_count} =
+          Mydia.Library.delete_media_files_from_disk(all_media_files)
 
-      Logger.info("Deleted #{success_count} files from disk (#{error_count} errors)",
-        media_item_id: media_item.id,
-        title: media_item.title
-      )
-    else
-      Logger.info("Skipping file deletion (delete_files=false)",
-        media_item_id: media_item.id,
-        title: media_item.title
-      )
-    end
+        Logger.info("Deleted #{success_count} files from disk (#{error_count} errors)",
+          media_item_id: media_item.id,
+          title: media_item.title
+        )
+
+        error_count
+      else
+        Logger.info("Skipping file deletion (delete_files=false)",
+          media_item_id: media_item.id,
+          title: media_item.title
+        )
+
+        0
+      end
 
     # Track event before deletion (we need the media_item data)
     actor_type = Keyword.get(opts, :actor_type, :system)
@@ -374,7 +381,10 @@ defmodule Mydia.Media do
     Events.media_item_removed(media_item, actor_type, actor_id)
 
     # Delete the media item (and cascade delete all related DB records)
-    Repo.delete(media_item)
+    case Repo.delete(media_item) do
+      {:ok, deleted} -> {:ok, deleted, error_count}
+      {:error, changeset} -> {:error, changeset}
+    end
   end
 
   @doc """
@@ -482,42 +492,59 @@ defmodule Mydia.Media do
   before removing the database records. When false (default), only removes database
   records and preserves files on disk.
   """
-  @spec delete_media_items([binary()], keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @spec delete_media_items([binary()], keyword()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
   def delete_media_items(ids, opts \\ []) when is_list(ids) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
-    Repo.transaction(fn ->
-      # If we need to delete files, load all media files first
-      if delete_files do
-        # Load all media items with their files
-        media_items =
+    result =
+      Repo.transaction(fn ->
+        # If we need to delete files, load all media files first. error_count is
+        # the number of files that could not be removed from disk (0 when
+        # delete_files is false); the caller surfaces it to the user.
+        error_count =
+          if delete_files do
+            # Load all media items with their files
+            media_items =
+              MediaItem
+              |> where([m], m.id in ^ids)
+              |> preload(media_files: :library_path, episodes: [media_files: :library_path])
+              |> Repo.all()
+
+            # Collect all media files from all items
+            all_media_files =
+              Enum.flat_map(media_items, fn item ->
+                item.media_files ++ Enum.flat_map(item.episodes, & &1.media_files)
+              end)
+
+            # Delete physical files from disk
+            {:ok, success_count, error_count} =
+              Mydia.Library.delete_media_files_from_disk(all_media_files)
+
+            Logger.info(
+              "Batch deleted #{success_count} files from disk (#{error_count} errors)",
+              media_item_count: length(media_items)
+            )
+
+            error_count
+          else
+            0
+          end
+
+        # Delete the media items (and cascade delete all related DB records)
+        count =
           MediaItem
           |> where([m], m.id in ^ids)
-          |> preload([:media_files, episodes: :media_files])
-          |> Repo.all()
+          |> Repo.delete_all()
+          |> elem(0)
 
-        # Collect all media files from all items
-        all_media_files =
-          Enum.flat_map(media_items, fn item ->
-            item.media_files ++ Enum.flat_map(item.episodes, & &1.media_files)
-          end)
+        {count, error_count}
+      end)
 
-        # Delete physical files from disk
-        {:ok, success_count, error_count} =
-          Mydia.Library.delete_media_files_from_disk(all_media_files)
-
-        Logger.info(
-          "Batch deleted #{success_count} files from disk (#{error_count} errors)",
-          media_item_count: length(media_items)
-        )
-      end
-
-      # Delete the media items (and cascade delete all related DB records)
-      MediaItem
-      |> where([m], m.id in ^ids)
-      |> Repo.delete_all()
-      |> elem(0)
-    end)
+    case result do
+      {:ok, {count, error_count}} -> {:ok, count, error_count}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """

@@ -323,4 +323,21 @@ defmodule MydiaWeb.MediaLive.IndexTest do
              )
     end
   end
+
+  describe "batch delete defaults" do
+    defp stub_socket do
+      %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: %{}},
+        private: %{live_temp: %{}}
+      }
+    end
+
+    test "show_delete_confirmation opens the modal defaulting to deleting files" do
+      {:noreply, socket} =
+        MydiaWeb.MediaLive.Index.handle_event("show_delete_confirmation", %{}, stub_socket())
+
+      assert socket.assigns.show_delete_modal == true
+      assert socket.assigns.delete_files == true
+    end
+  end
 end
