@@ -14,6 +14,7 @@ defmodule Mydia.CrashReporter.TowerReporterTest do
     # so it has to come from the env var, not a sandboxed DB setting. Point the
     # relay at an unreachable address so the background queue processor can never
     # POST to the real relay during the test.
+    original_enabled = System.get_env("CRASH_REPORTING_ENABLED")
     System.put_env("CRASH_REPORTING_ENABLED", "true")
     original_relay = System.get_env("METADATA_RELAY_URL")
     System.put_env("METADATA_RELAY_URL", "http://127.0.0.1:1")
@@ -21,7 +22,11 @@ defmodule Mydia.CrashReporter.TowerReporterTest do
 
     on_exit(fn ->
       Application.delete_env(:mydia, :crash_reporter_throttle)
-      System.delete_env("CRASH_REPORTING_ENABLED")
+
+      case original_enabled do
+        nil -> System.delete_env("CRASH_REPORTING_ENABLED")
+        val -> System.put_env("CRASH_REPORTING_ENABLED", val)
+      end
 
       case original_relay do
         nil -> System.delete_env("METADATA_RELAY_URL")

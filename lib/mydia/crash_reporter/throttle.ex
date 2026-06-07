@@ -66,7 +66,7 @@ defmodule Mydia.CrashReporter.Throttle do
     now = System.monotonic_time(:millisecond)
 
     state =
-      if now - state.window_start > state.window_ms do
+      if now - state.window_start >= state.window_ms do
         %{state | count: 0, window_start: now}
       else
         state
