@@ -195,6 +195,43 @@ defmodule MetadataRelay.CrashReportTest do
       assert Enum.any?(errors, &(&1.source_line =~ "library_scanner.ex:248"))
     end
 
+    test "client stacktrace module is folded into source_function so same-named functions in different modules stay distinct" do
+      assert report(%{
+               "error_type" => "RuntimeError",
+               "error_message" => "boom",
+               "stacktrace" => [
+                 %{
+                   "file" => "lib/mydia/a.ex",
+                   "line" => 10,
+                   "function" => "handle/1",
+                   "module" => "Elixir.Mydia.A"
+                 }
+               ]
+             }).status == 201
+
+      assert report(%{
+               "error_type" => "RuntimeError",
+               "error_message" => "boom",
+               "stacktrace" => [
+                 %{
+                   "file" => "lib/mydia/b.ex",
+                   "line" => 10,
+                   "function" => "handle/1",
+                   "module" => "Elixir.Mydia.B"
+                 }
+               ]
+             }).status == 201
+
+      errors = stored_errors()
+
+      assert length(errors) == 2,
+             "expected two distinct errors, got #{length(errors)}: " <>
+               inspect(Enum.map(errors, & &1.source_function))
+
+      assert Enum.any?(errors, &(&1.source_function =~ "Mydia.A.handle"))
+      assert Enum.any?(errors, &(&1.source_function =~ "Mydia.B.handle"))
+    end
+
     test "the reported error_type is preserved as the error kind" do
       assert report(%{
                "error_type" => "CaseClauseError",

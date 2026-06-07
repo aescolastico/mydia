@@ -739,12 +739,8 @@ defmodule MetadataRelay.Router do
 
   defp metadata_stack_frame(_), do: nil
 
-  defp parse_stacktrace_entry(%{"file" => file, "line" => line, "function" => function}) do
-    crash_frame(nil, function, file, line)
-  end
-
-  defp parse_stacktrace_entry(%{"file" => file, "line" => line}) do
-    crash_frame(nil, nil, file, line)
+  defp parse_stacktrace_entry(%{"file" => file, "line" => line} = entry) do
+    crash_frame(Map.get(entry, "module"), Map.get(entry, "function"), file, line)
   end
 
   defp parse_stacktrace_entry(_), do: nil
