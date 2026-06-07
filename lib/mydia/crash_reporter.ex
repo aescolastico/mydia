@@ -272,10 +272,14 @@ defmodule Mydia.CrashReporter do
     end)
   end
 
-  defp format_file(nil), do: nil
-  defp format_file(file) when is_binary(file), do: file
+  @doc false
+  # Normalizes a stacktrace location file (charlist, binary, or nil) to a
+  # string. Public so Mydia.CrashReporter.TowerReporter reuses the same
+  # charlist handling instead of duplicating it.
+  def format_file(nil), do: nil
+  def format_file(file) when is_binary(file), do: file
 
-  defp format_file(file) when is_list(file) do
+  def format_file(file) when is_list(file) do
     # Try to convert charlist to string
     case :unicode.characters_to_binary(file) do
       {:error, _, _} -> inspect(file)
@@ -284,7 +288,7 @@ defmodule Mydia.CrashReporter do
     end
   end
 
-  defp format_file(file), do: inspect(file)
+  def format_file(file), do: inspect(file)
 
   defp get_current_stacktrace do
     try do

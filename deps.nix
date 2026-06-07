@@ -632,19 +632,6 @@ let
       beamDeps = [ cc_precompiler elixir_make fine ];
     };
 
-    logger_backends = buildMix rec {
-      name = "logger_backends";
-      version = "1.0.0";
-
-      src = fetchHex {
-        pkg = "logger_backends";
-        version = "${version}";
-        sha256 = "1faceb3e7ec3ef66a8f5746c5afd020e63996df6fd4eb8cdb789e5665ae6c9ce";
-      };
-
-      beamDeps = [];
-    };
-
     luerl = buildRebar3 rec {
       name = "luerl";
       version = "1.5.0";
@@ -1126,6 +1113,19 @@ let
       beamDeps = [];
     };
 
+    tower = buildMix rec {
+      name = "tower";
+      version = "0.8.8";
+
+      src = fetchHex {
+        pkg = "tower";
+        version = "${version}";
+        sha256 = "5181dff69126283b4b2fb259bd1fcbd221d6555078817bc894712e34ac3cd572";
+      };
+
+      beamDeps = [ bandit telemetry uuid_v7 ];
+    };
+
     tzdata = buildMix rec {
       name = "tzdata";
       version = "1.1.3";
@@ -1176,6 +1176,19 @@ let
       };
 
       beamDeps = [];
+    };
+
+    uuid_v7 = buildMix rec {
+      name = "uuid_v7";
+      version = "0.6.0";
+
+      src = fetchHex {
+        pkg = "uuid_v7";
+        version = "${version}";
+        sha256 = "1dc401134e61da847a7b2a3b28d2593893f457b9f2704893b1ba3ff7946ce91f";
+      };
+
+      beamDeps = [ ecto ];
     };
 
     wallaby = buildMix rec {
