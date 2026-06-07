@@ -74,11 +74,27 @@ defmodule Mydia.Downloads.TorrentMatcher do
   """
 
   alias Mydia.Downloads.Structs.TorrentMatchResult
+  alias Mydia.Library.ReleaseParser
+  alias Mydia.Library.ReleaseParser.TargetContext
   alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Media
   alias Mydia.Metadata.Structs.MediaMetadata
 
   require Logger
+
+  # --- TargetContext binding tuning ---
+  # Max candidates re-parsed bound when the unbound title is confident enough
+  # to trust a shortlist.
+  @binding_shortlist_k 5
+  # When the best unbound title score is below this, the shortlist is widened to
+  # every candidate — a weak unbound title (tracker prefix, CJK marker) may have
+  # buried the correct candidate below the top-K cut.
+  @binding_low_confidence 0.5
+  # Demoted (wrong-show) candidates are capped here: at/below the suggestion floor
+  # and below the match threshold, so they surface as suggestions, never matches.
+  @suggestion_floor 0.3
+  # binding_confidence contributes only a small tiebreak nudge among clean survivors.
+  @binding_tiebreak_weight 0.05
 
   @type match_result :: TorrentMatchResult.t()
 
@@ -213,6 +229,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_movie_confidence(movie, torrent_info)
         {movie, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info)
       |> Enum.filter(fn {_movie, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_movie, confidence} -> confidence end, :desc)
 
@@ -361,6 +378,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_tv_show_confidence(show, torrent_info)
         {show, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info)
       |> Enum.filter(fn {_show, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_show, confidence} -> confidence end, :desc)
 
@@ -447,6 +465,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_tv_show_confidence(show, torrent_info)
         {show, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info)
       |> Enum.filter(fn {_show, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_show, confidence} -> confidence end, :desc)
 
@@ -837,6 +856,72 @@ defmodule Mydia.Downloads.TorrentMatcher do
     |> length()
   end
 
+  ## Private Functions - TargetContext binding
+
+  # Refine base title-similarity scores by re-parsing each shortlisted candidate
+  # bound to its TargetContext. Binding signals act as gates: a wrong-show parse
+  # is demoted to suggestion-only (never a confident match), an implausible season
+  # is penalized, and binding_confidence breaks ties among clean survivors.
+  #
+  # Only runs for ParsedFileInfo inputs carrying the original release name (the
+  # re-parse needs it). Legacy plain-map inputs return their scores unchanged, so
+  # the matcher's existing behavior — and its characterization suite — is preserved.
+  defp refine_scores_with_binding(scored, %ParsedFileInfo{original_filename: name})
+       when is_binary(name) and name != "" do
+    shortlist_ids =
+      scored
+      |> binding_shortlist()
+      |> MapSet.new(fn {item, _score} -> item.id end)
+
+    Enum.map(scored, fn {item, base} = pair ->
+      if MapSet.member?(shortlist_ids, item.id) do
+        {item, refine_with_binding(item, name, base)}
+      else
+        pair
+      end
+    end)
+  end
+
+  defp refine_scores_with_binding(scored, _torrent_info), do: scored
+
+  defp binding_shortlist(scored) do
+    sorted = Enum.sort_by(scored, fn {_item, base} -> base end, :desc)
+
+    best =
+      case sorted do
+        [{_item, base} | _] -> base
+        [] -> 0.0
+      end
+
+    if best < @binding_low_confidence do
+      # Weak unbound title — don't trust the shortlist; bind every candidate.
+      sorted
+    else
+      Enum.take(sorted, @binding_shortlist_k)
+    end
+  end
+
+  defp refine_with_binding(item, release_name, base) do
+    target = TargetContext.from_media_item(item)
+    bound = ReleaseParser.parse(release_name, target: target)
+    flags = bound.engine_flags || %{}
+
+    # Note on :season_out_of_range — deliberately NOT used here. That flag fires
+    # when the release's season is absent from the candidate's known seasons,
+    # which is the right suspicion for *library import* but inverted for
+    # *downloads*: we fetch seasons we don't have yet (next season or a missing
+    # middle season), so an out-of-range season is the normal case, not a
+    # mismatch. Episode existence is already enforced by find_episode/2.
+    if Map.get(flags, :binding_suspect) || Map.get(flags, :parsed_title_unbound) do
+      # Wrong-show guard: the release's own title doesn't bind to this candidate.
+      # Demote to suggestion-only so it never clears the match threshold.
+      min(base, @suggestion_floor)
+    else
+      binding = (bound.field_confidence || %{})[:binding] || 0.0
+      min(1.0, base + binding * @binding_tiebreak_weight)
+    end
+  end
+
   ## Private Functions - ParsedFileInfo accessors
 
   # Classify a parsed release into the matcher's internal branch. Accepts both
@@ -893,25 +978,20 @@ defmodule Mydia.Downloads.TorrentMatcher do
 
   ## Private Functions - Library Queries
 
-  defp list_movies(monitored_only) do
-    opts =
-      if monitored_only do
-        [type: "movie", monitored: true]
-      else
-        [type: "movie"]
-      end
+  # :episodes is preloaded so TargetContext.from_media_item/1 (used by the
+  # binding step) does not raise and can read known seasons. :metadata is a
+  # custom Ecto field type loaded with the row, so it needs no preload.
+  @candidate_preloads [:episodes]
 
+  defp list_movies(monitored_only) do
+    base = [type: "movie", preload: @candidate_preloads]
+    opts = if monitored_only, do: [{:monitored, true} | base], else: base
     Media.list_media_items(opts)
   end
 
   defp list_tv_shows(monitored_only) do
-    opts =
-      if monitored_only do
-        [type: "tv_show", monitored: true]
-      else
-        [type: "tv_show"]
-      end
-
+    base = [type: "tv_show", preload: @candidate_preloads]
+    opts = if monitored_only, do: [{:monitored, true} | base], else: base
     Media.list_media_items(opts)
   end
 end

@@ -24,6 +24,7 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
 
       info =
         parsed(
+          original_filename: "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv",
           type: :movie,
           title: "The Matrix",
           year: 1999,
@@ -43,7 +44,14 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
     end
 
     test "single episode (episodes list) resolves the episode", %{show: show, episode: episode} do
-      info = parsed(type: :tv_show, title: "From", season: 4, episodes: [7])
+      info =
+        parsed(
+          original_filename: "From.S04E07.1080p.WEB.h264-GROUP.mkv",
+          type: :tv_show,
+          title: "From",
+          season: 4,
+          episodes: [7]
+        )
 
       assert {:ok, match} = TorrentMatcher.find_match(info)
       assert match.media_item.id == show.id
@@ -51,7 +59,14 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
     end
 
     test "season pack (season set, empty episodes) matches show with no episode", %{show: show} do
-      info = parsed(type: :tv_show, title: "From", season: 4, episodes: nil)
+      info =
+        parsed(
+          original_filename: "From.S04.1080p.WEB-DL.x265-GROUP",
+          type: :tv_show,
+          title: "From",
+          season: 4,
+          episodes: nil
+        )
 
       assert {:ok, match} = TorrentMatcher.find_match(info)
       assert match.media_item.id == show.id
@@ -117,6 +132,7 @@ defmodule Mydia.Downloads.TorrentMatcherParsedInfoTest do
 
       info =
         parsed(
+          original_filename: "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv",
           type: :movie,
           title: "The Matrix",
           year: 1999,
