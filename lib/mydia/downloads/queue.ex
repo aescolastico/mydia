@@ -453,10 +453,10 @@ defmodule Mydia.Downloads.Queue do
   end
 
   def refresh_match_suggestions(%Download{} = download) do
-    alias Mydia.Downloads.{TorrentParser, TorrentMatcher}
+    alias Mydia.Downloads.{ReleaseIntake, TorrentMatcher}
 
     suggestions =
-      case TorrentParser.parse(download.title) do
+      case ReleaseIntake.parse_release(download.title) do
         {:ok, parsed_info} ->
           try do
             TorrentMatcher.find_top_candidates(parsed_info,
