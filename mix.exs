@@ -222,9 +222,9 @@ defmodule Mydia.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:error_tracker, "~> 0.5"},
-      # Logger backends were extracted from core Elixir in 1.15; required for
-      # Mydia.CrashReporter.LoggerBackend to be installed as a :gen_event handler.
-      {:logger_backends, "~> 1.0"},
+      # Vendor-neutral exception tracker; captures genuine exceptions/exits/throws
+      # (Phoenix, Bandit, Oban, OTP crashes) and feeds Mydia.CrashReporter.TowerReporter.
+      {:tower, "~> 0.8"},
 
       # Core
       {:gettext, "~> 0.26"},

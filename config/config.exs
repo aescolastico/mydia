@@ -430,6 +430,15 @@ config :mydia, Mydia.CrashReporter.Queue,
   # Maximum total retry duration: 24 hours
   max_retry_duration: 24 * 60 * 60
 
+# Configure Tower to capture genuine crashes only. `log_level: :none` disables
+# Tower's plain-Logger-message capture entirely (it gates only the :message
+# branch; crash capture via :crash_reason is unaffected), so routine
+# Logger.error/warning calls are never reported to the relay.
+config :tower,
+  reporters: [Mydia.CrashReporter.TowerReporter],
+  log_level: :none,
+  logger_metadata: [:request_id]
+
 # Configure downloads and transcoding
 config :mydia, :downloads,
   transcode_cache_dir: "priv/data/transcodes",
