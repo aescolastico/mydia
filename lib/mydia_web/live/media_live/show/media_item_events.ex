@@ -15,7 +15,7 @@ defmodule MydiaWeb.MediaLive.Show.MediaItemEvents do
     {:noreply,
      socket
      |> assign(:show_delete_confirm, true)
-     |> assign(:delete_files, false)}
+     |> assign(:delete_files, true)}
   end
 
   def hide_delete_confirm(_params, socket) do
@@ -43,7 +43,7 @@ defmodule MydiaWeb.MediaLive.Show.MediaItemEvents do
       )
 
       case Media.delete_media_item(media_item, delete_files: delete_files) do
-        {:ok, _} ->
+        {:ok, _item, 0} ->
           message =
             if delete_files do
               "#{media_item.title} deleted successfully (including files)"
@@ -56,6 +56,16 @@ defmodule MydiaWeb.MediaLive.Show.MediaItemEvents do
            |> put_flash(:info, message)
            |> push_navigate(to: media_type_path(media_item.type))}
 
+        {:ok, _item, error_count} ->
+          {:noreply,
+           socket
+           |> put_flash(
+             :error,
+             "#{media_item.title} removed, but #{error_count} #{pluralize_files(error_count)} " <>
+               "could not be deleted from disk. Check permissions and remove them manually."
+           )
+           |> push_navigate(to: media_type_path(media_item.type))}
+
         {:error, _changeset} ->
           {:noreply,
            socket
@@ -66,4 +76,7 @@ defmodule MydiaWeb.MediaLive.Show.MediaItemEvents do
       {:unauthorized, socket} -> {:noreply, socket}
     end
   end
+
+  defp pluralize_files(1), do: "file"
+  defp pluralize_files(_), do: "files"
 end

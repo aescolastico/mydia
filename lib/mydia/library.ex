@@ -522,11 +522,46 @@ defmodule Mydia.Library do
   end
 
   @doc """
-  Deletes a media file.
+  Deletes a media file record, optionally removing the file from disk.
+
+  When `delete_files: true`, the database record is deleted first and only then
+  is the physical file (and its NFO sidecar) removed from disk. This ordering is
+  deliberate: if the record delete fails the disk is never touched, so nothing is
+  lost; and a disk-removal failure after a successful record delete is reported
+  via `{:ok, media_file, :file_delete_failed}` (an orphaned file is recoverable,
+  an orphaned record pointing at a missing file is not). The file path is
+  resolved from the in-memory struct, which is preloaded before the delete so it
+  stays available afterwards.
+
+  When `delete_files: false` (the default), only the database record is removed
+  and the file is left on disk. This preserves the original arity-1 behavior for
+  existing callers.
   """
-  @spec delete_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
-  def delete_media_file(%MediaFile{} = media_file) do
-    Repo.delete(media_file)
+  @spec delete_media_file(MediaFile.t(), keyword()) ::
+          {:ok, MediaFile.t()}
+          | {:ok, MediaFile.t(), :file_delete_failed}
+          | {:error, Ecto.Changeset.t()}
+  def delete_media_file(%MediaFile{} = media_file, opts \\ []) do
+    delete_files = Keyword.get(opts, :delete_files, false)
+
+    # Preload the path source before deleting the row so the file is still
+    # resolvable from the in-memory struct after the record is gone.
+    media_file =
+      if delete_files, do: Repo.preload(media_file, :library_path), else: media_file
+
+    case Repo.delete(media_file) do
+      {:ok, deleted} when delete_files ->
+        case delete_media_file_from_disk(media_file) do
+          :ok -> {:ok, deleted}
+          {:error, _reason} -> {:ok, deleted, :file_delete_failed}
+        end
+
+      {:ok, deleted} ->
+        {:ok, deleted}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 
   @doc """

@@ -326,7 +326,8 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
     {:noreply,
      socket
      |> assign(:show_file_delete_confirm, true)
-     |> assign(:file_to_delete, file)}
+     |> assign(:file_to_delete, file)
+     |> assign(:delete_file_from_disk, true)}
   end
 
   def hide_file_delete_confirm(_params, socket) do
@@ -336,30 +337,49 @@ defmodule MydiaWeb.MediaLive.Show.FileEvents do
      |> assign(:file_to_delete, nil)}
   end
 
+  def toggle_file_delete_from_disk(%{"delete_file_from_disk" => value}, socket) do
+    {:noreply, assign(socket, :delete_file_from_disk, value == "true")}
+  end
+
   def delete_media_file(_params, socket) do
     with :ok <- Authorization.authorize_delete_media(socket) do
       file = socket.assigns.file_to_delete
+      delete_files = socket.assigns.delete_file_from_disk
 
-      case Library.delete_media_file(file) do
+      socket =
+        socket
+        |> assign(:show_file_delete_confirm, false)
+        |> assign(:file_to_delete, nil)
+
+      case Library.delete_media_file(file, delete_files: delete_files) do
         {:ok, _} ->
           {:noreply,
            socket
            |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
-           |> assign(:show_file_delete_confirm, false)
-           |> assign(:file_to_delete, nil)
-           |> put_flash(:info, "Media file deleted successfully")}
+           |> put_flash(:info, delete_file_success_message(delete_files))}
 
-        {:error, _changeset} ->
+        {:ok, _, :file_delete_failed} ->
           {:noreply,
            socket
-           |> put_flash(:error, "Failed to delete media file")
-           |> assign(:show_file_delete_confirm, false)
-           |> assign(:file_to_delete, nil)}
+           |> assign(:media_item, load_media_item(socket.assigns.media_item.id))
+           |> put_flash(
+             :error,
+             "Removed the file record, but the file on disk could not be deleted. " <>
+               "Check the file permissions and remove it manually if needed."
+           )}
+
+        {:error, _changeset} ->
+          {:noreply, put_flash(socket, :error, "Failed to delete media file")}
       end
     else
       {:unauthorized, socket} -> {:noreply, socket}
     end
   end
+
+  defp delete_file_success_message(true), do: "Media file deleted, including the file on disk"
+
+  defp delete_file_success_message(false),
+    do: "Media file removed from library, file kept on disk"
 
   def show_file_details(%{"file-id" => file_id}, socket) do
     file = Library.get_media_file!(file_id)

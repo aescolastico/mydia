@@ -84,7 +84,7 @@ defmodule Mydia.MediaTest do
 
     test "delete_media_item/1 deletes the media item" do
       media_item = media_item_fixture()
-      assert {:ok, %MediaItem{}} = Media.delete_media_item(media_item)
+      assert {:ok, %MediaItem{}, 0} = Media.delete_media_item(media_item)
       assert_raise Ecto.NoResultsError, fn -> Media.get_media_item!(media_item.id) end
     end
 
@@ -1816,6 +1816,81 @@ defmodule Mydia.MediaTest do
       end)
 
       assert {:ok, _updated} = Mydia.Media.refresh_metadata(item, config)
+    end
+  end
+
+  describe "file deletion return shape" do
+    alias Mydia.Library
+    alias Mydia.Media.MediaItem
+
+    import Mydia.MediaFixtures
+    import Mydia.SettingsFixtures
+
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "mydia_media_del_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf(tmp) end)
+      %{library_path: library_path_fixture(%{path: tmp, type: "movies"})}
+    end
+
+    defp movie_with_file(lp, rel, contents) do
+      media_item = media_item_fixture(%{type: "movie"})
+      File.write!(Path.join(lp.path, rel), contents)
+
+      {:ok, _file} =
+        Library.create_scanned_media_file(%{
+          relative_path: rel,
+          library_path_id: lp.id,
+          media_item_id: media_item.id,
+          size: byte_size(contents)
+        })
+
+      media_item
+    end
+
+    test "delete_media_item/2 with delete_files: true reports zero errors on success", %{
+      library_path: lp
+    } do
+      item = movie_with_file(lp, "movie.mkv", "data")
+      abs = Path.join(lp.path, "movie.mkv")
+
+      assert {:ok, %MediaItem{}, 0} = Media.delete_media_item(item, delete_files: true)
+      refute File.exists?(abs)
+    end
+
+    test "delete_media_item/2 reports the error count when a file cannot be removed", %{
+      library_path: lp
+    } do
+      # A directory at the file path makes the on-disk removal fail.
+      media_item = media_item_fixture(%{type: "movie"})
+      File.mkdir_p!(Path.join(lp.path, "as_dir.mkv"))
+
+      {:ok, _file} =
+        Library.create_scanned_media_file(%{
+          relative_path: "as_dir.mkv",
+          library_path_id: lp.id,
+          media_item_id: media_item.id,
+          size: 1
+        })
+
+      assert {:ok, %MediaItem{}, 1} = Media.delete_media_item(media_item, delete_files: true)
+      assert_raise Ecto.NoResultsError, fn -> Media.get_media_item!(media_item.id) end
+    end
+
+    test "delete_media_items/2 returns count and error count", %{library_path: lp} do
+      item1 = movie_with_file(lp, "a.mkv", "data")
+      item2 = movie_with_file(lp, "b.mkv", "data")
+
+      assert {:ok, 2, 0} =
+               Media.delete_media_items([item1.id, item2.id], delete_files: true)
+    end
+
+    test "delete_media_items/2 with delete_files: false reports zero errors", %{library_path: lp} do
+      item = movie_with_file(lp, "keep.mkv", "data")
+      abs = Path.join(lp.path, "keep.mkv")
+
+      assert {:ok, 1, 0} = Media.delete_media_items([item.id])
+      assert File.exists?(abs)
     end
   end
 end

@@ -4,8 +4,81 @@ defmodule Mydia.LibraryTest do
   import Ecto.Query, only: [from: 2]
 
   alias Mydia.Library
+  alias Mydia.Library.MediaFile
 
   import Mydia.SettingsFixtures
+
+  describe "delete_media_file/2" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "mydia_del_test_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf(tmp) end)
+      %{library_path: library_path_fixture(%{path: tmp, type: "movies"})}
+    end
+
+    defp scanned_file(library_path, rel, contents) do
+      File.write!(Path.join(library_path.path, rel), contents)
+
+      {:ok, file} =
+        Library.create_scanned_media_file(%{
+          relative_path: rel,
+          library_path_id: library_path.id,
+          size: byte_size(contents)
+        })
+
+      Mydia.Repo.preload(file, :library_path)
+    end
+
+    test "with delete_files: true removes the file from disk and the record", %{
+      library_path: lp
+    } do
+      file = scanned_file(lp, "movie.mkv", "data")
+      abs = MediaFile.absolute_path(file)
+      assert File.exists?(abs)
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file, delete_files: true)
+      refute File.exists?(abs)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "with delete_files: false (default) keeps the file on disk", %{library_path: lp} do
+      file = scanned_file(lp, "keep.mkv", "data")
+      abs = MediaFile.absolute_path(file)
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file)
+      assert File.exists?(abs)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "reports file-removal failure but still deletes the record", %{library_path: lp} do
+      # A directory at the media path makes File.rm fail reliably regardless of
+      # which user the test runs as (a read-only dir would not stop root).
+      rel = "as_dir.mkv"
+      File.mkdir_p!(Path.join(lp.path, rel))
+
+      {:ok, file} =
+        Library.create_scanned_media_file(%{
+          relative_path: rel,
+          library_path_id: lp.id,
+          size: 1
+        })
+
+      file = Mydia.Repo.preload(file, :library_path)
+
+      assert {:ok, %MediaFile{}, :file_delete_failed} =
+               Library.delete_media_file(file, delete_files: true)
+
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "treats an already-missing file as success", %{library_path: lp} do
+      file = scanned_file(lp, "gone.mkv", "data")
+      File.rm!(MediaFile.absolute_path(file))
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file, delete_files: true)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+  end
 
   describe "list_media_files/1 with library_path_type filter" do
     test "filters media files by library path type" do

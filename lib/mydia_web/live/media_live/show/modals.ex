@@ -143,20 +143,21 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   defp provider_label(provider), do: MydiaWeb.MediaLive.Show.Helpers.provider_label(provider)
 
   @doc """
-  File delete confirmation modal for removing a media file record.
+  File delete confirmation modal for removing a media file.
+
+  Lets the user choose whether to also delete the file from disk. Defaults to
+  deleting the file; "Remove from library only" keeps the file on disk.
   """
   attr :file_to_delete, :map, required: true
+  attr :delete_file_from_disk, :boolean, required: true
 
   def file_delete_confirm_modal(assigns) do
     ~H"""
     <div class="modal modal-open">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">Delete Media File?</h3>
-        <p class="py-4">
-          Are you sure you want to delete this file?
-        </p>
         <div class="bg-base-200 p-3 rounded-box mb-4">
-          <p class="text-sm font-mono text-base-content/70">
+          <p class="text-sm font-mono text-base-content/70 break-all">
             {Mydia.Library.MediaFile.absolute_path(@file_to_delete)}
           </p>
           <p class="text-sm mt-2">
@@ -164,16 +165,61 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             {format_file_size(@file_to_delete.size)}
           </p>
         </div>
-        <p class="text-warning text-sm mb-4">
-          <.icon name="hero-exclamation-triangle" class="w-4 h-4 inline" />
-          This will only remove the database record. The actual file will remain on disk.
-        </p>
+
+        <form phx-change="toggle_file_delete_from_disk">
+          <div class="space-y-2.5 mb-5">
+            <label class={[
+              "flex items-start gap-3 p-3.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+              !@delete_file_from_disk && "border-primary bg-primary/10",
+              @delete_file_from_disk && "border-base-300 hover:border-primary/50"
+            ]}>
+              <input
+                type="radio"
+                name="delete_file_from_disk"
+                value="false"
+                class="radio radio-primary mt-0.5 flex-shrink-0"
+                checked={!@delete_file_from_disk}
+              />
+              <div>
+                <div class="font-medium mb-1">Remove from library only</div>
+                <div class="text-sm opacity-75">File stays on disk, can be re-imported later</div>
+              </div>
+            </label>
+
+            <label class={[
+              "flex items-start gap-3 p-3.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+              @delete_file_from_disk && "border-error bg-error/10",
+              !@delete_file_from_disk && "border-base-300 hover:border-error/50"
+            ]}>
+              <input
+                type="radio"
+                name="delete_file_from_disk"
+                value="true"
+                class="radio radio-error mt-0.5 flex-shrink-0"
+                checked={@delete_file_from_disk}
+              />
+              <div>
+                <div class="font-medium mb-1">Delete file from disk</div>
+                <div class="text-sm opacity-75 flex items-center gap-1">
+                  <.icon name="hero-exclamation-triangle" class="w-4 h-4" />
+                  <span>Permanently deletes the file - cannot be undone</span>
+                </div>
+              </div>
+            </label>
+          </div>
+        </form>
+
         <div class="modal-action">
           <button type="button" phx-click="hide_file_delete_confirm" class="btn btn-ghost">
             Cancel
           </button>
-          <button type="button" phx-click="delete_media_file" class="btn btn-error">
-            Delete Record
+          <button
+            type="button"
+            phx-click="delete_media_file"
+            class={["btn", (@delete_file_from_disk && "btn-error") || "btn-warning"]}
+          >
+            <.icon name="hero-trash" class="w-4 h-4" />
+            {if @delete_file_from_disk, do: "Delete File", else: "Remove from Library"}
           </button>
         </div>
       </div>
