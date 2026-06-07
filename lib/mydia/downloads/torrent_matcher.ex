@@ -74,6 +74,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
   """
 
   alias Mydia.Downloads.Structs.TorrentMatchResult
+  alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Media
   alias Mydia.Metadata.Structs.MediaMetadata
 
@@ -104,7 +105,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
     monitored_only = Keyword.get(opts, :monitored_only, true)
     require_id_match = Keyword.get(opts, :require_id_match, false)
 
-    case torrent_info.type do
+    case info_kind(torrent_info) do
       :movie ->
         find_movie_match(torrent_info, monitored_only, confidence_threshold, require_id_match)
 
@@ -118,6 +119,11 @@ defmodule Mydia.Downloads.TorrentMatcher do
           confidence_threshold,
           require_id_match
         )
+
+      # An unclassifiable release (ReleaseParser :unknown that still carried a
+      # usable title) is never auto-matched — that would risk a wrong grab.
+      :unknown ->
+        {:error, :no_match_found}
     end
   end
 
@@ -136,16 +142,19 @@ defmodule Mydia.Downloads.TorrentMatcher do
     max_results = Keyword.get(opts, :max_results, 3)
     monitored_only = Keyword.get(opts, :monitored_only, false)
 
-    items =
-      case torrent_info.type do
-        :movie -> list_movies(monitored_only)
-        type when type in [:tv, :tv_season] -> list_tv_shows(monitored_only)
-      end
+    {items, calculate_fn} =
+      case info_kind(torrent_info) do
+        :movie ->
+          {list_movies(monitored_only), &calculate_movie_confidence(&1, torrent_info)}
 
-    calculate_fn =
-      case torrent_info.type do
-        :movie -> &calculate_movie_confidence(&1, torrent_info)
-        type when type in [:tv, :tv_season] -> &calculate_tv_show_confidence(&1, torrent_info)
+        kind when kind in [:tv, :tv_season] ->
+          {list_tv_shows(monitored_only), &calculate_tv_show_confidence(&1, torrent_info)}
+
+        # Unclassifiable: suggest from both pools using title similarity only, so a
+        # usable-title :unknown release still surfaces candidates.
+        :unknown ->
+          {list_movies(monitored_only) ++ list_tv_shows(monitored_only),
+           &calculate_tv_show_confidence(&1, torrent_info)}
       end
 
     items
@@ -333,7 +342,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
 
       {:error, :no_id_match} when require_id_match ->
         Logger.debug(
-          "ID-based match required but not available for: #{torrent_info.title} S#{torrent_info.season}E#{torrent_info.episode}"
+          "ID-based match required but not available for: #{torrent_info.title} S#{torrent_info.season}E#{info_episode(torrent_info)}"
         )
 
         {:error, :no_match_found}
@@ -388,14 +397,14 @@ defmodule Mydia.Downloads.TorrentMatcher do
   end
 
   defp find_episode(show, torrent_info) do
-    case Media.get_episode_by_number(show.id, torrent_info.season, torrent_info.episode) do
+    case Media.get_episode_by_number(show.id, torrent_info.season, info_episode(torrent_info)) do
       nil -> {:error, :episode_not_found}
       episode -> {:ok, episode}
     end
   end
 
   defp build_tv_match_reason(show, episode, torrent_info, confidence) do
-    "Matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence"
+    "Matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence"
   end
 
   ## Private Functions - TV Season Pack Matching
@@ -462,17 +471,18 @@ defmodule Mydia.Downloads.TorrentMatcher do
   end
 
   defp build_tv_match_reason_with_id(show, episode, torrent_info, confidence) do
-    "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence (TMDB/IMDB ID match)"
+    "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence (TMDB/IMDB ID match)"
   end
 
   ## Private Functions - ID-Based Matching
 
   @doc false
   def try_id_based_match(torrent_info, library_items, media_type) do
-    # Check if torrent_info has TVDB, TMDB, or IMDB ID
-    tvdb_id = Map.get(torrent_info, :tvdb_id)
-    tmdb_id = Map.get(torrent_info, :tmdb_id)
-    imdb_id = Map.get(torrent_info, :imdb_id)
+    # Derive TVDB/TMDB/IMDB IDs from the parsed info. ParsedFileInfo carries a
+    # single `external_id` (string) + `external_provider`; legacy maps may carry
+    # explicit `:tvdb_id`/`:tmdb_id`/`:imdb_id` keys. info_ids/1 normalizes both
+    # and casts numeric provider IDs to integers (the find_by_* guards require it).
+    {tvdb_id, tmdb_id, imdb_id} = info_ids(torrent_info)
 
     cond do
       # Try TVDB ID first for TV shows (most native for indexers)
@@ -578,7 +588,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         "ID-matched '#{torrent_info.title}' (#{torrent_info.year}) to '#{item.title}' (#{item.year}) via #{id_info} with 98.0% confidence"
 
       :tv ->
-        "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{item.title}' via #{id_info} with 98.0% confidence"
+        "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{item.title}' via #{id_info} with 98.0% confidence"
 
       :tv_season ->
         "ID-matched season pack '#{torrent_info.title}' S#{torrent_info.season} to '#{item.title}' via #{id_info} with 98.0% confidence"
@@ -682,6 +692,8 @@ defmodule Mydia.Downloads.TorrentMatcher do
         false
     end
   end
+
+  defp normalize_string(nil), do: ""
 
   defp normalize_string(str) do
     str
@@ -824,6 +836,60 @@ defmodule Mydia.Downloads.TorrentMatcher do
     |> Enum.take_while(fn {c1, c2} -> c1 == c2 end)
     |> length()
   end
+
+  ## Private Functions - ParsedFileInfo accessors
+
+  # Classify a parsed release into the matcher's internal branch. Accepts both
+  # the native ParsedFileInfo struct and legacy plain maps (used by the existing
+  # characterization test suite, which already speaks :movie/:tv/:tv_season).
+  defp info_kind(%ParsedFileInfo{type: :movie}), do: :movie
+
+  defp info_kind(%ParsedFileInfo{type: :tv_show, episodes: episodes}) do
+    if has_episodes?(episodes), do: :tv, else: :tv_season
+  end
+
+  defp info_kind(%ParsedFileInfo{type: :unknown}), do: :unknown
+  defp info_kind(%{type: type}), do: type
+
+  # Single episode number for season+episode lookup. ParsedFileInfo carries an
+  # `episodes` list; legacy maps carry a singular `episode`.
+  defp info_episode(%ParsedFileInfo{episodes: episodes}), do: primary_episode(episodes)
+  defp info_episode(%{episode: episode}), do: episode
+  defp info_episode(_), do: nil
+
+  defp primary_episode([first | _]), do: first
+  defp primary_episode(_), do: nil
+
+  defp has_episodes?(episodes) when is_list(episodes), do: episodes != []
+  defp has_episodes?(_), do: false
+
+  # Normalize external IDs to the {tvdb, tmdb, imdb} tuple the matcher's ID path
+  # expects. ParsedFileInfo's `external_id` is always a string, so numeric
+  # provider IDs are cast to integers (find_by_tvdb_id/find_by_tmdb_id compare
+  # against integer columns). Legacy maps with explicit ID keys pass through.
+  defp info_ids(%ParsedFileInfo{external_provider: provider, external_id: id}) do
+    ids_from_provider(provider, id)
+  end
+
+  defp info_ids(map) when is_map(map) do
+    {Map.get(map, :tvdb_id), Map.get(map, :tmdb_id), Map.get(map, :imdb_id)}
+  end
+
+  defp ids_from_provider(:tvdb, id), do: {parse_id(id), nil, nil}
+  defp ids_from_provider(:tmdb, id), do: {nil, parse_id(id), nil}
+  defp ids_from_provider(:imdb, id) when is_binary(id) and id != "", do: {nil, nil, id}
+  defp ids_from_provider(_, _), do: {nil, nil, nil}
+
+  defp parse_id(id) when is_integer(id), do: id
+
+  defp parse_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
+
+  defp parse_id(_), do: nil
 
   ## Private Functions - Library Queries
 
