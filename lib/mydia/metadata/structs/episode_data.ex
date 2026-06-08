@@ -6,6 +6,8 @@ defmodule Mydia.Metadata.Structs.EpisodeData do
   plain map access that can silently return nil.
   """
 
+  alias Mydia.Metadata.LanguageCode
+
   @enforce_keys [:season_number, :episode_number]
   defstruct [
     # Required fields
@@ -60,37 +62,36 @@ defmodule Mydia.Metadata.Structs.EpisodeData do
 
   TVDB uses different field names: `seasonNumber`, `number`, `name`,
   `overview`, `aired`, `runtime`, `image`.
-  """
-  def from_tvdb_response(data) when is_map(data) do
-    # Extract English translations if available (episodes within season responses
-    # may not include translations — falls back gracefully)
-    translations = data["translations"] || %{}
-    english_name = extract_english_translation(translations["nameTranslations"], "name")
 
-    english_overview =
-      extract_english_translation(translations["overviewTranslations"], "overview")
+  `preferred_codes` is an ordered list of TVDB (ISO 639-2/T) language codes to
+  try when selecting the localized name/overview, falling back to the raw
+  fields. Defaults to `["eng"]` to preserve prior English-only behavior.
+  """
+  def from_tvdb_response(data, preferred_codes \\ ["eng"]) when is_map(data) do
+    # Episodes within season responses may not include translations — falls
+    # back gracefully to the raw name/overview.
+    translations = data["translations"] || %{}
+
+    localized_name =
+      LanguageCode.select_translation(translations["nameTranslations"], "name", preferred_codes)
+
+    localized_overview =
+      LanguageCode.select_translation(
+        translations["overviewTranslations"],
+        "overview",
+        preferred_codes
+      )
 
     %__MODULE__{
       season_number: data["seasonNumber"],
       episode_number: data["number"],
-      name: english_name || data["name"],
-      overview: english_overview || data["overview"],
+      name: localized_name || data["name"],
+      overview: localized_overview || data["overview"],
       air_date: parse_date(data["aired"]),
       runtime: data["runtime"],
       still_path: data["image"]
     }
   end
-
-  defp extract_english_translation(nil, _field), do: nil
-
-  defp extract_english_translation(translations, field) when is_list(translations) do
-    case Enum.find(translations, fn t -> t["language"] == "eng" end) do
-      nil -> nil
-      translation -> translation[field]
-    end
-  end
-
-  defp extract_english_translation(_, _), do: nil
 
   defp parse_date(nil), do: nil
   defp parse_date(""), do: nil

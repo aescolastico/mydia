@@ -11,6 +11,7 @@ defmodule Mydia.Library.MetadataEnricher do
 
   require Logger
   alias Mydia.{Media, Metadata, Repo, Settings}
+  alias Mydia.Metadata.LanguageCode
   alias Mydia.Metadata.NfoWriter
 
   @doc """
@@ -396,6 +397,10 @@ defmodule Mydia.Library.MetadataEnricher do
     # Get seasons list from metadata (includes tvdb_season_id if from TVDB)
     seasons = get_seasons_list(media_item.metadata)
 
+    # The show's original language lets the TVDB season/episode fetch prefer the
+    # original-language translation before falling back to English.
+    original_language = LanguageCode.original_language_from(media_item.metadata)
+
     if seasons != [] do
       # Fetch and create/update all episodes
       Enum.each(seasons, fn season ->
@@ -403,11 +408,8 @@ defmodule Mydia.Library.MetadataEnricher do
         tvdb_season_id = Map.get(season, :tvdb_season_id)
 
         fetch_opts =
-          if tvdb_season_id do
-            [tvdb_season_id: tvdb_season_id]
-          else
-            []
-          end
+          [tvdb_season_id: tvdb_season_id, original_language: original_language]
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
         case Metadata.fetch_season_cached(config, provider_id, season_num, fetch_opts) do
           {:ok, season_data} ->

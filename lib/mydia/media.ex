@@ -1225,11 +1225,14 @@ defmodule Mydia.Media do
               tvdb_season_id =
                 if has_tvdb, do: Map.get(season, :tvdb_season_id), else: nil
 
+              # Use the configured language so the deleted key matches the one
+              # fetch_season_cached writes under (it now keys by configured
+              # language, not a hardcoded "en-US").
               cache_key =
                 Metadata.build_season_cache_key(
                   provider_id,
                   season.season_number,
-                  "en-US",
+                  Metadata.metadata_language(),
                   tvdb_season_id
                 )
 
@@ -1491,13 +1494,18 @@ defmodule Mydia.Media do
           end
       end
 
-    # Pass tvdb_season_id only if we have a tvdb_id (otherwise season IDs are TMDB)
+    # Pass tvdb_season_id only if we have a tvdb_id (otherwise season IDs are TMDB).
+    # Thread the show's original language so episode selection can fall back to it
+    # before English, matching the enricher path.
+    original_language = Metadata.LanguageCode.original_language_from(media_item.metadata)
+
     fetch_opts =
       if has_tvdb do
-        case Map.get(season, :tvdb_season_id) do
-          nil -> []
-          tvdb_season_id -> [tvdb_season_id: tvdb_season_id]
-        end
+        [
+          tvdb_season_id: Map.get(season, :tvdb_season_id),
+          original_language: original_language
+        ]
+        |> Enum.reject(fn {_key, value} -> is_nil(value) end)
       else
         []
       end

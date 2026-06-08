@@ -66,6 +66,7 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   require Logger
   alias Mydia.Metadata.Provider.{Error, HTTP}
+  alias Mydia.Metadata.LanguageCode
   alias Mydia.Metadata.ProviderIDRegistry
 
   alias Mydia.Metadata.Structs.{
@@ -90,6 +91,20 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   defp resolve_language(config, opts) do
     Keyword.get(opts, :language, config_language(config))
+  end
+
+  # Ordered list of TVDB (ISO 639-2/T) codes to try when selecting a
+  # translation: configured language, then the show's original language,
+  # then English. `original_language` may be 2-letter (TMDB) or 3-letter
+  # (TVDB), so it is normalized rather than trusted to be a TVDB code.
+  defp tvdb_preferred_codes(language, original_language) do
+    [
+      LanguageCode.to_tvdb_code(language),
+      LanguageCode.normalize_tvdb_code(original_language),
+      "eng"
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
 
   @impl true
@@ -276,9 +291,10 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # Perform the actual TVDB fetch after validation
-  defp perform_tvdb_fetch(config, provider_id, media_type, _opts) do
+  defp perform_tvdb_fetch(config, provider_id, media_type, opts) do
     # Use extended endpoint to get more details including seasons
     endpoint = "/tvdb/series/#{provider_id}/extended"
+    language = resolve_language(config, opts)
 
     req = HTTP.new_request(config)
 
@@ -289,7 +305,7 @@ defmodule Mydia.Metadata.Provider.Relay do
         # TVDB wraps response in "data" key
         data = body["data"] || body
         # Transform TVDB response to TMDB-like format for parsing
-        transformed = transform_tvdb_to_tmdb_format(data, media_type)
+        transformed = transform_tvdb_to_tmdb_format(data, media_type, language)
         metadata = parse_metadata(transformed, media_type, provider_id)
         # Override provider to :tvdb
         metadata = %{metadata | provider: :tvdb}
@@ -307,7 +323,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # Transform TVDB API response to match TMDB format for consistent parsing
-  defp transform_tvdb_to_tmdb_format(data, _media_type) when is_map(data) do
+  defp transform_tvdb_to_tmdb_format(data, _media_type, language) when is_map(data) do
     # Extract year from firstAired date or year field
     year = extract_tvdb_year(data)
 
@@ -317,21 +333,23 @@ defmodule Mydia.Metadata.Provider.Relay do
     # Transform genres
     genres = transform_tvdb_genres(data["genres"])
 
-    # Extract English translations (extended endpoint returns translation arrays)
+    # Select localized title/overview from the translation bundle, preferring
+    # the configured language, then the show's original language, then English.
     translations = data["translations"] || %{}
+    preferred = tvdb_preferred_codes(language, data["originalLanguage"])
 
-    english_name =
-      extract_tvdb_english_translation(translations["nameTranslations"], "name")
+    localized_name =
+      LanguageCode.select_translation(translations["nameTranslations"], "name", preferred)
 
-    english_overview =
-      extract_tvdb_english_translation(translations["overviewTranslations"], "overview")
+    localized_overview =
+      LanguageCode.select_translation(translations["overviewTranslations"], "overview", preferred)
 
     # Build TMDB-like response
     %{
       "id" => data["id"],
-      "name" => english_name || data["name"],
+      "name" => localized_name || data["name"],
       "original_name" => data["originalName"] || data["name"],
-      "overview" => english_overview || data["overview"],
+      "overview" => localized_overview || data["overview"],
       "first_air_date" => data["firstAired"],
       "last_air_date" => data["lastAired"],
       "status" => get_in(data, ["status", "name"]),
@@ -352,7 +370,7 @@ defmodule Mydia.Metadata.Provider.Relay do
     }
   end
 
-  defp transform_tvdb_to_tmdb_format(data, _media_type), do: data
+  defp transform_tvdb_to_tmdb_format(data, _media_type, _language), do: data
 
   defp extract_tvdb_year(%{"year" => year}) when is_binary(year) do
     case Integer.parse(year) do
@@ -412,19 +430,6 @@ defmodule Mydia.Metadata.Provider.Relay do
   defp transform_tvdb_origin_country(country) when is_binary(country), do: [country]
   defp transform_tvdb_origin_country(countries) when is_list(countries), do: countries
   defp transform_tvdb_origin_country(_), do: []
-
-  # Extract English translation from TVDB translation arrays
-  # TVDB extended endpoints return translations as lists of %{"language" => "eng", "name" => "..."}
-  defp extract_tvdb_english_translation(nil, _field), do: nil
-
-  defp extract_tvdb_english_translation(translations, field) when is_list(translations) do
-    case Enum.find(translations, fn t -> t["language"] == "eng" end) do
-      nil -> nil
-      translation -> translation[field]
-    end
-  end
-
-  defp extract_tvdb_english_translation(_, _), do: nil
 
   # TVDB images are full URLs or relative paths
   defp transform_tvdb_image(nil), do: nil
@@ -624,8 +629,10 @@ defmodule Mydia.Metadata.Provider.Relay do
     end
   end
 
-  defp fetch_season_tvdb(config, tvdb_season_id, _opts) do
+  defp fetch_season_tvdb(config, tvdb_season_id, opts) do
     endpoint = "/tvdb/seasons/#{tvdb_season_id}/extended"
+    language = resolve_language(config, opts)
+    preferred = tvdb_preferred_codes(language, Keyword.get(opts, :original_language))
 
     req = HTTP.new_request(config)
 
@@ -635,7 +642,7 @@ defmodule Mydia.Metadata.Provider.Relay do
         # Episodes in the season response don't include translation text,
         # only language code arrays. Fetch each episode's translations individually.
         data = enrich_tvdb_episodes_with_translations(req, data)
-        season = SeasonData.from_tvdb_response(data)
+        season = SeasonData.from_tvdb_response(data, preferred)
         {:ok, season}
 
       {:ok, %{status: 404}} ->
@@ -650,7 +657,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # TVDB season extended responses include episodes but without translation text.
-  # Fetch each episode's extended data to get translations (name/overview in English).
+  # Fetch each episode's extended data to get its translation bundle (all languages).
   defp enrich_tvdb_episodes_with_translations(req, data) do
     episodes = data["episodes"] || []
 
@@ -674,7 +681,8 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # Fetch an individual episode's extended data to get its translations.
-  # Merges the translations key into the episode map so from_tvdb_response can extract English text.
+  # Merges the translations key into the episode map so from_tvdb_response can
+  # select the configured language.
   defp fetch_tvdb_episode_translations(req, episode) do
     ep_id = episode["id"]
 

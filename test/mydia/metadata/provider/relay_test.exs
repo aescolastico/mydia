@@ -319,6 +319,21 @@ defmodule Mydia.Metadata.Provider.RelayTest do
       assert is_binary(metadata.title)
       assert is_binary(metadata.overview)
     end
+
+    test "fetches TVDB series metadata in the configured language" do
+      # Stranger Things (TVDB 305288) has Spanish translations. The TVDB path
+      # selects from the returned translation bundle rather than hardcoding English.
+      assert {:ok, metadata} =
+               Relay.fetch_by_id(@config, "305288",
+                 media_type: :tv_show,
+                 provider: :tvdb,
+                 language: "es"
+               )
+
+      assert metadata.provider == :tvdb
+      assert is_binary(metadata.title)
+      assert is_binary(metadata.overview)
+    end
   end
 
   describe "pagination" do
