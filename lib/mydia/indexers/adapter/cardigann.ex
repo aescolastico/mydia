@@ -365,9 +365,11 @@ defmodule Mydia.Indexers.Adapter.Cardigann do
       session ->
         # Check if session is expired
         if CardigannSearchSession.expired?(session) do
-          # Delete expired session
+          # Delete the stale row and treat it as absent. Callers only need to
+          # distinguish "usable session" from "no usable session", so expired
+          # collapses into :not_found rather than exposing a third return value.
           Repo.delete(session)
-          {:error, :expired}
+          {:error, :not_found}
         else
           {:ok, session}
         end
