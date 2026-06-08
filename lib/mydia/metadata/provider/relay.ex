@@ -624,8 +624,10 @@ defmodule Mydia.Metadata.Provider.Relay do
     end
   end
 
-  defp fetch_season_tvdb(config, tvdb_season_id, _opts) do
+  defp fetch_season_tvdb(config, tvdb_season_id, opts) do
     endpoint = "/tvdb/seasons/#{tvdb_season_id}/extended"
+    language = resolve_language(config, opts)
+    preferred = tvdb_preferred_codes(language, Keyword.get(opts, :original_language))
 
     req = HTTP.new_request(config)
 
@@ -635,7 +637,7 @@ defmodule Mydia.Metadata.Provider.Relay do
         # Episodes in the season response don't include translation text,
         # only language code arrays. Fetch each episode's translations individually.
         data = enrich_tvdb_episodes_with_translations(req, data)
-        season = SeasonData.from_tvdb_response(data)
+        season = SeasonData.from_tvdb_response(data, preferred)
         {:ok, season}
 
       {:ok, %{status: 404}} ->
@@ -650,7 +652,7 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # TVDB season extended responses include episodes but without translation text.
-  # Fetch each episode's extended data to get translations (name/overview in English).
+  # Fetch each episode's extended data to get its translation bundle (all languages).
   defp enrich_tvdb_episodes_with_translations(req, data) do
     episodes = data["episodes"] || []
 
@@ -674,7 +676,8 @@ defmodule Mydia.Metadata.Provider.Relay do
   end
 
   # Fetch an individual episode's extended data to get its translations.
-  # Merges the translations key into the episode map so from_tvdb_response can extract English text.
+  # Merges the translations key into the episode map so from_tvdb_response can
+  # select the configured language.
   defp fetch_tvdb_episode_translations(req, episode) do
     ep_id = episode["id"]
 
