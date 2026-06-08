@@ -93,17 +93,14 @@ defmodule Mydia.Metadata.Provider.Relay do
     Keyword.get(opts, :language, config_language(config))
   end
 
-  # Ordered list of TVDB (ISO 639-2/T) codes to try when selecting a
-  # translation: configured language, then the show's original language,
-  # then English. `original_language` may be 2-letter (TMDB) or 3-letter
-  # (TVDB), so it is normalized rather than trusted to be a TVDB code.
+  # Ordered list of TVDB codes to try when selecting a translation: configured
+  # language, then the show's original language, then English. Each language
+  # expands to its 3-letter and 2-letter candidates because TVDB's translation
+  # keys are inconsistent (e.g. Portuguese as both "por" and "pt").
   defp tvdb_preferred_codes(language, original_language) do
-    [
-      LanguageCode.to_tvdb_code(language),
-      LanguageCode.normalize_tvdb_code(original_language),
-      "eng"
-    ]
-    |> Enum.reject(&is_nil/1)
+    (LanguageCode.tvdb_candidates(language) ++
+       LanguageCode.tvdb_candidates(original_language) ++
+       ["eng"])
     |> Enum.uniq()
   end
 

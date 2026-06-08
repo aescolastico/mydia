@@ -55,37 +55,35 @@ defmodule Mydia.Metadata.LanguageCode do
   def to_tvdb_code(_), do: nil
 
   @doc """
-  Normalizes a language code that may be either a 2-letter (ISO 639-1, possibly
-  region-suffixed) or an already-3-letter (ISO 639-2/T) value into the TVDB
-  3-letter form. Use for values whose width depends on their source — e.g. a
-  show's `original_language`, which TVDB stores as `"jpn"` but TMDB stores as
-  `"ja"`. Returns `nil` for blank or unrecognized input.
+  Returns the ordered list of TVDB language codes to try for a configured or
+  original-language value. TVDB's translation keys are mostly ISO 639-2/T
+  3-letter codes, but it is inconsistent — Portuguese appears as both `"por"`
+  and `"pt"`, and some shows carry only one of them. So each language expands to
+  both its 3-letter and 2-letter forms; the form TVDB didn't use simply never
+  matches. Accepts 2-letter (`"pt-BR"`, TMDB) or 3-letter (`"jpn"`, TVDB) input.
+  Returns `[]` for blank or `nil` input.
 
   ## Examples
 
-      iex> Mydia.Metadata.LanguageCode.normalize_tvdb_code("jpn")
-      "jpn"
+      iex> Mydia.Metadata.LanguageCode.tvdb_candidates("pt-BR")
+      ["por", "pt"]
 
-      iex> Mydia.Metadata.LanguageCode.normalize_tvdb_code("ja")
-      "jpn"
+      iex> Mydia.Metadata.LanguageCode.tvdb_candidates("jpn")
+      ["jpn"]
   """
-  def normalize_tvdb_code(code) when is_binary(code) do
+  def tvdb_candidates(code) when is_binary(code) do
     primary =
       code
       |> String.downcase()
       |> String.split(["-", "_"], parts: 2)
       |> List.first()
 
-    cond do
-      primary == "" -> nil
-      # Already a 3-letter ISO 639-2 code (e.g. TVDB's "jpn"); pass through.
-      String.length(primary) == 3 -> primary
-      # Otherwise treat as a 2-letter ISO 639-1 code and map it.
-      true -> to_tvdb_code(primary)
-    end
+    [to_tvdb_code(primary), primary]
+    |> Enum.reject(fn c -> is_nil(c) or c == "" end)
+    |> Enum.uniq()
   end
 
-  def normalize_tvdb_code(_), do: nil
+  def tvdb_candidates(_), do: []
 
   @doc """
   Extracts a show's original-language code from a metadata struct or map,
