@@ -72,16 +72,7 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
         </div>
         <div class="stat-title">Crash Reports</div>
         <div class="stat-value text-warning">{@stats.queued_reports}</div>
-        <div class="stat-desc">
-          Queued →
-          <span
-            class="font-mono truncate max-w-xs inline-block align-bottom"
-            title={@stats.metadata_relay_url}
-            aria-label={"Relay URL: #{@stats.metadata_relay_url}"}
-          >
-            {@stats.metadata_relay_url}
-          </span>
-        </div>
+        <div class="stat-desc">Queued</div>
       </div>
       <.link
         navigate={~p"/admin/errors"}
