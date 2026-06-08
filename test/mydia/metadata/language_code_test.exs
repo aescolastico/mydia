@@ -25,21 +25,29 @@ defmodule Mydia.Metadata.LanguageCodeTest do
     end
   end
 
-  describe "normalize_tvdb_code/1" do
-    test "passes through an already-3-letter ISO 639-2 code" do
-      assert LanguageCode.normalize_tvdb_code("jpn") == "jpn"
-      assert LanguageCode.normalize_tvdb_code("ENG") == "eng"
+  describe "tvdb_candidates/1" do
+    test "expands Portuguese to both por and pt (TVDB uses both inconsistently)" do
+      assert LanguageCode.tvdb_candidates("pt-BR") == ["por", "pt"]
+      assert LanguageCode.tvdb_candidates("pt") == ["por", "pt"]
     end
 
-    test "maps a 2-letter ISO 639-1 code (with optional region) to 3-letter" do
-      assert LanguageCode.normalize_tvdb_code("ja") == "jpn"
-      assert LanguageCode.normalize_tvdb_code("pt-BR") == "por"
+    test "expands a 2-letter code to its 3-letter form plus the 2-letter form" do
+      assert LanguageCode.tvdb_candidates("de") == ["deu", "de"]
+      assert LanguageCode.tvdb_candidates("ja") == ["jpn", "ja"]
+      assert LanguageCode.tvdb_candidates("en-US") == ["eng", "en"]
     end
 
-    test "returns nil for blank, nil, and unmappable 2-letter codes" do
-      assert LanguageCode.normalize_tvdb_code("") == nil
-      assert LanguageCode.normalize_tvdb_code(nil) == nil
-      assert LanguageCode.normalize_tvdb_code("xx") == nil
+    test "passes an already-3-letter code through as the only candidate" do
+      assert LanguageCode.tvdb_candidates("jpn") == ["jpn"]
+      assert LanguageCode.tvdb_candidates("ENG") == ["eng"]
+    end
+
+    test "returns empty for blank/nil; passes an unknown code through harmlessly" do
+      assert LanguageCode.tvdb_candidates("") == []
+      assert LanguageCode.tvdb_candidates(nil) == []
+      # Unknown 2-letter code isn't mapped but is still offered as a candidate;
+      # it simply never matches a TVDB translation key.
+      assert LanguageCode.tvdb_candidates("xx") == ["xx"]
     end
   end
 
