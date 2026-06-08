@@ -37,7 +37,9 @@ defmodule Mydia.CrashReporterTest do
       source_line: "lib/foo.ex:1",
       source_function: "Foo.bar/0",
       status: :unresolved,
-      fingerprint: :crypto.strong_rand_bytes(8),
+      # ErrorTracker stores the fingerprint as a Base16 string (the column is a
+      # NOT NULL unique string); raw bytes break Postgres' UTF-8 encoding.
+      fingerprint: Base.encode16(:crypto.strong_rand_bytes(8)),
       last_occurrence_at: DateTime.utc_now()
     })
   end
