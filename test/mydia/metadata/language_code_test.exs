@@ -25,6 +25,37 @@ defmodule Mydia.Metadata.LanguageCodeTest do
     end
   end
 
+  describe "normalize_tvdb_code/1" do
+    test "passes through an already-3-letter ISO 639-2 code" do
+      assert LanguageCode.normalize_tvdb_code("jpn") == "jpn"
+      assert LanguageCode.normalize_tvdb_code("ENG") == "eng"
+    end
+
+    test "maps a 2-letter ISO 639-1 code (with optional region) to 3-letter" do
+      assert LanguageCode.normalize_tvdb_code("ja") == "jpn"
+      assert LanguageCode.normalize_tvdb_code("pt-BR") == "por"
+    end
+
+    test "returns nil for blank, nil, and unmappable 2-letter codes" do
+      assert LanguageCode.normalize_tvdb_code("") == nil
+      assert LanguageCode.normalize_tvdb_code(nil) == nil
+      assert LanguageCode.normalize_tvdb_code("xx") == nil
+    end
+  end
+
+  describe "original_language_from/1" do
+    test "extracts a non-empty original_language" do
+      assert LanguageCode.original_language_from(%{original_language: "jpn"}) == "jpn"
+    end
+
+    test "returns nil for absent, empty, or non-binary values" do
+      assert LanguageCode.original_language_from(%{original_language: nil}) == nil
+      assert LanguageCode.original_language_from(%{original_language: ""}) == nil
+      assert LanguageCode.original_language_from(%{}) == nil
+      assert LanguageCode.original_language_from(nil) == nil
+    end
+  end
+
   describe "select_translation/3" do
     setup do
       translations = [

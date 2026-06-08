@@ -95,9 +95,14 @@ defmodule Mydia.Metadata.Provider.Relay do
 
   # Ordered list of TVDB (ISO 639-2/T) codes to try when selecting a
   # translation: configured language, then the show's original language,
-  # then English. `original_language` is already a TVDB 3-letter code (or nil).
+  # then English. `original_language` may be 2-letter (TMDB) or 3-letter
+  # (TVDB), so it is normalized rather than trusted to be a TVDB code.
   defp tvdb_preferred_codes(language, original_language) do
-    [LanguageCode.to_tvdb_code(language), original_language, "eng"]
+    [
+      LanguageCode.to_tvdb_code(language),
+      LanguageCode.normalize_tvdb_code(original_language),
+      "eng"
+    ]
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end

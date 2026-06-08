@@ -212,7 +212,13 @@ defmodule Mydia.Media.ProviderSwitch do
              append_to_response: ["credits", "images", "videos", "keywords"]
            ),
          {:ok, season_datas, expected_episode_count} <-
-           prefetch_provider_seasons(new_id, target_provider, metadata.seasons || [], config) do
+           prefetch_provider_seasons(
+             new_id,
+             target_provider,
+             metadata.seasons || [],
+             config,
+             metadata.original_language
+           ) do
       # Step 3 (transactional, no network): wipe + swap + recreate + re-link.
       result =
         Repo.transaction(fn ->
@@ -280,7 +286,7 @@ defmodule Mydia.Media.ProviderSwitch do
     {:error, {:invalid_type, "Expected tv_show, got #{type}"}}
   end
 
-  defp prefetch_provider_seasons(provider_id, target_provider, seasons, config) do
+  defp prefetch_provider_seasons(provider_id, target_provider, seasons, config, original_language) do
     has_tvdb = target_provider == :tvdb
 
     # All-or-nothing: abort the whole switch if ANY season fails to fetch. A
@@ -294,8 +300,15 @@ defmodule Mydia.Media.ProviderSwitch do
             # endpoint with a TVDB id (wrong data / 404), so treat it as a hard
             # failure rather than silently fetching from the wrong provider.
             case Map.get(season, :tvdb_season_id) do
-              nil -> :error
-              tvdb_season_id -> {:ok, [tvdb_season_id: tvdb_season_id]}
+              nil ->
+                :error
+
+              tvdb_season_id ->
+                opts =
+                  [tvdb_season_id: tvdb_season_id, original_language: original_language]
+                  |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+                {:ok, opts}
             end
           else
             {:ok, []}

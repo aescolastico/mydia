@@ -11,6 +11,7 @@ defmodule Mydia.Library.MetadataEnricher do
 
   require Logger
   alias Mydia.{Media, Metadata, Repo, Settings}
+  alias Mydia.Metadata.LanguageCode
   alias Mydia.Metadata.NfoWriter
 
   @doc """
@@ -397,9 +398,8 @@ defmodule Mydia.Library.MetadataEnricher do
     seasons = get_seasons_list(media_item.metadata)
 
     # The show's original language lets the TVDB season/episode fetch prefer the
-    # original-language translation before falling back to English (TVDB stores
-    # it as a 3-letter code, matching the translation bundle's keys).
-    original_language = metadata_original_language(media_item.metadata)
+    # original-language translation before falling back to English.
+    original_language = LanguageCode.original_language_from(media_item.metadata)
 
     if seasons != [] do
       # Fetch and create/update all episodes
@@ -446,12 +446,6 @@ defmodule Mydia.Library.MetadataEnricher do
   end
 
   defp get_seasons_list(_), do: []
-
-  defp metadata_original_language(%{original_language: lang})
-       when is_binary(lang) and lang != "",
-       do: lang
-
-  defp metadata_original_language(_), do: nil
 
   defp create_episodes_for_season(media_item, season_data) do
     {:ok, count} = Media.upsert_episodes_from_season(media_item, season_data)

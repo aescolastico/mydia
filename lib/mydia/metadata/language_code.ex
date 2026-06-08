@@ -55,6 +55,50 @@ defmodule Mydia.Metadata.LanguageCode do
   def to_tvdb_code(_), do: nil
 
   @doc """
+  Normalizes a language code that may be either a 2-letter (ISO 639-1, possibly
+  region-suffixed) or an already-3-letter (ISO 639-2/T) value into the TVDB
+  3-letter form. Use for values whose width depends on their source — e.g. a
+  show's `original_language`, which TVDB stores as `"jpn"` but TMDB stores as
+  `"ja"`. Returns `nil` for blank or unrecognized input.
+
+  ## Examples
+
+      iex> Mydia.Metadata.LanguageCode.normalize_tvdb_code("jpn")
+      "jpn"
+
+      iex> Mydia.Metadata.LanguageCode.normalize_tvdb_code("ja")
+      "jpn"
+  """
+  def normalize_tvdb_code(code) when is_binary(code) do
+    primary =
+      code
+      |> String.downcase()
+      |> String.split(["-", "_"], parts: 2)
+      |> List.first()
+
+    cond do
+      primary == "" -> nil
+      # Already a 3-letter ISO 639-2 code (e.g. TVDB's "jpn"); pass through.
+      String.length(primary) == 3 -> primary
+      # Otherwise treat as a 2-letter ISO 639-1 code and map it.
+      true -> to_tvdb_code(primary)
+    end
+  end
+
+  def normalize_tvdb_code(_), do: nil
+
+  @doc """
+  Extracts a show's original-language code from a metadata struct or map,
+  returning `nil` when absent or blank. Nil-safe so callers can thread it into
+  fetch options without guarding the metadata themselves.
+  """
+  def original_language_from(%{original_language: lang})
+      when is_binary(lang) and lang != "",
+      do: lang
+
+  def original_language_from(_), do: nil
+
+  @doc """
   Selects a field value from a TVDB translation list by trying each preferred
   language code in order. TVDB translation entries look like
   `%{"language" => "eng", "name" => "..."}`. Returns the first non-empty match,

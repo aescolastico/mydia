@@ -36,6 +36,10 @@ defmodule Mydia.Metadata do
 
   require Logger
 
+  # Fallback language when neither opts nor the provider config specify one.
+  # Must agree with the relay provider's default so cache keys and fetches align.
+  @default_language "en-US"
+
   alias Mydia.Metadata.Provider
 
   @doc """
@@ -372,7 +376,7 @@ defmodule Mydia.Metadata do
   def metadata_language do
     case Mydia.Settings.get_metadata_config() do
       %{language: lang} when is_binary(lang) and lang != "" -> lang
-      _ -> "en-US"
+      _ -> @default_language
     end
   end
 
@@ -383,7 +387,7 @@ defmodule Mydia.Metadata do
   defp config_language(config) do
     case config do
       %{options: %{language: lang}} when is_binary(lang) and lang != "" -> lang
-      _ -> "en-US"
+      _ -> @default_language
     end
   end
 
