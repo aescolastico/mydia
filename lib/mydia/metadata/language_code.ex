@@ -96,6 +96,11 @@ defmodule Mydia.Metadata.LanguageCode do
       when is_binary(lang) and lang != "",
       do: lang
 
+  # Some paths carry metadata as a string-key map rather than a MediaMetadata struct.
+  def original_language_from(%{"original_language" => lang})
+      when is_binary(lang) and lang != "",
+      do: lang
+
   def original_language_from(_), do: nil
 
   @doc """

@@ -146,7 +146,9 @@ defmodule Mydia.Metadata do
     # Build cache key including all relevant search parameters
     media_type = Keyword.get(opts, :media_type)
     year = Keyword.get(opts, :year)
-    language = Keyword.get(opts, :language, "en-US")
+    # Default to the configured language so searches don't read English-cached
+    # results (mirrors fetch_by_id_cached/3 and fetch_season_cached/4).
+    language = Keyword.get(opts, :language, config_language(config))
     page = Keyword.get(opts, :page, 1)
     # Include the provider so a TV title searched under TVDB and under TMDB
     # never share a cache entry (per-library provider routing). Mirrors the

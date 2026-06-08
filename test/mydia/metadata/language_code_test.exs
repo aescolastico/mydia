@@ -48,6 +48,11 @@ defmodule Mydia.Metadata.LanguageCodeTest do
       assert LanguageCode.original_language_from(%{original_language: "jpn"}) == "jpn"
     end
 
+    test "extracts from a string-key map too" do
+      assert LanguageCode.original_language_from(%{"original_language" => "jpn"}) == "jpn"
+      assert LanguageCode.original_language_from(%{"original_language" => ""}) == nil
+    end
+
     test "returns nil for absent, empty, or non-binary values" do
       assert LanguageCode.original_language_from(%{original_language: nil}) == nil
       assert LanguageCode.original_language_from(%{original_language: ""}) == nil
