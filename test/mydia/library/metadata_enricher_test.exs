@@ -4,7 +4,7 @@ defmodule Mydia.Library.MetadataEnricherTest do
   import Mydia.MediaFixtures
 
   alias Mydia.Library.MetadataEnricher
-  alias Mydia.{Library, Settings}
+  alias Mydia.{Library, Media, Settings}
   alias Mydia.Media.MediaItem
 
   describe "enrich/2 with invalid input" do
@@ -636,6 +636,99 @@ defmodule Mydia.Library.MetadataEnricherTest do
 
       assert updated.id == item.id
       assert is_nil(updated.metadata_source)
+    end
+  end
+
+  describe "episode enrichment threads original language (U5)" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        # Korean has no translation in the stubbed bundle, so selection must
+        # fall back to the show's original language (Japanese), not English.
+        options: %{language: "ko", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "episodes use the original language when the configured language is missing",
+         %{bypass: bypass, config: config} do
+      series_id = System.unique_integer([:positive])
+      season_id = System.unique_integer([:positive])
+      episode_id = System.unique_integer([:positive])
+
+      media_item_fixture(%{
+        type: "tv_show",
+        title: "Original Lang Show",
+        tvdb_id: series_id,
+        metadata_source: :tvdb
+      })
+      |> backdate()
+
+      # Series extended: carries the original language and one official season.
+      Bypass.stub(bypass, "GET", "/tvdb/series/#{series_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "id" => series_id,
+            "name" => "Original Lang Show",
+            "overview" => "ov",
+            "originalLanguage" => "jpn",
+            "firstAired" => "2010-01-01",
+            "genres" => [],
+            "seasons" => [
+              %{
+                "id" => season_id,
+                "number" => 1,
+                "type" => %{"type" => "official"},
+                "name" => "Season 1"
+              }
+            ]
+          }
+        })
+      end)
+
+      # Season extended: episodes without translation text (only ids).
+      Bypass.stub(bypass, "GET", "/tvdb/seasons/#{season_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "number" => 1,
+            "name" => "Season 1",
+            "episodes" => [
+              %{"id" => episode_id, "seasonNumber" => 1, "number" => 1, "name" => "Raw Episode"}
+            ]
+          }
+        })
+      end)
+
+      # Episode extended: translation bundle with Japanese + English, no Korean.
+      Bypass.stub(bypass, "GET", "/tvdb/episodes/#{episode_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "translations" => %{
+              "nameTranslations" => [
+                %{"language" => "jpn", "name" => "日本語タイトル"},
+                %{"language" => "eng", "name" => "English Title"}
+              ],
+              "overviewTranslations" => [
+                %{"language" => "jpn", "overview" => "概要"},
+                %{"language" => "eng", "overview" => "English overview"}
+              ]
+            }
+          }
+        })
+      end)
+
+      match = tv_match(series_id, :tvdb, "Original Lang Show")
+
+      assert {:ok, updated} = MetadataEnricher.enrich(match, config: config, fetch_episodes: true)
+
+      [episode] = Media.list_episodes(updated.id)
+      # Without original-language threading these would be the English values.
+      assert episode.title == "日本語タイトル"
+      assert episode.metadata.overview == "概要"
     end
   end
 
