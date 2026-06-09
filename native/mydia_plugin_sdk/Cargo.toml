@@ -10,3 +10,6 @@ repository = "https://github.com/getmydia/mydia"
 # Elixir host. wit-bindgen generation + the #[mydia::plugin] macro land in U5/U6.
 
 [lib]
+
+[dependencies]
+wit-bindgen = "0.58.0"
