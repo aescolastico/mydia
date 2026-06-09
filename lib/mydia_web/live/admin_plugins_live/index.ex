@@ -29,6 +29,7 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
      |> assign(:browse_error, nil)
      |> assign(:approval, nil)
      |> assign(:detail, nil)
+     |> assign(:settings, nil)
      |> load_installed()
      |> load_updates()}
   end
@@ -113,6 +114,43 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
     apply_lifecycle(socket, fn -> Plugins.remove(slug) end, "Removed #{slug}.")
   end
 
+  ## Settings modal (operator-editable config — U3)
+
+  def handle_event("edit_settings", %{"slug" => slug}, socket) do
+    case Settings.get_plugin_config_by_slug(slug) do
+      nil -> {:noreply, socket}
+      config -> {:noreply, assign(socket, :settings, settings_state(config))}
+    end
+  end
+
+  def handle_event("close_settings", _params, socket) do
+    {:noreply, assign(socket, :settings, nil)}
+  end
+
+  def handle_event("save_settings", %{"slug" => slug} = params, socket) do
+    case Settings.get_plugin_config_by_slug(slug) do
+      nil ->
+        {:noreply, socket}
+
+      config ->
+        settings = build_settings(settings_schema_of(config), params)
+
+        socket =
+          case Plugins.update_settings(slug, settings) do
+            {:ok, _} ->
+              socket
+              |> put_flash(:info, "#{config.name} settings saved.")
+              |> assign(:settings, nil)
+              |> load_installed()
+
+            {:error, error} ->
+              put_flash(socket, :error, error_message(error))
+          end
+
+        {:noreply, socket}
+    end
+  end
+
   ## Detail modal (granted caps + egress audit)
 
   def handle_event("show_detail", %{"slug" => slug}, socket) do
@@ -153,6 +191,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   defp row(config) do
     source = if Settings.runtime_config?(config), do: :env, else: :index
     capabilities = capabilities_of(config)
+    settings_schema = settings_schema_of(config)
+    granted = config.granted_capabilities || %{}
 
     %{
       slug: config.slug,
@@ -162,15 +202,58 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       source: source,
       read_only: source == :env,
       capabilities: capabilities,
-      granted: config.granted_capabilities || %{},
+      granted: granted,
       pending_approval: not config.enabled and capabilities != %{},
-      network_hosts: Map.get(capabilities, "net:http", [])
+      has_settings: settings_schema != [],
+      # Once approved, the granted net:http reflects the operator-configured host.
+      network_hosts: Map.get(granted, "net:http", Map.get(capabilities, "net:http", []))
     }
   end
 
   defp capabilities_of(%{manifest: %{"capabilities" => caps}}) when is_map(caps), do: caps
   defp capabilities_of(%{granted_capabilities: caps}) when is_map(caps), do: caps
   defp capabilities_of(_), do: %{}
+
+  defp settings_schema_of(%{manifest: %{"settings_schema" => schema}}) when is_list(schema),
+    do: schema
+
+  defp settings_schema_of(_), do: []
+
+  # Builds the settings modal state. Secret values are not echoed back into the
+  # form (write-only) — a blank secret on save preserves the stored one.
+  defp settings_state(config) do
+    schema = settings_schema_of(config)
+    current = config.settings || %{}
+
+    form_data =
+      Enum.reduce(schema, %{}, fn field, acc ->
+        if field["type"] == "secret",
+          do: acc,
+          else: Map.put(acc, field["key"], Map.get(current, field["key"]))
+      end)
+
+    %{
+      slug: config.slug,
+      name: config.name,
+      schema: schema,
+      form: to_form(form_data)
+    }
+  end
+
+  # Extracts the schema-declared keys from submitted params. Blank secrets are
+  # dropped so update_settings/2's merge preserves the existing value.
+  defp build_settings(schema, params) do
+    Enum.reduce(schema, %{}, fn field, acc ->
+      key = field["key"]
+      value = Map.get(params, key)
+
+      cond do
+        is_nil(value) -> acc
+        field["type"] == "secret" and value == "" -> acc
+        true -> Map.put(acc, key, value)
+      end
+    end)
+  end
 
   defp load_updates(socket) do
     slugs =
@@ -197,7 +280,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: entry.slug,
       name: entry.name,
       version: entry.version,
-      capabilities: entry.manifest.capabilities
+      capabilities: entry.manifest.capabilities,
+      settings_schema: entry.manifest.settings_schema
     }
   end
 
@@ -209,7 +293,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: config.slug,
       name: config.name,
       version: config.version,
-      capabilities: capabilities
+      capabilities: capabilities,
+      settings_schema: settings_schema_of(config)
     }
   end
 
@@ -226,6 +311,7 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: config.slug,
       name: config.name,
       granted: config.granted_capabilities || %{},
+      settings_schema: settings_schema_of(config),
       audit: audit
     }
   end

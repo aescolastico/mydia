@@ -16,5 +16,10 @@
     <%= if @detail do %>
       <MydiaWeb.AdminPluginsLive.Components.detail_modal detail={@detail} />
     <% end %>
+
+    <%!-- Operator settings modal (host-granting config — U3) --%>
+    <%= if @settings do %>
+      <MydiaWeb.AdminPluginsLive.Components.settings_modal settings={@settings} />
+    <% end %>
   </.admin_page>
 </Layouts.app>

@@ -51,6 +51,44 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
     config
   end
 
+  defp schema_manifest_map(slug, name) do
+    Map.put(manifest_map(slug, name), "settings_schema", [
+      %{
+        "key" => "target",
+        "type" => "enum",
+        "label" => "Target service",
+        "options" => ["discord", "ntfy"]
+      },
+      %{
+        "key" => "webhook_url",
+        "type" => "url",
+        "label" => "Webhook / server URL",
+        "grants_host" => true
+      },
+      %{"key" => "ntfy_token", "type" => "secret", "label" => "Access token"}
+    ])
+  end
+
+  defp seed_with_schema(slug, name, opts) do
+    {:ok, config} =
+      Settings.create_plugin_config(%{
+        slug: slug,
+        name: name,
+        version: "1.0.0",
+        manifest: schema_manifest_map(slug, name),
+        wasm_module: guest_wasm(),
+        granted_capabilities:
+          Keyword.get(opts, :granted, %{
+            "net:http" => ["discord.com"],
+            "events:subscribe" => ["media_item.added"]
+          }),
+        enabled: Keyword.get(opts, :enabled, true),
+        settings: Keyword.get(opts, :settings, %{})
+      })
+
+    config
+  end
+
   setup %{conn: conn} do
     unique = System.unique_integer([:positive])
 
@@ -162,6 +200,82 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
 
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
       assert has_element?(view, "#update-badge-notifier")
+    end
+  end
+
+  describe "operator settings + host disclosure (U3, U4)" do
+    test "configuring a host-granting url grants its host (R5, R6)", %{conn: conn} do
+      seed_with_schema("webhook-notifier", "Webhook Notifier", enabled: true)
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+
+      assert has_element?(view, "#settings-webhook-notifier")
+      view |> element("#settings-webhook-notifier") |> render_click()
+      assert has_element?(view, "#plugin-settings-form")
+
+      view
+      |> form("#plugin-settings-form", %{
+        "target" => "ntfy",
+        "webhook_url" => "https://ntfy.example.com/mydia"
+      })
+      |> render_submit()
+
+      refute has_element?(view, "#settings-modal")
+
+      config = Settings.get_plugin_config_by_slug("webhook-notifier")
+      assert config.settings["webhook_url"] == "https://ntfy.example.com/mydia"
+      assert "ntfy.example.com" in config.granted_capabilities["net:http"]
+    end
+
+    test "secret values are not echoed back into the form", %{conn: conn} do
+      seed_with_schema("webhook-notifier", "Webhook Notifier",
+        enabled: true,
+        settings: %{"ntfy_token" => "tk_supersecret"}
+      )
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#settings-webhook-notifier") |> render_click()
+
+      refute render(view) =~ "tk_supersecret"
+    end
+
+    test "a blank secret on save preserves the stored value", %{conn: conn} do
+      seed_with_schema("webhook-notifier", "Webhook Notifier",
+        enabled: true,
+        settings: %{"ntfy_token" => "tk_keep", "target" => "ntfy"}
+      )
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#settings-webhook-notifier") |> render_click()
+
+      view
+      |> form("#plugin-settings-form", %{
+        "webhook_url" => "https://ntfy.example.com/x",
+        "ntfy_token" => ""
+      })
+      |> render_submit()
+
+      config = Settings.get_plugin_config_by_slug("webhook-notifier")
+      assert config.settings["ntfy_token"] == "tk_keep"
+    end
+
+    test "the approval modal discloses the host-granting field (U4)", %{conn: conn} do
+      seed_with_schema("webhook-notifier", "Webhook Notifier", enabled: false, granted: %{})
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+
+      view |> element("#approve-webhook-notifier") |> render_click()
+      assert has_element?(view, "#approval-host-grant")
+      assert render(view) =~ "Webhook / server URL"
+    end
+
+    test "a plugin without a settings schema shows no Settings button", %{conn: conn} do
+      seed_plugin("notifier", "Notifier",
+        enabled: true,
+        granted: %{"net:http" => ["discord.com"]}
+      )
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      assert has_element?(view, "#plugin-row-notifier")
+      refute has_element?(view, "#settings-notifier")
     end
   end
 
