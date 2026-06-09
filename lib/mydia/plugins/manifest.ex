@@ -387,9 +387,8 @@ defmodule Mydia.Plugins.Manifest do
 
     with :ok <- validate_connection_type(Map.get(conn, "type")),
          :ok <- validate_connection_url(conn, "code_url", hosts, true),
-         :ok <- validate_connection_url(conn, "poll_url", hosts, true),
-         :ok <- validate_connection_url(conn, "verification_url", hosts, false) do
-      :ok
+         :ok <- validate_connection_url(conn, "poll_url", hosts, true) do
+      validate_connection_url(conn, "verification_url", hosts, false)
     end
   end
 
@@ -444,16 +443,14 @@ defmodule Mydia.Plugins.Manifest do
     do: {:error, Error.new(:invalid_manifest, "schedule must be an object")}
 
   defp validate_schedule(schedule, capabilities) do
-    cond do
-      "schedule:interval" not in Map.keys(capabilities) ->
-        {:error,
-         Error.new(
-           :invalid_manifest,
-           "a plugin with a schedule must declare the schedule:interval capability"
-         )}
-
-      true ->
-        validate_schedule_interval(Map.get(schedule, "interval_minutes"))
+    if Map.has_key?(capabilities, "schedule:interval") do
+      validate_schedule_interval(Map.get(schedule, "interval_minutes"))
+    else
+      {:error,
+       Error.new(
+         :invalid_manifest,
+         "a plugin with a schedule must declare the schedule:interval capability"
+       )}
     end
   end
 

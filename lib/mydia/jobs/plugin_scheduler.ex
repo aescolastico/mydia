@@ -51,8 +51,7 @@ defmodule Mydia.Jobs.PluginScheduler do
   @spec tick(DateTime.t(), (String.t() -> {:ok, term()} | {:error, term()})) :: :ok
   def tick(now, invoker) do
     candidate_configs()
-    |> Enum.filter(&scheduled?/1)
-    |> Enum.filter(&due?(&1, now))
+    |> Enum.filter(&(scheduled?(&1) and due?(&1, now)))
     |> Enum.each(&run_one(&1, now, invoker))
 
     :ok
