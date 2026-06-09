@@ -16,7 +16,12 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   alias Mydia.Events
   alias Mydia.Plugins
   alias Mydia.Plugins.Index
+  alias Mydia.Plugins.Log
+  alias Mydia.Plugins.Logs
   alias Mydia.Settings
+
+  # Max log rows loaded into the detail timeline on open / filter.
+  @log_limit 200
 
   @impl true
   def mount(_params, _session, socket) do
@@ -29,6 +34,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
      |> assign(:browse_error, nil)
      |> assign(:approval, nil)
      |> assign(:detail, nil)
+     |> assign(:log_topic, nil)
+     |> stream(:plugin_logs, [])
      |> load_installed()
      |> load_updates()}
   end
@@ -117,16 +124,90 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
   def handle_event("show_detail", %{"slug" => slug}, socket) do
     case Settings.get_plugin_config_by_slug(slug) do
-      nil -> {:noreply, socket}
-      config -> {:noreply, assign(socket, :detail, detail_for(config))}
+      nil ->
+        {:noreply, socket}
+
+      config ->
+        socket = subscribe_logs(socket, slug)
+        logs = Logs.recent(slug, limit: @log_limit)
+
+        {:noreply,
+         socket
+         |> assign(:detail, detail_for(config))
+         |> stream(:plugin_logs, logs, reset: true)}
     end
   end
 
   def handle_event("close_detail", _params, socket) do
-    {:noreply, assign(socket, :detail, nil)}
+    {:noreply,
+     socket
+     |> unsubscribe_logs()
+     |> assign(:detail, nil)
+     |> stream(:plugin_logs, [], reset: true)}
+  end
+
+  ## Debug logs (U6) — filter + live tail
+
+  def handle_event("filter_logs", %{"level" => level}, socket) do
+    detail = socket.assigns.detail
+    min_level = parse_level(level)
+    logs = Logs.recent(detail.slug, limit: @log_limit, min_level: min_level)
+
+    {:noreply,
+     socket
+     |> assign(:detail, %{detail | min_level: min_level})
+     |> stream(:plugin_logs, logs, reset: true)}
+  end
+
+  ## Test trigger (U7)
+
+  def handle_event("test_plugin", %{"slug" => slug, "event" => event_type}, socket) do
+    case Plugins.test_invoke(slug, event_type) do
+      :ok ->
+        {:noreply, put_flash(socket, :info, "Test #{event_type} dispatched to #{slug}.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "#{slug} is not running — enable it first.")}
+    end
+  end
+
+  ## Live tail (U6)
+
+  @impl true
+  def handle_info({:plugin_log, %Log{} = log}, socket) do
+    detail = socket.assigns.detail
+
+    if detail && log.slug == detail.slug && level_visible?(log.level, detail.min_level) do
+      {:noreply, stream_insert(socket, :plugin_logs, log, at: 0)}
+    else
+      {:noreply, socket}
+    end
   end
 
   ## Helpers
+
+  defp subscribe_logs(socket, slug) do
+    socket = unsubscribe_logs(socket)
+    topic = Logs.topic(slug)
+    if connected?(socket), do: Phoenix.PubSub.subscribe(Mydia.PubSub, topic)
+    assign(socket, :log_topic, topic)
+  end
+
+  defp unsubscribe_logs(%{assigns: %{log_topic: nil}} = socket), do: socket
+
+  defp unsubscribe_logs(%{assigns: %{log_topic: topic}} = socket) do
+    if connected?(socket), do: Phoenix.PubSub.unsubscribe(Mydia.PubSub, topic)
+    assign(socket, :log_topic, nil)
+  end
+
+  defp parse_level(level) do
+    case level do
+      l when l in ["debug", "info", "warn", "error"] -> String.to_existing_atom(l)
+      _ -> :debug
+    end
+  end
+
+  defp level_visible?(level, min_level), do: Log.level_rank(level) >= Log.level_rank(min_level)
 
   defp apply_lifecycle(socket, fun, success_msg) do
     socket =
@@ -225,8 +306,11 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
     %{
       slug: config.slug,
       name: config.name,
+      enabled: config.enabled,
       granted: config.granted_capabilities || %{},
-      audit: audit
+      audit: audit,
+      min_level: :debug,
+      test_events: Map.get(config.granted_capabilities || %{}, "events:subscribe", [])
     }
   end
 

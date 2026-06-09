@@ -46,6 +46,12 @@ defmodule Mydia.Application do
         # holds installed plugin descriptors (see Mydia.Plugins.Registry).
         Mydia.Plugins.Registry,
         {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
+        # Maps a live guest instance pid -> its current invocation correlation
+        # ({slug, invocation_id, line-counter, test_run?}) so the `log` host
+        # function (which runs in the instance process) can attribute a guest
+        # line to the right invocation. Entries are owned by the calling process
+        # and auto-removed if it dies (see Mydia.Plugins.Host).
+        {Registry, keys: :unique, name: Mydia.Plugins.InvocationRegistry},
         {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
         # Fans "events:all" out to subscribed plugins (U5). Replaces the Luerl
         # hooks manager removed in U11.

@@ -93,6 +93,52 @@ defmodule Mydia.Plugins do
   defp to_string_or_nil(value), do: to_string(value)
 
   @doc """
+  Fires a synthetic `event_type` at a single plugin for the admin Test button
+  (U7, R10/R11).
+
+  Calls `Host.call/4` directly (bypassing `invoke_plugin/2`'s delivery routing,
+  so durable plugins like the bundled notifier run synchronously and surface
+  immediately rather than via an Oban job) with `test_run: true`, so the markers
+  and guest logs for the run are badged as a test. Runs in a supervised Task so
+  the caller (LiveView) does not block. Returns `:ok` when the plugin is running,
+  `{:error, :not_running}` otherwise.
+  """
+  @spec test_invoke(String.t(), String.t()) :: :ok | {:error, :not_running}
+  def test_invoke(slug, event_type) when is_binary(slug) and is_binary(event_type) do
+    case get_plugin(slug) do
+      {:ok, %Plugin{} = plugin} ->
+        payload = build_payload(synthetic_event(event_type))
+
+        Task.Supervisor.start_child(Mydia.TaskSupervisor, fn ->
+          Host.call(plugin.slug, plugin.entrypoint, payload, force_fuel: true, test_run: true)
+        end)
+
+        :ok
+
+      _ ->
+        {:error, :not_running}
+    end
+  end
+
+  defp synthetic_event(event_type) do
+    %{
+      type: event_type,
+      category: "media",
+      severity: :info,
+      actor_type: :system,
+      actor_id: "plugin_test",
+      resource_type: "media_item",
+      resource_id: Ecto.UUID.generate(),
+      metadata: %{
+        "title" => "Test Movie",
+        "media_type" => "movie",
+        "year" => 2026,
+        "test" => true
+      }
+    }
+  end
+
+  @doc """
   Rehydrates installed plugins into the runtime registry post-boot.
 
   Called from `Mydia.Application` after the supervision tree starts, mirroring
