@@ -10,28 +10,34 @@ defmodule Mix.Tasks.Compile.Plugins do
 
   ## Incremental by content digest, not mtime
 
-  Each crate's source tree (everything but `target/`) is hashed; the digest is
-  cached in the compiler manifest. A crate whose digest is unchanged and whose
-  output already exists is skipped without invoking cargo. The digest is
+  Each crate's source tree (everything but `target/`) is hashed; the manifest
+  caches `{source_digest, output_sha256}` per crate. A crate is skipped (no cargo)
+  only when the source digest matches **and** the artifact on disk hashes to the
+  recorded output — so a stale or foreign `priv/plugins/*.wasm` triggers a
+  rebuild instead of being silently reused (the manifest lives in `_build`, which
+  a shared build cache can pair with a per-checkout output dir). The digest is
   content-based, so a `git checkout`/`bisect` that rewinds source correctly
   triggers a rebuild — an mtime guard would not (a gitignored artifact can be
   newer than older source).
 
-  ## Environment-aware skip
+  ## Loud skip on a missing toolchain
 
-  When `cargo` or the `wasm32-unknown-unknown` target is unavailable, a *dev*
-  build logs a warning and no-ops so a contributor not working on plugins can
-  still compile the app. A *release/CI* build (`MIX_ENV=prod` or `CI` set) treats
-  a missing toolchain as a hard error — otherwise `mix compile` would succeed and
-  the image would ship with no bundled `.wasm`, and the plugin would silently
-  never seed.
+  When `cargo` or the `wasm32-unknown-unknown` target is unavailable the guests
+  cannot be rebuilt. Rather than hard-failing — a toolchain-less contributor and
+  the Nix package build legitimately lack the target — the compiler no-ops, but
+  it **never skips silently**: it emits a loud `Mix.shell/0` warning that names
+  what was skipped and whether the existing `priv/plugins/*.wasm` is merely
+  *stale* (outputs present, not rebuilt) or outright *missing* (the plugin will
+  not load). The release guard lives in the Docker builders, which assert
+  `priv/plugins/*.wasm` exists after `mix compile` (see Dockerfile /
+  Dockerfile.e2e), so an image can never ship without the bundled artifact.
   """
 
   use Mix.Task.Compiler
 
   @recursive false
   @target "wasm32-unknown-unknown"
-  @manifest_vsn 1
+  @manifest_vsn 2
 
   @impl Mix.Task.Compiler
   def run(_argv) do
@@ -42,7 +48,7 @@ defmodule Mix.Tasks.Compile.Plugins do
         {:noop, []}
 
       (reason = toolchain_gap()) != nil ->
-        on_toolchain_gap(reason)
+        on_toolchain_gap(reason, crates)
 
       true ->
         build_all(crates)
@@ -92,16 +98,47 @@ defmodule Mix.Tasks.Compile.Plugins do
     _ -> false
   end
 
-  # The compiler always graceful-skips a missing wasm toolchain (warn, no-op)
-  # rather than hard-failing: the Nix package build and toolchain-less
-  # contributors legitimately lack the target, and forcing a hard error there
-  # would break those builds. The silent-empty-image risk is instead guarded
-  # where it matters — the Docker builders assert priv/plugins/*.wasm exists
-  # after `mix compile` (see Dockerfile / Dockerfile.e2e), so a release image
-  # can never ship without the bundled artifact.
-  defp on_toolchain_gap(reason) do
-    Mix.shell().info("[plugins] skipping wasm build — #{reason}")
+  # The compiler graceful-skips a missing wasm toolchain (no-op) rather than
+  # hard-failing: the Nix package build and toolchain-less contributors
+  # legitimately lack the target, and forcing a hard error there would break
+  # those builds. The skip is never silent, though — it warns loudly via
+  # Mix.shell().error/1, distinguishing stale outputs from missing ones, so a
+  # stale priv/plugins/*.wasm can't be used without notice. The release guard is
+  # the Docker builders asserting the artifact exists after `mix compile`.
+  defp on_toolchain_gap(reason, crates) do
+    Mix.shell().error(toolchain_gap_message(reason, missing_outputs(crates)))
     {:noop, []}
+  end
+
+  # The build outputs (relative paths) that do not yet exist for the given
+  # crates. Empty means every guest already has a (possibly stale) artifact.
+  defp missing_outputs(crates) do
+    for crate <- crates,
+        rel = "priv/plugins/#{Path.basename(crate)}.wasm",
+        not File.exists?(Path.expand(rel, File.cwd!())),
+        do: rel
+  end
+
+  # Builds the loud-skip warning. Pure (no IO) for testing. `missing_outputs` is
+  # the list of artifacts absent from disk; when empty, the existing ones may be
+  # stale because they were not rebuilt.
+  @doc false
+  def toolchain_gap_message(reason, missing_outputs) do
+    fix =
+      "Install the #{@target} target (`rustup target add #{@target}`) or rebuild " <>
+        "your dev image, then re-run `mix compile`."
+
+    detail =
+      case missing_outputs do
+        [] ->
+          "Bundled plugin guests were NOT rebuilt; the existing priv/plugins/*.wasm " <>
+            "may be STALE."
+
+        missing ->
+          "MISSING artifacts: #{Enum.join(missing, ", ")} — those plugins will not load."
+      end
+
+    "[plugins] WARNING: wasm toolchain unavailable (#{reason}). #{detail} #{fix}"
   end
 
   # ── Build ─────────────────────────────────────────────────────────────────
@@ -111,8 +148,8 @@ defmodule Mix.Tasks.Compile.Plugins do
 
     {results, new_cache} =
       Enum.map_reduce(crates, cache, fn crate, acc ->
-        {result, digest} = build_crate(crate, acc)
-        {result, Map.put(acc, crate, digest)}
+        {result, entry} = build_crate(crate, acc)
+        {result, Map.put(acc, crate, entry)}
       end)
 
     write_manifest(new_cache)
@@ -129,17 +166,48 @@ defmodule Mix.Tasks.Compile.Plugins do
     end
   end
 
-  # Returns {{:error, diagnostic} | :built | :unchanged | :skipped, source_digest}.
+  # Returns {{:error, diagnostic} | :built | :unchanged | :skipped, cache_entry}
+  # where a cache entry is `{source_digest, output_sha256}`.
   defp build_crate(crate, cache) do
     name = Path.basename(crate)
     digest = source_digest(crate)
     output = Path.expand(Path.join("priv/plugins", "#{name}.wasm"), File.cwd!())
+    previous = Map.get(cache, crate)
 
-    if Map.get(cache, crate) == digest and File.exists?(output) do
-      {:unchanged, digest}
+    if output_fresh?(previous, digest, output) do
+      {:unchanged, previous}
     else
-      {compile_crate(crate, name, output), digest}
+      result = compile_crate(crate, name, output)
+      {result, cache_entry(result, digest, output, previous)}
     end
+  end
+
+  # A crate is unchanged only when its source digest matches AND the artifact on
+  # disk is byte-for-byte the one that digest produced. Validating the output's
+  # *content* (not just `File.exists?/1`) is what stops a stale or foreign
+  # priv/plugins/*.wasm from being silently accepted — e.g. a shared build-cache
+  # manifest (in _build) paired with a per-checkout output dir, where the digest
+  # matches but this checkout's artifact is stale. Public for testing only.
+  @doc false
+  def output_fresh?({cached_digest, output_sha}, digest, output) do
+    cached_digest == digest and File.exists?(output) and sha256_file(output) == output_sha
+  end
+
+  def output_fresh?(_previous, _digest, _output), do: false
+
+  # The manifest entry to record after a build attempt. A real build or a trusted
+  # unchanged records the new digest + the output's hash; a skip or error keeps
+  # the previous entry so a later run with a working toolchain still rebuilds.
+  defp cache_entry(result, digest, output, previous) do
+    if result in [:built, :unchanged] and File.exists?(output) do
+      {digest, sha256_file(output)}
+    else
+      previous
+    end
+  end
+
+  defp sha256_file(path) do
+    :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
   end
 
   defp compile_crate(crate, name, output) do
@@ -156,8 +224,13 @@ defmodule Mix.Tasks.Compile.Plugins do
         if wasm_target_missing?(out) do
           # A cargo without the wasm32 std (apk/distro/Nix cargo, no rustup) only
           # surfaces the gap at build time. Treat it as a skip, not a hard error,
-          # so it matches the toolchain-gap path above.
-          Mix.shell().info("[plugins] skipping #{name} — #{@target} target not available")
+          # so it matches the toolchain-gap path above — but warn loudly so a
+          # stale or missing priv/plugins/#{name}.wasm can't pass unnoticed.
+          Mix.shell().error(
+            "[plugins] WARNING: skipped #{name} — #{@target} target not available; " <>
+              "priv/plugins/#{name}.wasm may be stale or missing"
+          )
+
           :skipped
         else
           # A real guest build error (e.g. a server-only crate). Surface cargo's
