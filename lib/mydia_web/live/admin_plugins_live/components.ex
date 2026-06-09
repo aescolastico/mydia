@@ -283,6 +283,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   Per-plugin detail modal: granted capabilities + recent egress audit + Revoke.
   """
   attr :detail, :map, required: true
+  attr :logs, :any, required: true
 
   def detail_modal(assigns) do
     ~H"""
@@ -302,11 +303,62 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
         <.host_grant_note id="detail-host-grant" settings_schema={@detail.settings_schema} />
 
         <h4 class="font-semibold mt-4 mb-2">Recent network activity</h4>
-        <div id="detail-audit" class="text-xs space-y-1 max-h-40 overflow-y-auto">
+        <div id="detail-audit" class="text-xs space-y-1 max-h-32 overflow-y-auto">
           <p :if={@detail.audit == []} class="text-base-content/60">No recorded requests.</p>
           <div :for={event <- @detail.audit} class="flex justify-between gap-2 font-mono">
             <span class="truncate">{event.metadata["host"]}</span>
             <span class="text-base-content/60">{event.metadata["outcome"]}</span>
+          </div>
+        </div>
+
+        <div :if={@detail.enabled and @detail.test_events != []} class="mt-4">
+          <h4 class="font-semibold mb-2">Test</h4>
+          <form phx-submit="test_plugin" class="flex gap-2 items-center">
+            <input type="hidden" name="slug" value={@detail.slug} />
+            <select name="event" class="select select-bordered select-sm flex-1">
+              <option :for={ev <- @detail.test_events} value={ev}>{ev}</option>
+            </select>
+            <.button id="test-plugin" type="submit" class="btn btn-sm btn-primary">
+              Run test
+            </.button>
+          </form>
+          <p class="text-xs text-base-content/60 mt-1">
+            Fires a synthetic event so you can confirm the plugin works without waiting for real media.
+          </p>
+        </div>
+
+        <div class="flex items-center justify-between mt-4 mb-2">
+          <h4 class="font-semibold">Activity log</h4>
+          <form id="log-filter-form" phx-change="filter_logs">
+            <select name="level" class="select select-bordered select-xs" id="log-level-filter">
+              <option
+                :for={lvl <- ~w(debug info warn error)}
+                value={lvl}
+                selected={to_string(@detail.min_level) == lvl}
+              >
+                {String.capitalize(lvl)}+
+              </option>
+            </select>
+          </form>
+        </div>
+        <div
+          id="plugin-logs"
+          phx-update="stream"
+          class="text-xs font-mono space-y-1 max-h-64 overflow-y-auto rounded bg-base-200 p-2"
+        >
+          <p id="plugin-logs-empty" class="hidden only:block text-base-content/60">
+            No activity yet — add media or use Run test to confirm it works.
+          </p>
+          <div
+            :for={{dom_id, log} <- @logs}
+            id={dom_id}
+            class={["flex gap-2 items-baseline", log_row_class(log)]}
+          >
+            <span class="opacity-50 shrink-0 w-5" title={to_string(log.source)}>
+              {source_tag(log.source)}
+            </span>
+            <span class="flex-1 break-all">{log.message}</span>
+            <span :if={log.test_run} class="badge badge-warning badge-xs shrink-0">test</span>
           </div>
         </div>
 
@@ -329,6 +381,18 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
     </div>
     """
   end
+
+  # Compact source marker for an activity-log line.
+  defp source_tag(:guest), do: "log"
+  defp source_tag(:wasi), do: "out"
+  defp source_tag(:host), do: "sys"
+  defp source_tag(_), do: "?"
+
+  # Level-keyed row tint; error/warn stand out so a trap marker is unmistakable.
+  defp log_row_class(%{level: :error}), do: "text-error"
+  defp log_row_class(%{level: :warn}), do: "text-warning"
+  defp log_row_class(%{level: :debug}), do: "text-base-content/50"
+  defp log_row_class(_), do: ""
 
   @doc """
   The operator settings modal (U3): renders a plugin's manifest-declared

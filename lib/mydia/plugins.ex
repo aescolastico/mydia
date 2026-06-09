@@ -93,6 +93,52 @@ defmodule Mydia.Plugins do
   defp to_string_or_nil(value), do: to_string(value)
 
   @doc """
+  Fires a synthetic `event_type` at a single plugin for the admin Test button
+  (U7, R10/R11).
+
+  Calls `Host.call/4` directly (bypassing `invoke_plugin/2`'s delivery routing,
+  so durable plugins like the bundled notifier run synchronously and surface
+  immediately rather than via an Oban job) with `test_run: true`, so the markers
+  and guest logs for the run are badged as a test. Runs in a supervised Task so
+  the caller (LiveView) does not block. Returns `:ok` when the plugin is running,
+  `{:error, :not_running}` otherwise.
+  """
+  @spec test_invoke(String.t(), String.t()) :: :ok | {:error, :not_running}
+  def test_invoke(slug, event_type) when is_binary(slug) and is_binary(event_type) do
+    case get_plugin(slug) do
+      {:ok, %Plugin{} = plugin} ->
+        payload = build_payload(synthetic_event(event_type))
+
+        Task.Supervisor.start_child(Mydia.TaskSupervisor, fn ->
+          Host.call(plugin.slug, plugin.entrypoint, payload, force_fuel: true, test_run: true)
+        end)
+
+        :ok
+
+      _ ->
+        {:error, :not_running}
+    end
+  end
+
+  defp synthetic_event(event_type) do
+    %{
+      type: event_type,
+      category: "media",
+      severity: :info,
+      actor_type: :system,
+      actor_id: "plugin_test",
+      resource_type: "media_item",
+      resource_id: Ecto.UUID.generate(),
+      metadata: %{
+        "title" => "Test Movie",
+        "media_type" => "movie",
+        "year" => 2026,
+        "test" => true
+      }
+    }
+  end
+
+  @doc """
   Rehydrates installed plugins into the runtime registry post-boot.
 
   Called from `Mydia.Application` after the supervision tree starts, mirroring
@@ -123,46 +169,106 @@ defmodule Mydia.Plugins do
   end
 
   @doc """
-  Ensures the bundled webhook notifier is installed (inactive, pending approval).
+  Discovers every bundled plugin shipped in `priv/plugins/` and seeds it disabled
+  (pending approval), without copying any wasm bytes into the DB.
 
-  Reads the shipped artifact + manifest from `priv/plugins/`, and if no plugin is
-  installed under its slug, persists it disabled with no grants — the admin
-  approves and configures it through the normal UI (R17: no new core surface).
-  An already-installed row is left untouched so admin grants/settings survive.
+  Each `priv/plugins/*.json` manifest is parsed; a slug with no existing config is
+  persisted disabled, no grants, `wasm_module: nil` — its bytes resolve from the
+  filesystem at activation (see `resolve_artifact/2`). The admin approves and
+  configures it through the normal UI (R17: no new core surface). An
+  already-installed row's admin state (grants/settings/enabled) is left untouched.
+
+  ## Reconcile (built-in upgrade)
+
+  An install that ran the older copy-into-DB seeding has its bundled row carrying
+  stale bytes in `wasm_module`, which the resolver's DB layer would prefer over a
+  newer image artifact. Seeding nulls `wasm_module`/`integrity_hash` on any
+  `source_url == "bundled"` row so resolution falls through to the filesystem and
+  a newer image ships newer code automatically.
   """
   @spec ensure_bundled() :: :ok
   def ensure_bundled do
-    with {:ok, wasm} <- read_priv("webhook_notifier.wasm"),
-         {:ok, manifest_json} <- read_priv("webhook_notifier.json"),
-         {:ok, manifest} <- Manifest.parse(manifest_json),
-         nil <- Settings.get_plugin_config_by_slug(manifest.slug) do
-      hash = :crypto.hash(:sha256, wasm) |> Base.encode16(case: :lower)
+    Enum.each(bundled_manifests(), &seed_or_reconcile/1)
+  end
 
-      Settings.create_plugin_config(%{
-        slug: manifest.slug,
-        name: manifest.name,
-        version: manifest.version,
-        source_url: "bundled",
-        integrity_hash: hash,
-        manifest: manifest_to_map(manifest),
-        wasm_module: wasm,
-        granted_capabilities: %{},
-        enabled: false,
-        settings: %{"delivery" => "durable"}
-      })
+  defp bundled_manifests do
+    Application.app_dir(:mydia, "priv/plugins")
+    |> Path.join("*.json")
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      with {:ok, json} <- File.read(path),
+           {:ok, raw} <- Jason.decode(json),
+           {:ok, manifest} <- Manifest.parse(raw) do
+        [{manifest, raw}]
+      else
+        other ->
+          Logger.warning("could not load bundled manifest #{path}: #{inspect(other)}")
+          []
+      end
+    end)
+  end
 
-      :ok
-    else
-      %Settings.PluginConfig{} -> :ok
-      {:error, reason} -> Logger.warning("could not seed bundled notifier: #{inspect(reason)}")
-      _ -> :ok
+  defp seed_or_reconcile({manifest, raw}) do
+    case Settings.get_plugin_config_by_slug(manifest.slug) do
+      nil -> seed_bundled(manifest, raw)
+      %Settings.PluginConfig{} = config -> reconcile_bundled(config)
     end
   end
 
-  defp read_priv(file) do
-    path = Application.app_dir(:mydia, Path.join("priv/plugins", file))
-    File.read(path)
+  defp seed_bundled(manifest, raw) do
+    Settings.create_plugin_config(%{
+      slug: manifest.slug,
+      name: manifest.name,
+      version: manifest.version,
+      source_url: "bundled",
+      integrity_hash: nil,
+      manifest: manifest_to_map(manifest),
+      wasm_module: nil,
+      granted_capabilities: %{},
+      enabled: false,
+      settings: bundled_settings(raw)
+    })
+
+    :ok
   end
+
+  # A bundled plugin declares its delivery mode in its manifest (durable enqueues
+  # an Oban job; inline runs synchronously). Default inline when unspecified.
+  defp bundled_settings(raw) do
+    case Map.get(raw, "delivery") do
+      mode when mode in ["durable", "inline"] -> %{"delivery" => mode}
+      _ -> %{"delivery" => "inline"}
+    end
+  end
+
+  # Null stale DB bytes on a pre-existing bundled row (built-in upgrade), leaving
+  # all admin state untouched. Non-bundled rows (e.g. an index plugin) are never
+  # touched, so their cached bytes survive.
+  #
+  # Guard against bricking: only null the DB bytes when a filesystem replacement
+  # actually resolves (override or bundled artifact present). In an environment
+  # where the .wasm was not built (a toolchain-less dev compile that skipped),
+  # nulling would strip an enabled plugin's only artifact, so we keep the DB
+  # bytes and log instead.
+  defp reconcile_bundled(
+         %Settings.PluginConfig{source_url: "bundled", wasm_module: wasm} = config
+       )
+       when is_binary(wasm) do
+    case resolve_artifact(%{config | wasm_module: nil}) do
+      {:ok, _bytes} ->
+        Settings.update_plugin_config(config, %{wasm_module: nil, integrity_hash: nil})
+        :ok
+
+      {:error, _} ->
+        Logger.warning(
+          "plugin #{config.slug}: keeping DB bytes — no filesystem artifact to fall back to"
+        )
+
+        :ok
+    end
+  end
+
+  defp reconcile_bundled(_config), do: :ok
 
   ## Install lifecycle (U8)
 
@@ -417,11 +523,12 @@ defmodule Mydia.Plugins do
   end
 
   # Builds the runtime descriptor from the persisted config + manifest and starts
-  # its pool with the gated host-function imports.
+  # its pool with the gated host-function imports. The wasm bytes are resolved
+  # through the layered resolver (override dir → DB blob → bundled priv/plugins).
   defp activate(config) do
     with manifest_map when not is_nil(manifest_map) <- config.manifest,
-         wasm when is_binary(wasm) <- config.wasm_module,
-         {:ok, manifest} <- Manifest.parse(manifest_map) do
+         {:ok, manifest} <- Manifest.parse(manifest_map),
+         {:ok, wasm} <- resolve_artifact(config) do
       descriptor =
         Plugin.from_manifest(manifest,
           granted_capabilities: config.granted_capabilities || %{},
@@ -436,12 +543,115 @@ defmodule Mydia.Plugins do
       end
     else
       nil ->
-        {:error, Error.new(:invalid_config, "plugin #{config.slug} has no artifact to activate")}
+        {:error, Error.new(:invalid_config, "plugin #{config.slug} has no manifest to activate")}
 
       {:error, _} = err ->
         err
     end
   end
+
+  ## Layered artifact resolution (U3)
+
+  @doc """
+  Resolves a plugin's wasm bytes by layer, highest precedence first:
+
+    1. **Override dir** — a `<slug>.wasm` (hyphenated or underscored) dropped in
+       `PLUGINS_OVERRIDE_DIR`, for an operator patch/dev iteration.
+    2. **DB blob** — `config.wasm_module`, the verified bytes of a network
+       (index) plugin cached at install.
+    3. **Bundled** — the image artifact at `priv/plugins/<underscored-slug>.wasm`,
+       built from source by the `:plugins` mix compiler.
+
+  Bundled/override bytes are trusted (the image, the operator's own volume), so
+  integrity is not re-verified here — network integrity already happened at fetch
+  time in `Mydia.Plugins.Index`. `opts[:override_dir]` and `opts[:bundled_dir]`
+  exist for hermetic tests; production calls pass none.
+  """
+  @spec resolve_artifact(Settings.PluginConfig.t(), keyword()) ::
+          {:ok, binary()} | {:error, Error.t()}
+  def resolve_artifact(config, opts \\ []) do
+    slug = config.slug
+    override_dir = Keyword.get(opts, :override_dir, configured_override_dir())
+    bundled_dir = Keyword.get(opts, :bundled_dir, bundled_plugins_dir())
+
+    with :miss <- from_override(slug, override_dir),
+         :miss <- from_db(config),
+         :miss <- from_bundled(slug, bundled_dir) do
+      {:error, Error.new(:invalid_config, "plugin #{slug} has no artifact to activate")}
+    else
+      {:ok, _bytes} = ok -> ok
+      {:error, _} = err -> err
+    end
+  end
+
+  # Layer 1: operator override directory. Accepts both the hyphenated slug and
+  # the underscored form (operators see the hyphenated slug in the UI; the
+  # compiler emits the underscored filename), guarded against path traversal.
+  defp from_override(_slug, dir) when dir in [nil, ""], do: :miss
+
+  defp from_override(slug, dir) do
+    names = Enum.uniq([slug, underscored(slug)])
+
+    found =
+      Enum.find_value(names, fn name ->
+        path = Path.join(dir, name <> ".wasm")
+
+        case read_within(dir, path) do
+          {:ok, bytes} -> {bytes, path}
+          :miss -> nil
+        end
+      end)
+
+    case found do
+      {bytes, path} ->
+        Logger.info("plugin #{slug}: activating bytes from override dir #{path}")
+        {:ok, bytes}
+
+      nil ->
+        Logger.debug(
+          "plugin #{slug}: override dir #{dir} set but no matching .wasm; falling through"
+        )
+
+        :miss
+    end
+  end
+
+  # Layer 2: DB-cached bytes (index plugins). Bundled rows carry nil here (U4).
+  defp from_db(%{wasm_module: bytes}) when is_binary(bytes) and byte_size(bytes) > 0,
+    do: {:ok, bytes}
+
+  defp from_db(_), do: :miss
+
+  # Layer 3: image-bundled artifact, built into priv/plugins by the compiler.
+  defp from_bundled(slug, dir), do: read_within(dir, Path.join(dir, underscored(slug) <> ".wasm"))
+
+  # Reads `path` only when it stays under `dir` (defence-in-depth traversal
+  # guard — real slugs are regex-validated, but the guard is load-bearing
+  # regardless of how the slug was sourced). File.read (not File.read!) so a file
+  # vanishing between checks yields :miss rather than raising.
+  defp read_within(dir, path) do
+    with true <- within_dir?(dir, path),
+         {:ok, bytes} <- File.read(path) do
+      {:ok, bytes}
+    else
+      _ -> :miss
+    end
+  end
+
+  defp within_dir?(dir, path) do
+    String.starts_with?(Path.expand(path), Path.expand(dir) <> "/")
+  end
+
+  defp underscored(slug), do: String.replace(slug, "-", "_")
+
+  defp configured_override_dir do
+    case Application.get_env(:mydia, :runtime_config) do
+      %{plugins: %{override_dir: dir}} -> dir
+      _ -> nil
+    end
+  end
+
+  defp bundled_plugins_dir, do: Application.app_dir(:mydia, "priv/plugins")
 
   defp deactivate(slug) do
     Host.stop_plugin(slug)

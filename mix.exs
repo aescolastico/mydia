@@ -86,7 +86,16 @@ defmodule Mydia.MixProject do
   # because that is the order under which it actually emits its analysis in
   # this version (appending it after Mix.compilers/0 yields no report).
   defp compilers do
-    base = [:phoenix_live_view] ++ Mix.compilers()
+    # `:plugins` builds the bundled WASM guests under plugins/*/ into
+    # priv/plugins/ during mix compile (see Mix.Tasks.Compile.Plugins). It is
+    # APPENDED, not prepended: the compiler task module lives in lib/ and is only
+    # loadable after the `:elixir` compiler has run, so a fresh build can't find
+    # `compile.plugins` if it runs first. Appending also still places the build
+    # inside `mix compile`, so the artifact exists before `mix release` bundles
+    # priv/. Unlike `:unused` (which must wrap elixir, hence prepended) `:plugins`
+    # is independent. It runs on every compile in every env, including the
+    # test-env --warnings-as-errors compile.
+    base = [:phoenix_live_view] ++ Mix.compilers() ++ [:plugins]
 
     if System.get_env("UNUSED_CHECK") == "true" and Mix.env() in [:dev, :test] do
       [:unused | base]

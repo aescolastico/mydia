@@ -151,9 +151,18 @@ defmodule Mydia.Config.Loader do
       indexers: load_indexers_env(),
       media_servers: load_media_servers_env(),
       library_paths: load_library_paths_env(),
-      plugin_installs: load_plugins_env()
+      plugin_installs: load_plugins_env(),
+      plugins: load_plugins_runtime_env()
     }
     |> remove_empty_maps()
+  end
+
+  # Runtime keys for the plugin platform (the singular :plugins embed), distinct
+  # from PLUGIN_<N>_* installs handled by load_plugins_env/0. Only the filesystem
+  # override directory is env-configurable today.
+  defp load_plugins_runtime_env do
+    %{}
+    |> put_if_present(:override_dir, System.get_env("PLUGINS_OVERRIDE_DIR"))
   end
 
   defp load_server_env do

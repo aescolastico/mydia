@@ -323,4 +323,70 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       refute has_element?(view, "#toggle-envp")
     end
   end
+
+  describe "debug logs and test trigger (U6, U7)" do
+    alias Mydia.Plugins.Logs
+
+    defp seed_enabled_notifier do
+      seed_plugin("notifier", "Notifier",
+        enabled: true,
+        granted: %{"events:subscribe" => ["media_item.added"]}
+      )
+    end
+
+    defp log!(attrs) do
+      {:ok, log} =
+        Logs.create(
+          Map.merge(
+            %{slug: "notifier", invocation_id: "inv", source: :guest, level: :info, message: "m"},
+            attrs
+          )
+        )
+
+      log
+    end
+
+    test "the detail modal renders the activity log with existing rows", %{conn: conn} do
+      seed_enabled_notifier()
+      log!(%{message: "posting to webhook"})
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#details-notifier") |> render_click()
+
+      assert has_element?(view, "#plugin-logs")
+      assert render(view) =~ "posting to webhook"
+    end
+
+    test "the level filter re-queries the timeline", %{conn: conn} do
+      seed_enabled_notifier()
+      log!(%{level: :debug, message: "debug noise"})
+      log!(%{source: :host, level: :error, message: "boom trap"})
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#details-notifier") |> render_click()
+      assert render(view) =~ "debug noise"
+
+      html = view |> form("#log-filter-form") |> render_change(%{"level" => "error"})
+      refute html =~ "debug noise"
+      assert html =~ "boom trap"
+    end
+
+    test "a broadcast log line appends to the open timeline live", %{conn: conn} do
+      seed_enabled_notifier()
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#details-notifier") |> render_click()
+
+      log!(%{invocation_id: "live", message: "live tail line"})
+
+      assert render(view) =~ "live tail line"
+    end
+
+    test "the Test control renders for an enabled plugin with subscribed events", %{conn: conn} do
+      seed_enabled_notifier()
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#details-notifier") |> render_click()
+
+      assert has_element?(view, "#test-plugin")
+    end
+  end
 end

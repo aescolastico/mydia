@@ -39,6 +39,7 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Media
   alias Mydia.Plugins
   alias Mydia.Plugins.Error
+  alias Mydia.Plugins.Logs
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
 
@@ -46,6 +47,14 @@ defmodule Mydia.Plugins.HostFunctions do
 
   @overflow -1
   @malformed -2
+
+  @invocation_registry Mydia.Plugins.InvocationRegistry
+
+  # Per-invocation guest log-line cap. `log` is ungated, so a buggy or hostile
+  # guest could spam it in a loop and flood plugin_logs before retention fires;
+  # fuel bounds total work but not rows inserted. Past the cap we drop further
+  # lines and emit one sentinel (U3).
+  @log_line_cap 1000
 
   @doc """
   Builds the wasmex imports map for a plugin pool.
@@ -61,10 +70,100 @@ defmodule Mydia.Plugins.HostFunctions do
       @namespace => %{
         "http_request" => host_fn(slug, &http_request/3, gate_opts),
         "data_read" =>
-          host_fn(slug, fn plugin, req, _opts -> data_read(plugin, req) end, gate_opts)
+          host_fn(slug, fn plugin, req, _opts -> data_read(plugin, req) end, gate_opts),
+        "log" => log_fn(slug)
       }
     }
   end
+
+  # `log(level, message)` is ungated — every guest may emit diagnostics with no
+  # capability grant (U3, R1). The callback runs in the instance process, so
+  # `context.pid` resolves the active invocation via the InvocationRegistry. It
+  # returns 0 (no response bytes) and never raises into the guest.
+  defp log_fn(slug) do
+    {:fn, [:i32, :i32, :i32, :i32], [:i32],
+     fn %{memory: memory, caller: caller, pid: pid}, req_ptr, req_len, _resp_ptr, _resp_cap ->
+       handle_log(slug, pid, caller, memory, req_ptr, req_len)
+       0
+     end}
+  end
+
+  defp handle_log(slug, pid, caller, memory, req_ptr, req_len) do
+    with {:ok, req} <- decode_request(caller, memory, req_ptr, req_len) do
+      {invocation_id, counter, test_run} = invocation_for(pid, slug)
+      record_guest_line(slug, invocation_id, counter, test_run, req)
+    end
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("plugin log for #{slug} raised: #{Exception.message(e)}")
+      :ok
+  end
+
+  defp invocation_for(pid, slug) do
+    case Registry.lookup(@invocation_registry, pid) do
+      [{_owner, {^slug, invocation_id, counter, test_run}}] ->
+        {invocation_id, counter, test_run}
+
+      _ ->
+        # Defensive: a `log` call with no live correlation entry. Store it
+        # uncorrelated rather than dropping or raising.
+        {"uncorrelated", nil, false}
+    end
+  end
+
+  # No counter (uncorrelated) — store without enforcing the cap.
+  defp record_guest_line(slug, invocation_id, nil, test_run, req) do
+    write_guest_line(slug, invocation_id, test_run, req)
+  end
+
+  defp record_guest_line(slug, invocation_id, counter, test_run, req) do
+    :counters.add(counter, 1, 1)
+    n = :counters.get(counter, 1)
+
+    cond do
+      n <= @log_line_cap ->
+        write_guest_line(slug, invocation_id, test_run, req)
+
+      n == @log_line_cap + 1 ->
+        Logs.create_async(%{
+          slug: slug,
+          invocation_id: invocation_id,
+          source: :host,
+          level: :warn,
+          message: "log limit reached (#{@log_line_cap} lines) — further guest lines dropped",
+          test_run: test_run
+        })
+
+      true ->
+        :ok
+    end
+  end
+
+  defp write_guest_line(slug, invocation_id, test_run, req) do
+    Logs.create_async(%{
+      slug: slug,
+      invocation_id: invocation_id,
+      source: :guest,
+      level: normalize_level(Map.get(req, "level")),
+      message: to_string(Map.get(req, "message", "")),
+      test_run: test_run
+    })
+  end
+
+  defp normalize_level(level) when is_binary(level) do
+    case String.downcase(level) do
+      "debug" -> :debug
+      "info" -> :info
+      "warn" -> :warn
+      "warning" -> :warn
+      "error" -> :error
+      _ -> :info
+    end
+  end
+
+  defp normalize_level(_), do: :info
 
   # Wraps a {plugin, request_map, gate_opts} -> {:ok, map} | {:error, Error}
   # function as a wasmex (req_ptr, req_len, resp_ptr, resp_cap) -> i32 import.

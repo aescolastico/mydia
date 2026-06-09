@@ -110,6 +110,12 @@ defmodule Mydia.Config.Schema do
       # index/source URLs are validated to be https at config time.
       field :index_url, :string, default: "https://plugins.getmydia.com/index.json"
       field :extra_source_urls, {:array, :string}, default: []
+      # Filesystem override directory (PLUGINS_OVERRIDE_DIR). When set, a
+      # `<slug>.wasm` dropped here takes precedence over the DB blob and the
+      # image-bundled artifact at activation (layered artifact resolution).
+      # Overrides the bytes of a known/bundled slug; capability approval still
+      # gates what the plugin may do.
+      field :override_dir, :string
     end
 
     embeds_one :flaresolverr, FlareSolverr, on_replace: :update, primary_key: false do
@@ -329,7 +335,8 @@ defmodule Mydia.Config.Schema do
       :invocation_timeout_ms,
       :pool_size,
       :index_url,
-      :extra_source_urls
+      :extra_source_urls,
+      :override_dir
     ])
     |> validate_required([:fuel_enabled])
     |> validate_number(:fuel_limit, greater_than: 0)

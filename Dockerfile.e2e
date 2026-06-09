@@ -25,9 +25,15 @@ RUN apk add --no-cache \
     nodejs \
     npm \
     sqlite-dev \
-    rust \
-    cargo \
     curl
+
+# Rust via rustup so the wasm32 target is available for the bundled plugin
+# guests built by the :plugins mix compiler. The e2e entrypoint boots the app,
+# which seeds bundled plugins, so the artifact must build here too.
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
+    rustup target add wasm32-unknown-unknown
 
 # Set build environment
 ENV MIX_ENV=prod
@@ -82,11 +88,22 @@ COPY priv ./priv
 COPY lib ./lib
 COPY assets ./assets
 COPY native ./native
+# Bundled plugin guest sources — built to priv/plugins/*.wasm during mix compile.
+COPY plugins ./plugins
 
 # Compile application
 RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
     --mount=type=cache,id=mydia-mix,target=/root/.mix \
     mix compile
+
+# Fail the build if a bundled plugin's wasm artifact was not produced — the e2e
+# image boots the app and seeds bundled plugins, so a missing artifact would
+# surface as a confusing runtime failure instead of a build error.
+RUN for m in priv/plugins/*.json; do \
+      [ -e "$m" ] || continue; \
+      w="priv/plugins/$(basename "$m" .json).wasm"; \
+      test -f "$w" || { echo "ERROR: missing built plugin artifact $w" >&2; exit 1; }; \
+    done
 
 # Build Phoenix assets with npm cache
 RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
