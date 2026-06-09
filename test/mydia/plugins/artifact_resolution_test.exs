@@ -3,10 +3,11 @@ defmodule Mydia.Plugins.ArtifactResolutionTest do
 
   alias Mydia.Plugins
   alias Mydia.Plugins.Error
+  alias Mydia.Settings.PluginConfig
 
   @moduletag :tmp_dir
 
-  defp config(slug, wasm), do: %{slug: slug, wasm_module: wasm}
+  defp config(slug, wasm), do: %PluginConfig{slug: slug, wasm_module: wasm}
 
   defp write(dir, name, bytes) do
     File.mkdir_p!(dir)
@@ -40,6 +41,26 @@ defmodule Mydia.Plugins.ArtifactResolutionTest do
 
       assert {:ok, "BUNDLED"} =
                Plugins.resolve_artifact(config("webhook-notifier", nil),
+                 override_dir: nil,
+                 bundled_dir: bundled
+               )
+    end
+
+    test "override near-miss falls through to the DB blob (index plugin)", %{tmp_dir: dir} do
+      override = write(Path.join(dir, "o"), "unrelated.wasm", "X")
+
+      assert {:ok, "DBBYTES"} =
+               Plugins.resolve_artifact(config("an-index-plugin", "DBBYTES"),
+                 override_dir: override,
+                 bundled_dir: Path.join(dir, "none")
+               )
+    end
+
+    test "an empty DB blob is treated as absent and falls through to bundled", %{tmp_dir: dir} do
+      bundled = write(Path.join(dir, "bundled"), "webhook_notifier.wasm", "BUNDLED")
+
+      assert {:ok, "BUNDLED"} =
+               Plugins.resolve_artifact(config("webhook-notifier", ""),
                  override_dir: nil,
                  bundled_dir: bundled
                )

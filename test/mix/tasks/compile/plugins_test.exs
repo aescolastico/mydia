@@ -46,6 +46,25 @@ defmodule Mix.Tasks.Compile.PluginsTest do
     end
   end
 
+  describe "wasm_target_missing?/1 (toolchain-gap classification)" do
+    test "true for the cargo/rustc missing-target signatures" do
+      assert Plugins.wasm_target_missing?(
+               "note: the `wasm32-unknown-unknown` target may not be installed"
+             )
+
+      assert Plugins.wasm_target_missing?(
+               "help: consider downloading the target with `rustup target add wasm32-unknown-unknown`"
+             )
+
+      assert Plugins.wasm_target_missing?("error[E0463]: can't find crate for `core`")
+      assert Plugins.wasm_target_missing?("can't find crate for `std`")
+    end
+
+    test "false for a genuine guest source error" do
+      refute Plugins.wasm_target_missing?("error[E0425]: cannot find value `foo` in this scope")
+    end
+  end
+
   defp new_crate(base, name, body) do
     crate = Path.join(base, name)
     File.mkdir_p!(Path.join(crate, "src"))

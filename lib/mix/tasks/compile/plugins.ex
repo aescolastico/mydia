@@ -92,19 +92,16 @@ defmodule Mix.Tasks.Compile.Plugins do
     _ -> false
   end
 
+  # The compiler always graceful-skips a missing wasm toolchain (warn, no-op)
+  # rather than hard-failing: the Nix package build and toolchain-less
+  # contributors legitimately lack the target, and forcing a hard error there
+  # would break those builds. The silent-empty-image risk is instead guarded
+  # where it matters — the Docker builders assert priv/plugins/*.wasm exists
+  # after `mix compile` (see Dockerfile / Dockerfile.e2e), so a release image
+  # can never ship without the bundled artifact.
   defp on_toolchain_gap(reason) do
-    if release_build?() do
-      {:error, [diagnostic("plugin build requires the wasm toolchain: #{reason}")]}
-    else
-      Mix.shell().info("[plugins] skipping wasm build — #{reason}")
-      {:noop, []}
-    end
-  end
-
-  # A release/CI build must produce artifacts; only a local dev/test compile may
-  # gracefully skip a missing toolchain.
-  defp release_build? do
-    Mix.env() == :prod or System.get_env("CI") not in [nil, "", "false", "0"]
+    Mix.shell().info("[plugins] skipping wasm build — #{reason}")
+    {:noop, []}
   end
 
   # ── Build ─────────────────────────────────────────────────────────────────
@@ -120,13 +117,19 @@ defmodule Mix.Tasks.Compile.Plugins do
 
     write_manifest(new_cache)
 
-    case Enum.find(results, &match?({:error, _}, &1)) do
-      {:error, diag} -> {:error, [diag]}
-      nil -> if Enum.any?(results, &(&1 == :built)), do: {:ok, []}, else: {:noop, []}
+    cond do
+      Enum.find(results, &match?({:error, _}, &1)) ->
+        {:error, [elem(Enum.find(results, &match?({:error, _}, &1)), 1)]}
+
+      Enum.any?(results, &(&1 == :built)) ->
+        {:ok, []}
+
+      true ->
+        {:noop, []}
     end
   end
 
-  # Returns {{:error, diagnostic} | :built | :unchanged, source_digest}.
+  # Returns {{:error, diagnostic} | :built | :unchanged | :skipped, source_digest}.
   defp build_crate(crate, cache) do
     name = Path.basename(crate)
     digest = source_digest(crate)
@@ -150,10 +153,28 @@ defmodule Mix.Tasks.Compile.Plugins do
         copy_if_changed(crate, name, output)
 
       {out, _code} ->
-        # Surface cargo's stderr verbatim — wasm32 build errors (e.g. a guest
-        # pulling a server-only crate) are otherwise cryptic.
-        {:error, diagnostic("cargo build failed for #{name}:\n#{out}")}
+        if wasm_target_missing?(out) do
+          # A cargo without the wasm32 std (apk/distro/Nix cargo, no rustup) only
+          # surfaces the gap at build time. Treat it as a skip, not a hard error,
+          # so it matches the toolchain-gap path above.
+          Mix.shell().info("[plugins] skipping #{name} — #{@target} target not available")
+          :skipped
+        else
+          # A real guest build error (e.g. a server-only crate). Surface cargo's
+          # stderr verbatim — wasm32 errors are otherwise cryptic.
+          {:error, diagnostic("cargo build failed for #{name}:\n#{out}")}
+        end
     end
+  end
+
+  # True when cargo output indicates the wasm32 target/std is not installed (vs a
+  # genuine source error). Public for testing only.
+  @doc false
+  def wasm_target_missing?(output) do
+    String.contains?(output, "target may not be installed") or
+      String.contains?(output, "rustup target add") or
+      String.contains?(output, "can't find crate for `core`") or
+      String.contains?(output, "can't find crate for `std`")
   end
 
   # Copy only when the freshly built bytes differ from what's on disk, so an
@@ -177,13 +198,10 @@ defmodule Mix.Tasks.Compile.Plugins do
 
   # ── Source digest (content-based, target/ excluded) ───────────────────────
 
-  @doc """
-  Content digest of a crate's source tree (everything but `target/`).
-
-  Public for testing. The digest is content-based so it survives `git
-  checkout`/`bisect` correctly — unlike an mtime comparison.
-  """
-  @doc since: "built-in-plugins"
+  # Content digest of a crate's source tree (everything but `target/`). Public
+  # for testing only — the digest is content-based so it survives `git
+  # checkout`/`bisect` correctly, unlike an mtime comparison.
+  @doc false
   def source_digest(crate) do
     crate
     |> Path.join("**/*")

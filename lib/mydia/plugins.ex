@@ -198,12 +198,28 @@ defmodule Mydia.Plugins do
   # Null stale DB bytes on a pre-existing bundled row (built-in upgrade), leaving
   # all admin state untouched. Non-bundled rows (e.g. an index plugin) are never
   # touched, so their cached bytes survive.
+  #
+  # Guard against bricking: only null the DB bytes when a filesystem replacement
+  # actually resolves (override or bundled artifact present). In an environment
+  # where the .wasm was not built (a toolchain-less dev compile that skipped),
+  # nulling would strip an enabled plugin's only artifact, so we keep the DB
+  # bytes and log instead.
   defp reconcile_bundled(
          %Settings.PluginConfig{source_url: "bundled", wasm_module: wasm} = config
        )
        when is_binary(wasm) do
-    Settings.update_plugin_config(config, %{wasm_module: nil, integrity_hash: nil})
-    :ok
+    case resolve_artifact(%{config | wasm_module: nil}) do
+      {:ok, _bytes} ->
+        Settings.update_plugin_config(config, %{wasm_module: nil, integrity_hash: nil})
+        :ok
+
+      {:error, _} ->
+        Logger.warning(
+          "plugin #{config.slug}: keeping DB bytes — no filesystem artifact to fall back to"
+        )
+
+        :ok
+    end
   end
 
   defp reconcile_bundled(_config), do: :ok
@@ -474,32 +490,20 @@ defmodule Mydia.Plugins do
   time in `Mydia.Plugins.Index`. `opts[:override_dir]` and `opts[:bundled_dir]`
   exist for hermetic tests; production calls pass none.
   """
-  @spec resolve_artifact(Settings.PluginConfig.t() | map(), keyword()) ::
+  @spec resolve_artifact(Settings.PluginConfig.t(), keyword()) ::
           {:ok, binary()} | {:error, Error.t()}
   def resolve_artifact(config, opts \\ []) do
     slug = config.slug
     override_dir = Keyword.get(opts, :override_dir, configured_override_dir())
     bundled_dir = Keyword.get(opts, :bundled_dir, bundled_plugins_dir())
 
-    layers = [
-      fn -> from_override(slug, override_dir) end,
-      fn -> from_db(config) end,
-      fn -> from_bundled(slug, bundled_dir) end
-    ]
-
-    Enum.reduce_while(layers, :miss, fn layer, _acc ->
-      case layer.() do
-        {:ok, _bytes} = ok -> {:halt, ok}
-        {:error, _} = err -> {:halt, err}
-        :miss -> {:cont, :miss}
-      end
-    end)
-    |> case do
-      :miss ->
-        {:error, Error.new(:invalid_config, "plugin #{slug} has no artifact to activate")}
-
-      result ->
-        result
+    with :miss <- from_override(slug, override_dir),
+         :miss <- from_db(config),
+         :miss <- from_bundled(slug, bundled_dir) do
+      {:error, Error.new(:invalid_config, "plugin #{slug} has no artifact to activate")}
+    else
+      {:ok, _bytes} = ok -> ok
+      {:error, _} = err -> err
     end
   end
 
@@ -511,7 +515,17 @@ defmodule Mydia.Plugins do
   defp from_override(slug, dir) do
     names = Enum.uniq([slug, underscored(slug)])
 
-    case Enum.find_value(names, &override_bytes(dir, &1)) do
+    found =
+      Enum.find_value(names, fn name ->
+        path = Path.join(dir, name <> ".wasm")
+
+        case read_within(dir, path) do
+          {:ok, bytes} -> {bytes, path}
+          :miss -> nil
+        end
+      end)
+
+    case found do
       {bytes, path} ->
         Logger.info("plugin #{slug}: activating bytes from override dir #{path}")
         {:ok, bytes}
@@ -525,20 +539,6 @@ defmodule Mydia.Plugins do
     end
   end
 
-  defp override_bytes(dir, name) do
-    path = Path.join(dir, name <> ".wasm")
-
-    if within_dir?(dir, path) and File.regular?(path) do
-      {File.read!(path), path}
-    end
-  end
-
-  # Defence-in-depth traversal guard: the resolved candidate must stay under the
-  # override dir even though the DB slug regex already forbids `/` and `..`.
-  defp within_dir?(dir, path) do
-    String.starts_with?(Path.expand(path), Path.expand(dir) <> "/")
-  end
-
   # Layer 2: DB-cached bytes (index plugins). Bundled rows carry nil here (U4).
   defp from_db(%{wasm_module: bytes}) when is_binary(bytes) and byte_size(bytes) > 0,
     do: {:ok, bytes}
@@ -546,17 +546,23 @@ defmodule Mydia.Plugins do
   defp from_db(_), do: :miss
 
   # Layer 3: image-bundled artifact, built into priv/plugins by the compiler.
-  # Guarded the same way as the override layer (real slugs are regex-validated,
-  # but the guard is load-bearing regardless of how the slug was sourced).
-  defp from_bundled(slug, dir) do
-    path = Path.join(dir, underscored(slug) <> ".wasm")
+  defp from_bundled(slug, dir), do: read_within(dir, Path.join(dir, underscored(slug) <> ".wasm"))
 
+  # Reads `path` only when it stays under `dir` (defence-in-depth traversal
+  # guard — real slugs are regex-validated, but the guard is load-bearing
+  # regardless of how the slug was sourced). File.read (not File.read!) so a file
+  # vanishing between checks yields :miss rather than raising.
+  defp read_within(dir, path) do
     with true <- within_dir?(dir, path),
          {:ok, bytes} <- File.read(path) do
       {:ok, bytes}
     else
       _ -> :miss
     end
+  end
+
+  defp within_dir?(dir, path) do
+    String.starts_with?(Path.expand(path), Path.expand(dir) <> "/")
   end
 
   defp underscored(slug), do: String.replace(slug, "-", "_")

@@ -96,6 +96,15 @@ RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
     --mount=type=cache,id=mydia-mix,target=/root/.mix \
     mix compile
 
+# Fail the build if a bundled plugin's wasm artifact was not produced — the e2e
+# image boots the app and seeds bundled plugins, so a missing artifact would
+# surface as a confusing runtime failure instead of a build error.
+RUN for m in priv/plugins/*.json; do \
+      [ -e "$m" ] || continue; \
+      w="priv/plugins/$(basename "$m" .json).wasm"; \
+      test -f "$w" || { echo "ERROR: missing built plugin artifact $w" >&2; exit 1; }; \
+    done
+
 # Build Phoenix assets with npm cache
 RUN --mount=type=cache,id=mydia-hex,target=/root/.hex \
     --mount=type=cache,id=mydia-mix,target=/root/.mix \

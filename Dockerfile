@@ -119,6 +119,15 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/native/mydia_p2p_core/target,sharing=locked \
     mix compile
 
+# Fail the build if a bundled plugin's wasm artifact was not produced (the
+# :plugins compiler graceful-skips a missing toolchain, so this is the guard
+# that a release image never ships without its bundled plugins).
+RUN for m in priv/plugins/*.json; do \
+      [ -e "$m" ] || continue; \
+      w="priv/plugins/$(basename "$m" .json).wasm"; \
+      test -f "$w" || { echo "ERROR: missing built plugin artifact $w" >&2; exit 1; }; \
+    done
+
 # Build Phoenix assets
 # Cache npm packages to avoid re-downloading each build
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \

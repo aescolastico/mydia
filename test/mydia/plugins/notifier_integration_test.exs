@@ -31,6 +31,9 @@ defmodule Mydia.Plugins.NotifierIntegrationTest do
     assert config.granted_capabilities == %{}
     assert config.settings["delivery"] == "durable"
     assert config.manifest["capabilities"]["net:http"] == ["discord.com"]
+    # No bytes are copied into the DB — they resolve from the filesystem.
+    assert config.wasm_module == nil
+    assert config.integrity_hash == nil
     refute Host.running?(@slug)
 
     # Approving via the generic lifecycle activates it as a durable plugin, so
@@ -85,5 +88,25 @@ defmodule Mydia.Plugins.NotifierIntegrationTest do
     assert config.granted_capabilities == %{"net:http" => ["discord.com"]}
     assert config.enabled == true
     assert config.settings["delivery"] == "durable"
+  end
+
+  test "ensure_bundled never clobbers a non-bundled (index) plugin's DB bytes" do
+    {:ok, _} =
+      Settings.create_plugin_config(%{
+        slug: "an-index-plugin",
+        name: "An Index Plugin",
+        version: "1.0.0",
+        source_url: "https://plugins.example.com/an-index-plugin.wasm",
+        wasm_module: "INDEX-BYTES",
+        integrity_hash: "abc123",
+        enabled: true
+      })
+
+    assert :ok = Plugins.ensure_bundled()
+
+    config = Settings.get_plugin_config_by_slug("an-index-plugin")
+    # Reconcile only touches source_url == "bundled" rows.
+    assert config.wasm_module == "INDEX-BYTES"
+    assert config.integrity_hash == "abc123"
   end
 end
