@@ -67,7 +67,37 @@ defmodule Mydia.Plugins do
   end
 
   def invoke_plugin(%Plugin{} = plugin, event) do
-    Host.call(plugin.slug, plugin.entrypoint, build_payload(event))
+    payload = build_payload(event) |> inject_config(plugin.slug)
+    Host.call(plugin.slug, plugin.entrypoint, payload)
+  end
+
+  @doc """
+  Invokes a plugin's `on-schedule` handler for a scheduled tick (U4).
+
+  Single-flight `:skip`: if a sibling invocation (reactive, inline, or a prior
+  schedule) is already running, the tick is a no-op (`{:error, :busy}`), so ticks
+  never pile up. The operator settings are injected under `config`, exactly as
+  the reactive and durable paths do, so a plugin behaves identically regardless
+  of how it was invoked.
+  """
+  @spec invoke_plugin_schedule(String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  def invoke_plugin_schedule(slug, opts \\ []) when is_binary(slug) do
+    now = Keyword.get(opts, :now, System.system_time(:second))
+    payload = inject_config(%{"slug" => slug, "now" => now}, slug)
+
+    Host.call(slug, "on-schedule", payload, handler: :on_schedule, single_flight: :skip)
+  end
+
+  # Inject the plugin's operator settings under "config" so the guest sees them
+  # on every invocation path (previously only the durable notifier path did).
+  defp inject_config(payload, slug) do
+    settings =
+      case Mydia.Settings.get_plugin_config_by_slug(slug) do
+        %{settings: %{} = s} -> s
+        _ -> %{}
+      end
+
+    Map.put(payload, "config", settings)
   end
 
   @doc """

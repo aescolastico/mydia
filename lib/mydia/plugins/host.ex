@@ -71,6 +71,7 @@ defmodule Mydia.Plugins.Host do
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Log
   alias Mydia.Plugins.Logs
+  alias Mydia.Plugins.SingleFlight
   alias Wasmex.Components
   alias Wasmex.Wasi.WasiP2Options
 
@@ -179,24 +180,42 @@ defmodule Mydia.Plugins.Host do
     * `:test_run` - badge the markers/guest logs for this run as a test
     * `:memory_limit_bytes` - override the linear-memory cap for this call
       (defaults to config; a test seam for exercising `StoreLimits`)
+    * `:handler` - `:on_event` (default) or `:on_schedule`
+    * `:single_flight` - `:wait` (default; block until the plugin's lock is free)
+      or `:skip` (return a `:busy` error if a sibling invocation is in flight —
+      the scheduler's non-reentrancy)
   """
   @spec call(slug(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, Error.t()}
   def call(slug, function, payload, opts \\ [])
       when is_binary(slug) and is_binary(function) and is_map(payload) do
     cfg = config()
-    timeout = Keyword.get(opts, :timeout, cfg.invocation_timeout_ms)
+    handler = Keyword.get(opts, :handler, :on_event)
+    timeout = Keyword.get(opts, :timeout, default_timeout(cfg, handler))
+    mode = Keyword.get(opts, :single_flight, :wait)
 
     invocation = %{
       slug: slug,
       invocation_id: Ecto.UUID.generate(),
       test_run: Keyword.get(opts, :test_run, false),
       function: function,
-      handler: Keyword.get(opts, :handler, :on_event),
+      handler: handler,
       payload: payload,
       memory_limit_bytes: Keyword.get(opts, :memory_limit_bytes, cfg.memory_limit_bytes),
       timeout: timeout
     }
+
+    # Serialize invocations per plugin so shared KV state is consistent (U4). A
+    # `:skip` acquirer (the scheduler) bails out without running when busy; a
+    # `:wait` acquirer queues behind the in-flight invocation.
+    case SingleFlight.run(slug, mode, fn -> invoke_with_markers(invocation) end) do
+      {:busy} -> {:error, Error.new(:busy, "plugin #{slug} invocation already in flight")}
+      result -> result
+    end
+  end
+
+  defp invoke_with_markers(invocation) do
+    %{slug: slug, timeout: timeout} = invocation
 
     # Host markers bracket every invocation on both call paths (dispatch and
     # direct) so a run is always visible in the timeline — even one that traps
@@ -519,6 +538,10 @@ defmodule Mydia.Plugins.Host do
       _ -> Mydia.Config.Schema.defaults().plugins
     end
   end
+
+  # on-schedule gets the larger schedule budget; everything else the event budget.
+  defp default_timeout(cfg, :on_schedule), do: Map.get(cfg, :schedule_timeout_ms) || 60_000
+  defp default_timeout(cfg, _handler), do: cfg.invocation_timeout_ms
 
   defp to_string_reason(reason) when is_binary(reason), do: reason
   defp to_string_reason(reason), do: inspect(reason)

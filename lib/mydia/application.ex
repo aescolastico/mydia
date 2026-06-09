@@ -47,6 +47,9 @@ defmodule Mydia.Application do
         Mydia.Plugins.Registry,
         {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
         {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
+        # Per-plugin invocation single-flight lock (U4): serializes on-event /
+        # on-schedule / inline calls for one plugin so shared KV state is safe.
+        Mydia.Plugins.SingleFlight,
         # Fans "events:all" out to subscribed plugins (U5). Replaces the Luerl
         # hooks manager removed in U11.
         Mydia.Plugins.Dispatcher,

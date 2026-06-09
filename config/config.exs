@@ -261,7 +261,8 @@ config :mydia, Oban,
     notifications: 1,
     maintenance: 1,
     import_lists: 2,
-    integrations: 2
+    integrations: 2,
+    plugins: 1
   ],
   plugins: [
     # Keep completed jobs for 7 days
@@ -269,6 +270,9 @@ config :mydia, Oban,
     # Scheduled jobs
     {Oban.Plugins.Cron,
      crontab: [
+       # Tick scheduled plugins every minute (each plugin's manifest interval is
+       # checked inside the job; due plugins get on-schedule). U4.
+       {"* * * * *", Mydia.Jobs.PluginScheduler},
        # Monitor downloads every 2 minutes
        {"*/2 * * * *", Mydia.Jobs.DownloadMonitor},
        # Search for monitored movies every hour

@@ -38,6 +38,9 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
       "Read connected users' linked accounts and watch history, and mark items " <>
         "watched on their behalf"
 
+  def capability_label("schedule:interval", _),
+    do: "Run automatically on a fixed schedule"
+
   def capability_label(other, values),
     do: "#{other}: #{join(values)}"
 
@@ -49,6 +52,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def capability_icon("surfaces:write"), do: "hero-pencil-square"
   def capability_icon("state:kv"), do: "hero-circle-stack"
   def capability_icon("users:connections"), do: "hero-users"
+  def capability_icon("schedule:interval"), do: "hero-clock"
   def capability_icon(_), do: "hero-key"
 
   @doc "True when a capability class carries privacy/security weight worth emphasizing."

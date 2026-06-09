@@ -372,4 +372,43 @@ defmodule Mydia.Plugins.ManifestTest do
       assert "users:connections" in Manifest.available_classes()
     end
   end
+
+  describe "schedule descriptor (U4)" do
+    defp with_schedule(schedule, extra_caps \\ %{"schedule:interval" => []}) do
+      valid_map(%{
+        "capabilities" => Map.merge(%{"events:subscribe" => ["media_item.added"]}, extra_caps),
+        "schedule" => schedule
+      })
+    end
+
+    test "a valid schedule parses and exposes the interval" do
+      map = with_schedule(%{"interval_minutes" => 30})
+      assert {:ok, %Manifest{} = manifest} = Manifest.parse(map)
+      assert Manifest.schedule_interval_minutes(manifest) == 30
+    end
+
+    test "an interval below the floor is rejected" do
+      map = with_schedule(%{"interval_minutes" => 1})
+
+      assert {:error, %{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "at least #{Manifest.min_schedule_interval()}"
+    end
+
+    test "a schedule without the schedule:interval capability is rejected" do
+      map = with_schedule(%{"interval_minutes" => 30}, %{})
+
+      assert {:error, %{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "schedule:interval"
+    end
+
+    test "a non-integer interval is rejected" do
+      map = with_schedule(%{"interval_minutes" => "soon"})
+      assert {:error, %{type: :invalid_manifest}} = Manifest.parse(map)
+    end
+
+    test "no schedule means no interval" do
+      assert {:ok, %Manifest{schedule: nil}} = Manifest.parse(valid_map())
+      assert Manifest.schedule_interval_minutes(%Manifest{}) == nil
+    end
+  end
 end

@@ -37,6 +37,8 @@ defmodule Mydia.Settings.PluginConfig do
           integrity_hash: String.t() | nil,
           manifest: map() | nil,
           wasm_module: binary() | nil,
+          last_scheduled_at: DateTime.t() | nil,
+          consecutive_schedule_failures: integer(),
           updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
           updated_by_id: binary() | nil,
           inserted_at: DateTime.t(),
@@ -58,6 +60,11 @@ defmodule Mydia.Settings.PluginConfig do
     # binary (BLOB/BYTEA) for offline-boot activation (never a text column).
     field :manifest, Mydia.Settings.JsonMapType
     field :wasm_module, :binary
+
+    # Scheduler bookkeeping (U4): when the last scheduled run completed, and the
+    # consecutive-failure counter that drives exponential backoff.
+    field :last_scheduled_at, :utc_datetime_usec
+    field :consecutive_schedule_failures, :integer, default: 0
 
     belongs_to :updated_by, Mydia.Accounts.User
 

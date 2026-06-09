@@ -105,6 +105,10 @@ defmodule Mydia.Config.Schema do
       field :fuel_limit, :integer, default: 10_000_000_000
       field :memory_limit_bytes, :integer, default: 67_108_864
       field :invocation_timeout_ms, :integer, default: 5000
+      # on-schedule gets its own (larger) budget than on-event: a sync chunks and
+      # checkpoints across this window, with wall-clock kill as the only guard
+      # (no fuel metering on component stores).
+      field :schedule_timeout_ms, :integer, default: 60_000
       field :pool_size, :integer, default: 4
       # Official plugin index (R13). HTTPS is the v1 trust anchor (KTD10), so all
       # index/source URLs are validated to be https at config time.
@@ -333,6 +337,7 @@ defmodule Mydia.Config.Schema do
       :fuel_limit,
       :memory_limit_bytes,
       :invocation_timeout_ms,
+      :schedule_timeout_ms,
       :pool_size,
       :index_url,
       :extra_source_urls,
@@ -342,6 +347,7 @@ defmodule Mydia.Config.Schema do
     |> validate_number(:fuel_limit, greater_than: 0)
     |> validate_number(:memory_limit_bytes, greater_than: 0)
     |> validate_number(:invocation_timeout_ms, greater_than: 0)
+    |> validate_number(:schedule_timeout_ms, greater_than: 0)
     |> validate_number(:pool_size, greater_than: 0)
     |> validate_https_source(:index_url)
     |> validate_https_sources(:extra_source_urls)

@@ -82,6 +82,7 @@ defmodule Mydia.Plugins.Manifest do
           capabilities: %{optional(String.t()) => [String.t()]},
           settings_schema: [map()],
           connection: map() | nil,
+          schedule: map() | nil,
           min_host_version: String.t() | nil
         }
 
@@ -95,6 +96,7 @@ defmodule Mydia.Plugins.Manifest do
             capabilities: %{},
             settings_schema: [],
             connection: nil,
+            schedule: nil,
             min_host_version: nil
 
   # v1 event catalog (KTD3): a curated subset of existing event `type` strings
@@ -114,13 +116,18 @@ defmodule Mydia.Plugins.Manifest do
 
   # All taxonomy classes (reserved + implemented). The schema/approval UI know
   # all four so they need no breaking change when the reserved ones land.
-  @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv users:connections)
+  @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv users:connections schedule:interval)
 
   # Implemented; the rest are reserved-but-rejected (KTD8). `data:read` is
   # honored by the `data_read` host function; `state:kv` by the kv-* host
   # functions (U3); `users:connections` by connections-list + the connect flow
-  # (U7). `surfaces:write` stays reserved until U6.
-  @available_classes ~w(events:subscribe net:http data:read state:kv users:connections)
+  # (U7); `schedule:interval` by the PluginScheduler tick (U4). `surfaces:write`
+  # stays reserved until U6.
+  @available_classes ~w(events:subscribe net:http data:read state:kv users:connections schedule:interval)
+
+  # The lowest interval (minutes) a scheduled plugin may request — a floor so a
+  # misconfigured manifest can't tick the host to death.
+  @min_schedule_interval 5
 
   # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
   # to a curated projection in the `data_read` host function (U6).
@@ -166,11 +173,13 @@ defmodule Mydia.Plugins.Manifest do
     settings_schema = Map.get(map, "settings_schema", [])
 
     connection = Map.get(map, "connection")
+    schedule = Map.get(map, "schedule")
 
     with :ok <- validate_required(map),
          {:ok, capabilities} <- validate_capabilities(capabilities),
          {:ok, settings_schema} <- validate_settings_schema(settings_schema),
          :ok <- validate_connection(connection, capabilities),
+         :ok <- validate_schedule(schedule, capabilities),
          :ok <- validate_min_host_version(Map.get(map, "min_host_version")) do
       {:ok,
        %__MODULE__{
@@ -184,10 +193,26 @@ defmodule Mydia.Plugins.Manifest do
          capabilities: capabilities,
          settings_schema: settings_schema,
          connection: connection,
+         schedule: schedule,
          min_host_version: Map.get(map, "min_host_version")
        }}
     end
   end
+
+  @doc """
+  Returns the schedule interval in minutes a manifest declares, or `nil` when it
+  declares no schedule. Accepts a `%Manifest{}` or a raw schedule map.
+  """
+  @spec schedule_interval_minutes(t() | map() | nil) :: pos_integer() | nil
+  def schedule_interval_minutes(%__MODULE__{schedule: schedule}),
+    do: schedule_interval_minutes(schedule)
+
+  def schedule_interval_minutes(%{"interval_minutes" => n}) when is_integer(n), do: n
+  def schedule_interval_minutes(_), do: nil
+
+  @doc "The lowest schedule interval (minutes) the host permits."
+  @spec min_schedule_interval() :: pos_integer()
+  def min_schedule_interval, do: @min_schedule_interval
 
   @doc """
   Returns the host-granting field maps a manifest declares — `url` fields with
@@ -385,6 +410,43 @@ defmodule Mydia.Plugins.Manifest do
         {:error, Error.new(:invalid_manifest, "connection.#{key} must be a string URL")}
     end
   end
+
+  # An optional `schedule` (`{"interval_minutes": N}`) opts the plugin into the
+  # host's fixed-interval tick (U4). The interval is floored at
+  # `@min_schedule_interval`, and the plugin must declare the `schedule:interval`
+  # capability so the schedule shows at approval — a plugin can't get a clock
+  # without the admin seeing it.
+  defp validate_schedule(nil, _capabilities), do: :ok
+
+  defp validate_schedule(schedule, _capabilities) when not is_map(schedule),
+    do: {:error, Error.new(:invalid_manifest, "schedule must be an object")}
+
+  defp validate_schedule(schedule, capabilities) do
+    cond do
+      "schedule:interval" not in Map.keys(capabilities) ->
+        {:error,
+         Error.new(
+           :invalid_manifest,
+           "a plugin with a schedule must declare the schedule:interval capability"
+         )}
+
+      true ->
+        validate_schedule_interval(Map.get(schedule, "interval_minutes"))
+    end
+  end
+
+  defp validate_schedule_interval(n) when is_integer(n) and n >= @min_schedule_interval, do: :ok
+
+  defp validate_schedule_interval(n) when is_integer(n),
+    do:
+      {:error,
+       Error.new(
+         :invalid_manifest,
+         "schedule.interval_minutes must be at least #{@min_schedule_interval}, got: #{n}"
+       )}
+
+  defp validate_schedule_interval(_),
+    do: {:error, Error.new(:invalid_manifest, "schedule.interval_minutes must be an integer")}
 
   # An optional `min_host_version` declares the lowest Mydia version the plugin
   # supports — the floor `Mydia.Plugins` enforces at activation (R7). It must be a
