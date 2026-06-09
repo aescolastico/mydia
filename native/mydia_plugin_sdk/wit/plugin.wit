@@ -1,0 +1,119 @@
+// Canonical Mydia plugin contract — the single source of truth both the Elixir
+// host (via Wasmex.Components.ComponentServer) and the Rust guest SDK (via
+// wit-bindgen) generate bindings from. The package version IS the ABI version:
+// wasmtime's component linker type-checks imports at instantiation and refuses a
+// mismatch, so a guest built against a newer contract than the host provides
+// fails to instantiate. Evolve additively (new records / variant cases / option
+// fields, gated with @since) for non-breaking changes; bump the major for any
+// removal or signature change.
+package mydia:plugin@1.0.0;
+
+/// Shared types for the plugin contract.
+interface types {
+  /// A lifecycle event delivered to a plugin. Envelope fields are typed; the
+  /// arbitrary per-event metadata bag varies by event type and is carried as a
+  /// JSON object string (`metadata-json`, "{}" when empty).
+  record event {
+    /// The event type, e.g. "media_item.added", "download.completed".
+    event: string,
+    category: option<string>,
+    severity: option<string>,
+    actor-type: option<string>,
+    actor-id: option<string>,
+    resource-type: option<string>,
+    resource-id: option<string>,
+    metadata-json: string,
+  }
+
+  /// Curated, read-only projection of a media item (data:read). Never the raw
+  /// row — only these non-sensitive fields are ever exposed.
+  record media-item {
+    id: string,
+    item-type: string,
+    title: string,
+    original-title: option<string>,
+    year: option<u32>,
+    tmdb-id: option<s64>,
+    tvdb-id: option<s64>,
+    imdb-id: option<string>,
+    overview: option<string>,
+    tagline: option<string>,
+    runtime: option<u32>,
+    genres: list<string>,
+    poster-path: option<string>,
+    backdrop-path: option<string>,
+    rating: option<f64>,
+  }
+
+  /// A data:read result, keyed by resource namespace. New namespaces are added
+  /// as additional variant cases (gated with @since) — additive, non-breaking.
+  variant read-result {
+    media-item(media-item),
+  }
+
+  record outbound-request {
+    url: string,
+    /// HTTP method; the host defaults to GET when empty.
+    method: string,
+    headers: list<tuple<string, string>>,
+    body: option<string>,
+  }
+
+  record outbound-response {
+    status: u16,
+    ok: bool,
+    /// Present when the response body is valid UTF-8.
+    body: option<string>,
+    /// "binary" when the body was non-UTF-8 and therefore omitted.
+    body-encoding: option<string>,
+  }
+
+  record data-request {
+    /// Resource namespace, e.g. "media_item".
+    namespace: string,
+    id: string,
+  }
+
+  /// Errors a host function may return; each carries a human-readable detail.
+  variant host-error {
+    /// Capability not granted (deny-by-default).
+    denied(string),
+    invalid-request(string),
+    not-found(string),
+    network(string),
+    internal(string),
+  }
+}
+
+/// Host-implemented capabilities the guest may import. Each call is
+/// capability-checked server-side on every invocation; grants are never baked
+/// into the instance.
+interface host {
+  use types.{outbound-request, outbound-response, data-request, read-result, host-error};
+
+  /// Outbound HTTP request, subject to the plugin's net:http grant and the SSRF
+  /// egress gate. Requires net:http.
+  http-request: func(req: outbound-request) -> result<outbound-response, host-error>;
+
+  /// Read a curated projection of a domain resource. Requires data:read scoped
+  /// to the requested namespace.
+  data-read: func(req: data-request) -> result<read-result, host-error>;
+}
+
+/// The guest's event handler. The SDK's #[mydia::plugin] macro implements this
+/// from a plain author-written function.
+interface handler {
+  use types.{event};
+
+  /// Handle one lifecycle event. Returns a small JSON result string the host
+  /// reads (e.g. {"delivered":true,"status":204}); an Err string is surfaced as
+  /// a plugin error.
+  on-event: func(evt: event) -> result<string, string>;
+}
+
+/// The Mydia plugin world: a guest imports host capabilities and exports the
+/// event handler.
+world plugin {
+  import host;
+  export handler;
+}
