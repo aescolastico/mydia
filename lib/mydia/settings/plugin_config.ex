@@ -35,6 +35,8 @@ defmodule Mydia.Settings.PluginConfig do
           granted_capabilities: map() | nil,
           source_url: String.t() | nil,
           integrity_hash: String.t() | nil,
+          manifest: map() | nil,
+          wasm_module: binary() | nil,
           updated_by: Mydia.Accounts.User.t() | nil | Ecto.Association.NotLoaded.t(),
           updated_by_id: binary() | nil,
           inserted_at: DateTime.t(),
@@ -51,6 +53,11 @@ defmodule Mydia.Settings.PluginConfig do
     field :granted_capabilities, Mydia.Settings.JsonMapType
     field :source_url, :string
     field :integrity_hash, :string
+    # The plugin's manifest (declared events + capabilities), kept so a descriptor
+    # can be rebuilt at boot. The verified wasm artifact, persisted as a true
+    # binary (BLOB/BYTEA) for offline-boot activation (never a text column).
+    field :manifest, Mydia.Settings.JsonMapType
+    field :wasm_module, :binary
 
     belongs_to :updated_by, Mydia.Accounts.User
 
@@ -70,6 +77,8 @@ defmodule Mydia.Settings.PluginConfig do
       :granted_capabilities,
       :source_url,
       :integrity_hash,
+      :manifest,
+      :wasm_module,
       :updated_by_id
     ])
     |> validate_required([:slug, :name])

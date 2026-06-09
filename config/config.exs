@@ -296,7 +296,9 @@ config :mydia, Oban,
        # Purge expired release-blacklist rows daily at 5:30 AM (#123)
        {"30 5 * * *", Mydia.Jobs.BlacklistCleanup},
        # Analyze media files lacking tech metadata every minute (#131)
-       {"* * * * *", Mydia.Jobs.FileAnalysis}
+       {"* * * * *", Mydia.Jobs.FileAnalysis},
+       # Check installed plugins for newer versions daily at 7 AM
+       {"0 7 * * *", Mydia.Jobs.PluginUpdateCheck}
      ]}
   ]
 

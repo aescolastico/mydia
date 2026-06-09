@@ -337,6 +337,19 @@ defmodule Mydia.Settings.ServiceConfigs do
     Repo.get_by(PluginConfig, slug: slug)
   end
 
+  @doc """
+  Returns the raw DB plugin-config rows (no runtime/env merge).
+
+  Unlike `list_plugin_configs/1`, this carries the persisted artifact and
+  manifest, so it is what boot-time activation (`Mydia.Plugins.register_plugins/0`)
+  iterates.
+  """
+  def get_db_plugin_configs do
+    PluginConfig
+    |> order_by([p], asc: p.priority, asc: p.name)
+    |> Repo.all()
+  end
+
   def create_plugin_config(attrs) do
     %PluginConfig{}
     |> PluginConfig.changeset(attrs)

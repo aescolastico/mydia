@@ -604,6 +604,10 @@ defmodule Mydia.Settings do
   @spec get_plugin_config_by_slug(String.t()) :: PluginConfig.t() | nil
   defdelegate get_plugin_config_by_slug(slug), to: Mydia.Settings.ServiceConfigs
 
+  @doc "Returns the raw DB plugin-config rows (with artifact + manifest, no env merge)."
+  @spec get_db_plugin_configs() :: [PluginConfig.t()]
+  defdelegate get_db_plugin_configs(), to: Mydia.Settings.ServiceConfigs
+
   @doc "Creates a plugin config."
   @spec create_plugin_config(map()) :: {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
   defdelegate create_plugin_config(attrs), to: Mydia.Settings.ServiceConfigs
