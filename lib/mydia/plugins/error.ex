@@ -15,9 +15,14 @@ defmodule Mydia.Plugins.Error do
     * `:trap` - Guest trapped (fuel exhausted, memory limit, unreachable, etc.)
     * `:invalid_output` - Guest returned a payload the host could not decode
     * `:invalid_manifest` - Manifest failed to parse or validate
-    * `:capability_denied` - Plugin used a capability it was not granted
+    * `:capability_denied` - Plugin used a capability it was not granted (incl. an
+      off-allowlist `net:http` host or an ungranted `data:read` namespace)
     * `:capability_unavailable` - Capability declared but not implemented in this version
-    * `:network_error` - Outbound HTTP gate rejected or failed the request
+    * `:network_error` - Outbound HTTP gate could not resolve, connect, or complete
+    * `:invalid_url` - URL was malformed, non-http(s), or used an unsafe host form
+    * `:blocked` - Destination resolved to a private/link-local/reserved IP (SSRF gate)
+    * `:too_large` - Response exceeded the gate's size cap
+    * `:invalid_request` - A host-function request payload was missing or malformed
     * `:integrity_mismatch` - Package hash did not match the declared value
     * `:invalid_config` - Invalid configuration provided
     * `:unknown` - Unknown or unexpected error
@@ -34,6 +39,10 @@ defmodule Mydia.Plugins.Error do
           | :capability_denied
           | :capability_unavailable
           | :network_error
+          | :invalid_url
+          | :blocked
+          | :too_large
+          | :invalid_request
           | :integrity_mismatch
           | :invalid_config
           | :unknown
