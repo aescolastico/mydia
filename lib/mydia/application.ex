@@ -43,7 +43,9 @@ defmodule Mydia.Application do
         {Task.Supervisor, name: Mydia.RequestTaskSupervisor},
         Mydia.Hooks.Manager,
         # WASM plugin platform: per-plugin pools register here and live under
-        # the dynamic supervisor (see Mydia.Plugins.Host).
+        # the dynamic supervisor (see Mydia.Plugins.Host); the Agent registry
+        # holds installed plugin descriptors (see Mydia.Plugins.Registry).
+        Mydia.Plugins.Registry,
         {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
         {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
         {Registry, keys: :unique, name: Mydia.Streaming.HlsSessionRegistry},
@@ -95,6 +97,8 @@ defmodule Mydia.Application do
       Mydia.Indexers.register_adapters()
       # Register metadata provider adapters
       Mydia.Metadata.register_providers()
+      # Rehydrate installed WASM plugins into the runtime registry
+      Mydia.Plugins.register_plugins()
       # Start relay service if remote access is enabled (requires Repo to be running)
       start_relay_if_enabled()
       # Ensure default quality profiles exist (skip in test environment)
