@@ -36,7 +36,7 @@ RUN apt-get update -qq && \
 # on PATH at runtime.
 RUN export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH="/opt/cargo/bin:$PATH" && \
     (which rustc || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path) && \
-    rustup target add wasm32-unknown-unknown && \
+    rustup target add wasm32-wasip2 && \
     chmod -R a+w /opt/rustup /opt/cargo 2>/dev/null || true
 
 # Install Flutter if not present.

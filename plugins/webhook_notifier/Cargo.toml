@@ -8,9 +8,12 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-# tinyjson is pure Rust with no dependencies and no build script, so it compiles
-# straight to wasm32 without any host-side build steps.
+# The SDK provides the #[mydia::plugin] macro and the typed WIT host bindings.
+# tinyjson stays as the plugin's internal JSON tool: the templated "custom"
+# target renders over the arbitrary event metadata bag, which is carried across
+# the typed boundary as a JSON string.
 [dependencies]
+mydia-plugin-sdk = { path = "../../native/mydia_plugin_sdk" }
 tinyjson = "2"
 
 [profile.release]

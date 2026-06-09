@@ -22,8 +22,11 @@ defmodule Mix.Tasks.Compile.Plugins do
 
   ## Loud skip on a missing toolchain
 
-  When `cargo` or the `wasm32-unknown-unknown` target is unavailable the guests
-  cannot be rebuilt. Rather than hard-failing — a toolchain-less contributor and
+  Guests are WebAssembly **components**, built for `wasm32-wasip2` against the
+  canonical WIT contract (the SDK's `wit-bindgen` is a cargo dependency, so no
+  system binding-generator is needed). When `cargo` or the `wasm32-wasip2` target
+  is unavailable the guests cannot be rebuilt. Rather than hard-failing — a
+  toolchain-less contributor and
   the Nix package build legitimately lack the target — the compiler no-ops, but
   it **never skips silently**: it emits a loud `Mix.shell/0` warning that names
   what was skipped and whether the existing `priv/plugins/*.wasm` is merely
@@ -36,7 +39,7 @@ defmodule Mix.Tasks.Compile.Plugins do
   use Mix.Task.Compiler
 
   @recursive false
-  @target "wasm32-unknown-unknown"
+  @target "wasm32-wasip2"
   @manifest_vsn 2
 
   @impl Mix.Task.Compiler

@@ -3,10 +3,11 @@ set -euo pipefail
 
 # Lint every WASM plugin crate under plugins/.
 #
-# Plugins compile to wasm32-unknown-unknown (pure Rust guests, no WASI), so we
-# check them against that target rather than the host. This keeps plugin commits
-# off the native NIF toolchain entirely — the native p2p crate links against
-# system libraries and is irrelevant to a plugin change.
+# Plugins compile to wasm32-wasip2 component-model guests (built against the WIT
+# contract via the SDK's wit-bindgen), so we check them against that target
+# rather than the host. This keeps plugin commits off the native NIF toolchain
+# entirely — the native p2p crate links against system libraries and is
+# irrelevant to a plugin change.
 #
 # Usage: scripts/check-plugins.sh [--fix]
 #   (default) cargo fmt --check + cargo clippy -D warnings
@@ -15,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PLUGINS_DIR="$PROJECT_ROOT/plugins"
-TARGET="wasm32-unknown-unknown"
+TARGET="wasm32-wasip2"
 
 FMT_MODE="--check"
 if [ "${1:-}" = "--fix" ]; then
@@ -27,14 +28,23 @@ if [ ! -d "$PLUGINS_DIR" ]; then
   exit 0
 fi
 
-# The wasm32 target ships with the pinned nix toolchain (devShells.rust). When
-# running outside nix with a host rustup, add it once: rustup target add $TARGET
-if command -v rustup >/dev/null 2>&1 &&
-   ! rustup target list --installed 2>/dev/null | grep -qx "$TARGET"; then
-  echo "Rust target $TARGET is not installed. Run:"
-  echo "  rustup target add $TARGET"
-  echo "  (or lint via: nix develop .#rust -c scripts/check-plugins.sh)"
-  exit 1
+# Verify the *active* toolchain has the target's std, by probing its sysroot
+# directly rather than asking rustup — the pinned nix toolchain (devShells.rust)
+# bakes the target in and exposes no rustup, while a leaked host rustup would
+# report the target missing and give a false negative. When running outside nix
+# with a host rustup, add it once: rustup target add $TARGET.
+SYSROOT="$(rustc --print sysroot 2>/dev/null || true)"
+if [ -n "$SYSROOT" ] && [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
+  if command -v rustup >/dev/null 2>&1; then
+    rustup target add "$TARGET" 2>/dev/null || true
+  fi
+
+  if [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
+    echo "Rust target $TARGET is not installed for the active toolchain. Run:"
+    echo "  rustup target add $TARGET"
+    echo "  (or lint via: nix develop .#rust -c scripts/check-plugins.sh)"
+    exit 1
+  fi
 fi
 
 found=0

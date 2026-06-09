@@ -49,7 +49,7 @@ RUN apk add --no-cache \
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
-    rustup target add wasm32-unknown-unknown
+    rustup target add wasm32-wasip2
 
 # Increase hex timeout for slow networks/CI
 ENV HEX_HTTP_TIMEOUT=300000
