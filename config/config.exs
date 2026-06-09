@@ -298,7 +298,9 @@ config :mydia, Oban,
        # Analyze media files lacking tech metadata every minute (#131)
        {"* * * * *", Mydia.Jobs.FileAnalysis},
        # Check installed plugins for newer versions daily at 7 AM
-       {"0 7 * * *", Mydia.Jobs.PluginUpdateCheck}
+       {"0 7 * * *", Mydia.Jobs.PluginUpdateCheck},
+       # Prune per-invocation plugin debug logs daily at 4:30 AM (U5)
+       {"30 4 * * *", Mydia.Jobs.PluginLogCleanup}
      ]}
   ]
 
