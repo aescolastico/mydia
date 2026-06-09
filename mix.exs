@@ -207,6 +207,10 @@ defmodule Mydia.MixProject do
       # WebSocket client for relay connections
       {:websockex, "~> 0.4.3"},
 
+      # WASM plugin runtime (wasmtime via Rustler NIF) + pooling
+      {:wasmex, "~> 0.14"},
+      {:nimble_pool, "~> 1.1"},
+
       # Utilities
       {:timex, "~> 3.7"},
       {:yaml_elixir, "~> 2.9"},
@@ -235,8 +239,8 @@ defmodule Mydia.MixProject do
       # CORS support for cross-origin API requests (standalone player)
       {:corsica, "~> 2.1"},
 
-      # Rustler for Libp2p NIF
-      {:rustler, "~> 0.34.0", runtime: false},
+      # Rustler for Libp2p NIF (native crate is on rustler 0.37.2; wasmex needs ~> 0.37.1)
+      {:rustler, "~> 0.37", runtime: false},
 
       # GraphQL
       {:absinthe, "~> 1.7"},

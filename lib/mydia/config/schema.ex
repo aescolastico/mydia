@@ -19,6 +19,7 @@ defmodule Mydia.Config.Schema do
           logging: __MODULE__.Logging.t() | nil,
           oban: __MODULE__.Oban.t() | nil,
           hooks: __MODULE__.Hooks.t() | nil,
+          plugins: __MODULE__.Plugins.t() | nil,
           flaresolverr: __MODULE__.FlareSolverr.t() | nil,
           download_clients: [__MODULE__.DownloadClient.t()],
           indexers: [__MODULE__.Indexer.t()],
@@ -101,6 +102,17 @@ defmodule Mydia.Config.Schema do
       field :directory, :string, default: "hooks"
       field :default_timeout_ms, :integer, default: 5000
       field :max_timeout_ms, :integer, default: 30000
+    end
+
+    embeds_one :plugins, Plugins, on_replace: :update, primary_key: false do
+      # WASM plugin runtime sandbox limits (KTD4). Fuel metering defaults OFF
+      # for raw speed; the event-dispatch path forces it ON regardless (the
+      # safety floor against a hung guest draining the pool).
+      field :fuel_enabled, :boolean, default: false
+      field :fuel_limit, :integer, default: 10_000_000_000
+      field :memory_limit_bytes, :integer, default: 67_108_864
+      field :invocation_timeout_ms, :integer, default: 5000
+      field :pool_size, :integer, default: 4
     end
 
     embeds_one :flaresolverr, FlareSolverr, on_replace: :update, primary_key: false do
@@ -186,6 +198,7 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:logging, with: &logging_changeset/2)
     |> cast_embed(:oban, with: &oban_changeset/2)
     |> cast_embed(:hooks, with: &hooks_changeset/2)
+    |> cast_embed(:plugins, with: &plugins_changeset/2)
     |> cast_embed(:flaresolverr, with: &flaresolverr_changeset/2)
     |> cast_embed(:download_clients, with: &download_client_changeset/2)
     |> cast_embed(:indexers, with: &indexer_changeset/2)
@@ -301,6 +314,22 @@ defmodule Mydia.Config.Schema do
     |> validate_required([:enabled, :directory])
     |> validate_number(:default_timeout_ms, greater_than: 0)
     |> validate_number(:max_timeout_ms, greater_than: 0)
+  end
+
+  defp plugins_changeset(schema, attrs) do
+    schema
+    |> cast(attrs, [
+      :fuel_enabled,
+      :fuel_limit,
+      :memory_limit_bytes,
+      :invocation_timeout_ms,
+      :pool_size
+    ])
+    |> validate_required([:fuel_enabled])
+    |> validate_number(:fuel_limit, greater_than: 0)
+    |> validate_number(:memory_limit_bytes, greater_than: 0)
+    |> validate_number(:invocation_timeout_ms, greater_than: 0)
+    |> validate_number(:pool_size, greater_than: 0)
   end
 
   defp flaresolverr_changeset(schema, attrs) do
@@ -509,6 +538,7 @@ defmodule Mydia.Config.Schema do
       logging: %__MODULE__.Logging{},
       oban: %__MODULE__.Oban{},
       hooks: %__MODULE__.Hooks{},
+      plugins: %__MODULE__.Plugins{},
       flaresolverr: %__MODULE__.FlareSolverr{},
       download_clients: [],
       indexers: [],

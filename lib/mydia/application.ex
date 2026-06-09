@@ -42,6 +42,10 @@ defmodule Mydia.Application do
         # Request task supervisor for multiplexed request handling with independent timeouts
         {Task.Supervisor, name: Mydia.RequestTaskSupervisor},
         Mydia.Hooks.Manager,
+        # WASM plugin platform: per-plugin pools register here and live under
+        # the dynamic supervisor (see Mydia.Plugins.Host).
+        {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
+        {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
         {Registry, keys: :unique, name: Mydia.Streaming.HlsSessionRegistry},
         Mydia.Streaming.HlsSessionSupervisor,
         {Registry, keys: :unique, name: Mydia.Downloads.TranscodeRegistry},
