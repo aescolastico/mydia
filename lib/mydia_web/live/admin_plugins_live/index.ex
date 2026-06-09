@@ -34,6 +34,7 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
      |> assign(:browse_error, nil)
      |> assign(:approval, nil)
      |> assign(:detail, nil)
+     |> assign(:settings, nil)
      |> assign(:log_topic, nil)
      |> stream(:plugin_logs, [])
      |> load_installed()
@@ -118,6 +119,48 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
   def handle_event("remove", %{"slug" => slug}, socket) do
     apply_lifecycle(socket, fn -> Plugins.remove(slug) end, "Removed #{slug}.")
+  end
+
+  ## Settings modal (operator-editable config — U3)
+
+  def handle_event("edit_settings", %{"slug" => slug}, socket) do
+    case Settings.get_plugin_config_by_slug(slug) do
+      nil -> {:noreply, socket}
+      config -> {:noreply, assign(socket, :settings, settings_state(config))}
+    end
+  end
+
+  def handle_event("close_settings", _params, socket) do
+    {:noreply, assign(socket, :settings, nil)}
+  end
+
+  def handle_event("save_settings", %{"slug" => slug} = params, socket) do
+    case Settings.get_plugin_config_by_slug(slug) do
+      nil ->
+        {:noreply, socket}
+
+      config ->
+        schema = settings_schema_of(config)
+        settings = build_settings(schema, params)
+
+        socket =
+          with :ok <- validate_url_settings(schema, settings),
+               {:ok, _} <- Plugins.update_settings(slug, settings) do
+            socket
+            |> put_flash(:info, "#{config.name} settings saved.")
+            |> assign(:settings, nil)
+            |> load_installed()
+          else
+            {:error, message} when is_binary(message) ->
+              # Keep the modal open so the operator can correct the value.
+              put_flash(socket, :error, message)
+
+            {:error, error} ->
+              put_flash(socket, :error, error_message(error))
+          end
+
+        {:noreply, socket}
+    end
   end
 
   ## Detail modal (granted caps + egress audit)
@@ -234,6 +277,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   defp row(config) do
     source = if Settings.runtime_config?(config), do: :env, else: :index
     capabilities = capabilities_of(config)
+    settings_schema = settings_schema_of(config)
+    granted = config.granted_capabilities || %{}
 
     %{
       slug: config.slug,
@@ -243,15 +288,91 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       source: source,
       read_only: source == :env,
       capabilities: capabilities,
-      granted: config.granted_capabilities || %{},
+      granted: granted,
       pending_approval: not config.enabled and capabilities != %{},
-      network_hosts: Map.get(capabilities, "net:http", [])
+      has_settings: settings_schema != [],
+      # Once approved, the granted net:http reflects the operator-configured host.
+      network_hosts: Map.get(granted, "net:http", Map.get(capabilities, "net:http", []))
     }
   end
 
   defp capabilities_of(%{manifest: %{"capabilities" => caps}}) when is_map(caps), do: caps
   defp capabilities_of(%{granted_capabilities: caps}) when is_map(caps), do: caps
   defp capabilities_of(_), do: %{}
+
+  defp settings_schema_of(%{manifest: %{"settings_schema" => schema}}) when is_list(schema),
+    do: schema
+
+  defp settings_schema_of(_), do: []
+
+  # Builds the settings modal state. Secret values are not echoed back into the
+  # form (write-only) — a blank secret on save preserves the stored one.
+  defp settings_state(config) do
+    schema = settings_schema_of(config)
+    current = config.settings || %{}
+
+    form_data =
+      Enum.reduce(schema, %{}, fn field, acc ->
+        if field["type"] == "secret",
+          do: acc,
+          else: Map.put(acc, field["key"], Map.get(current, field["key"]))
+      end)
+
+    %{
+      slug: config.slug,
+      name: config.name,
+      schema: schema,
+      form: to_form(form_data)
+    }
+  end
+
+  # Rejects a non-blank url-typed setting that does not parse to an absolute
+  # http(s) URL — otherwise a scheme-less value (e.g. "ntfy.example.com/x") would
+  # derive no host, silently dropping the grant and breaking delivery.
+  defp validate_url_settings(schema, settings) do
+    schema
+    |> Enum.filter(&(&1["type"] == "url"))
+    |> Enum.reduce_while(:ok, fn field, :ok ->
+      value = Map.get(settings, field["key"])
+
+      if blank_value?(value) or absolute_url?(value) do
+        {:cont, :ok}
+      else
+        label = field["label"] || field["key"]
+        {:halt, {:error, "#{label} must be a full URL including https://"}}
+      end
+    end)
+  end
+
+  defp blank_value?(value), do: is_nil(value) or value == ""
+
+  defp absolute_url?(value) when is_binary(value) do
+    case URI.parse(value) do
+      %URI{scheme: scheme, host: host}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp absolute_url?(_), do: false
+
+  # Extracts the schema-declared keys from submitted params. Blank secrets are
+  # dropped so update_settings/2's merge preserves the existing value.
+  defp build_settings(schema, params) do
+    Enum.reduce(schema, %{}, fn field, acc ->
+      key = field["key"]
+      value = Map.get(params, key)
+
+      cond do
+        is_nil(value) -> acc
+        field["type"] == "secret" and value == "" -> acc
+        true -> Map.put(acc, key, value)
+      end
+    end)
+  end
 
   defp load_updates(socket) do
     slugs =
@@ -278,7 +399,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: entry.slug,
       name: entry.name,
       version: entry.version,
-      capabilities: entry.manifest.capabilities
+      capabilities: entry.manifest.capabilities,
+      settings_schema: entry.manifest.settings_schema
     }
   end
 
@@ -290,7 +412,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: config.slug,
       name: config.name,
       version: config.version,
-      capabilities: capabilities
+      capabilities: capabilities,
+      settings_schema: settings_schema_of(config)
     }
   end
 
@@ -308,6 +431,7 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       name: config.name,
       enabled: config.enabled,
       granted: config.granted_capabilities || %{},
+      settings_schema: settings_schema_of(config),
       audit: audit,
       min_level: :debug,
       test_events: Map.get(config.granted_capabilities || %{}, "events:subscribe", [])

@@ -309,13 +309,44 @@ defmodule Mydia.Plugins do
          manifest when not is_nil(manifest) <- config.manifest,
          {:ok, config} <-
            Settings.update_plugin_config(config, %{
-             granted_capabilities: manifest["capabilities"] || %{},
+             granted_capabilities:
+               put_effective_http(manifest["capabilities"] || %{}, manifest, config.settings),
              enabled: true
            }) do
       activate_and_reload(config)
     else
       nil -> {:error, Error.new(:invalid_config, "plugin #{slug} has no stored manifest")}
       {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Updates a plugin's operator-editable settings and recomputes its effective
+  `net:http` host grant from the new values (host-granting settings — KTD1/KTD2).
+
+  The effective allowlist is a **full replacement**
+  (`manifest static hosts ∪ host(host-granting setting values)`), so changing a
+  configured URL drops the previously granted host — no stale-host accumulation.
+  Recomputation only touches `net:http` when it was already granted (approved);
+  an unapproved plugin keeps its empty grant and derives hosts at approve time,
+  preserving deny-by-default. When the plugin is enabled the live registry
+  descriptor is re-registered so the gate enforces the new hosts on the next
+  call, without restarting the running pool.
+  """
+  @spec update_settings(String.t(), map()) ::
+          {:ok, Settings.PluginConfig.t()} | {:error, Error.t()}
+  def update_settings(slug, settings) when is_map(settings) do
+    with {:ok, config} <- fetch_config(slug),
+         merged = Map.merge(config.settings || %{}, settings),
+         granted =
+           put_effective_http(config.granted_capabilities || %{}, config.manifest, merged),
+         {:ok, updated} <-
+           Settings.update_plugin_config(config, %{
+             settings: merged,
+             granted_capabilities: granted
+           }) do
+      if updated.enabled, do: reregister_descriptor(updated)
+      {:ok, updated}
     end
   end
 
@@ -642,6 +673,72 @@ defmodule Mydia.Plugins do
     end
   end
 
+  # Replaces a capability map's `net:http` with the effective host set, but only
+  # when `net:http` is already present — so this never grants a capability the
+  # admin did not approve. Used for both the manifest set (at approve) and the
+  # granted set (at settings-save).
+  defp put_effective_http(map, manifest_map, settings) do
+    if Map.has_key?(map, "net:http") do
+      Map.put(map, "net:http", effective_http_hosts(manifest_map, settings))
+    else
+      map
+    end
+  end
+
+  # Full-replacement effective allowlist: the manifest's static hosts unioned
+  # with the hosts of the operator's host-granting setting values (KTD1).
+  defp effective_http_hosts(manifest_map, settings) do
+    static = get_in(manifest_map, ["capabilities", "net:http"]) || []
+    Enum.uniq(static ++ derived_hosts(manifest_map, settings))
+  end
+
+  defp derived_hosts(manifest_map, settings) when is_map(manifest_map) do
+    manifest_map
+    |> Map.get("settings_schema")
+    |> Manifest.host_granting_keys()
+    |> Enum.map(&Map.get(settings || %{}, &1))
+    |> Enum.map(&url_host/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp derived_hosts(_manifest_map, _settings), do: []
+
+  defp url_host(value) when is_binary(value) do
+    case URI.parse(value) do
+      %URI{host: host} when is_binary(host) and host != "" -> host
+      _ -> nil
+    end
+  end
+
+  defp url_host(_), do: nil
+
+  # Rebuilds the registry descriptor from updated config so grant changes take
+  # effect immediately. The running pool is left untouched — grants are read from
+  # the descriptor on every host-function call (U6), so re-registering is enough.
+  defp reregister_descriptor(config) do
+    with manifest_map when not is_nil(manifest_map) <- config.manifest,
+         {:ok, manifest} <- Manifest.parse(manifest_map) do
+      descriptor =
+        Plugin.from_manifest(manifest,
+          granted_capabilities: config.granted_capabilities || %{},
+          enabled: true,
+          source: :index,
+          delivery: delivery_for(config)
+        )
+
+      Registry.register(config.slug, descriptor)
+      reload()
+      :ok
+    else
+      error ->
+        Logger.warning(
+          "could not refresh plugin #{config.slug} after settings change: #{inspect(error)}"
+        )
+
+        :ok
+    end
+  end
+
   defp manifest_to_map(%Manifest{} = m) do
     %{
       "slug" => m.slug,
@@ -650,7 +747,8 @@ defmodule Mydia.Plugins do
       "description" => m.description,
       "author" => m.author,
       "entrypoint" => m.entrypoint,
-      "capabilities" => m.capabilities
+      "capabilities" => m.capabilities,
+      "settings_schema" => m.settings_schema
     }
   end
 

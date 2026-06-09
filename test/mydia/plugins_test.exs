@@ -148,6 +148,100 @@ defmodule Mydia.PluginsTest do
     end
   end
 
+  describe "update_settings/2 host-granting recomputation (KTD1, R2)" do
+    defp schema_manifest do
+      manifest!(%{
+        "settings_schema" => [
+          %{"key" => "webhook_url", "type" => "url", "grants_host" => true},
+          %{"key" => "backup_url", "type" => "url", "grants_host" => true}
+        ]
+      })
+    end
+
+    defp granted_hosts(slug) do
+      Settings.get_plugin_config_by_slug(slug).granted_capabilities["net:http"]
+    end
+
+    setup %{bypass: bypass} do
+      wasm = guest_wasm()
+      serve_package(bypass, wasm)
+      {:ok, _} = Plugins.install(entry(bypass, schema_manifest(), wasm), gate_opts())
+      :ok
+    end
+
+    test "configuring a host-granting url adds its host to the effective grant" do
+      assert {:ok, _} =
+               Plugins.update_settings("webhook-notifier", %{
+                 "webhook_url" => "https://ntfy.example.com/mydia"
+               })
+
+      hosts = granted_hosts("webhook-notifier")
+      assert "ntfy.example.com" in hosts
+      assert "discord.com" in hosts
+    end
+
+    test "changing the url drops the previous host (full replacement)" do
+      {:ok, _} =
+        Plugins.update_settings("webhook-notifier", %{"webhook_url" => "https://a.example.com/x"})
+
+      {:ok, _} =
+        Plugins.update_settings("webhook-notifier", %{"webhook_url" => "https://b.example.com/x"})
+
+      hosts = granted_hosts("webhook-notifier")
+      assert "b.example.com" in hosts
+      refute "a.example.com" in hosts
+    end
+
+    test "blank or unparseable url derives no host and keeps static hosts" do
+      {:ok, _} = Plugins.update_settings("webhook-notifier", %{"webhook_url" => ""})
+      assert granted_hosts("webhook-notifier") == ["discord.com"]
+    end
+
+    test "multiple host-granting fields union their hosts" do
+      {:ok, _} =
+        Plugins.update_settings("webhook-notifier", %{
+          "webhook_url" => "https://one.example.com/x",
+          "backup_url" => "https://two.example.com/y"
+        })
+
+      hosts = granted_hosts("webhook-notifier")
+      assert "one.example.com" in hosts
+      assert "two.example.com" in hosts
+    end
+
+    test "the live registry descriptor reflects the new host without a pool restart" do
+      assert Host.running?("webhook-notifier")
+
+      {:ok, _} =
+        Plugins.update_settings("webhook-notifier", %{
+          "webhook_url" => "https://ntfy.example.com/mydia"
+        })
+
+      {:ok, descriptor} = Registry.lookup("webhook-notifier")
+      assert "ntfy.example.com" in descriptor.granted_capabilities["net:http"]
+      assert Host.running?("webhook-notifier")
+    end
+  end
+
+  describe "update_settings/2 deny-by-default (R2, R3)" do
+    test "does not grant net:http for an unapproved plugin", %{bypass: bypass} do
+      wasm = guest_wasm()
+      serve_package(bypass, wasm)
+
+      {:ok, :inactive} =
+        Plugins.install(entry(bypass, schema_manifest(), wasm), [grants: %{}] ++ gate_opts())
+
+      {:ok, _} =
+        Plugins.update_settings("webhook-notifier", %{
+          "webhook_url" => "https://ntfy.example.com/mydia"
+        })
+
+      config = Settings.get_plugin_config_by_slug("webhook-notifier")
+      assert config.settings["webhook_url"] == "https://ntfy.example.com/mydia"
+      refute Map.has_key?(config.granted_capabilities, "net:http")
+    end
+  end
+
   describe "detect_updates/2 (R14)" do
     defp config(slug, version), do: %Mydia.Settings.PluginConfig{slug: slug, version: version}
 

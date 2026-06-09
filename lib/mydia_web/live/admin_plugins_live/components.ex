@@ -9,6 +9,8 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   """
   use MydiaWeb, :html
 
+  alias Mydia.Plugins.Manifest
+
   @doc """
   Plain-language description of a single declared capability.
 
@@ -169,6 +171,15 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
             {if(@plugin.enabled, do: "Disable", else: "Enable")}
           </.button>
           <.button
+            :if={@plugin.has_settings}
+            id={"settings-#{@plugin.slug}"}
+            class="btn btn-ghost btn-sm join-item"
+            phx-click="edit_settings"
+            phx-value-slug={@plugin.slug}
+          >
+            Settings
+          </.button>
+          <.button
             id={"details-#{@plugin.slug}"}
             class="btn btn-ghost btn-sm join-item"
             phx-click="show_detail"
@@ -244,8 +255,9 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
           It cannot run until you approve them. Approval is all-or-nothing.
         </p>
 
-        <div class="my-4">
+        <div class="my-4 space-y-2">
           <.capability_list id="approval-capabilities" capabilities={@approval.capabilities} />
+          <.host_grant_note id="approval-host-grant" settings_schema={@approval.settings_schema} />
         </div>
 
         <div class="modal-action">
@@ -288,6 +300,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
         <p :if={@detail.granted == %{}} class="text-sm text-base-content/60">
           No capabilities granted.
         </p>
+        <.host_grant_note id="detail-host-grant" settings_schema={@detail.settings_schema} />
 
         <h4 class="font-semibold mt-4 mb-2">Recent network activity</h4>
         <div id="detail-audit" class="text-xs space-y-1 max-h-32 overflow-y-auto">
@@ -380,6 +393,117 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   defp log_row_class(%{level: :warn}), do: "text-warning"
   defp log_row_class(%{level: :debug}), do: "text-base-content/50"
   defp log_row_class(_), do: ""
+
+  @doc """
+  The operator settings modal (U3): renders a plugin's manifest-declared
+  `settings_schema` as a form. Field inputs are derived from each field's
+  declared `type`; secrets are write-only (never echoed back). Saving recomputes
+  the host grant from any host-granting URL field (see `Mydia.Plugins.update_settings/2`).
+  """
+  attr :settings, :map, required: true
+
+  def settings_modal(assigns) do
+    ~H"""
+    <div id="settings-modal" class="modal modal-open">
+      <div class="modal-box max-w-lg">
+        <h3 class="text-lg font-bold flex items-center gap-2">
+          <.icon name="hero-cog-6-tooth" class="w-5 h-5" /> {@settings.name} settings
+        </h3>
+        <.form for={@settings.form} id="plugin-settings-form" phx-submit="save_settings">
+          <input type="hidden" name="slug" value={@settings.slug} />
+          <div class="space-y-3 my-4">
+            <.settings_field :for={field <- @settings.schema} field={field} form={@settings.form} />
+          </div>
+          <div class="modal-action">
+            <.button type="button" class="btn btn-ghost" phx-click="close_settings">
+              Cancel
+            </.button>
+            <.button type="submit" variant="primary" class="btn btn-primary">
+              Save settings
+            </.button>
+          </div>
+        </.form>
+      </div>
+      <div class="modal-backdrop" phx-click="close_settings"></div>
+    </div>
+    """
+  end
+
+  # Renders one settings field from its declared type.
+  attr :field, :map, required: true
+  attr :form, :any, required: true
+
+  defp settings_field(%{field: %{"type" => "enum"}} = assigns) do
+    ~H"""
+    <.input
+      field={@form[@field["key"]]}
+      type="select"
+      label={@field["label"] || @field["key"]}
+      options={@field["options"] || []}
+    />
+    """
+  end
+
+  defp settings_field(%{field: %{"type" => "secret"}} = assigns) do
+    ~H"""
+    <.input
+      field={@form[@field["key"]]}
+      type="password"
+      autocomplete="off"
+      label={@field["label"] || @field["key"]}
+      placeholder="••••••••"
+    />
+    """
+  end
+
+  defp settings_field(%{field: %{"type" => "url"}} = assigns) do
+    ~H"""
+    <.input field={@form[@field["key"]]} type="url" label={@field["label"] || @field["key"]} />
+    """
+  end
+
+  defp settings_field(assigns) do
+    ~H"""
+    <.input field={@form[@field["key"]]} type="text" label={@field["label"] || @field["key"]} />
+    """
+  end
+
+  @doc """
+  Notes that the plugin will reach the host of whatever URL the operator enters
+  in its host-granting settings (U4). Renders nothing when the plugin declares no
+  host-granting field. Keeps approval consent legible: static hosts come from
+  `capability_list`, operator-chosen hosts are disclosed here.
+  """
+  attr :settings_schema, :list, default: []
+  attr :id, :string, required: true
+
+  def host_grant_note(assigns) do
+    assigns = assign(assigns, :fields, host_granting_labels(assigns.settings_schema))
+
+    ~H"""
+    <div
+      :if={@fields != []}
+      id={@id}
+      class="flex items-start gap-3 rounded-lg p-3 bg-warning/10"
+    >
+      <.icon name="hero-globe-alt" class="w-5 h-5 mt-0.5 shrink-0" />
+      <div>
+        <p class="font-medium">Plus any host you enter in: {Enum.join(@fields, ", ")}</p>
+        <p class="text-xs text-base-content/60">
+          This plugin reaches the server at the URL you configure in these settings.
+        </p>
+      </div>
+    </div>
+    """
+  end
+
+  # Labels of the host-granting fields, derived from the single source of truth
+  # in Mydia.Plugins.Manifest so this disclosure can't drift from the grant logic.
+  defp host_granting_labels(schema) do
+    schema
+    |> Manifest.host_granting_fields()
+    |> Enum.map(&(Map.get(&1, "label") || Map.get(&1, "key")))
+  end
 
   @doc """
   Renders the ordered list of declared capabilities for an approval surface.
