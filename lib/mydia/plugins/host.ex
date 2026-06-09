@@ -310,22 +310,20 @@ defmodule Mydia.Plugins.Host do
   defp decode_result(json) when is_binary(json) do
     trimmed = String.trim(json)
 
-    cond do
-      trimmed == "" ->
-        {:ok, %{}}
+    if trimmed == "" do
+      {:ok, %{}}
+    else
+      case Jason.decode(trimmed) do
+        {:ok, decoded} when is_map(decoded) ->
+          {:ok, decoded}
 
-      true ->
-        case Jason.decode(trimmed) do
-          {:ok, decoded} when is_map(decoded) ->
-            {:ok, decoded}
+        {:ok, other} ->
+          {:error,
+           Error.new(:invalid_output, "guest result is not a JSON object: #{inspect(other)}")}
 
-          {:ok, other} ->
-            {:error,
-             Error.new(:invalid_output, "guest result is not a JSON object: #{inspect(other)}")}
-
-          {:error, _} ->
-            {:error, Error.new(:invalid_output, "guest result is not valid JSON")}
-        end
+        {:error, _} ->
+          {:error, Error.new(:invalid_output, "guest result is not valid JSON")}
+      end
     end
   end
 
