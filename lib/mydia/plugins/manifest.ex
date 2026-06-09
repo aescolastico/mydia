@@ -158,22 +158,32 @@ defmodule Mydia.Plugins.Manifest do
   end
 
   @doc """
-  Returns the setting keys a manifest declares host-granting — `url` fields with
+  Returns the host-granting field maps a manifest declares — `url` fields with
   `grants_host: true`. Accepts either a `%Manifest{}` or a raw `settings_schema`
   list (as stored on a persisted plugin config), so callers reading the JSON
-  manifest map do not need to re-parse.
+  manifest map do not need to re-parse. The single source of truth for "which
+  settings grant a host"; see `host_granting_keys/1`.
   """
-  @spec host_granting_keys(t() | [map()] | nil) :: [String.t()]
-  def host_granting_keys(%__MODULE__{settings_schema: schema}), do: host_granting_keys(schema)
+  @spec host_granting_fields(t() | [map()] | nil) :: [map()]
+  def host_granting_fields(%__MODULE__{settings_schema: schema}), do: host_granting_fields(schema)
 
-  def host_granting_keys(schema) when is_list(schema) do
-    for field <- schema,
-        Map.get(field, "type") == "url",
-        Map.get(field, "grants_host") == true,
-        do: Map.get(field, "key")
+  def host_granting_fields(schema) when is_list(schema) do
+    Enum.filter(
+      schema,
+      &(Map.get(&1, "type") == "url" and Map.get(&1, "grants_host") == true)
+    )
   end
 
-  def host_granting_keys(_), do: []
+  def host_granting_fields(_), do: []
+
+  @doc """
+  Returns the setting keys a manifest declares host-granting. Thin projection of
+  `host_granting_fields/1` to the field `key`.
+  """
+  @spec host_granting_keys(t() | [map()] | nil) :: [String.t()]
+  def host_granting_keys(schema_or_manifest) do
+    schema_or_manifest |> host_granting_fields() |> Enum.map(&Map.get(&1, "key"))
+  end
 
   # ── Validation ──────────────────────────────────────────────────────────
 

@@ -9,6 +9,8 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   """
   use MydiaWeb, :html
 
+  alias Mydia.Plugins.Manifest
+
   @doc """
   Plain-language description of a single declared capability.
 
@@ -412,7 +414,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   attr :id, :string, required: true
 
   def host_grant_note(assigns) do
-    assigns = assign(assigns, :fields, host_granting_fields(assigns.settings_schema))
+    assigns = assign(assigns, :fields, host_granting_labels(assigns.settings_schema))
 
     ~H"""
     <div
@@ -431,15 +433,13 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
     """
   end
 
-  # Labels of the host-granting (url + grants_host) fields in a settings schema.
-  defp host_granting_fields(schema) when is_list(schema) do
-    for field <- schema,
-        Map.get(field, "type") == "url",
-        Map.get(field, "grants_host") == true,
-        do: Map.get(field, "label") || Map.get(field, "key")
+  # Labels of the host-granting fields, derived from the single source of truth
+  # in Mydia.Plugins.Manifest so this disclosure can't drift from the grant logic.
+  defp host_granting_labels(schema) do
+    schema
+    |> Manifest.host_granting_fields()
+    |> Enum.map(&(Map.get(&1, "label") || Map.get(&1, "key")))
   end
-
-  defp host_granting_fields(_), do: []
 
   @doc """
   Renders the ordered list of declared capabilities for an approval surface.

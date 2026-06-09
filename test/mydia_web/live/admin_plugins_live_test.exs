@@ -226,6 +226,26 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       assert "ntfy.example.com" in config.granted_capabilities["net:http"]
     end
 
+    test "rejects a scheme-less webhook_url instead of silently dropping the grant", %{conn: conn} do
+      seed_with_schema("webhook-notifier", "Webhook Notifier", enabled: true)
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#settings-webhook-notifier") |> render_click()
+
+      html =
+        view
+        |> form("#plugin-settings-form", %{
+          "target" => "ntfy",
+          "webhook_url" => "ntfy.example.com/mydia"
+        })
+        |> render_submit()
+
+      # Modal stays open with an error; nothing is persisted.
+      assert has_element?(view, "#settings-modal")
+      assert html =~ "full URL"
+      config = Settings.get_plugin_config_by_slug("webhook-notifier")
+      refute Map.has_key?(config.settings, "webhook_url")
+    end
+
     test "secret values are not echoed back into the form", %{conn: conn} do
       seed_with_schema("webhook-notifier", "Webhook Notifier",
         enabled: true,

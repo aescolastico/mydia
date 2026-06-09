@@ -173,7 +173,7 @@ fn ntfy_request(
 
     let mut headers = vec![
         ("content-type", string("text/plain")),
-        ("title", string(title)),
+        ("title", string(&sanitize_header(title))),
     ];
 
     push_setting_header(&mut headers, config, "ntfy_priority", "priority", |v| {
@@ -202,9 +202,16 @@ fn push_setting_header<'a>(
 ) {
     if let Some(value) = config.and_then(|c| get(c, key)).and_then(as_str) {
         if !value.is_empty() {
-            headers.push((header, string(&f(value))));
+            headers.push((header, string(&sanitize_header(&f(value)))));
         }
     }
+}
+
+// ntfy metadata travels in HTTP headers; strip CR/LF so an operator-entered
+// value can't inject extra header lines. Defense-in-depth — the host's HTTP
+// client also rejects control characters in header values.
+fn sanitize_header(value: &str) -> String {
+    value.chars().filter(|c| *c != '\r' && *c != '\n').collect()
 }
 
 fn read_media(event: &JsonValue) -> Option<JsonValue> {

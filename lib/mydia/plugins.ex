@@ -482,7 +482,7 @@ defmodule Mydia.Plugins do
     Enum.uniq(static ++ derived_hosts(manifest_map, settings))
   end
 
-  defp derived_hosts(manifest_map, settings) do
+  defp derived_hosts(manifest_map, settings) when is_map(manifest_map) do
     manifest_map
     |> Map.get("settings_schema")
     |> Manifest.host_granting_keys()
@@ -490,6 +490,8 @@ defmodule Mydia.Plugins do
     |> Enum.map(&url_host/1)
     |> Enum.reject(&is_nil/1)
   end
+
+  defp derived_hosts(_manifest_map, _settings), do: []
 
   defp url_host(value) when is_binary(value) do
     case URI.parse(value) do
@@ -518,7 +520,12 @@ defmodule Mydia.Plugins do
       reload()
       :ok
     else
-      _ -> :ok
+      error ->
+        Logger.warning(
+          "could not refresh plugin #{config.slug} after settings change: #{inspect(error)}"
+        )
+
+        :ok
     end
   end
 

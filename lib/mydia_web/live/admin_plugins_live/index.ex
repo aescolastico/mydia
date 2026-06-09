@@ -133,15 +133,20 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
         {:noreply, socket}
 
       config ->
-        settings = build_settings(settings_schema_of(config), params)
+        schema = settings_schema_of(config)
+        settings = build_settings(schema, params)
 
         socket =
-          case Plugins.update_settings(slug, settings) do
-            {:ok, _} ->
-              socket
-              |> put_flash(:info, "#{config.name} settings saved.")
-              |> assign(:settings, nil)
-              |> load_installed()
+          with :ok <- validate_url_settings(schema, settings),
+               {:ok, _} <- Plugins.update_settings(slug, settings) do
+            socket
+            |> put_flash(:info, "#{config.name} settings saved.")
+            |> assign(:settings, nil)
+            |> load_installed()
+          else
+            {:error, message} when is_binary(message) ->
+              # Keep the modal open so the operator can correct the value.
+              put_flash(socket, :error, message)
 
             {:error, error} ->
               put_flash(socket, :error, error_message(error))
@@ -239,6 +244,39 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       form: to_form(form_data)
     }
   end
+
+  # Rejects a non-blank url-typed setting that does not parse to an absolute
+  # http(s) URL — otherwise a scheme-less value (e.g. "ntfy.example.com/x") would
+  # derive no host, silently dropping the grant and breaking delivery.
+  defp validate_url_settings(schema, settings) do
+    schema
+    |> Enum.filter(&(&1["type"] == "url"))
+    |> Enum.reduce_while(:ok, fn field, :ok ->
+      value = Map.get(settings, field["key"])
+
+      if blank_value?(value) or absolute_url?(value) do
+        {:cont, :ok}
+      else
+        label = field["label"] || field["key"]
+        {:halt, {:error, "#{label} must be a full URL including https://"}}
+      end
+    end)
+  end
+
+  defp blank_value?(value), do: is_nil(value) or value == ""
+
+  defp absolute_url?(value) when is_binary(value) do
+    case URI.parse(value) do
+      %URI{scheme: scheme, host: host}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp absolute_url?(_), do: false
 
   # Extracts the schema-declared keys from submitted params. Blank secrets are
   # dropped so update_settings/2's merge preserves the existing value.

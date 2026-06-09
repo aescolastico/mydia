@@ -224,6 +224,27 @@ defmodule Mydia.Plugins.Notifier.DeliveryTest do
       refute "authorization" in keys
     end
 
+    test "strips CR/LF from operator header values (no header injection)", %{bypass: bypass} do
+      start_notifier!(bypass,
+        settings: %{"target" => "ntfy", "ntfy_priority" => "4\r\nX-Injected: evil"}
+      )
+
+      item = media_item_fixture(%{title: "Dune"})
+      test_pid = self()
+
+      Bypass.expect_once(bypass, "POST", "/hook", fn conn ->
+        send(test_pid, {:headers, conn.req_headers})
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      assert :ok = Delivery.perform(job(added_payload(item)))
+      assert_receive {:headers, headers}
+
+      priority = Enum.find_value(headers, fn {k, v} -> if k == "priority", do: v end)
+      assert priority == "4X-Injected: evil"
+      refute Enum.any?(headers, fn {k, _} -> k == "x-injected" end)
+    end
+
     test "an ntfy host not on the grant is still blocked by the gate", %{bypass: bypass} do
       start_notifier!(bypass,
         granted_host: "discord.com",
