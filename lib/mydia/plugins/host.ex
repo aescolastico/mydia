@@ -404,6 +404,16 @@ defmodule Mydia.Plugins.Host do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
+  # Drains the per-invocation WASI pipes into wasi-source log rows (U4).
+  #
+  # Target-triple dependency (U8): captured stdout/stderr only carries text for
+  # guests built against a WASI target (wasm32-wasip1), whose libc routes
+  # println!/panic output through fd 1/2. A `wasm32-unknown-unknown` guest (the
+  # bundled webhook notifier today) has no WASI stdio, so this yields nothing —
+  # the host trap marker (U2) still records the *outcome*, and the guest can
+  # still narrate via the `log` host function (target-independent), but the Rust
+  # panic *message text* is only captured for WASI-target guests. For those,
+  # also avoid `panic_immediate_abort`, which strips the message to a bare trap.
   defp capture_wasi(inv, stdout, stderr) do
     emit_wasi(inv, stdout, :info)
     emit_wasi(inv, stderr, :warn)
