@@ -45,6 +45,13 @@
         lockFile = ../../plugins/webhook_notifier/Cargo.lock;
       };
 
+      # Same for the bundled simkl_sync plugin guest. Each bundled guest is its
+      # own crate with its own lock, so a new guest needs its deps vendored here
+      # (and a `.cargo/config.toml` below) or the no-network sandbox build fails.
+      simklSyncCargoDeps = pkgs.rustPlatform.importCargoLock {
+        lockFile = ../../plugins/simkl_sync/Cargo.lock;
+      };
+
       # Precompiled wasmex NIF (rustler_precompiled downloads this at compile
       # time, which the Nix sandbox forbids). Pre-fetch the release tarball and
       # point RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH at it so the wasmex build
@@ -281,6 +288,16 @@
 
             [source.vendored-sources]
             directory = "${webhookNotifierCargoDeps}"
+            CARGO_EOF
+
+            # Same for the bundled simkl_sync plugin guest.
+            mkdir -p plugins/simkl_sync/.cargo
+            cat > plugins/simkl_sync/.cargo/config.toml <<CARGO_EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "${simklSyncCargoDeps}"
             CARGO_EOF
           '';
 
