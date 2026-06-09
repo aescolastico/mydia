@@ -12,14 +12,17 @@ webhook notifier as the worked example.
 ## The model in one minute
 
 - A plugin is a Wasm **component** built for `wasm32-wasip2` against the
-  canonical WIT contract `mydia:plugin@1.0.0`.
-- It **exports** one function — `handler.on-event` — which the host calls for
-  each subscribed event.
-- It **imports** the host's capabilities — `http-request`, `data-read`, `log` —
-  each enforced server-side on every call. There is no ambient network, file, or
-  OS access; the sandbox denies stdio and the only way out is a host import.
+  canonical WIT contract `mydia:plugin@1.1.0`.
+- It **exports** `handler.on-event` (called for each subscribed event) and,
+  optionally, `handler.on-schedule` (called on a fixed interval).
+- It **imports** the host's capabilities — `http-request`, `data-read`, `log`,
+  plus the 1.1 additions `kv-get/set/delete`, `data-list`, `ensure-watched`,
+  `connections-list`, and `connection-request` — each enforced server-side on
+  every call. There is no ambient network, file, or OS access; the sandbox
+  denies stdio and the only way out is a host import.
 - The SDK's `#[mydia::plugin]` macro adapts your typed handler onto the exported
-  function, so you never touch the generated binding boilerplate.
+  function, so you never touch the generated binding boilerplate. Pass
+  `#[mydia::plugin(on_schedule = my_fn)]` to add a schedule handler.
 
 The WIT contract is the single source of truth, living at
 `native/mydia_plugin_sdk/wit/plugin.wit`. Both the Elixir host and your guest
@@ -122,16 +125,19 @@ The arbitrary per-event detail (and the operator's plugin settings) ride in
 `metadata_json` as a JSON object, so the typed envelope stays stable while the
 payload varies by event. Parse it with any JSON crate when you need it.
 
-### Event catalog (v1)
+### Event catalog
 
-A plugin subscribes to events in its manifest; each must be in the v1 catalog:
+A plugin subscribes to events in its manifest; each must be in the catalog:
 
-- `media_item.added`
-- `media_item.updated`
-- `media_item.removed`
+- `media_item.added`, `media_item.updated`, `media_item.removed`
 - `media_file.imported`
-- `download.completed`
-- `download.failed`
+- `download.completed`, `download.failed`
+- `playback.started`, `playback.progressed`, `playback.paused`, `playback.finished`
+
+The `playback.*` events carry an `origin` (`player`, `sync:<provider>`, or
+`plugin:<slug>`) in `metadata_json`. The dispatcher never delivers an event back
+to the plugin that originated it, so write-backs don't echo. `playback.progressed`
+is sampled (one per 5% bucket); `playback.paused` is reserved but not yet emitted.
 
 ## Capabilities
 
@@ -143,8 +149,11 @@ operator approves it.
 |-------|---------|
 | `events:subscribe` | The event types the plugin reacts to (from the catalog above). Required. |
 | `net:http` | The exact hostnames the plugin may contact. **No wildcards** (a wildcard subdomain is an exfiltration channel). |
-| `data:read` | Scoped read namespaces (v1: `media_item`). The host returns a curated, read-only projection — never raw rows or secrets. |
-| `surfaces:write` | Reserved; not available in v1. |
+| `data:read` | Scoped read namespaces (`media_item`, `playback_progress`). The host returns a curated, read-only projection — never raw rows or secrets. |
+| `surfaces:write` | Curated write surfaces. Vocabulary: `playback:watched` (mark items watched via `ensure-watched`). |
+| `state:kv` | A per-plugin key/value store (`@max_keys` 256 keys, 64 KB per value) for watermarks, cursors, and dedupe sets. |
+| `users:connections` | Per-user third-party connections — the host holds the token; the plugin gets identity + status only. **Cross-user, consent-scoped.** |
+| `schedule:interval` | Run `on-schedule` on a fixed interval (manifest `schedule`, 5-minute floor). |
 
 ### Host functions
 
@@ -179,6 +188,81 @@ Each `result<_, host-error>` surfaces a denial (`Denied`), a bad request, a
 not-found, or a network error — handle it; the host never lets a guest bypass
 the gate.
 
+### 1.1 host functions
+
+```rust
+use mydia_plugin_sdk::host;
+use mydia_plugin_sdk::types::{ListRequest, ListItem, WatchTarget};
+
+// state:kv — opaque per-plugin storage across invocations.
+host::kv_set("watermark", "2024-06-01T00:00:00Z").ok();
+let mark = host::kv_get("watermark").ok().flatten();   // Option<String>
+host::kv_delete("watermark").ok();
+
+// data:read via data-list — cursor-paginated, updated-since filtered. Walk
+// next_cursor until None. playback_progress is consent-scoped to connected users.
+let page = host::data_list(&ListRequest {
+    namespace: "playback_progress".into(),
+    cursor: None,
+    updated_since: mark.clone(),
+    limit: Some(200),
+}).unwrap();
+for item in page.items {
+    if let ListItem::PlaybackProgress(p) = item { let _ = p.watched; }
+}
+
+// surfaces:write — mark watched for a user, idempotently. Host-side external-id
+// matching; the response says changed / already-watched / not-found.
+host::ensure_watched(&WatchTarget {
+    user_id: "…".into(),
+    imdb_id: Some("tt100".into()),
+    tmdb_id: None, tvdb_id: None,
+    season_number: None, episode_number: None,
+    watched_at: None,
+}).ok();
+
+// users:connections — identity + status only (never a token).
+for c in host::connections_list().unwrap() { let _ = (c.id, c.user_id, c.status); }
+
+// connection-request — an authenticated request. The host verifies the
+// connection belongs to you, strips any guest Authorization, and injects the
+// bearer token itself. You never see the token.
+// host::connection_request(&c.id, &outbound_request)
+```
+
+Key guarantees:
+
+- `ensure-watched` is **idempotent**: re-marking a watched item reports
+  `already-watched` and emits no event.
+- `data-list` cursors are opaque and request-local — walk them within one run,
+  never persist them.
+- `kv-set` is an engine-native upsert (last write wins); keys are opaque to the
+  host. Keys under `conn/<connection-id>/...` are swept when that connection is
+  removed.
+
+### Scheduled handler
+
+Add `on-schedule` for periodic work (declare a `schedule` and the
+`schedule:interval` capability in the manifest):
+
+```rust
+use mydia_plugin_sdk::types::{Event, ScheduleTick};
+
+#[mydia_plugin_sdk::plugin(on_schedule = on_schedule)]
+fn on_event(evt: Event) -> Result<String, String> { Ok("{}".into()) }
+
+fn on_schedule(tick: ScheduleTick) -> Result<String, String> {
+    // tick.config_json carries the operator settings. Return a small JSON result;
+    // include "connections_invalid": ["<user-id>"] to flag users whose token
+    // the provider rejected (a 401) — the host marks those connections errored.
+    Ok("{\"connections_invalid\":[]}".into())
+}
+```
+
+A run that takes longer than one interval is fine — the next tick is skipped
+while it runs (non-reentrant), and your state must survive a wall-clock kill, so
+checkpoint progress to KV as you go.
+
 ## Manifest
 
 A plugin ships a JSON manifest declaring its identity, capabilities, and
@@ -208,11 +292,14 @@ over wasmtime's hard link-time refusal. Omit it if you have no floor.
 ### Evolving the contract
 
 The WIT package version **is** the ABI version. The contract evolves
-**additively by default** — new functions, new records, new variant cases, and
-new `option<T>` fields are gated with `@since` and keep existing plugins working
-across host upgrades. Only a removal or a signature change bumps the major
-version. So: target the lowest host you need via `min_host_version`, and expect
-new capabilities to be additive.
+**additively** — new host functions, new records, new variant cases, and new
+exports are added without touching existing types or signatures. A plugin built
+against an older minor keeps working: the host detects each guest's contract
+version from its bytes and serves the matching interface namespace and exports,
+so a `1.0` guest's `on-event` still resolves against a `1.1` host. Only a removal
+or a signature change bumps the major version. Target the lowest host you need
+via `min_host_version`; a `1.1` guest sets `"min_host_version": "1.1.0"` so an
+older host refuses it cleanly rather than failing to link.
 
 ## The dev loop
 

@@ -53,12 +53,15 @@ install time. A plugin can never widen its own grant at runtime.
 
 | Capability | Meaning |
 |------------|---------|
-| `events:subscribe` | The event types the plugin reacts to. Required. Each must be in the v1 catalog. |
+| `events:subscribe` | The event types the plugin reacts to. Required. Each must be in the catalog. |
 | `net:http` | The exact hostnames the plugin may contact. No wildcards. |
-| `data:read` | Read namespaces the plugin may query (v1: `media_item`). Returns a curated, read-only projection. |
-| `surfaces:write` | Reserved; not available in v1. |
+| `data:read` | Read namespaces the plugin may query (`media_item`, `playback_progress`). Returns a curated, read-only projection. |
+| `surfaces:write` | Curated write surfaces. Value vocabulary: `playback:watched` (the `ensure-watched` host function). |
+| `state:kv` | A small per-plugin key/value store that survives across invocations (watermarks, cursors, dedupe sets). |
+| `users:connections` | Per-user third-party connections the host holds on the plugin's behalf. **Cross-user** — see below. |
+| `schedule:interval` | Lets the plugin run on a fixed interval via `on-schedule`. Paired with the `schedule` descriptor. |
 
-The v1 event catalog for `events:subscribe`:
+The event catalog for `events:subscribe`:
 
 - `media_item.added`
 - `media_item.updated`
@@ -66,6 +69,22 @@ The v1 event catalog for `events:subscribe`:
 - `media_file.imported`
 - `download.completed`
 - `download.failed`
+- `playback.started`
+- `playback.progressed` — sampled: the host emits at most one per 5% completion bucket, so a burst of position updates yields a single event.
+- `playback.paused` — in the catalog; not yet emitted (no player pause signal).
+- `playback.finished` — the unwatched→watched edge (the 90% auto-mark, an explicit mark-watched, or a sync write).
+
+Every `playback.*` event carries an `origin` in its metadata: `player` (a real client write), `sync:<provider>` (a media-server or Trakt import), or `plugin:<slug>` (a plugin write-back). The dispatcher never delivers an event back to the plugin that originated it, so a plugin's own `ensure-watched` writes do not echo to itself.
+
+!!! warning "`users:connections` and `data:read playback_progress` are cross-user"
+    These are the platform's first cross-user capabilities. The approval line
+    states plainly that the plugin can read connected users' linked accounts and
+    watch history and mark items watched on their behalf. Access is **consent-
+    scoped**: a user is only visible to the plugin after they click *Connect* on
+    their profile. `data-list playback_progress` returns rows only for connected
+    users, and `ensure-watched` is rejected for a user without an active
+    connection. Adding an egress host or a new capability class in a manifest
+    revision returns the plugin to unapproved.
 
 !!! warning "`net:http` is an exact-host allowlist"
     List each host you contact (`discord.com`, `api.example.com`). Wildcard
@@ -128,6 +147,54 @@ what is relevant to the current selection:
 ```
 
 Here `ntfy_priority` only appears when the operator has set `target` to `ntfy`.
+
+## Scheduled plugins
+
+A plugin that needs a clock declares a `schedule` and the `schedule:interval`
+capability. The host invokes its `on-schedule` export on a fixed interval:
+
+```json
+"schedule": { "interval_minutes": 30 },
+"capabilities": { "schedule:interval": [] }
+```
+
+- `interval_minutes` is floored at **5 minutes**; a smaller value is rejected at
+  parse.
+- A schedule with no `schedule:interval` capability is rejected — the admin
+  always sees the schedule at approval.
+- Ticks are **non-reentrant**: if a previous run (scheduled, reactive, or
+  inline) is still in flight the tick is a no-op, so work never piles up.
+- `on-schedule` runs under a larger timeout budget than `on-event` (default
+  60s). A run that fails backs off exponentially; a success resets the counter.
+- A scheduled run may return a `connections_invalid` array in its JSON result;
+  the host marks those users' connections `error` (only users who actually hold
+  an active connection — a guest can't mass-error state).
+
+## Connection descriptor
+
+A plugin that links a per-user third-party account declares a `connection`
+descriptor. The **host** runs the OAuth device (PIN) flow end to end from a
+generic card on the user's profile; the guest never executes during connect and
+never sees the token.
+
+```json
+"connection": {
+  "type": "oauth_device",
+  "code_url": "https://api.example.com/oauth/pin?client_id={client_id}",
+  "poll_url": "https://api.example.com/oauth/pin/{user_code}?client_id={client_id}",
+  "verification_url": "https://example.com/pin",
+  "client_id": "your-public-embeddable-client-id"
+}
+```
+
+- `code_url`, `poll_url`, and `verification_url` must all sit on a host declared
+  in `net:http`, so the verification URL rendered in trusted UI can never be a
+  phishing surface.
+- `{client_id}` and `{user_code}` are substituted by the host. The embedded
+  `client_id` is the public/embeddable id; an operator can override it via a
+  `client_id` setting.
+- The plugin reaches the connected account with `connection-request`, which
+  attaches the bearer token host-side (see the [Reference](authoring.md)).
 
 ## Host-version floor
 
