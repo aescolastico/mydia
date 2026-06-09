@@ -104,6 +104,10 @@ defmodule Mydia.Plugins.Manifest do
     media_file.imported
     download.completed
     download.failed
+    playback.started
+    playback.progressed
+    playback.paused
+    playback.finished
   )
 
   # All taxonomy classes (reserved + implemented). The schema/approval UI know

@@ -3,6 +3,7 @@ defmodule Mydia.PlaybackTest do
 
   alias Mydia.Playback
   alias Mydia.Accounts
+  alias Mydia.Events
   alias Mydia.Media
 
   describe "get_progress/2" do
@@ -302,6 +303,122 @@ defmodule Mydia.PlaybackTest do
   end
 
   # Helper functions for test setup
+  describe "playback events (U1)" do
+    setup do
+      {:ok, user} = create_user()
+      {:ok, media_item} = create_media_item()
+      {:ok, episode} = create_episode()
+      %{user: user, media_item: media_item, episode: episode}
+    end
+
+    defp playback_events(user, action) do
+      Events.list_events(
+        type: "playback.#{action}",
+        actor_type: :user,
+        actor_id: user.id
+      )
+    end
+
+    test "save_progress crossing 90% emits one finished with origin player and actor_id",
+         %{user: user, media_item: media_item} do
+      {:ok, _} =
+        Playback.save_progress(user.id, [media_item_id: media_item.id], %{
+          position_seconds: 95,
+          duration_seconds: 100
+        })
+
+      assert [event] = playback_events(user, "finished")
+      assert event.actor_id == user.id
+      assert event.actor_type == :user
+      assert event.resource_type == "media_item"
+      assert event.resource_id == media_item.id
+      assert event.metadata["origin"] == "player"
+      assert event.metadata["watched"] == true
+      # A finished write does not also emit a progressed for the same call.
+      assert playback_events(user, "progressed") == []
+    end
+
+    test "rapid save_progress within one bucket emits a single progressed",
+         %{user: user, media_item: media_item} do
+      # All four writes land in the same 5% bucket (10..14%); only the first,
+      # which crosses into the bucket, emits.
+      for pos <- [10, 11, 12, 13] do
+        {:ok, _} =
+          Playback.save_progress(user.id, [media_item_id: media_item.id], %{
+            position_seconds: pos,
+            duration_seconds: 100
+          })
+      end
+
+      assert [_one] = playback_events(user, "progressed")
+    end
+
+    test "crossing into a new bucket emits an additional progressed",
+         %{user: user, media_item: media_item} do
+      {:ok, _} =
+        Playback.save_progress(user.id, [media_item_id: media_item.id], %{
+          position_seconds: 10,
+          duration_seconds: 100
+        })
+
+      {:ok, _} =
+        Playback.save_progress(user.id, [media_item_id: media_item.id], %{
+          position_seconds: 40,
+          duration_seconds: 100
+        })
+
+      assert length(playback_events(user, "progressed")) == 2
+    end
+
+    test "mark_watched on an already-watched row emits nothing",
+         %{user: user, media_item: media_item} do
+      {:ok, _} =
+        Playback.save_progress(user.id, [media_item_id: media_item.id], %{
+          position_seconds: 95,
+          duration_seconds: 100
+        })
+
+      assert [_only] = playback_events(user, "finished")
+
+      {:ok, _} = Playback.mark_watched(user.id, media_item_id: media_item.id)
+
+      # Still exactly one — the idempotent re-mark emitted no new finished.
+      assert [_only] = playback_events(user, "finished")
+    end
+
+    test "mark_watched on an unwatched row emits one finished",
+         %{user: user, episode: episode} do
+      {:ok, _} =
+        Playback.save_progress(user.id, [episode_id: episode.id], %{
+          position_seconds: 10,
+          duration_seconds: 100
+        })
+
+      assert playback_events(user, "finished") == []
+
+      {:ok, _} = Playback.mark_watched(user.id, episode_id: episode.id)
+
+      assert [event] = playback_events(user, "finished")
+      assert event.resource_type == "episode"
+      assert event.resource_id == episode.id
+      assert event.metadata["origin"] == "player"
+    end
+
+    test "origin option is carried into the emitted event",
+         %{user: user, media_item: media_item} do
+      {:ok, _} =
+        Playback.save_progress(
+          user.id,
+          [media_item_id: media_item.id],
+          %{position_seconds: 0, duration_seconds: 1, watched: true},
+          origin: "sync:plex"
+        )
+
+      assert [event] = playback_events(user, "finished")
+      assert event.metadata["origin"] == "sync:plex"
+    end
+  end
+
   defp create_user do
     Accounts.create_user(%{
       email: "user#{System.unique_integer([:positive])}@example.com",

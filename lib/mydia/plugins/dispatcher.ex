@@ -52,7 +52,9 @@ defmodule Mydia.Plugins.Dispatcher do
   @impl true
   def handle_info({:event_created, %{type: type} = event}, %{invoker: invoker} = state) do
     if type in Manifest.event_catalog() do
-      for plugin <- Plugins.subscribers(type) do
+      origin = event_origin(event)
+
+      for plugin <- Plugins.subscribers(type), not suppressed?(origin, plugin) do
         run_isolated(invoker, plugin, event)
       end
     end
@@ -61,6 +63,18 @@ defmodule Mydia.Plugins.Dispatcher do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # The event's origin (e.g. "plugin:simkl_sync", "sync:plex", "player") lives in
+  # its metadata bag. Tolerant of both string and atom keys since events may be
+  # built in either shape across the codebase.
+  defp event_origin(%{metadata: %{} = meta}), do: meta["origin"] || meta[:origin]
+  defp event_origin(_), do: nil
+
+  # Never deliver an event back to the plugin that originated it (R14): a
+  # plugin-tagged write-back would otherwise echo straight back into the same
+  # plugin. Events from players, other plugins, or sync providers pass through.
+  defp suppressed?(nil, _plugin), do: false
+  defp suppressed?(origin, plugin), do: origin == "plugin:" <> plugin.slug
 
   # Run one plugin invocation in an isolated, supervised task. Crashes are
   # caught and logged so one misbehaving plugin never affects the others or the
