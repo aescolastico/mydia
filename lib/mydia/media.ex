@@ -137,12 +137,10 @@ defmodule Mydia.Media do
       actor_type = Keyword.get(opts, :actor_type, :system)
       actor_id = Keyword.get(opts, :actor_id, "media_context")
 
+      # The media_item.added event flows through the plugin dispatcher
+      # (Mydia.Plugins.Dispatcher), which replaced the Luerl after_media_added
+      # hook (U11). No explicit hook call is needed here.
       Events.media_item_added(media_item, actor_type, actor_id)
-
-      # Execute after_media_added hooks asynchronously
-      Mydia.Hooks.execute_async("after_media_added", %{
-        media_item: serialize_media_item(media_item)
-      })
 
       # For TV shows, automatically fetch episodes unless explicitly skipped
       if media_item.type == "tv_show" and not Keyword.get(opts, :skip_episode_refresh, false) do
@@ -1704,19 +1702,6 @@ defmodule Mydia.Media do
   # Downloads are active if they haven't completed and haven't failed
   defp download_active?(download) do
     is_nil(download.completed_at) && is_nil(download.error_message)
-  end
-
-  # Serialize media item for hooks
-  defp serialize_media_item(%MediaItem{} = media_item) do
-    %{
-      id: media_item.id,
-      type: media_item.type,
-      title: media_item.title,
-      tmdb_id: media_item.tmdb_id,
-      year: media_item.year,
-      monitored: media_item.monitored,
-      metadata: media_item.metadata
-    }
   end
 
   ## Category Classification

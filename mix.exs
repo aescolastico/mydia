@@ -215,7 +215,6 @@ defmodule Mydia.MixProject do
       {:timex, "~> 3.7"},
       {:yaml_elixir, "~> 2.9"},
       {:ymlr, "~> 5.1"},
-      {:luerl, "~> 1.2"},
       {:sweet_xml, "~> 0.7"},
       {:floki, "~> 0.36"},
       {:nimble_parsec, "~> 1.4"},
