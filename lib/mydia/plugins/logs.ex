@@ -162,18 +162,19 @@ defmodule Mydia.Plugins.Logs do
         |> Enum.map(fn {_slug, inv, _ts} -> inv end)
       end)
 
-    case stale_invocations do
-      [] ->
-        0
+    # Chunk the delete: the stale-id list spans all plugins, and an unbounded
+    # `IN (...)` exceeds SQLite's bound-parameter cap (999 pre-3.32) at scale —
+    # a green-Postgres / red-SQLite divergence. 900 keeps margin under the cap.
+    stale_invocations
+    |> Enum.chunk_every(900)
+    |> Enum.reduce(0, fn chunk, acc ->
+      {count, _} =
+        Log
+        |> where([l], l.invocation_id in ^chunk)
+        |> Repo.delete_all()
 
-      ids ->
-        {count, _} =
-          Log
-          |> where([l], l.invocation_id in ^ids)
-          |> Repo.delete_all()
-
-        count
-    end
+      acc + count
+    end)
   end
 
   defp prune_by_invocation_cap(_), do: 0

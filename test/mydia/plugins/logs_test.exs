@@ -132,4 +132,31 @@ defmodule Mydia.Plugins.LogsTest do
       assert kept == ["inv-3", "inv-4"]
     end
   end
+
+  describe "ordering and message cap" do
+    test "recent/2 preserves intra-invocation insertion order (microsecond precision)" do
+      base = DateTime.utc_now()
+
+      sequence = [{:host, "invoke start"}, {:guest, "posting"}, {:host, "ok 204"}]
+
+      for {{source, message}, i} <- Enum.with_index(sequence) do
+        {:ok, log} = Logs.create(attrs(%{invocation_id: "seq", source: source, message: message}))
+        ts = DateTime.add(base, i, :microsecond)
+        Repo.update_all(from(l in Log, where: l.id == ^log.id), set: [inserted_at: ts])
+      end
+
+      # Newest-first; microsecond gaps keep same-second rows ordered (a
+      # second-precision column would collapse these and randomize the tiebreak).
+      messages = "webhook_notifier" |> Logs.recent() |> Enum.map(& &1.message)
+      assert messages == ["ok 204", "posting", "invoke start"]
+    end
+
+    test "an oversized message is truncated to the byte cap" do
+      big = String.duplicate("x", 200_000)
+      {:ok, log} = Logs.create(attrs(%{source: :wasi, level: :info, message: big}))
+
+      assert byte_size(log.message) <= 64 * 1024 + 32
+      assert String.ends_with?(log.message, "[truncated]")
+    end
+  end
 end

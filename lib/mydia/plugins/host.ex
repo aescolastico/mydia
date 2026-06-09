@@ -56,6 +56,7 @@ defmodule Mydia.Plugins.Host do
   require Logger
 
   alias Mydia.Plugins.Error
+  alias Mydia.Plugins.Log
   alias Mydia.Plugins.Logs
   alias Wasmex.Wasi.WasiOptions
 
@@ -397,7 +398,18 @@ defmodule Mydia.Plugins.Host do
   defp classify_outcome({:ok, _}), do: {:info, "ok", nil}
 
   defp classify_outcome({:error, %Error{type: type, message: message}}),
-    do: {:error, to_string(type), message}
+    do: {:error, to_string(type), sanitize_detail(message)}
+
+  # Defensive: every current run_invocation path is {:ok,_}|{:error,%Error{}},
+  # but a catch-all keeps an unexpected shape from raising in the marker path.
+  defp classify_outcome(_other), do: {:error, "unknown", nil}
+
+  # A guest panic message (via to_string_reason) can carry non-UTF-8 bytes; this
+  # detail lands in marker metadata which JsonMapType encodes with Jason, which
+  # raises on invalid UTF-8 — dropping the very end-marker that records the trap.
+  defp sanitize_detail(nil), do: nil
+  defp sanitize_detail(message) when is_binary(message), do: Log.sanitize(message)
+  defp sanitize_detail(message), do: message
 
   defp end_message(outcome, function, ms), do: "#{function} #{outcome} (#{ms}ms)"
 

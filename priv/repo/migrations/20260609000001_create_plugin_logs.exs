@@ -28,7 +28,9 @@ defmodule Mydia.Repo.Migrations.CreatePluginLogs do
       add :metadata, :text
       add :test_run, :boolean, null: false, default: false
 
-      timestamps(inserted_at: :inserted_at, updated_at: false, type: :utc_datetime)
+      # Microsecond precision keeps a single invocation's rows ordered (see
+      # Mydia.Plugins.Log).
+      timestamps(inserted_at: :inserted_at, updated_at: false, type: :utc_datetime_usec)
     end
 
     # Tail query for the detail UI (most-recent per plugin) and the per-plugin
