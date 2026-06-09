@@ -265,6 +265,103 @@
                     <.icon name="hero-link" class="w-4 h-4" /> Connect Trakt.tv
                   </button>
               <% end %>
+
+              <%!-- Generic plugin connections (U8) — host-run device flow --%>
+              <div :for={pc <- @plugin_connections} class="pt-2" id={"plugin-conn-#{pc.slug}"}>
+                <div class="divider my-1"></div>
+                <h3 class="font-medium mb-1">{pc.name}</h3>
+                <p class="text-sm text-base-content/60 mb-3">
+                  This connection is managed by the third-party plugin {pc.name}; it will be able to
+                  read your watch history and mark items watched in mydia on your behalf.
+                </p>
+
+                <%= cond do %>
+                  <% @plugin_connect && @plugin_connect.slug == pc.slug && Map.get(@plugin_connect, :error) -> %>
+                    <div class="alert alert-error" id={"plugin-conn-error-#{pc.slug}"}>
+                      <.icon name="hero-exclamation-circle" class="w-5 h-5" />
+                      <span>{@plugin_connect.error}</span>
+                    </div>
+                  <% @plugin_connect && @plugin_connect.slug == pc.slug && Map.get(@plugin_connect, :user_code) -> %>
+                    <div
+                      class="bg-base-200 rounded-lg p-4 text-center space-y-3"
+                      id={"plugin-conn-pending-#{pc.slug}"}
+                    >
+                      <p class="text-sm text-base-content/70">
+                        Go to the following URL and enter the code below:
+                      </p>
+                      <a
+                        :if={@plugin_connect.verification_url}
+                        href={@plugin_connect.verification_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="link link-primary text-sm"
+                      >
+                        {@plugin_connect.verification_url}
+                      </a>
+                      <div class="py-2">
+                        <code class="text-3xl font-mono font-bold tracking-widest select-all">
+                          {@plugin_connect.user_code}
+                        </code>
+                      </div>
+                      <div class="flex items-center justify-center gap-2 text-sm text-base-content/60">
+                        <span class="loading loading-spinner loading-xs"></span>
+                        Waiting for authorization...
+                      </div>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        phx-click="plugin_cancel"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  <% pc.connection && pc.connection.status == "connected" -> %>
+                    <div
+                      class="flex items-center justify-between"
+                      id={"plugin-conn-connected-#{pc.slug}"}
+                    >
+                      <span class="badge badge-success gap-1">
+                        <.icon name="hero-check-circle" class="w-3 h-3" /> Connected
+                      </span>
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-error btn-sm"
+                        phx-click="plugin_disconnect"
+                        phx-value-slug={pc.slug}
+                        data-confirm={"Disconnect #{pc.name}?"}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  <% pc.connection && pc.connection.status == "error" -> %>
+                    <div
+                      class="flex items-center justify-between"
+                      id={"plugin-conn-errored-#{pc.slug}"}
+                    >
+                      <span class="badge badge-error gap-1">
+                        <.icon name="hero-exclamation-triangle" class="w-3 h-3" /> Needs reconnect
+                      </span>
+                      <button
+                        type="button"
+                        class="btn btn-primary btn-sm"
+                        phx-click="plugin_connect"
+                        phx-value-slug={pc.slug}
+                      >
+                        Reconnect
+                      </button>
+                    </div>
+                  <% true -> %>
+                    <button
+                      type="button"
+                      id={"plugin-conn-connect-#{pc.slug}"}
+                      class="btn btn-primary btn-sm"
+                      phx-click="plugin_connect"
+                      phx-value-slug={pc.slug}
+                    >
+                      <.icon name="hero-link" class="w-4 h-4" /> Connect {pc.name}
+                    </button>
+                <% end %>
+              </div>
             </div>
           </div>
         </div>

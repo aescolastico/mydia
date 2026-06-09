@@ -54,6 +54,36 @@ defmodule Mydia.Plugins do
   end
 
   @doc """
+  Lists enabled plugins that declare a `connection` descriptor (U8), with the
+  data the host-run device flow needs: the descriptor, the effective `client_id`
+  (operator setting override, else the manifest default), and the plugin's
+  granted `net:http` hosts (the egress allowlist the connect flow runs under).
+  """
+  @spec list_connectable() :: [map()]
+  def list_connectable do
+    for config <- Mydia.Settings.list_plugin_configs(),
+        config.enabled,
+        is_map(config.manifest),
+        descriptor = config.manifest["connection"],
+        is_map(descriptor) do
+      %{
+        slug: config.slug,
+        name: config.name,
+        descriptor: descriptor,
+        client_id: Map.get(config.settings || %{}, "client_id") || descriptor["client_id"],
+        allowed_hosts: connectable_hosts(config.slug)
+      }
+    end
+  end
+
+  defp connectable_hosts(slug) do
+    case get_plugin(slug) do
+      {:ok, %Plugin{} = plugin} -> Plugin.granted_http_hosts(plugin)
+      _ -> []
+    end
+  end
+
+  @doc """
   Invokes a plugin for an event, routing by the plugin's delivery mode.
 
   This is the dispatcher's default invoker. `:inline` plugins run their guest
