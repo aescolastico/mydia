@@ -48,6 +48,7 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Kv
   alias Mydia.Plugins.Logs
+  alias Mydia.Plugins.Matcher
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
 
@@ -643,9 +644,75 @@ defmodule Mydia.Plugins.HostFunctions do
 
   @doc false
   @spec ensure_watched(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}
-  def ensure_watched(%Plugin{} = plugin, _target) do
-    with :ok <- require_surface(plugin, "playback:watched") do
-      {:error, Error.new(:internal, "ensure-watched not implemented")}
+  def ensure_watched(%Plugin{} = plugin, target) do
+    with :ok <- require_surface(plugin, "playback:watched"),
+         {:ok, user_id} <- fetch_target_user(target),
+         :ok <- require_active_connection(plugin, user_id),
+         {:ok, watched_at} <- parse_watched_at(from_option(Map.get(target, :"watched-at"))) do
+      resolve_and_write(plugin, user_id, target, watched_at)
+    end
+  end
+
+  defp resolve_and_write(plugin, user_id, target, watched_at) do
+    matcher_target = %{
+      imdb: from_option(Map.get(target, :"imdb-id")),
+      tmdb: from_option(Map.get(target, :"tmdb-id")),
+      tvdb: from_option(Map.get(target, :"tvdb-id")),
+      season: from_option(Map.get(target, :"season-number")),
+      episode: from_option(Map.get(target, :"episode-number"))
+    }
+
+    case Matcher.match(matcher_target) do
+      :not_found ->
+        {:ok, %{status: :"not-found"}}
+
+      {:movie, id} ->
+        apply_watch(plugin, user_id, [media_item_id: id], watched_at)
+
+      {:episode, id} ->
+        apply_watch(plugin, user_id, [episode_id: id], watched_at)
+    end
+  end
+
+  defp apply_watch(plugin, user_id, content_id, watched_at) do
+    # Tagged plugin:<slug> so the dispatcher suppresses the echo to this plugin
+    # (R14) while existing ripple (e.g. Trakt scrobble hooks) still fires.
+    status =
+      Playback.ensure_watched(user_id, content_id,
+        origin: "plugin:#{plugin.slug}",
+        watched_at: watched_at
+      )
+
+    {:ok, %{status: ensure_status(status)}}
+  end
+
+  defp ensure_status(:already_watched), do: :"already-watched"
+  defp ensure_status(:changed), do: :changed
+
+  defp fetch_target_user(target) do
+    case Map.get(target, :"user-id") do
+      id when is_binary(id) and id != "" -> {:ok, id}
+      _ -> {:error, Error.new(:invalid_request, "ensure-watched requires a user-id")}
+    end
+  end
+
+  # Consent boundary (R21): a plugin may only write for a user who has an active
+  # connection to it.
+  defp require_active_connection(plugin, user_id) do
+    if Connections.active?(plugin.slug, user_id) do
+      :ok
+    else
+      {:error,
+       Error.new(:capability_denied, "user #{user_id} has no active connection to #{plugin.slug}")}
+    end
+  end
+
+  defp parse_watched_at(nil), do: {:ok, nil}
+
+  defp parse_watched_at(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, ts, _} -> {:ok, DateTime.truncate(ts, :second)}
+      _ -> {:error, Error.new(:invalid_request, "watched-at must be an RFC3339 timestamp")}
     end
   end
 

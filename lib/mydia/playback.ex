@@ -221,6 +221,41 @@ defmodule Mydia.Playback do
   end
 
   @doc """
+  Idempotently marks content watched for a user, the origin-tagged write-back
+  entry used by the plugin `ensure-watched` host function (U6) and the same
+  synthetic-progress idiom the media-server and Trakt sync use.
+
+  Returns `:already_watched` when the row is already watched (no write, no
+  event), or `:changed` when a row was created (synthetic `position 0 /
+  duration 1 / watched: true`) or an existing row flipped to watched.
+
+  ## Options
+    * `:origin` - the write origin (default `"player"`); plugins pass
+      `"plugin:<slug>"` so the dispatcher suppresses the echo (R14)
+    * `:watched_at` - the `DateTime` the watch happened (defaults to now)
+  """
+  @spec ensure_watched(binary(), keyword(), keyword()) :: :already_watched | :changed
+  def ensure_watched(user_id, content_id, opts \\ []) when is_list(content_id) do
+    origin = Keyword.get(opts, :origin, "player")
+    watched_at = Keyword.get(opts, :watched_at)
+
+    case get_progress(user_id, content_id) do
+      %{watched: true} ->
+        :already_watched
+
+      nil ->
+        attrs = %{position_seconds: 0, duration_seconds: 1, watched: true}
+        attrs = if watched_at, do: Map.put(attrs, :last_watched_at, watched_at), else: attrs
+        {:ok, _} = save_progress(user_id, content_id, attrs, origin: origin)
+        :changed
+
+      _existing ->
+        {:ok, _} = mark_watched(user_id, content_id, origin: origin)
+        :changed
+    end
+  end
+
+  @doc """
   Deletes playback progress for a user and content.
 
   Useful for "Mark as Unwatched" functionality.

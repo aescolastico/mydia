@@ -118,12 +118,16 @@ defmodule Mydia.Plugins.Manifest do
   # all four so they need no breaking change when the reserved ones land.
   @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv users:connections schedule:interval)
 
-  # Implemented; the rest are reserved-but-rejected (KTD8). `data:read` is
-  # honored by the `data_read` host function; `state:kv` by the kv-* host
-  # functions (U3); `users:connections` by connections-list + the connect flow
-  # (U7); `schedule:interval` by the PluginScheduler tick (U4). `surfaces:write`
-  # stays reserved until U6.
-  @available_classes ~w(events:subscribe net:http data:read state:kv users:connections schedule:interval)
+  # Implemented capability classes. `data:read` is honored by data-read/data-list;
+  # `state:kv` by the kv-* host functions (U3); `users:connections` by
+  # connections-list + the connect flow (U7); `schedule:interval` by the
+  # PluginScheduler tick (U4); `surfaces:write` by ensure-watched (U6).
+  @available_classes ~w(events:subscribe net:http data:read state:kv users:connections schedule:interval surfaces:write)
+
+  # The value vocabulary for `surfaces:write` — the curated write surfaces a
+  # plugin may target. Only `playback:watched` (the ensure-watched host function)
+  # is honored in this version.
+  @write_surfaces ~w(playback:watched)
 
   # The lowest interval (minutes) a scheduled plugin may request — a floor so a
   # misconfigured manifest can't tick the host to death.
@@ -271,8 +275,24 @@ defmodule Mydia.Plugins.Manifest do
     with :ok <- validate_classes(Map.keys(capabilities)),
          :ok <- validate_events(Map.get(capabilities, "events:subscribe")),
          :ok <- validate_http_hosts(Map.get(capabilities, "net:http")),
-         :ok <- validate_data_namespaces(Map.get(capabilities, "data:read")) do
+         :ok <- validate_data_namespaces(Map.get(capabilities, "data:read")),
+         :ok <- validate_surfaces(Map.get(capabilities, "surfaces:write")) do
       {:ok, capabilities}
+    end
+  end
+
+  defp validate_surfaces(nil), do: :ok
+
+  defp validate_surfaces(surfaces) when not is_list(surfaces),
+    do: {:error, Error.new(:invalid_manifest, "surfaces:write must be a list of surfaces")}
+
+  defp validate_surfaces([]),
+    do: {:error, Error.new(:invalid_manifest, "surfaces:write must not be empty")}
+
+  defp validate_surfaces(surfaces) do
+    case Enum.find(surfaces, &(&1 not in @write_surfaces)) do
+      nil -> :ok
+      bad -> {:error, Error.new(:invalid_manifest, "unknown surfaces:write surface: #{bad}")}
     end
   end
 

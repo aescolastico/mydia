@@ -4,6 +4,7 @@ defmodule Mydia.Plugins.HostFunctionsTest do
   import Mydia.MediaFixtures
   import Mydia.AccountsFixtures
 
+  alias Mydia.Events
   alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.HostFunctions
@@ -390,6 +391,127 @@ defmodule Mydia.Plugins.HostFunctionsTest do
       assert rec[:"episode-number"] == {:some, 4}
       assert rec[:"tmdb-id"] == {:some, show.tmdb_id}
       assert rec.watched == true
+    end
+  end
+
+  describe "ensure_watched/2 (surfaces:write playback:watched)" do
+    setup do
+      {:ok, _} =
+        Mydia.Settings.create_plugin_config(%{
+          slug: "tester",
+          name: "Tester",
+          version: "1.0.0",
+          source_url: "test",
+          manifest: %{
+            "slug" => "tester",
+            "name" => "Tester",
+            "version" => "1.0.0",
+            "capabilities" => %{"events:subscribe" => ["media_item.added"]}
+          },
+          granted_capabilities: %{},
+          enabled: false
+        })
+
+      user = user_fixture()
+      {:ok, _} = Connections.connect("tester", user.id, %{access_token: "t"})
+      %{user: user}
+    end
+
+    defp opt(nil), do: :none
+    defp opt(v), do: {:some, v}
+
+    defp target(user_id, opts) do
+      %{
+        "user-id": user_id,
+        "imdb-id": opt(opts[:imdb]),
+        "tmdb-id": opt(opts[:tmdb]),
+        "tvdb-id": opt(opts[:tvdb]),
+        "season-number": opt(opts[:season]),
+        "episode-number": opt(opts[:episode]),
+        "watched-at": opt(opts[:watched_at])
+      }
+    end
+
+    defp movie_with(attrs) do
+      {:ok, item} =
+        Mydia.Media.create_media_item(Map.merge(%{title: "M", type: "movie", year: 2024}, attrs))
+
+      item
+    end
+
+    defp finished_events(user) do
+      Events.list_events(type: "playback.finished", actor_type: :user, actor_id: user.id)
+    end
+
+    test "grant access: write is denied without surfaces:write playback:watched", %{user: user} do
+      p = plugin(%{"events:subscribe" => ["media_item.added"]})
+
+      assert {:error, %Error{type: :capability_denied}} =
+               HostFunctions.ensure_watched(p, target(user.id, imdb: "tt1"))
+    end
+
+    test "AE3: a user with no active connection is denied" do
+      stranger = user_fixture()
+      p = plugin(%{"surfaces:write" => ["playback:watched"]})
+
+      assert {:error, %Error{type: :capability_denied}} =
+               HostFunctions.ensure_watched(p, target(stranger.id, imdb: "tt1"))
+    end
+
+    test "AE1: a matched movie is marked watched; re-applying is an idempotent no-op",
+         %{user: user} do
+      _movie = movie_with(%{imdb_id: "tt500", tmdb_id: 500})
+      p = plugin(%{"surfaces:write" => ["playback:watched"]})
+
+      assert {:ok, %{status: :changed}} =
+               HostFunctions.ensure_watched(p, target(user.id, imdb: "tt500"))
+
+      # A synthetic-progress row created -> one finished event, origin plugin:tester.
+      assert [event] = finished_events(user)
+      assert event.metadata["origin"] == "plugin:tester"
+
+      # Re-applying reports already-watched and emits no new event.
+      assert {:ok, %{status: :"already-watched"}} =
+               HostFunctions.ensure_watched(p, target(user.id, imdb: "tt500"))
+
+      assert [_only] = finished_events(user)
+    end
+
+    test "unmatched external ids return not-found with no write", %{user: user} do
+      p = plugin(%{"surfaces:write" => ["playback:watched"]})
+
+      assert {:ok, %{status: :"not-found"}} =
+               HostFunctions.ensure_watched(p, target(user.id, imdb: "tt-nope"))
+
+      assert finished_events(user) == []
+    end
+
+    test "episode coordinates resolve through the show; a missing episode is not-found",
+         %{user: user} do
+      {:ok, show} =
+        Mydia.Media.create_media_item(
+          %{title: "Show", type: "tv_show", tvdb_id: 999},
+          skip_episode_refresh: true
+        )
+
+      {:ok, ep} =
+        Mydia.Media.create_episode(%{
+          media_item_id: show.id,
+          season_number: 3,
+          episode_number: 7,
+          title: "Ep"
+        })
+
+      p = plugin(%{"surfaces:write" => ["playback:watched"]})
+
+      assert {:ok, %{status: :changed}} =
+               HostFunctions.ensure_watched(p, target(user.id, tvdb: 999, season: 3, episode: 7))
+
+      assert Mydia.Playback.get_progress(user.id, episode_id: ep.id).watched == true
+
+      # A nonexistent episode of the same show is not-found.
+      assert {:ok, %{status: :"not-found"}} =
+               HostFunctions.ensure_watched(p, target(user.id, tvdb: 999, season: 9, episode: 9))
     end
   end
 end

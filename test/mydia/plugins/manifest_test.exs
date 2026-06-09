@@ -92,7 +92,20 @@ defmodule Mydia.Plugins.ManifestTest do
       assert msg =~ "secrets"
     end
 
-    test "rejects surfaces:write in v1 (reserved, not available)" do
+    test "accepts surfaces:write with the playback:watched vocabulary" do
+      map =
+        valid_map(%{
+          "capabilities" => %{
+            "events:subscribe" => ["media_item.added"],
+            "surfaces:write" => ["playback:watched"]
+          }
+        })
+
+      assert {:ok, %Manifest{capabilities: caps}} = Manifest.parse(map)
+      assert caps["surfaces:write"] == ["playback:watched"]
+    end
+
+    test "rejects an unknown surfaces:write surface" do
       map =
         valid_map(%{
           "capabilities" => %{
@@ -101,7 +114,8 @@ defmodule Mydia.Plugins.ManifestTest do
           }
         })
 
-      assert {:error, %Error{type: :capability_unavailable}} = Manifest.parse(map)
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "recommended"
     end
 
     test "rejects a net:http wildcard hostname (KTD5 exact-match rule)" do
