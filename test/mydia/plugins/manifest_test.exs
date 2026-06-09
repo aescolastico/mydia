@@ -65,17 +65,31 @@ defmodule Mydia.Plugins.ManifestTest do
       assert msg =~ "fs:write"
     end
 
-    test "rejects data:read in v1 (reserved, not available)" do
+    test "parses data:read with a valid namespace (available in v1)" do
       map =
         valid_map(%{
           "capabilities" => %{
             "events:subscribe" => ["media_item.added"],
-            "data:read" => ["media"]
+            "net:http" => ["discord.com"],
+            "data:read" => ["media_item"]
           }
         })
 
-      assert {:error, %Error{type: :capability_unavailable, message: msg}} = Manifest.parse(map)
-      assert msg =~ "data:read"
+      assert {:ok, %Manifest{capabilities: caps}} = Manifest.parse(map)
+      assert caps["data:read"] == ["media_item"]
+    end
+
+    test "rejects a data:read namespace outside the v1 catalog" do
+      map =
+        valid_map(%{
+          "capabilities" => %{
+            "events:subscribe" => ["media_item.added"],
+            "data:read" => ["secrets"]
+          }
+        })
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "secrets"
     end
 
     test "rejects surfaces:write in v1 (reserved, not available)" do

@@ -28,13 +28,17 @@ defmodule Mydia.Plugins.Manifest do
       must be in the v1 catalog (`event_catalog/0`).
     * `net:http` — the exact hostnames the plugin may contact. **No wildcards**
       (a wildcard is a DNS-subdomain exfiltration channel — KTD5).
-    * `data:read` — scoped read namespaces. **Reserved, not implemented in v1.**
+    * `data:read` — scoped read namespaces (e.g. `media_item`). Each namespace
+      must be in the v1 read catalog (`data_namespaces/0`); the host honors it
+      via the `data_read` host function (U6), which returns a curated read-only
+      projection — never raw rows or secrets.
     * `surfaces:write` — write-back surfaces. **Reserved, not implemented in v1.**
 
   To avoid an approve-but-no-runtime gap (KTD8), a v1 manifest declaring a
-  reserved-but-unimplemented class is rejected at parse time with a clear
-  "capability not available in this version" error — the admin is never asked
-  to approve a capability no host function honors.
+  reserved-but-unimplemented class (only `surfaces:write` remains reserved) is
+  rejected at parse time with a clear "capability not available in this version"
+  error — the admin is never asked to approve a capability no host function
+  honors.
   """
 
   alias Mydia.Plugins.Error
@@ -74,8 +78,14 @@ defmodule Mydia.Plugins.Manifest do
   # all four so they need no breaking change when the reserved ones land.
   @known_classes ~w(events:subscribe net:http data:read surfaces:write)
 
-  # Implemented in v1; the rest are reserved-but-rejected (KTD8).
-  @available_classes ~w(events:subscribe net:http)
+  # Implemented in v1; the rest are reserved-but-rejected (KTD8). `data:read`
+  # is honored by the `data_read` host function (U6); `surfaces:write` stays
+  # reserved.
+  @available_classes ~w(events:subscribe net:http data:read)
+
+  # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
+  # to a curated projection in the `data_read` host function (U6).
+  @data_namespaces ~w(media_item)
 
   @doc "Returns the v1 event catalog (allowed `events:subscribe` values)."
   @spec event_catalog() :: [String.t()]
@@ -88,6 +98,10 @@ defmodule Mydia.Plugins.Manifest do
   @doc "Returns the capability classes a host function honors in this version."
   @spec available_classes() :: [String.t()]
   def available_classes, do: @available_classes
+
+  @doc "Returns the v1 `data:read` namespaces (allowed scoped-read values)."
+  @spec data_namespaces() :: [String.t()]
+  def data_namespaces, do: @data_namespaces
 
   @doc """
   Parses and validates a manifest from a JSON string or an already-decoded map.
@@ -149,7 +163,8 @@ defmodule Mydia.Plugins.Manifest do
   defp validate_capabilities(capabilities) do
     with :ok <- validate_classes(Map.keys(capabilities)),
          :ok <- validate_events(Map.get(capabilities, "events:subscribe")),
-         :ok <- validate_http_hosts(Map.get(capabilities, "net:http")) do
+         :ok <- validate_http_hosts(Map.get(capabilities, "net:http")),
+         :ok <- validate_data_namespaces(Map.get(capabilities, "data:read")) do
       {:ok, capabilities}
     end
   end
@@ -208,6 +223,24 @@ defmodule Mydia.Plugins.Manifest do
 
       true ->
         :ok
+    end
+  end
+
+  defp validate_data_namespaces(nil), do: :ok
+
+  defp validate_data_namespaces(namespaces) when not is_list(namespaces),
+    do: {:error, Error.new(:invalid_manifest, "data:read must be a list of namespaces")}
+
+  defp validate_data_namespaces([]),
+    do: {:error, Error.new(:invalid_manifest, "data:read must not be empty")}
+
+  defp validate_data_namespaces(namespaces) do
+    case Enum.find(namespaces, &(&1 not in @data_namespaces)) do
+      nil ->
+        :ok
+
+      bad ->
+        {:error, Error.new(:invalid_manifest, "data:read namespace not in v1 catalog: #{bad}")}
     end
   end
 
