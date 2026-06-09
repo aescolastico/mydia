@@ -14,7 +14,10 @@
 
     <%!-- Per-plugin detail modal: granted caps + recent egress audit --%>
     <%= if @detail do %>
-      <MydiaWeb.AdminPluginsLive.Components.detail_modal detail={@detail} />
+      <MydiaWeb.AdminPluginsLive.Components.detail_modal
+        detail={@detail}
+        logs={@streams.plugin_logs}
+      />
     <% end %>
   </.admin_page>
 </Layouts.app>
