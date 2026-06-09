@@ -1,0 +1,20 @@
+[package]
+name = "webhook_notifier"
+version = "1.0.0"
+edition = "2021"
+description = "Mydia bundled webhook/Discord notifier plugin (WASM guest)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# tinyjson is pure Rust with no dependencies and no build script, so it compiles
+# straight to wasm32 without any host-side build steps.
+[dependencies]
+tinyjson = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"

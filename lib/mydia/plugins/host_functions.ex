@@ -50,27 +50,30 @@ defmodule Mydia.Plugins.HostFunctions do
   @doc """
   Builds the wasmex imports map for a plugin pool.
 
-  The closures capture only the `slug`; the current grants are looked up per
-  call, so revocation is honored without restarting the pool.
+  The closures capture the `slug`; the current grants are looked up per call, so
+  revocation is honored without restarting the pool. `gate_opts` are host-side
+  options forwarded to the gate (e.g. the `:allow_private`/`:resolver` test
+  seams) — production passes none, so a guest can never influence them.
   """
-  @spec imports_for(String.t()) :: map()
-  def imports_for(slug) when is_binary(slug) do
+  @spec imports_for(String.t(), keyword()) :: map()
+  def imports_for(slug, gate_opts \\ []) when is_binary(slug) do
     %{
       @namespace => %{
-        "http_request" => host_fn(slug, &http_request/2),
-        "data_read" => host_fn(slug, &data_read/2)
+        "http_request" => host_fn(slug, &http_request/3, gate_opts),
+        "data_read" =>
+          host_fn(slug, fn plugin, req, _opts -> data_read(plugin, req) end, gate_opts)
       }
     }
   end
 
-  # Wraps a {plugin, request_map} -> {:ok, map} | {:error, Error} function as a
-  # wasmex (req_ptr, req_len, resp_ptr, resp_cap) -> i32 import.
-  defp host_fn(slug, fun) do
+  # Wraps a {plugin, request_map, gate_opts} -> {:ok, map} | {:error, Error}
+  # function as a wasmex (req_ptr, req_len, resp_ptr, resp_cap) -> i32 import.
+  defp host_fn(slug, fun, gate_opts) do
     {:fn, [:i32, :i32, :i32, :i32], [:i32],
      fn %{memory: memory, caller: caller}, req_ptr, req_len, resp_ptr, resp_cap ->
        with {:ok, req} <- decode_request(caller, memory, req_ptr, req_len),
             {:ok, plugin} <- Plugins.get_plugin(slug) do
-         response = run(fun, plugin, req)
+         response = run(fun, plugin, req, gate_opts)
          write_response(caller, memory, resp_ptr, resp_cap, response)
        else
          {:error, :malformed} ->
@@ -82,11 +85,17 @@ defmodule Mydia.Plugins.HostFunctions do
      end}
   end
 
-  defp run(fun, plugin, req) do
-    case fun.(plugin, req) do
+  # A host function raising must never crash the Wasmex instance process running
+  # the guest — degrade to an error envelope the guest can read.
+  defp run(fun, plugin, req, gate_opts) do
+    case fun.(plugin, req, gate_opts) do
       {:ok, map} -> map
       {:error, %Error{} = err} -> error_envelope(err)
     end
+  rescue
+    e ->
+      Logger.warning("host function for #{plugin.slug} raised: #{Exception.message(e)}")
+      error_envelope(Error.new(:unknown, "host function error"))
   end
 
   defp decode_request(caller, memory, ptr, len) do

@@ -61,7 +61,11 @@ defmodule Mydia.Plugins do
   bundled notifier — U10) enqueue a durable Oban delivery job; that branch is
   wired in U10, so until then every plugin is dispatched inline.
   """
-  @spec invoke_plugin(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}
+  @spec invoke_plugin(Plugin.t(), map()) :: {:ok, term()} | {:error, term()}
+  def invoke_plugin(%Plugin{delivery: :durable} = plugin, event) do
+    Mydia.Plugins.Notifier.Delivery.enqueue(plugin.slug, build_payload(event))
+  end
+
   def invoke_plugin(%Plugin{} = plugin, event) do
     Host.call(plugin.slug, plugin.entrypoint, build_payload(event), force_fuel: true)
   end
@@ -99,6 +103,12 @@ defmodule Mydia.Plugins do
   """
   @spec register_plugins() :: :ok
   def register_plugins do
+    # Seed the bundled notifier so it shows in the admin UI (pending approval).
+    # Gated by the same flag the app uses for boot-time side effects, so the test
+    # suite's app boot doesn't write to the shared DB (tests call ensure_bundled/0
+    # explicitly when they need it).
+    if Application.get_env(:mydia, :start_health_monitors, true), do: ensure_bundled()
+
     Settings.get_db_plugin_configs()
     |> Enum.filter(& &1.enabled)
     |> Enum.each(fn config ->
@@ -110,6 +120,48 @@ defmodule Mydia.Plugins do
           Logger.warning("could not activate plugin #{config.slug}: #{inspect(error)}")
       end
     end)
+  end
+
+  @doc """
+  Ensures the bundled webhook notifier is installed (inactive, pending approval).
+
+  Reads the shipped artifact + manifest from `priv/plugins/`, and if no plugin is
+  installed under its slug, persists it disabled with no grants — the admin
+  approves and configures it through the normal UI (R17: no new core surface).
+  An already-installed row is left untouched so admin grants/settings survive.
+  """
+  @spec ensure_bundled() :: :ok
+  def ensure_bundled do
+    with {:ok, wasm} <- read_priv("webhook_notifier.wasm"),
+         {:ok, manifest_json} <- read_priv("webhook_notifier.json"),
+         {:ok, manifest} <- Manifest.parse(manifest_json),
+         nil <- Settings.get_plugin_config_by_slug(manifest.slug) do
+      hash = :crypto.hash(:sha256, wasm) |> Base.encode16(case: :lower)
+
+      Settings.create_plugin_config(%{
+        slug: manifest.slug,
+        name: manifest.name,
+        version: manifest.version,
+        source_url: "bundled",
+        integrity_hash: hash,
+        manifest: manifest_to_map(manifest),
+        wasm_module: wasm,
+        granted_capabilities: %{},
+        enabled: false,
+        settings: %{"delivery" => "durable"}
+      })
+
+      :ok
+    else
+      %Settings.PluginConfig{} -> :ok
+      {:error, reason} -> Logger.warning("could not seed bundled notifier: #{inspect(reason)}")
+      _ -> :ok
+    end
+  end
+
+  defp read_priv(file) do
+    path = Application.app_dir(:mydia, Path.join("priv/plugins", file))
+    File.read(path)
   end
 
   ## Install lifecycle (U8)
