@@ -39,6 +39,18 @@ defmodule Mydia.Plugins.Manifest do
   rejected at parse time with a clear "capability not available in this version"
   error — the admin is never asked to approve a capability no host function
   honors.
+
+  ## Settings schema
+
+  An optional top-level `settings_schema` declares the operator-editable config
+  fields a plugin exposes. Each field is an object with `key`, `type`
+  (`string | url | secret | enum`), and optional `label`, `required`, and (for
+  `enum`) `options`. A `url` field may carry `grants_host: true`, which marks it
+  as **host-granting**: the host of the operator-configured value is added to the
+  plugin's effective `net:http` allowlist at config time (see
+  `Mydia.Plugins` host-grant recomputation). This lets a shared plugin reach a
+  server the operator owns without the hostname ever appearing in the manifest,
+  while the host — never the guest — computes the grant.
   """
 
   alias Mydia.Plugins.Error
@@ -51,7 +63,8 @@ defmodule Mydia.Plugins.Manifest do
           author: String.t() | nil,
           entrypoint: String.t(),
           events: [String.t()],
-          capabilities: %{optional(String.t()) => [String.t()]}
+          capabilities: %{optional(String.t()) => [String.t()]},
+          settings_schema: [map()]
         }
 
   defstruct slug: nil,
@@ -61,7 +74,8 @@ defmodule Mydia.Plugins.Manifest do
             author: nil,
             entrypoint: "handle",
             events: [],
-            capabilities: %{}
+            capabilities: %{},
+            settings_schema: []
 
   # v1 event catalog (KTD3): a curated subset of existing event `type` strings
   # dispatched off the "events:all" bus.
@@ -86,6 +100,9 @@ defmodule Mydia.Plugins.Manifest do
   # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
   # to a curated projection in the `data_read` host function (U6).
   @data_namespaces ~w(media_item)
+
+  # Field types a `settings_schema` entry may declare.
+  @setting_types ~w(string url secret enum)
 
   @doc "Returns the v1 event catalog (allowed `events:subscribe` values)."
   @spec event_catalog() :: [String.t()]
@@ -120,9 +137,11 @@ defmodule Mydia.Plugins.Manifest do
 
   def parse(map) when is_map(map) do
     capabilities = Map.get(map, "capabilities", %{})
+    settings_schema = Map.get(map, "settings_schema", [])
 
     with :ok <- validate_required(map),
-         {:ok, capabilities} <- validate_capabilities(capabilities) do
+         {:ok, capabilities} <- validate_capabilities(capabilities),
+         {:ok, settings_schema} <- validate_settings_schema(settings_schema) do
       {:ok,
        %__MODULE__{
          slug: map["slug"],
@@ -132,10 +151,29 @@ defmodule Mydia.Plugins.Manifest do
          author: map["author"],
          entrypoint: Map.get(map, "entrypoint", "handle"),
          events: Map.get(capabilities, "events:subscribe", []),
-         capabilities: capabilities
+         capabilities: capabilities,
+         settings_schema: settings_schema
        }}
     end
   end
+
+  @doc """
+  Returns the setting keys a manifest declares host-granting — `url` fields with
+  `grants_host: true`. Accepts either a `%Manifest{}` or a raw `settings_schema`
+  list (as stored on a persisted plugin config), so callers reading the JSON
+  manifest map do not need to re-parse.
+  """
+  @spec host_granting_keys(t() | [map()] | nil) :: [String.t()]
+  def host_granting_keys(%__MODULE__{settings_schema: schema}), do: host_granting_keys(schema)
+
+  def host_granting_keys(schema) when is_list(schema) do
+    for field <- schema,
+        Map.get(field, "type") == "url",
+        Map.get(field, "grants_host") == true,
+        do: Map.get(field, "key")
+  end
+
+  def host_granting_keys(_), do: []
 
   # ── Validation ──────────────────────────────────────────────────────────
 
@@ -241,6 +279,73 @@ defmodule Mydia.Plugins.Manifest do
 
       bad ->
         {:error, Error.new(:invalid_manifest, "data:read namespace not in v1 catalog: #{bad}")}
+    end
+  end
+
+  defp validate_settings_schema(nil), do: {:ok, []}
+
+  defp validate_settings_schema(schema) when not is_list(schema),
+    do: {:error, Error.new(:invalid_manifest, "settings_schema must be a list")}
+
+  defp validate_settings_schema(schema) do
+    with :ok <- validate_each_setting(schema),
+         :ok <- validate_unique_setting_keys(schema) do
+      {:ok, schema}
+    end
+  end
+
+  defp validate_each_setting(schema) do
+    Enum.reduce_while(schema, :ok, fn field, :ok ->
+      case validate_setting_field(field) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_setting_field(field) when not is_map(field),
+    do: {:error, Error.new(:invalid_manifest, "settings_schema field must be an object")}
+
+  defp validate_setting_field(field) do
+    key = Map.get(field, "key")
+    type = Map.get(field, "type")
+
+    cond do
+      blank?(key) ->
+        {:error, Error.new(:invalid_manifest, "settings_schema field key is blank")}
+
+      type not in @setting_types ->
+        {:error,
+         Error.new(:invalid_manifest, "settings_schema field #{key} has unknown type: #{type}")}
+
+      Map.get(field, "grants_host") == true and type != "url" ->
+        {:error,
+         Error.new(:invalid_manifest, "grants_host is only allowed on url fields: #{key}")}
+
+      type == "enum" and not valid_options?(Map.get(field, "options")) ->
+        {:error,
+         Error.new(
+           :invalid_manifest,
+           "enum setting #{key} must declare a non-empty options list"
+         )}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp valid_options?(options) when is_list(options) and options != [],
+    do: Enum.all?(options, &(is_binary(&1) and not blank?(&1)))
+
+  defp valid_options?(_), do: false
+
+  defp validate_unique_setting_keys(schema) do
+    keys = Enum.map(schema, &Map.get(&1, "key"))
+
+    if length(Enum.uniq(keys)) == length(keys) do
+      :ok
+    else
+      {:error, Error.new(:invalid_manifest, "settings_schema keys must be unique")}
     end
   end
 

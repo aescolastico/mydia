@@ -128,6 +128,89 @@ defmodule Mydia.Plugins.ManifestTest do
     end
   end
 
+  describe "parse/1 settings_schema" do
+    defp schema_map(schema) do
+      valid_map(%{"settings_schema" => schema})
+    end
+
+    test "parses a schema with url (host-granting), secret, and enum fields" do
+      map =
+        schema_map([
+          %{
+            "key" => "target",
+            "type" => "enum",
+            "label" => "Target",
+            "options" => ["discord", "ntfy"]
+          },
+          %{
+            "key" => "webhook_url",
+            "type" => "url",
+            "label" => "Server URL",
+            "grants_host" => true
+          },
+          %{"key" => "ntfy_token", "type" => "secret", "label" => "Access token"}
+        ])
+
+      assert {:ok, %Manifest{settings_schema: schema}} = Manifest.parse(map)
+      assert length(schema) == 3
+      assert Manifest.host_granting_keys(schema) == ["webhook_url"]
+    end
+
+    test "defaults to an empty schema when absent (backward compatible)" do
+      assert {:ok, %Manifest{settings_schema: []}} = Manifest.parse(valid_map())
+    end
+
+    test "host_granting_keys/1 works on a parsed manifest struct" do
+      {:ok, manifest} =
+        Manifest.parse(
+          schema_map([%{"key" => "webhook_url", "type" => "url", "grants_host" => true}])
+        )
+
+      assert Manifest.host_granting_keys(manifest) == ["webhook_url"]
+    end
+
+    test "rejects grants_host on a non-url field" do
+      map = schema_map([%{"key" => "secret_field", "type" => "secret", "grants_host" => true}])
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "grants_host"
+    end
+
+    test "rejects an unknown field type" do
+      map = schema_map([%{"key" => "weird", "type" => "datetime"}])
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "datetime"
+    end
+
+    test "rejects an enum field with no options" do
+      map = schema_map([%{"key" => "target", "type" => "enum"}])
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "options"
+    end
+
+    test "rejects a blank field key" do
+      map = schema_map([%{"key" => "", "type" => "string"}])
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "key"
+    end
+
+    test "rejects duplicate field keys" do
+      map =
+        schema_map([
+          %{"key" => "dup", "type" => "string"},
+          %{"key" => "dup", "type" => "url"}
+        ])
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "unique"
+    end
+
+    test "rejects a non-list settings_schema" do
+      map = schema_map(%{"key" => "x", "type" => "string"})
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "list"
+    end
+  end
+
   describe "Plugin.from_manifest/2 (R5 deny-by-default)" do
     test "builds a descriptor that declares capabilities but grants none" do
       {:ok, manifest} = Manifest.parse(valid_map())
