@@ -52,7 +52,15 @@ defmodule Mydia.Plugins.Logs do
   @spec create_async(map()) :: :ok
   def create_async(attrs) do
     if Repo.config()[:pool] == Ecto.Adapters.SQL.Sandbox do
-      insert_logged(attrs)
+      # Under the sandbox, insert synchronously. Guard against a missing
+      # connection ownership (e.g. a caller with no checked-out sandbox conn, or
+      # the instance process running a guest `log` call): logging must never
+      # crash the invocation it is observing.
+      try do
+        insert_logged(attrs)
+      rescue
+        e -> Logger.debug("plugin log skipped: #{Exception.message(e)}")
+      end
     else
       Task.Supervisor.start_child(Mydia.TaskSupervisor, fn -> insert_logged(attrs) end)
     end

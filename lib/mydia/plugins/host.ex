@@ -56,10 +56,16 @@ defmodule Mydia.Plugins.Host do
   require Logger
 
   alias Mydia.Plugins.Error
+  alias Mydia.Plugins.Logs
   alias Wasmex.Wasi.WasiOptions
 
   @registry Mydia.Plugins.PoolRegistry
   @supervisor Mydia.Plugins.PoolSupervisor
+  @invocation_registry Mydia.Plugins.InvocationRegistry
+
+  # Cap on captured WASI stdout/stderr per invocation (per pipe). Bounds the
+  # in-memory drain and the maximum :text row written to plugin_logs (U4).
+  @max_wasi_bytes 64 * 1024
 
   # Large fuel budget used when fuel is not being enforced. The engine has
   # consume_fuel compiled in, so the store must be funded or it traps at once.
@@ -144,6 +150,9 @@ defmodule Mydia.Plugins.Host do
       if enforce_fuel?, do: Keyword.get(opts, :fuel_limit, cfg.fuel_limit), else: @unenforced_fuel
 
     invocation = %{
+      slug: slug,
+      invocation_id: Ecto.UUID.generate(),
+      test_run: Keyword.get(opts, :test_run, false),
       function: function,
       payload: payload,
       memory_limit_bytes: cfg.memory_limit_bytes,
@@ -151,24 +160,34 @@ defmodule Mydia.Plugins.Host do
       timeout: timeout
     }
 
-    try do
-      # The checkout deadline gives the slot back even if the run wedges; the
-      # inner per-call timeouts are the primary deadline.
-      NimblePool.checkout!(
-        via(slug),
-        :checkout,
-        fn _from, worker ->
-          {run_invocation(worker, invocation), :ok}
-        end,
-        timeout + 1_000
-      )
-    catch
-      :exit, {:noproc, _} ->
-        {:error, Error.new(:not_found, "plugin #{slug} is not running")}
+    # Host markers bracket every invocation on both call paths (dispatch and
+    # direct) so a run is always visible in the timeline — even one that traps
+    # before the guest emits anything (R3, AE1).
+    emit_start_marker(invocation)
+    started_at = System.monotonic_time(:millisecond)
 
-      :exit, {:timeout, _} ->
-        {:error, Error.new(:timeout, "plugin #{slug} timed out after #{timeout}ms")}
-    end
+    result =
+      try do
+        # The checkout deadline gives the slot back even if the run wedges; the
+        # inner per-call timeouts are the primary deadline.
+        NimblePool.checkout!(
+          via(slug),
+          :checkout,
+          fn _from, worker ->
+            {run_invocation(worker, invocation), :ok}
+          end,
+          timeout + 1_000
+        )
+      catch
+        :exit, {:noproc, _} ->
+          {:error, Error.new(:not_found, "plugin #{slug} is not running")}
+
+        :exit, {:timeout, _} ->
+          {:error, Error.new(:timeout, "plugin #{slug} timed out after #{timeout}ms")}
+      end
+
+    emit_end_marker(invocation, result, System.monotonic_time(:millisecond) - started_at)
+    result
   end
 
   # ── Compilation ─────────────────────────────────────────────────────────
@@ -196,13 +215,34 @@ defmodule Mydia.Plugins.Host do
 
     limits = %Wasmex.StoreLimits{memory_size: inv.memory_limit_bytes}
 
-    with {:ok, store} <-
-           Wasmex.Store.new_wasi(%WasiOptions{args: [], env: %{}, preopen: []}, limits, engine),
+    # Fresh stdout/stderr pipes per invocation capture the guest's WASI output
+    # (println!/panic text). Fresh-store-per-call means each pipe holds exactly
+    # this run's bytes — no offset bookkeeping (U4).
+    {:ok, stdout} = Wasmex.Pipe.new()
+    {:ok, stderr} = Wasmex.Pipe.new()
+
+    wasi = %WasiOptions{args: [], env: %{}, preopen: [], stdout: stdout, stderr: stderr}
+
+    with {:ok, store} <- Wasmex.Store.new_wasi(wasi, limits, engine),
          :ok <- set_fuel(store, inv.fuel),
          {:ok, pid} <- start_instance(store, module, imports) do
+      # Correlate guest `log` calls (which run in the instance process) to this
+      # invocation. The entry is owned by this (calling) process, so it is
+      # auto-removed if we die; we also unregister explicitly below.
+      counter = :counters.new(1, [:write_concurrency])
+
+      Registry.register(
+        @invocation_registry,
+        pid,
+        {inv.slug, inv.invocation_id, counter, inv.test_run}
+      )
+
       try do
         invoke(pid, store, inv)
       after
+        # Drain the pipes BEFORE killing the instance (the store dies with it).
+        capture_wasi(inv, stdout, stderr)
+        Registry.unregister(@invocation_registry, pid)
         Process.exit(pid, :kill)
       end
     else
@@ -302,6 +342,96 @@ defmodule Mydia.Plugins.Host do
         end
     end
   end
+
+  # ── Debug log markers + WASI capture (U2, U4) ─────────────────────────────
+
+  defp emit_start_marker(inv) do
+    Logs.create_async(%{
+      slug: inv.slug,
+      invocation_id: inv.invocation_id,
+      source: :host,
+      level: :debug,
+      message: "invoke #{inv.function}",
+      metadata: start_metadata(inv),
+      test_run: inv.test_run
+    })
+  end
+
+  defp start_metadata(inv) do
+    base = %{"phase" => "start", "function" => inv.function}
+
+    case event_type(inv.payload) do
+      nil -> base
+      type -> Map.put(base, "event", type)
+    end
+  end
+
+  defp event_type(payload) when is_map(payload),
+    do: Map.get(payload, :event) || Map.get(payload, "event")
+
+  defp event_type(_), do: nil
+
+  defp emit_end_marker(inv, result, duration_ms) do
+    {level, outcome, detail} = classify_outcome(result)
+
+    metadata =
+      %{
+        "phase" => "end",
+        "function" => inv.function,
+        "outcome" => outcome,
+        "duration_ms" => duration_ms
+      }
+      |> maybe_put("detail", detail)
+
+    Logs.create_async(%{
+      slug: inv.slug,
+      invocation_id: inv.invocation_id,
+      source: :host,
+      level: level,
+      message: end_message(outcome, inv.function, duration_ms),
+      metadata: metadata,
+      test_run: inv.test_run
+    })
+  end
+
+  defp classify_outcome({:ok, _}), do: {:info, "ok", nil}
+
+  defp classify_outcome({:error, %Error{type: type, message: message}}),
+    do: {:error, to_string(type), message}
+
+  defp end_message(outcome, function, ms), do: "#{function} #{outcome} (#{ms}ms)"
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp capture_wasi(inv, stdout, stderr) do
+    emit_wasi(inv, stdout, :info)
+    emit_wasi(inv, stderr, :warn)
+  end
+
+  defp emit_wasi(inv, pipe, level) do
+    Wasmex.Pipe.seek(pipe, 0)
+
+    case Wasmex.Pipe.read(pipe) do
+      bytes when is_binary(bytes) and byte_size(bytes) > 0 ->
+        Logs.create_async(%{
+          slug: inv.slug,
+          invocation_id: inv.invocation_id,
+          source: :wasi,
+          level: level,
+          message: truncate(bytes, @max_wasi_bytes),
+          test_run: inv.test_run
+        })
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp truncate(bytes, max) when byte_size(bytes) > max,
+    do: binary_part(bytes, 0, max) <> " … [truncated]"
+
+  defp truncate(bytes, _max), do: bytes
 
   # ── NimblePool callbacks ────────────────────────────────────────────────
 
