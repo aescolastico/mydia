@@ -30,6 +30,9 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def capability_label("surfaces:write", surfaces),
     do: "Write to these surfaces: #{join(surfaces)}"
 
+  def capability_label("state:kv", _),
+    do: "Store its own state across runs"
+
   def capability_label(other, values),
     do: "#{other}: #{join(values)}"
 
@@ -39,6 +42,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def capability_icon("events:subscribe"), do: "hero-bell-alert"
   def capability_icon("data:read"), do: "hero-book-open"
   def capability_icon("surfaces:write"), do: "hero-pencil-square"
+  def capability_icon("state:kv"), do: "hero-circle-stack"
   def capability_icon(_), do: "hero-key"
 
   @doc "True when a capability class carries privacy/security weight worth emphasizing."
@@ -498,10 +502,19 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
         <h3 class="text-lg font-bold flex items-center gap-2">
           <.icon name="hero-cog-6-tooth" class="w-5 h-5" /> {@settings.name} settings
         </h3>
-        <.form for={@settings.form} id="plugin-settings-form" phx-submit="save_settings">
+        <.form
+          for={@settings.form}
+          id="plugin-settings-form"
+          phx-change="settings_changed"
+          phx-submit="save_settings"
+        >
           <input type="hidden" name="slug" value={@settings.slug} />
           <div class="space-y-3 my-4">
-            <.settings_field :for={field <- @settings.schema} field={field} form={@settings.form} />
+            <.settings_field
+              :for={field <- Enum.filter(@settings.schema, &visible_field?(&1, @settings.values))}
+              field={field}
+              form={@settings.form}
+            />
           </div>
           <div class="modal-action">
             <.button type="button" class="btn btn-ghost" phx-click="close_settings">
@@ -551,10 +564,35 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
     """
   end
 
+  defp settings_field(%{field: %{"type" => "text"}} = assigns) do
+    ~H"""
+    <.input
+      field={@form[@field["key"]]}
+      type="textarea"
+      label={@field["label"] || @field["key"]}
+    />
+    """
+  end
+
   defp settings_field(assigns) do
     ~H"""
     <.input field={@form[@field["key"]]} type="text" label={@field["label"] || @field["key"]} />
     """
+  end
+
+  # A field is shown unless its `visible_when` map names controlling keys whose
+  # current values don't all match. Each value may be a string or list of
+  # acceptable strings. Fields without `visible_when` are always shown.
+  defp visible_field?(field, values) do
+    case Map.get(field, "visible_when") do
+      map when is_map(map) ->
+        Enum.all?(map, fn {key, allowed} ->
+          to_string(Map.get(values, key, "")) in List.wrap(allowed)
+        end)
+
+      _ ->
+        true
+    end
   end
 
   @doc """

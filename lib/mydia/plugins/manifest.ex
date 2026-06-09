@@ -112,12 +112,12 @@ defmodule Mydia.Plugins.Manifest do
 
   # All taxonomy classes (reserved + implemented). The schema/approval UI know
   # all four so they need no breaking change when the reserved ones land.
-  @known_classes ~w(events:subscribe net:http data:read surfaces:write)
+  @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv)
 
-  # Implemented in v1; the rest are reserved-but-rejected (KTD8). `data:read`
-  # is honored by the `data_read` host function (U6); `surfaces:write` stays
-  # reserved.
-  @available_classes ~w(events:subscribe net:http data:read)
+  # Implemented; the rest are reserved-but-rejected (KTD8). `data:read` is
+  # honored by the `data_read` host function; `state:kv` by the kv-* host
+  # functions (U3). `surfaces:write` stays reserved until U6.
+  @available_classes ~w(events:subscribe net:http data:read state:kv)
 
   # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
   # to a curated projection in the `data_read` host function (U6).

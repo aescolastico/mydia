@@ -134,4 +134,59 @@ defmodule Mydia.Plugins.HostFunctionsTest do
              } = fns
     end
   end
+
+  describe "kv host functions (state:kv grant)" do
+    setup do
+      {:ok, _} =
+        Mydia.Settings.create_plugin_config(%{
+          slug: "tester",
+          name: "Tester",
+          version: "1.0.0",
+          source_url: "test",
+          manifest: %{
+            "slug" => "tester",
+            "name" => "Tester",
+            "version" => "1.0.0",
+            "capabilities" => %{
+              "events:subscribe" => ["media_item.added"],
+              "state:kv" => []
+            }
+          },
+          granted_capabilities: %{"state:kv" => []},
+          enabled: false
+        })
+
+      :ok
+    end
+
+    test "set then get round-trips, returning an option" do
+      p = plugin(%{"state:kv" => []})
+      assert {:ok, true} = HostFunctions.kv_set(p, "k", "v")
+      assert {:ok, {:some, "v"}} = HostFunctions.kv_get(p, "k")
+    end
+
+    test "kv-get on a missing key returns none" do
+      p = plugin(%{"state:kv" => []})
+      assert {:ok, :none} = HostFunctions.kv_get(p, "absent")
+    end
+
+    test "kv-delete removes the key" do
+      p = plugin(%{"state:kv" => []})
+      {:ok, true} = HostFunctions.kv_set(p, "k", "v")
+      assert {:ok, true} = HostFunctions.kv_delete(p, "k")
+      assert {:ok, :none} = HostFunctions.kv_get(p, "k")
+    end
+
+    test "AE4: a plugin without state:kv is denied across all three" do
+      p = plugin(%{"events:subscribe" => ["media_item.added"]})
+      assert {:error, %Error{type: :capability_denied}} = HostFunctions.kv_get(p, "k")
+      assert {:error, %Error{type: :capability_denied}} = HostFunctions.kv_set(p, "k", "v")
+      assert {:error, %Error{type: :capability_denied}} = HostFunctions.kv_delete(p, "k")
+    end
+
+    test "an empty key is rejected as invalid-request" do
+      p = plugin(%{"state:kv" => []})
+      assert {:error, %Error{type: :invalid_request}} = HostFunctions.kv_get(p, "")
+    end
+  end
 end

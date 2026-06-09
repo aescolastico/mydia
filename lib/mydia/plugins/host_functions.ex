@@ -9,17 +9,20 @@ defmodule Mydia.Plugins.HostFunctions do
   revoked capability takes effect immediately (a plugin can never widen its own
   grant — KTD6).
 
-  ## Component import ABI (v1)
+  ## Component import ABI (1.1)
 
-  Imports live under the `"mydia:plugin/host@1.0.0"` interface namespace and
+  Imports live under the `"mydia:plugin/host@1.1.0"` interface namespace and
   receive/return **typed WIT records** — no linear-memory marshalling. Wasmex
   hands each import closure the decoded record (atom-keyed map; `option<T>` as
   `{:some, v}` / `:none`; `list<tuple>` as `[{k, v}]`) and marshals the closure's
-  return value back across the boundary:
+  return value back across the boundary. The 1.0 functions —
 
     * `http-request(outbound-request) -> result<outbound-response, host-error>`
     * `data-read(data-request) -> result<read-result, host-error>`
     * `log(string, string)` — ungated, fire-and-forget
+
+  are joined in 1.1 by `kv-get/set/delete`, `data-list`, `ensure-watched`,
+  `connections-list`, and `connection-request` (each capability-gated).
 
   A closure must return exactly the WIT-declared shape: `{:ok, record}` /
   `{:error, host-error}` for the `result` functions. A wrong-typed return can
@@ -41,6 +44,7 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Media
   alias Mydia.Plugins
   alias Mydia.Plugins.Error
+  alias Mydia.Plugins.Kv
   alias Mydia.Plugins.Logs
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
@@ -463,27 +467,44 @@ defmodule Mydia.Plugins.HostFunctions do
 
   @doc false
   @spec kv_get(Plugin.t(), String.t()) :: {:ok, term()} | {:error, Error.t()}
-  def kv_get(%Plugin{} = plugin, _key) do
-    with :ok <- require_capability(plugin, "state:kv") do
-      {:error, Error.new(:internal, "state:kv not implemented")}
+  def kv_get(%Plugin{} = plugin, key) do
+    with :ok <- require_capability(plugin, "state:kv"),
+         {:ok, key} <- validate_kv_key(key),
+         {:ok, value} <- Kv.get(plugin.slug, key) do
+      {:ok, to_option(value)}
     end
   end
 
   @doc false
   @spec kv_set(Plugin.t(), String.t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
-  def kv_set(%Plugin{} = plugin, _key, _value) do
-    with :ok <- require_capability(plugin, "state:kv") do
-      {:error, Error.new(:internal, "state:kv not implemented")}
+  def kv_set(%Plugin{} = plugin, key, value) do
+    with :ok <- require_capability(plugin, "state:kv"),
+         {:ok, key} <- validate_kv_key(key),
+         {:ok, value} <- validate_kv_value(value),
+         {:ok, _} <- Kv.set(plugin.slug, key, value) do
+      {:ok, true}
     end
   end
 
   @doc false
   @spec kv_delete(Plugin.t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
-  def kv_delete(%Plugin{} = plugin, _key) do
-    with :ok <- require_capability(plugin, "state:kv") do
-      {:error, Error.new(:internal, "state:kv not implemented")}
+  def kv_delete(%Plugin{} = plugin, key) do
+    with :ok <- require_capability(plugin, "state:kv"),
+         {:ok, key} <- validate_kv_key(key) do
+      Kv.delete(plugin.slug, key)
+      {:ok, true}
     end
   end
+
+  defp validate_kv_key(key) when is_binary(key) and key != "", do: {:ok, key}
+
+  defp validate_kv_key(_),
+    do: {:error, Error.new(:invalid_request, "kv key must be a non-empty string")}
+
+  defp validate_kv_value(value) when is_binary(value), do: {:ok, value}
+
+  defp validate_kv_value(_),
+    do: {:error, Error.new(:invalid_request, "kv value must be a string")}
 
   @doc false
   @spec data_list(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}

@@ -7,6 +7,8 @@ defmodule Mydia.Plugins.ConformanceTest do
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Host
   alias Mydia.Plugins.HostFunctions
+  alias Mydia.Plugins.Plugin
+  alias Mydia.Plugins.Registry
   alias Mydia.Settings
 
   defp host_version, do: :mydia |> Application.spec(:vsn) |> List.to_string()
@@ -112,6 +114,72 @@ defmodule Mydia.Plugins.ConformanceTest do
       # The pool survives the failed schedule call and still serves events.
       assert {:ok, %{}} = Host.call("legacy-conf", "handle", payload("ok"))
     end
+
+    test "the guest round-trips kv-set/get/delete through the host (U3)" do
+      slug = "kvguest"
+      install_with_grant!(slug, %{"state:kv" => []})
+
+      bytes = File.read!(@fixture)
+      {:ok, _pid} = Host.start_plugin(slug, bytes, imports: HostFunctions.imports_for(slug))
+      on_exit(fn -> Host.stop_plugin(slug) end)
+
+      assert {:ok, %{"ok" => true}} =
+               Host.call(slug, "h", %{"event" => "kv-set", "key" => "k", "value" => "v"})
+
+      assert {:ok, %{"found" => true, "value" => "v"}} =
+               Host.call(slug, "h", %{"event" => "kv-get", "key" => "k"})
+
+      assert {:ok, %{"ok" => true}} =
+               Host.call(slug, "h", %{"event" => "kv-delete", "key" => "k"})
+
+      assert {:ok, %{"found" => false}} =
+               Host.call(slug, "h", %{"event" => "kv-get", "key" => "k"})
+    end
+
+    test "a guest without state:kv is denied at the host boundary (U3)" do
+      slug = "kvdenied"
+      install_with_grant!(slug, %{"events:subscribe" => ["media_item.added"]})
+
+      bytes = File.read!(@fixture)
+      {:ok, _pid} = Host.start_plugin(slug, bytes, imports: HostFunctions.imports_for(slug))
+      on_exit(fn -> Host.stop_plugin(slug) end)
+
+      # The guest surfaces the host-error as an Err, which the host reports as a
+      # guest error — the grant gate held.
+      assert {:error, %Error{type: :guest_error}} =
+               Host.call(slug, "h", %{"event" => "kv-set", "key" => "k", "value" => "v"})
+    end
+  end
+
+  # Installs a plugin_config (for FK resolution) and registers a runtime
+  # descriptor carrying the grants the host functions check.
+  defp install_with_grant!(slug, granted) do
+    {:ok, _} =
+      Settings.create_plugin_config(%{
+        slug: slug,
+        name: slug,
+        version: "1.0.0",
+        source_url: "test",
+        manifest: %{
+          "slug" => slug,
+          "name" => slug,
+          "version" => "1.0.0",
+          "capabilities" => %{"events:subscribe" => ["media_item.added"]}
+        },
+        granted_capabilities: granted,
+        enabled: false
+      })
+
+    {:ok, _} =
+      Registry.register(slug, %Plugin{
+        slug: slug,
+        name: slug,
+        granted_capabilities: granted,
+        enabled: true
+      })
+
+    on_exit(fn -> Registry.unregister(slug) end)
+    :ok
   end
 
   describe "min_host_version floor (R7)" do
