@@ -18,7 +18,14 @@ defmodule Mydia.Settings.PluginConfigTest do
 
     previous = Application.get_env(:mydia, :runtime_config)
     Application.put_env(:mydia, :runtime_config, config)
-    on_exit(fn -> Application.put_env(:mydia, :runtime_config, previous) end)
+
+    on_exit(fn ->
+      case previous do
+        nil -> Application.delete_env(:mydia, :runtime_config)
+        value -> Application.put_env(:mydia, :runtime_config, value)
+      end
+    end)
+
     :ok
   end
 

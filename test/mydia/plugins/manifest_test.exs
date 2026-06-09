@@ -131,6 +131,45 @@ defmodule Mydia.Plugins.ManifestTest do
       assert msg =~ "wildcard"
     end
 
+    test "rejects a net:http host with a port (gate matches bare hostnames)" do
+      map =
+        valid_map(%{
+          "capabilities" => %{
+            "events:subscribe" => ["media_item.added"],
+            "net:http" => ["discord.com:443"]
+          }
+        })
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "bare hostname"
+    end
+
+    test "rejects a net:http host with a scheme/path" do
+      map =
+        valid_map(%{
+          "capabilities" => %{
+            "events:subscribe" => ["media_item.added"],
+            "net:http" => ["https://discord.com/api"]
+          }
+        })
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "bare hostname"
+    end
+
+    test "rejects a net:http host with leading/trailing whitespace" do
+      map =
+        valid_map(%{
+          "capabilities" => %{
+            "events:subscribe" => ["media_item.added"],
+            "net:http" => [" discord.com "]
+          }
+        })
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "whitespace"
+    end
+
     test "requires events:subscribe to be present" do
       map = valid_map(%{"capabilities" => %{"net:http" => ["discord.com"]}})
       assert {:error, %Error{type: :invalid_manifest}} = Manifest.parse(map)

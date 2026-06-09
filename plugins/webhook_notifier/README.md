@@ -5,18 +5,23 @@ implementation of the v1 WASM plugin ABI.
 
 ## Building
 
+The `priv/plugins/webhook_notifier.wasm` artifact is **build-produced, not
+committed**: it is gitignored (`/priv/plugins/*.wasm`) and the `:plugins` mix
+compiler builds it from this crate's source on every `mix compile` (dev, test,
+CI, and the Docker image build). Source under `plugins/*/` is the only truth —
+there is nothing to re-copy or keep in sync by hand. Just run `mix compile`
+after changing `src/lib.rs`.
+
+To build the guest manually (e.g. to inspect the artifact):
+
 ```sh
-rustup target add wasm32-unknown-unknown   # once
-cargo build --release --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/release/webhook_notifier.wasm \
-   ../../priv/plugins/webhook_notifier.wasm
+rustup target add wasm32-wasip2   # once
+cargo build --release --target wasm32-wasip2
 ```
 
-The committed artifact at `priv/plugins/webhook_notifier.wasm` is what ships and
-what the tests run against. Rebuild and re-copy it whenever `src/lib.rs` changes,
-and keep it in sync in the same commit. The guest uses no WASI APIs (all egress
-is through the imported `mydia.http_request` / `mydia.data_read` host functions),
-so `wasm32-unknown-unknown` is sufficient — no `wasm32-wasip1` toolchain needed.
+The guest is a WebAssembly **component** built for `wasm32-wasip2` against the
+canonical WIT contract — all egress is through the imported `mydia.http_request`
+/ `mydia.data_read` host functions.
 
 ## Linting
 

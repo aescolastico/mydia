@@ -243,41 +243,42 @@ defmodule Mydia.Plugins.Net.Gate do
   defp perform(uri, ip, opts) do
     timeout = Keyword.get(opts, :timeout, @default_timeout_ms)
     max_bytes = Keyword.get(opts, :max_bytes, @default_max_bytes)
-    method = opts |> Keyword.get(:method, "GET") |> normalize_method()
     headers = Keyword.get(opts, :headers, %{})
     body = Keyword.get(opts, :body)
 
-    pinned_url = pin_url(uri, ip)
+    with {:ok, method} <- normalize_method(Keyword.get(opts, :method, "GET")) do
+      pinned_url = pin_url(uri, ip)
 
-    req_opts =
-      [
-        method: method,
-        url: pinned_url,
-        headers: Map.put(headers, "host", uri.authority || uri.host),
-        connect_options: [hostname: uri.host, timeout: timeout],
-        # The authoritative deadline is the outer task timeout below; an
-        # `:infinity` receive avoids Finch's streaming-timeout path, which exits
-        # the streaming process with `:shutdown` instead of returning cleanly.
-        receive_timeout: :infinity,
-        redirect: false,
-        retry: false,
-        decode_body: false,
-        into: size_capped_collector(max_bytes)
-      ]
-      |> maybe_put_body(body)
+      req_opts =
+        [
+          method: method,
+          url: pinned_url,
+          headers: Map.put(headers, "host", uri.authority || uri.host),
+          connect_options: [hostname: uri.host, timeout: timeout],
+          # The authoritative deadline is the outer task timeout below; an
+          # `:infinity` receive avoids Finch's streaming-timeout path, which exits
+          # the streaming process with `:shutdown` instead of returning cleanly.
+          receive_timeout: :infinity,
+          redirect: false,
+          retry: false,
+          decode_body: false,
+          into: size_capped_collector(max_bytes)
+        ]
+        |> maybe_put_body(body)
 
-    # Run the request in an isolated, monitored task. In production the gate is
-    # called from the Wasmex instance process running the guest's host-function
-    # callback; Finch's streaming links a worker to the caller, so a transport
-    # abort would otherwise propagate `:shutdown` and kill the guest. async_nolink
-    # turns that into a deliverable message, and the outer deadline is the single
-    # authoritative timeout.
-    task = Task.Supervisor.async_nolink(Mydia.TaskSupervisor, fn -> do_request(req_opts) end)
+      # Run the request in an isolated, monitored task. In production the gate is
+      # called from the Wasmex instance process running the guest's host-function
+      # callback; Finch's streaming links a worker to the caller, so a transport
+      # abort would otherwise propagate `:shutdown` and kill the guest. async_nolink
+      # turns that into a deliverable message, and the outer deadline is the single
+      # authoritative timeout.
+      task = Task.Supervisor.async_nolink(Mydia.TaskSupervisor, fn -> do_request(req_opts) end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      nil -> {:error, Error.new(:timeout, "request timed out after #{timeout}ms")}
-      {:exit, reason} -> {:error, classify_exit(reason)}
+      case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+        {:ok, result} -> result
+        nil -> {:error, Error.new(:timeout, "request timed out after #{timeout}ms")}
+        {:exit, reason} -> {:error, classify_exit(reason)}
+      end
     end
   end
 
@@ -319,32 +320,72 @@ defmodule Mydia.Plugins.Net.Gate do
   end
 
   # Stream the body, halting (and flagging) once it passes the cap, so a hostile
-  # or runaway server can't force unbounded buffering.
+  # or runaway server can't force unbounded buffering. Chunks accumulate as
+  # iodata (a reversed list) plus a running byte count, so the cap is enforced
+  # without the O(n²) binary copying that `acc <> data` would incur on large
+  # responses (e.g. tens-of-MiB package downloads). The iodata is flattened to a
+  # single binary once, in `do_request/1`.
   defp size_capped_collector(max_bytes) do
     fn {:data, data}, {req, resp} ->
-      acc = ensure_binary(resp.body) <> data
+      {iodata, size} = collector_acc(resp.body)
+      new_size = size + byte_size(data)
 
-      if byte_size(acc) > max_bytes do
+      if new_size > max_bytes do
         {:halt, {req, %{resp | body: {:too_large, max_bytes}}}}
       else
-        {:cont, {req, %{resp | body: acc}}}
+        {:cont, {req, %{resp | body: {:iodata, [data | iodata], new_size}}}}
       end
     end
   end
 
+  # Req seeds the body as an empty binary before the first chunk; after that the
+  # collector carries its own `{:iodata, list, size}` accumulator.
+  defp collector_acc({:iodata, iodata, size}), do: {iodata, size}
+  defp collector_acc(_), do: {[], 0}
+
   defp ensure_binary(body) when is_binary(body), do: body
+
+  defp ensure_binary({:iodata, iodata, _size}),
+    do: iodata |> Enum.reverse() |> IO.iodata_to_binary()
+
   defp ensure_binary(_), do: ""
 
   defp maybe_put_body(req_opts, nil), do: req_opts
   defp maybe_put_body(req_opts, body), do: Keyword.put(req_opts, :body, body)
 
-  defp normalize_method(method) when is_atom(method), do: method
+  # Map an HTTP method (string, case-insensitive, or atom) to the lowercase atom
+  # Req/Finch expects. An explicit allowlist avoids `String.to_existing_atom/1`
+  # silently coercing valid-but-unknown methods (PATCH/OPTIONS, depending on
+  # which atoms happen to be loaded) into `:get` and issuing the wrong request.
+  # Anything off the allowlist is rejected so the bad input surfaces to the
+  # guest instead of being executed as a different verb.
+  @http_methods %{
+    "get" => :get,
+    "head" => :head,
+    "post" => :post,
+    "put" => :put,
+    "patch" => :patch,
+    "delete" => :delete,
+    "options" => :options,
+    "trace" => :trace,
+    "connect" => :connect
+  }
+
+  defp normalize_method(method) when is_atom(method) do
+    normalize_method(Atom.to_string(method))
+  end
 
   defp normalize_method(method) when is_binary(method) do
-    method |> String.downcase() |> String.to_existing_atom()
-  rescue
-    ArgumentError -> :get
+    downcased = String.downcase(method)
+
+    case Map.fetch(@http_methods, downcased) do
+      {:ok, atom} -> {:ok, atom}
+      :error -> {:error, Error.new(:invalid_request, "unsupported HTTP method: #{method}")}
+    end
   end
+
+  defp normalize_method(other),
+    do: {:error, Error.new(:invalid_request, "invalid HTTP method: #{inspect(other)}")}
 
   defp classify_transport_error(%{reason: :timeout}),
     do: Error.new(:timeout, "connection or receive timed out")

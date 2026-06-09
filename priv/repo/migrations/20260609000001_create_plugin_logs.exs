@@ -10,9 +10,11 @@ defmodule Mydia.Repo.Migrations.CreatePluginLogs do
   # SQLite but fail Postgres with a UTF-8 error). `metadata` is JSON via
   # Mydia.Settings.JsonMapType. Logs are immutable: inserted_at only.
   #
-  # `plugin_config_id` is nullable so logs survive a config delete only via the
-  # FK cascade; queries are driven by the denormalized `slug` so a log row is
-  # never orphaned from its plugin identity.
+  # `plugin_config_id` is nullable so runtime/env plugins, which have no
+  # `plugin_configs` DB row, can still log (inserted with a nil FK). DB-backed
+  # plugins do set it, and `on_delete: :delete_all` cascades their logs away when
+  # the config is removed. Queries are driven by the denormalized `slug`, so a log
+  # row always knows its plugin identity even with a nil `plugin_config_id`.
   def change do
     create table(:plugin_logs, primary_key: false) do
       add :id, :binary_id, primary_key: true

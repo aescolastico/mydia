@@ -348,9 +348,32 @@ defmodule Mydia.Plugins.Manifest do
            "net:http hostname must be exact, no wildcards: #{wild}"
          )}
 
+      bad = Enum.find(hosts, &(&1 != String.trim(&1))) ->
+        {:error,
+         Error.new(
+           :invalid_manifest,
+           "net:http hostname must not have leading/trailing whitespace: #{inspect(bad)}"
+         )}
+
+      bad = Enum.find(hosts, &(not bare_hostname?(&1))) ->
+        {:error,
+         Error.new(
+           :invalid_manifest,
+           "net:http must be a bare hostname (no scheme, port, path, or userinfo): #{bad}"
+         )}
+
       true ->
         :ok
     end
+  end
+
+  # The net:http gate (`Mydia.Plugins.Net.Gate`) matches a request's `URI.host`
+  # against these values exactly, so anything that can't appear in a bare host —
+  # a scheme prefix, a `:port`, a `/path`, or `user@` userinfo — can never match
+  # and would surface as a confusing `capability_denied` at request time. Reject
+  # those forms at parse time so the manifest fails fast with a clear error.
+  defp bare_hostname?(host) do
+    not String.contains?(host, [":", "/", "@", " "])
   end
 
   defp validate_data_namespaces(nil), do: :ok

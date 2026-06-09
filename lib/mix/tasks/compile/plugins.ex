@@ -3,9 +3,10 @@ defmodule Mix.Tasks.Compile.Plugins do
   Builds the bundled WASM plugin guests under `plugins/*/` into `priv/plugins/`.
 
   Mirrors how `use Rustler` lands the p2p NIF in `priv/native/`, but as a real
-  `Mix.Task.Compiler` registered (prepended) in `mix.exs` `compilers/0`, so the
-  guests build transparently on every `mix compile` in dev, test, CI, and the
-  Docker image build. The compiled `.wasm` is gitignored — source under
+  `Mix.Task.Compiler` registered (appended) in `mix.exs` `compilers/0` — it runs
+  after `:elixir` because the task module lives in `lib/` and isn't loadable
+  until the app is compiled — so the guests build transparently on every
+  `mix compile` in dev, test, CI, and the Docker image build. The compiled `.wasm` is gitignored — source under
   `plugins/*/` is the only truth (U1–U3 of the built-in-plugins plan).
 
   ## Incremental by content digest, not mtime
