@@ -13,7 +13,11 @@
       };
       rustToolchain = rustPkgs.rust-bin.stable.latest.default.override {
         extensions = [ "clippy" "rustfmt" "rust-src" ];
-        targets = [ "wasm32-unknown-unknown" ];
+        # wasm32-unknown-unknown: legacy core-wasm plugin guests (being migrated).
+        # wasm32-wasip2: component-model plugin guests (WIT). The wit-bindgen crate
+        # is a cargo dependency, so no system binding-generator is needed; wasm-tools
+        # (below) is for inspecting/validating the produced components.
+        targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" ];
       };
     in
     {
@@ -21,7 +25,7 @@
       # invoke it via `nix develop .#rust -c ...` so commits never depend on a
       # host rust install.
       devShells.rust = pkgs.mkShell {
-        buildInputs = [ rustToolchain pkgs.gcc pkgs.pkg-config ];
+        buildInputs = [ rustToolchain pkgs.gcc pkgs.pkg-config pkgs.wasm-tools ];
 
         # Keep lint builds in their own target dir so they never collide with
         # the (sometimes root-owned) artifacts left by Docker/host builds, and
@@ -36,6 +40,9 @@
         buildInputs = [
           # Rust toolchain (native p2p NIF + wasm32 plugin guests)
           rustToolchain
+
+          # Inspect/validate WASM components (WIT plugin guests)
+          pkgs.wasm-tools
 
           # Elixir/Erlang — pinned to Elixir 1.19 / OTP 28 (built as a matched
           # pair via beam.packages.erlang_28) to match the runtime environments.
