@@ -123,46 +123,90 @@ defmodule Mydia.Plugins do
   end
 
   @doc """
-  Ensures the bundled webhook notifier is installed (inactive, pending approval).
+  Discovers every bundled plugin shipped in `priv/plugins/` and seeds it disabled
+  (pending approval), without copying any wasm bytes into the DB.
 
-  Reads the shipped artifact + manifest from `priv/plugins/`, and if no plugin is
-  installed under its slug, persists it disabled with no grants — the admin
-  approves and configures it through the normal UI (R17: no new core surface).
-  An already-installed row is left untouched so admin grants/settings survive.
+  Each `priv/plugins/*.json` manifest is parsed; a slug with no existing config is
+  persisted disabled, no grants, `wasm_module: nil` — its bytes resolve from the
+  filesystem at activation (see `resolve_artifact/2`). The admin approves and
+  configures it through the normal UI (R17: no new core surface). An
+  already-installed row's admin state (grants/settings/enabled) is left untouched.
+
+  ## Reconcile (built-in upgrade)
+
+  An install that ran the older copy-into-DB seeding has its bundled row carrying
+  stale bytes in `wasm_module`, which the resolver's DB layer would prefer over a
+  newer image artifact. Seeding nulls `wasm_module`/`integrity_hash` on any
+  `source_url == "bundled"` row so resolution falls through to the filesystem and
+  a newer image ships newer code automatically.
   """
   @spec ensure_bundled() :: :ok
   def ensure_bundled do
-    with {:ok, wasm} <- read_priv("webhook_notifier.wasm"),
-         {:ok, manifest_json} <- read_priv("webhook_notifier.json"),
-         {:ok, manifest} <- Manifest.parse(manifest_json),
-         nil <- Settings.get_plugin_config_by_slug(manifest.slug) do
-      hash = :crypto.hash(:sha256, wasm) |> Base.encode16(case: :lower)
+    Enum.each(bundled_manifests(), &seed_or_reconcile/1)
+  end
 
-      Settings.create_plugin_config(%{
-        slug: manifest.slug,
-        name: manifest.name,
-        version: manifest.version,
-        source_url: "bundled",
-        integrity_hash: hash,
-        manifest: manifest_to_map(manifest),
-        wasm_module: wasm,
-        granted_capabilities: %{},
-        enabled: false,
-        settings: %{"delivery" => "durable"}
-      })
+  defp bundled_manifests do
+    Application.app_dir(:mydia, "priv/plugins")
+    |> Path.join("*.json")
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      with {:ok, json} <- File.read(path),
+           {:ok, raw} <- Jason.decode(json),
+           {:ok, manifest} <- Manifest.parse(raw) do
+        [{manifest, raw}]
+      else
+        other ->
+          Logger.warning("could not load bundled manifest #{path}: #{inspect(other)}")
+          []
+      end
+    end)
+  end
 
-      :ok
-    else
-      %Settings.PluginConfig{} -> :ok
-      {:error, reason} -> Logger.warning("could not seed bundled notifier: #{inspect(reason)}")
-      _ -> :ok
+  defp seed_or_reconcile({manifest, raw}) do
+    case Settings.get_plugin_config_by_slug(manifest.slug) do
+      nil -> seed_bundled(manifest, raw)
+      %Settings.PluginConfig{} = config -> reconcile_bundled(config)
     end
   end
 
-  defp read_priv(file) do
-    path = Application.app_dir(:mydia, Path.join("priv/plugins", file))
-    File.read(path)
+  defp seed_bundled(manifest, raw) do
+    Settings.create_plugin_config(%{
+      slug: manifest.slug,
+      name: manifest.name,
+      version: manifest.version,
+      source_url: "bundled",
+      integrity_hash: nil,
+      manifest: manifest_to_map(manifest),
+      wasm_module: nil,
+      granted_capabilities: %{},
+      enabled: false,
+      settings: bundled_settings(raw)
+    })
+
+    :ok
   end
+
+  # A bundled plugin declares its delivery mode in its manifest (durable enqueues
+  # an Oban job; inline runs synchronously). Default inline when unspecified.
+  defp bundled_settings(raw) do
+    case Map.get(raw, "delivery") do
+      mode when mode in ["durable", "inline"] -> %{"delivery" => mode}
+      _ -> %{"delivery" => "inline"}
+    end
+  end
+
+  # Null stale DB bytes on a pre-existing bundled row (built-in upgrade), leaving
+  # all admin state untouched. Non-bundled rows (e.g. an index plugin) are never
+  # touched, so their cached bytes survive.
+  defp reconcile_bundled(
+         %Settings.PluginConfig{source_url: "bundled", wasm_module: wasm} = config
+       )
+       when is_binary(wasm) do
+    Settings.update_plugin_config(config, %{wasm_module: nil, integrity_hash: nil})
+    :ok
+  end
+
+  defp reconcile_bundled(_config), do: :ok
 
   ## Install lifecycle (U8)
 

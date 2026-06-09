@@ -5,6 +5,7 @@
   "description": "Posts a Discord-style webhook when media is added or a download completes.",
   "author": "Mydia",
   "entrypoint": "handle",
+  "delivery": "durable",
   "capabilities": {
     "events:subscribe": ["media_item.added", "download.completed"],
     "net:http": ["discord.com"],

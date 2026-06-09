@@ -58,4 +58,32 @@ defmodule Mydia.Plugins.NotifierIntegrationTest do
     assert config.version == "0.9.0"
     assert config.settings["webhook_url"] == "https://discord.com/api/webhooks/x"
   end
+
+  test "ensure_bundled reconciles stale DB bytes on a pre-existing bundled row" do
+    # Simulate an install that ran the old copy-into-DB seeding: a bundled row
+    # carrying wasm bytes + an integrity hash in the DB.
+    {:ok, _} =
+      Settings.create_plugin_config(%{
+        slug: @slug,
+        name: "Webhook Notifier",
+        version: "1.0.0",
+        source_url: "bundled",
+        wasm_module: "STALE-BYTES",
+        integrity_hash: "deadbeef",
+        granted_capabilities: %{"net:http" => ["discord.com"]},
+        enabled: true,
+        settings: %{"delivery" => "durable"}
+      })
+
+    assert :ok = Plugins.ensure_bundled()
+
+    config = Settings.get_plugin_config_by_slug(@slug)
+    # Stale bytes nulled so the resolver falls through to the filesystem.
+    assert config.wasm_module == nil
+    assert config.integrity_hash == nil
+    # Admin state is preserved.
+    assert config.granted_capabilities == %{"net:http" => ["discord.com"]}
+    assert config.enabled == true
+    assert config.settings["delivery"] == "durable"
+  end
 end
