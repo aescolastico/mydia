@@ -134,6 +134,20 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
     {:noreply, assign(socket, :settings, nil)}
   end
 
+  # Re-renders the open modal as the operator edits, so `visible_when` fields
+  # show/hide live when the controlling value (e.g. `target`) changes. No save.
+  def handle_event("settings_changed", params, socket) do
+    case socket.assigns.settings do
+      nil ->
+        {:noreply, socket}
+
+      settings ->
+        values = Map.drop(params, ["slug", "_target"])
+
+        {:noreply, assign(socket, :settings, %{settings | values: values, form: to_form(values)})}
+    end
+  end
+
   def handle_event("save_settings", %{"slug" => slug} = params, socket) do
     case Settings.get_plugin_config_by_slug(slug) do
       nil ->
@@ -329,8 +343,14 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       slug: config.slug,
       name: config.name,
       schema: schema,
+      values: stringify_values(form_data),
       form: to_form(form_data)
     }
+  end
+
+  # Current field values keyed by string, used to resolve `visible_when`.
+  defp stringify_values(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
   # Rejects a non-blank url-typed setting that does not parse to an absolute

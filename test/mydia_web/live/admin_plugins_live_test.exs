@@ -69,6 +69,62 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
     ])
   end
 
+  # Schema exercising `visible_when`: ntfy_tags shows only for target=ntfy,
+  # body/query templates only for target=custom.
+  defp visibility_manifest_map(slug, name) do
+    Map.put(manifest_map(slug, name), "settings_schema", [
+      %{
+        "key" => "target",
+        "type" => "enum",
+        "label" => "Target service",
+        "options" => ["discord", "ntfy", "custom"]
+      },
+      %{
+        "key" => "webhook_url",
+        "type" => "url",
+        "label" => "Webhook / server URL",
+        "grants_host" => true
+      },
+      %{
+        "key" => "ntfy_tags",
+        "type" => "string",
+        "label" => "Tags",
+        "visible_when" => %{"target" => "ntfy"}
+      },
+      %{
+        "key" => "body_template",
+        "type" => "text",
+        "label" => "Body template",
+        "visible_when" => %{"target" => "custom"}
+      },
+      %{
+        "key" => "query_template",
+        "type" => "string",
+        "label" => "Query params",
+        "visible_when" => %{"target" => "custom"}
+      }
+    ])
+  end
+
+  defp seed_with_visibility(slug, name, opts) do
+    {:ok, config} =
+      Settings.create_plugin_config(%{
+        slug: slug,
+        name: name,
+        version: "1.0.0",
+        manifest: visibility_manifest_map(slug, name),
+        wasm_module: guest_wasm(),
+        granted_capabilities: %{
+          "net:http" => ["discord.com"],
+          "events:subscribe" => ["media_item.added"]
+        },
+        enabled: true,
+        settings: Keyword.get(opts, :settings, %{})
+      })
+
+    config
+  end
+
   defp seed_with_schema(slug, name, opts) do
     {:ok, config} =
       Settings.create_plugin_config(%{
@@ -311,11 +367,67 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       assert has_element?(view, "#settings-notifier[disabled]")
       assert render(view) =~ "no configurable settings"
     end
+
+    test "visible_when hides fields irrelevant to the selected target", %{conn: conn} do
+      seed_with_visibility("webhook-notifier", "Webhook Notifier",
+        settings: %{
+          "target" => "discord",
+          "webhook_url" => "https://discord.com/api/webhooks/1/x"
+        }
+      )
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#settings-webhook-notifier") |> render_click()
+
+      # Discord selected: only target + webhook_url show; ntfy/custom fields hidden.
+      assert has_element?(view, "#plugin-settings-form select[name=target]")
+      assert has_element?(view, "#plugin-settings-form input[name=webhook_url]")
+      refute has_element?(view, "#plugin-settings-form input[name=ntfy_tags]")
+      refute has_element?(view, "#plugin-settings-form textarea[name=body_template]")
+
+      # Switching the target to custom reveals the custom template fields live.
+      view
+      |> form("#plugin-settings-form", %{
+        "target" => "custom",
+        "webhook_url" => "https://discord.com/api/webhooks/1/x"
+      })
+      |> render_change()
+
+      assert has_element?(view, "#plugin-settings-form textarea[name=body_template]")
+      assert has_element?(view, "#plugin-settings-form input[name=query_template]")
+      refute has_element?(view, "#plugin-settings-form input[name=ntfy_tags]")
+    end
+
+    test "saves a custom target's template fields", %{conn: conn} do
+      seed_with_visibility("webhook-notifier", "Webhook Notifier",
+        settings: %{"target" => "custom"}
+      )
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#settings-webhook-notifier") |> render_click()
+
+      view
+      |> form("#plugin-settings-form", %{
+        "target" => "custom",
+        "webhook_url" => "https://hooks.example.com/x",
+        "body_template" => "{{title}} added",
+        "query_template" => "t={{title}}"
+      })
+      |> render_submit()
+
+      config = Settings.get_plugin_config_by_slug("webhook-notifier")
+      assert config.settings["body_template"] == "{{title}} added"
+      assert config.settings["query_template"] == "t={{title}}"
+      assert "hooks.example.com" in config.granted_capabilities["net:http"]
+    end
   end
 
   describe "provenance (AE6)" do
     test "an env-sourced plugin renders read-only with a source badge", %{conn: conn} do
+      # May be unset: some suites (e.g. settings_test) delete the key on exit
+      # and readers fall back to Schema.defaults — mirror that fallback here.
       original = Application.get_env(:mydia, :runtime_config)
+      base = original || Mydia.Config.Schema.defaults()
 
       install = %Mydia.Config.Schema.PluginInstall{
         slug: "envp",
