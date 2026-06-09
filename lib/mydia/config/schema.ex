@@ -24,7 +24,8 @@ defmodule Mydia.Config.Schema do
           download_clients: [__MODULE__.DownloadClient.t()],
           indexers: [__MODULE__.Indexer.t()],
           media_servers: [__MODULE__.MediaServer.t()],
-          library_paths: [__MODULE__.LibraryPath.t()]
+          library_paths: [__MODULE__.LibraryPath.t()],
+          plugin_installs: [__MODULE__.PluginInstall.t()]
         }
 
   embedded_schema do
@@ -180,6 +181,21 @@ defmodule Mydia.Config.Schema do
       field :scan_interval, :integer, default: 3600
       field :quality_profile_id, :integer
     end
+
+    # Env/YAML-sourced installed plugins (PLUGIN_<N>_*). DB-sourced installs
+    # live in the `plugin_configs` table; these merge in read-only with a
+    # source badge (see Mydia.Settings.RuntimeConfig.get_runtime_plugins/0).
+    embeds_many :plugin_installs, PluginInstall, on_replace: :delete, primary_key: false do
+      field :slug, :string
+      field :name, :string
+      field :version, :string
+      field :enabled, :boolean, default: true
+      field :priority, :integer, default: 1
+      field :source_url, :string
+      field :integrity_hash, :string
+      field :settings, :map, default: %{}
+      field :granted_capabilities, :map, default: %{}
+    end
   end
 
   @doc """
@@ -204,6 +220,7 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:indexers, with: &indexer_changeset/2)
     |> cast_embed(:media_servers, with: &media_server_changeset/2)
     |> cast_embed(:library_paths, with: &library_path_changeset/2)
+    |> cast_embed(:plugin_installs, with: &plugin_install_changeset/2)
     |> validate_configuration()
   end
 
@@ -467,6 +484,23 @@ defmodule Mydia.Config.Schema do
     |> validate_number(:quality_profile_id, greater_than: 0)
   end
 
+  defp plugin_install_changeset(schema, attrs) do
+    schema
+    |> cast(attrs, [
+      :slug,
+      :name,
+      :version,
+      :enabled,
+      :priority,
+      :source_url,
+      :integrity_hash,
+      :settings,
+      :granted_capabilities
+    ])
+    |> validate_required([:slug, :name])
+    |> validate_number(:priority, greater_than: 0)
+  end
+
   defp validate_oidc_config(changeset) do
     oidc_enabled = get_field(changeset, :oidc_enabled)
 
@@ -543,7 +577,8 @@ defmodule Mydia.Config.Schema do
       download_clients: [],
       indexers: [],
       media_servers: [],
-      library_paths: []
+      library_paths: [],
+      plugin_installs: []
     }
 
     # Run through changeset to apply defaults from field definitions

@@ -41,7 +41,8 @@ defmodule Mydia.Settings do
     DownloadClientConfig,
     IndexerConfig,
     MediaServerConfig,
-    LibraryPath
+    LibraryPath,
+    PluginConfig
   }
 
   # ── Quality Profiles ─────────────────────────────────────────────────
@@ -585,6 +586,45 @@ defmodule Mydia.Settings do
   """
   @spec change_media_server_config(MediaServerConfig.t(), map()) :: Ecto.Changeset.t()
   defdelegate change_media_server_config(config, attrs \\ %{}), to: Mydia.Settings.ServiceConfigs
+
+  # ── Plugin Configs ───────────────────────────────────────────────────
+
+  @doc """
+  Lists installed plugin configs from the database and runtime (env/YAML)
+  config. Runtime plugins are read-only `runtime::plugin::<slug>` rows.
+  """
+  @spec list_plugin_configs(keyword()) :: [PluginConfig.t()]
+  defdelegate list_plugin_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Gets a plugin config by ID (DB UUID or `runtime::plugin::<slug>`)."
+  @spec get_plugin_config!(binary(), keyword()) :: PluginConfig.t()
+  defdelegate get_plugin_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Gets a DB-sourced plugin config by slug, or nil."
+  @spec get_plugin_config_by_slug(String.t()) :: PluginConfig.t() | nil
+  defdelegate get_plugin_config_by_slug(slug), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Creates a plugin config."
+  @spec create_plugin_config(map()) :: {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate create_plugin_config(attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Updates a plugin config."
+  @spec update_plugin_config(PluginConfig.t(), map()) ::
+          {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate update_plugin_config(config, attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Inserts or updates a DB plugin config keyed by slug."
+  @spec upsert_plugin_config(map()) :: {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate upsert_plugin_config(attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Deletes a plugin config."
+  @spec delete_plugin_config(PluginConfig.t()) ::
+          {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate delete_plugin_config(config), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Returns a changeset for tracking plugin config changes."
+  @spec change_plugin_config(PluginConfig.t(), map()) :: Ecto.Changeset.t()
+  defdelegate change_plugin_config(config, attrs \\ %{}), to: Mydia.Settings.ServiceConfigs
 
   # ── Library Paths ────────────────────────────────────────────────────
 
