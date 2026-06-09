@@ -71,6 +71,11 @@ services:
       # These contain SDK-specific artifacts that conflict between environments
       - player_dart_tool:/app/player/.dart_tool
       - player_build:/app/player/build
+      # Isolate ExUnit's tmp_dir (tmp/) from the host bind mount. Docker runs as
+      # root and `nix develop` runs as the local uid; sharing tmp/ leaves
+      # root-owned dirs that break the other environment's `tmp_dir` cleanup
+      # (File.Error: permission denied). Same rationale as the Flutter dirs above.
+      - tmp_dir_cache:/app/tmp
     stdin_open: true
     tty: true
     restart: unless-stopped
@@ -88,6 +93,10 @@ volumes:
   player_dart_tool:
     driver: local
   player_build:
+    driver: local
+  # ExUnit tmp_dir isolation (prevents root-owned tmp/ leftovers from Docker
+  # breaking nix-develop test runs, and vice versa)
+  tmp_dir_cache:
     driver: local
   # Named volumes for caching
   build_cache:

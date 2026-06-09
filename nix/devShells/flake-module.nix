@@ -37,9 +37,18 @@
           # Rust toolchain (native p2p NIF + wasm32 plugin guests)
           rustToolchain
 
-          # Elixir/Erlang (latest)
-          pkgs.elixir
-          pkgs.erlang
+          # Elixir/Erlang — pinned to Elixir 1.19 / OTP 28 (built as a matched
+          # pair via beam.packages.erlang_28) to match the runtime environments.
+          #
+          # ⚠️ KEEP IN SYNC across all three toolchain sources — bump together:
+          #   - this file (elixir_1_19 + erlang_28)
+          #   - Dockerfile.dev            (FROM elixir:1.19-otp-28)
+          #   - .github/workflows/ci.yml  (ELIXIR_VERSION / OTP_VERSION)
+          # If they drift, local nix, Docker dev, and CI compile under different
+          # toolchains and "green locally" stops predicting "green in CI"
+          # (e.g. --warnings-as-errors and mix.lock resolution differ by version).
+          pkgs.beam.packages.erlang_28.elixir_1_19
+          pkgs.erlang_28
 
           # Node.js for assets (latest)
           pkgs.nodejs

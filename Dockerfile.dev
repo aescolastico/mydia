@@ -1,6 +1,12 @@
 # syntax=docker/dockerfile:1.4
 # Development image with all tools (Elixir, Rust, Node, Flutter, Chrome)
-FROM elixir:1.19
+#
+# ⚠️ KEEP IN SYNC across all three toolchain sources — bump together:
+#   - this image tag                  (Elixir 1.19 / OTP 28)
+#   - nix/devShells/flake-module.nix  (elixir_1_19 + erlang_28)
+#   - .github/workflows/ci.yml        (ELIXIR_VERSION / OTP_VERSION)
+# If they drift, local nix, Docker dev, and CI compile under different toolchains.
+FROM elixir:1.19-otp-28
 
 # Install build dependencies and development tools
 RUN apt-get update -qq && \
