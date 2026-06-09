@@ -65,6 +65,67 @@ defmodule Mix.Tasks.Compile.PluginsTest do
     end
   end
 
+  describe "toolchain_gap_message/2 (loud skip, never silent)" do
+    test "warns the existing artifacts may be stale when none are missing" do
+      msg = Plugins.toolchain_gap_message("cargo not found on PATH", [])
+
+      assert msg =~ "WARNING"
+      assert msg =~ "cargo not found on PATH"
+      assert msg =~ "STALE"
+      assert msg =~ "rustup target add"
+    end
+
+    test "names missing artifacts that will not load" do
+      msg =
+        Plugins.toolchain_gap_message(
+          "the wasm32-unknown-unknown rust target is not installed",
+          ["priv/plugins/webhook_notifier.wasm"]
+        )
+
+      assert msg =~ "WARNING"
+      assert msg =~ "MISSING"
+      assert msg =~ "priv/plugins/webhook_notifier.wasm"
+      assert msg =~ "will not load"
+    end
+  end
+
+  describe "output_fresh?/3 (stale-artifact guard)" do
+    setup %{tmp_dir: dir} do
+      out = Path.join(dir, "demo.wasm")
+      File.write!(out, "FRESH")
+      {:ok, out: out, sha: sha("FRESH")}
+    end
+
+    test "true when digest matches and the artifact matches its recorded hash", %{
+      out: out,
+      sha: sha
+    } do
+      assert Plugins.output_fresh?({"D", sha}, "D", out)
+    end
+
+    test "false when the on-disk artifact no longer matches the recorded hash", %{
+      out: out,
+      sha: sha
+    } do
+      File.write!(out, "STALE")
+      refute Plugins.output_fresh?({"D", sha}, "D", out)
+    end
+
+    test "false when the source digest changed", %{out: out, sha: sha} do
+      refute Plugins.output_fresh?({"OLD", sha}, "NEW", out)
+    end
+
+    test "false when the artifact is missing", %{tmp_dir: dir} do
+      refute Plugins.output_fresh?({"D", "abc"}, "D", Path.join(dir, "missing.wasm"))
+    end
+
+    test "false for a v1 (digest-only) cache entry", %{out: out} do
+      refute Plugins.output_fresh?("D", "D", out)
+    end
+  end
+
+  defp sha(bytes), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
+
   defp new_crate(base, name, body) do
     crate = Path.join(base, name)
     File.mkdir_p!(Path.join(crate, "src"))
