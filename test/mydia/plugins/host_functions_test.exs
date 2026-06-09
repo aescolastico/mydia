@@ -117,10 +117,21 @@ defmodule Mydia.Plugins.HostFunctionsTest do
 
       imports = builder.(%{slug: "tester", invocation_id: "x", test_run: false})
 
-      assert %{"mydia:plugin/host@1.0.0" => fns} = imports
+      assert %{"mydia:plugin/host@1.1.0" => fns} = imports
 
       assert %{"http-request" => {:fn, f1}, "data-read" => {:fn, f2}, "log" => {:fn, f3}} = fns
       assert is_function(f1, 1) and is_function(f2, 1) and is_function(f3, 2)
+
+      # 1.1 additions are all wired so a 1.1 guest instantiates.
+      assert %{
+               "kv-get" => {:fn, _},
+               "kv-set" => {:fn, _},
+               "kv-delete" => {:fn, _},
+               "data-list" => {:fn, _},
+               "ensure-watched" => {:fn, _},
+               "connections-list" => {:fn, _},
+               "connection-request" => {:fn, _}
+             } = fns
     end
   end
 end

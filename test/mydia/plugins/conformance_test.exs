@@ -11,7 +11,7 @@ defmodule Mydia.Plugins.ConformanceTest do
 
   defp host_version, do: :mydia |> Application.spec(:vsn) |> List.to_string()
 
-  # A component built from the canonical mydia:plugin@1.0.0 WIT (via the SDK).
+  # A component built from the canonical mydia:plugin@1.1.0 WIT (via the SDK).
   @fixture Path.join([
              __DIR__,
              "..",
@@ -21,6 +21,18 @@ defmodule Mydia.Plugins.ConformanceTest do
              "plugins",
              "host_fns_fixture.wasm"
            ])
+
+  # A 1.0 component (built against mydia:plugin@1.0.0), never rebuilt — proves a
+  # legacy guest still works against the 1.1 host.
+  @legacy_fixture Path.join([
+                    __DIR__,
+                    "..",
+                    "..",
+                    "support",
+                    "fixtures",
+                    "plugins",
+                    "host_test_fixture.wasm"
+                  ])
 
   defp payload(event), do: %{"event" => event, "metadata" => %{}}
 
@@ -55,6 +67,50 @@ defmodule Mydia.Plugins.ConformanceTest do
       on_exit(fn -> Host.stop_plugin("conformance") end)
 
       assert {:ok, %{"logged" => true}} = Host.call("conformance", "handle", payload("log"))
+    end
+  end
+
+  describe "1.1 contract surfaces (U2)" do
+    test "the host invokes the guest's on-schedule export" do
+      bytes = File.read!(@fixture)
+
+      {:ok, _pid} =
+        Host.start_plugin("sched-conf", bytes, imports: HostFunctions.imports_for("sched-conf"))
+
+      on_exit(fn -> Host.stop_plugin("sched-conf") end)
+
+      assert {:ok, %{"scheduled" => true, "slug" => "sched-conf"}} =
+               Host.call(
+                 "sched-conf",
+                 "on-schedule",
+                 %{"slug" => "sched-conf", "config" => %{}},
+                 handler: :on_schedule
+               )
+    end
+
+    test "a 1.0 guest still handles on-event, and its schedule call fails soft" do
+      bytes = File.read!(@legacy_fixture)
+
+      {:ok, _pid} =
+        Host.start_plugin("legacy-conf", bytes, imports: HostFunctions.imports_for("legacy-conf"))
+
+      on_exit(fn -> Host.stop_plugin("legacy-conf") end)
+
+      # on-event resolves at the guest's own 1.0 interface version.
+      assert {:ok, %{}} = Host.call("legacy-conf", "handle", payload("ok"))
+
+      # on-schedule is 1.1-only; a 1.0 guest has no such export, so the call
+      # fails soft (a returned error, no crash).
+      assert {:error, %Error{}} =
+               Host.call(
+                 "legacy-conf",
+                 "on-schedule",
+                 %{"slug" => "legacy-conf", "config" => %{}},
+                 handler: :on_schedule
+               )
+
+      # The pool survives the failed schedule call and still serves events.
+      assert {:ok, %{}} = Host.call("legacy-conf", "handle", payload("ok"))
     end
   end
 

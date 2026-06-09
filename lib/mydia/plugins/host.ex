@@ -3,11 +3,12 @@ defmodule Mydia.Plugins.Host do
   WASM **component-model** runtime host for the plugin platform.
 
   Guests are WebAssembly components built against the canonical
-  `mydia:plugin@1.0.0` WIT contract (`native/mydia_plugin_sdk/wit/plugin.wit`).
+  `mydia:plugin@1.1.0` WIT contract (`native/mydia_plugin_sdk/wit/plugin.wit`).
   The host instantiates them through `Wasmex.Components.*` and calls the typed
-  `handler.on-event` export — wasmtime's component linker type-checks imports at
-  instantiation, so a guest built against a contract the host does not provide
-  fails to instantiate instead of mis-marshalling (U3).
+  `handler.on-event` / `handler.on-schedule` exports. A guest built against an
+  older minor (1.0) is served the matching namespace + export, detected from the
+  component bytes at `start_plugin` (`detect_legacy/1`), so old guests keep
+  working against the 1.1 host.
 
   Each installed plugin gets its own `NimblePool`, which bounds how many guests
   run concurrently on the dirty NIF schedulers. Each *invocation* checks out a
@@ -76,10 +77,23 @@ defmodule Mydia.Plugins.Host do
   @registry Mydia.Plugins.PoolRegistry
   @supervisor Mydia.Plugins.PoolSupervisor
 
-  # The typed handler export, addressed by its interface path. The interface
+  # The typed handler exports, addressed by their interface path. The interface
   # version is part of the path because the WIT package version IS the ABI
-  # version (a guest built against a different major fails to instantiate).
-  @handler_export ["mydia:plugin/handler@1.0.0", "on-event"]
+  # version; wasmtime semver-matches so a 1.0 guest's `handler@1.0.0/on-event`
+  # still resolves against this 1.1 lookup. `on-schedule` is 1.1-only — a 1.0
+  # guest has no such export and the schedule call fails soft.
+  @handler_export ["mydia:plugin/handler@1.1.0", "on-event"]
+  @schedule_export ["mydia:plugin/handler@1.1.0", "on-schedule"]
+  @legacy_handler_export ["mydia:plugin/handler@1.0.0", "on-event"]
+
+  # Provided host-import namespaces. wasmex links the provided imports map to the
+  # guest's *exact* imported package name (no semver fuzzing), so a 1.0 guest
+  # (which imports `host@1.0.0` with only the original three functions) needs the
+  # map re-keyed and narrowed. We detect this once per plugin from the
+  # instantiation error and memoize it.
+  @host_namespace "mydia:plugin/host@1.1.0"
+  @legacy_host_namespace "mydia:plugin/host@1.0.0"
+  @legacy_host_funcs ~w(http-request data-read log)
 
   @type slug :: String.t()
 
@@ -105,6 +119,13 @@ defmodule Mydia.Plugins.Host do
   def start_plugin(slug, wasm_bytes, opts \\ [])
       when is_binary(slug) and is_binary(wasm_bytes) do
     with :ok <- validate_component(wasm_bytes) do
+      # Detect the guest's contract version up front (wasmex links the provided
+      # imports lazily at first call and rejects a package the guest doesn't
+      # import, so we cannot probe by instantiation). The component embeds its
+      # imported interface names as UTF-8; a guest that does not import the 1.1
+      # host interface is served the 1.0 namespace + export.
+      :persistent_term.put({__MODULE__, :legacy, slug}, detect_legacy(wasm_bytes))
+
       worker_arg = %{
         slug: slug,
         bytes: wasm_bytes,
@@ -134,6 +155,9 @@ defmodule Mydia.Plugins.Host do
       [] -> :ok
     end
 
+    # Drop the memoized contract-version verdict so a re-installed (possibly
+    # rebuilt) artifact is re-detected on next start.
+    :persistent_term.erase({__MODULE__, :legacy, slug})
     :ok
   end
 
@@ -168,6 +192,7 @@ defmodule Mydia.Plugins.Host do
       invocation_id: Ecto.UUID.generate(),
       test_run: Keyword.get(opts, :test_run, false),
       function: function,
+      handler: Keyword.get(opts, :handler, :on_event),
       payload: payload,
       memory_limit_bytes: Keyword.get(opts, :memory_limit_bytes, cfg.memory_limit_bytes),
       timeout: timeout
@@ -223,7 +248,7 @@ defmodule Mydia.Plugins.Host do
   # ── Invocation ──────────────────────────────────────────────────────────
 
   defp run_invocation(worker, inv) do
-    %{bytes: bytes, imports: imports_spec} = worker
+    %{slug: slug, bytes: bytes, imports: imports_spec} = worker
 
     limits = %Wasmex.StoreLimits{memory_size: inv.memory_limit_bytes}
 
@@ -236,7 +261,16 @@ defmodule Mydia.Plugins.Host do
       allow_http: false
     }
 
-    imports = build_imports(imports_spec, inv)
+    full_imports = build_imports(imports_spec, inv)
+    instantiate(slug, bytes, wasi, limits, full_imports, inv)
+  end
+
+  # Instantiate the guest with imports matching its contract version. A 1.0 guest
+  # imports `host@1.0.0` (three functions); wasmex links the provided imports to
+  # the guest's exact imported package name, so the map is re-keyed/narrowed for
+  # legacy guests (detected from the bytes at start_plugin).
+  defp instantiate(slug, bytes, wasi, limits, full_imports, inv) do
+    imports = if legacy?(slug), do: to_legacy_imports(full_imports), else: full_imports
 
     case Components.start_link(%{
            bytes: bytes,
@@ -244,22 +278,36 @@ defmodule Mydia.Plugins.Host do
            store_limits: limits,
            imports: imports
          }) do
-      {:ok, pid} ->
-        # start_link links the fresh instance GenServer to this checkout process;
-        # unlink so killing the disposable instance (below, or on a hung guest)
-        # never propagates an exit back to the caller.
-        Process.unlink(pid)
-
-        try do
-          invoke(pid, inv)
-        after
-          Process.exit(pid, :kill)
-        end
-
-      {:error, reason} ->
-        {:error, Error.new(:instantiate_failed, to_string_reason(reason))}
+      {:ok, pid} -> run_in_instance(pid, inv)
+      {:error, reason} -> {:error, Error.new(:instantiate_failed, to_string_reason(reason))}
     end
   end
+
+  defp run_in_instance(pid, inv) do
+    # start_link links the fresh instance GenServer to this checkout process;
+    # unlink so killing the disposable instance (below, or on a hung guest)
+    # never propagates an exit back to the caller.
+    Process.unlink(pid)
+
+    try do
+      invoke(pid, inv)
+    after
+      Process.exit(pid, :kill)
+    end
+  end
+
+  # Re-key the full 1.1 imports map to the 1.0 namespace, keeping only the three
+  # functions a 1.0 guest imports.
+  defp to_legacy_imports(full_imports) do
+    funcs = Map.get(full_imports, @host_namespace, %{})
+    %{@legacy_host_namespace => Map.take(funcs, @legacy_host_funcs)}
+  end
+
+  # A guest is legacy (1.0) when its component does not import the 1.1 host
+  # interface. The interface name is embedded as UTF-8 in the component bytes.
+  defp detect_legacy(bytes), do: not String.contains?(bytes, @host_namespace)
+
+  defp legacy?(slug), do: :persistent_term.get({__MODULE__, :legacy, slug}, false)
 
   # A static map is used as-is; a builder is called per invocation so closures
   # can capture this run's context (slug + invocation id, for log correlation).
@@ -271,9 +319,10 @@ defmodule Mydia.Plugins.Host do
   end
 
   defp invoke(pid, inv) do
-    args = Components.FieldConverter.maybe_convert_args([to_event_record(inv.payload)], true)
+    {export, record} = handler_call(inv)
+    args = Components.FieldConverter.maybe_convert_args([record], true)
 
-    case Components.call_function(pid, @handler_export, args, inv.timeout) do
+    case Components.call_function(pid, export, args, inv.timeout) do
       {:ok, {:ok, json}} -> decode_result(json)
       {:ok, {:error, message}} -> {:error, Error.new(:guest_error, sanitize_message(message))}
       {:error, reason} -> {:error, Error.new(:trap, to_string_reason(reason))}
@@ -281,6 +330,18 @@ defmodule Mydia.Plugins.Host do
   catch
     :exit, {:timeout, _} ->
       {:error, Error.new(:timeout, "invocation timed out after #{inv.timeout}ms")}
+  end
+
+  # Pick the export + marshalled record for the requested handler. on-schedule
+  # is 1.1-only; a 1.0 guest lacks the export and call_function returns an error
+  # the caller surfaces (fail-soft, no crash). on-event resolves at the guest's
+  # own interface version (legacy detected during instantiation).
+  defp handler_call(%{handler: :on_schedule, payload: payload}),
+    do: {@schedule_export, to_schedule_record(payload)}
+
+  defp handler_call(%{slug: slug, payload: payload}) do
+    export = if legacy?(slug), do: @legacy_handler_export, else: @handler_export
+    {export, to_event_record(payload)}
   end
 
   # Known envelope keys that map to typed `event` record fields; everything else
@@ -300,6 +361,24 @@ defmodule Mydia.Plugins.Host do
       resource_id: opt_string(Map.get(payload, "resource_id")),
       metadata_json: Jason.encode!(Map.drop(payload, @envelope_keys))
     }
+  end
+
+  # Marshal a schedule payload into the WIT `schedule-tick` record. The operator
+  # settings ride along as a JSON string in `config-json` (U4 injects them under
+  # the "config" key, like the durable notifier path).
+  defp to_schedule_record(payload) do
+    %{
+      slug: to_string(Map.get(payload, "slug") || ""),
+      now: schedule_now(payload),
+      config_json: Jason.encode!(Map.get(payload, "config") || %{})
+    }
+  end
+
+  defp schedule_now(payload) do
+    case Map.get(payload, "now") do
+      now when is_integer(now) -> now
+      _ -> System.system_time(:second)
+    end
   end
 
   defp opt_string(nil), do: :none

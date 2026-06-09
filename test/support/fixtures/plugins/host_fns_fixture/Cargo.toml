@@ -1,12 +1,22 @@
-# Host-function test fixture (U4). A component that imports the mydia:plugin/host
-# interface and exercises each host function, keyed by event type:
+# Host-function test fixture (U2/U4). A component that imports the
+# mydia:plugin/host interface and exercises each host function, keyed by event
+# type. Params ride in the event's metadata-json (any non-envelope payload key).
 #
-#   "log"   -> calls host::log, returns {"logged":true}
-#   "http"  -> calls host::http_request, returns {"status":n,"ok":bool} or errors
-#   "data"  -> calls host::data_read(media_item), returns {"title":...} or errors
+#   "log"              -> host::log, returns {"logged":true}
+#   "http"             -> host::http_request, returns {"status":n,"ok":bool}
+#   "data"             -> host::data_read(media_item), returns {"title":...}
+#   "kv-set"           -> host::kv_set(key,value), returns {"ok":true}
+#   "kv-get"           -> host::kv_get(key), returns {"found":bool,"value":...}
+#   "kv-delete"        -> host::kv_delete(key), returns {"ok":true}
+#   "data-list"        -> host::data_list(namespace,...), returns {"count":n,...}
+#   "ensure-watched"   -> host::ensure_watched(target), returns {"status":...}
+#   "connections-list" -> host::connections_list(), returns {"count":n,...}
+#   "connection-request" -> host::connection_request(id,req), returns {"status":n}
+#
+# The on-schedule export returns {"scheduled":true,"slug":...,"now":n}.
 #
 # Built once to wasm32-wasip2 and checked in at ../host_fns_fixture.wasm.
-# Rebuild: cargo build --release --target wasm32-wasip2
+# Rebuild via nix: cargo build --release --target wasm32-wasip2
 [package]
 name = "mydia-host-fns-fixture"
 version = "0.0.0"
@@ -18,6 +28,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mydia-plugin-sdk = { path = "../../../../../native/mydia_plugin_sdk" }
+tinyjson = "2"
 
 [profile.release]
 opt-level = "z"

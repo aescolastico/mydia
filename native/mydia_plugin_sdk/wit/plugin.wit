@@ -4,9 +4,16 @@
 // wasmtime's component linker type-checks imports at instantiation and refuses a
 // mismatch, so a guest built against a newer contract than the host provides
 // fails to instantiate. Evolve additively (new records / variant cases / option
-// fields, gated with @since) for non-breaking changes; bump the major for any
-// removal or signature change.
-package mydia:plugin@1.0.0;
+// fields / new functions / new exports) for non-breaking changes; bump the major
+// for any removal or signature change.
+//
+// 1.1.0 (additive, U2): KV state, list reads, watched write-back, per-user
+// connections, host-attached auth (`connection-request`), and the `on-schedule`
+// handler export. Every 1.0 type and function is byte-stable, so a 1.0 guest
+// still instantiates and handles `on-event` against a 1.1 host (wasmtime serves
+// the older interface as a semver-compatible subset of the superset the host
+// provides). New 1.1 guests refuse old hosts via the manifest `min_host_version`.
+package mydia:plugin@1.1.0;
 
 /// Shared types for the plugin contract.
 interface types {
@@ -14,7 +21,7 @@ interface types {
   /// arbitrary per-event metadata bag varies by event type and is carried as a
   /// JSON object string (`metadata-json`, "{}" when empty).
   record event {
-    /// The event type, e.g. "media_item.added", "download.completed".
+    /// The event type, e.g. "media_item.added", "playback.finished".
     event: string,
     category: option<string>,
     severity: option<string>,
@@ -46,7 +53,7 @@ interface types {
   }
 
   /// A data:read result, keyed by resource namespace. New namespaces are added
-  /// as additional variant cases (gated with @since) — additive, non-breaking.
+  /// as additional variant cases — additive, non-breaking.
   variant read-result {
     media-item(media-item),
   }
@@ -74,6 +81,105 @@ interface types {
     id: string,
   }
 
+  // ── 1.1.0 additions ──────────────────────────────────────────────────────
+
+  /// A cursor-paginated list request over a cataloged namespace (`data-list`,
+  /// U5). `cursor` is an opaque, request-local token from a previous page;
+  /// `updated-since` (RFC3339) filters to rows changed at or after the bound;
+  /// `limit` is a page-size hint the host clamps to its maximum.
+  record list-request {
+    namespace: string,
+    cursor: option<string>,
+    updated-since: option<string>,
+    limit: option<u32>,
+  }
+
+  /// A per-user watch-state projection (the `playback_progress` namespace).
+  /// Carries everything a sync plugin needs to push a watch without further
+  /// lookups: external ids, episode coordinates, and timestamps.
+  record playback-progress {
+    user-id: string,
+    /// "movie" | "episode".
+    item-type: string,
+    media-item-id: option<string>,
+    episode-id: option<string>,
+    tmdb-id: option<s64>,
+    tvdb-id: option<s64>,
+    imdb-id: option<string>,
+    season-number: option<u32>,
+    episode-number: option<u32>,
+    watched: bool,
+    /// RFC3339; absent when never watched.
+    last-watched-at: option<string>,
+    /// RFC3339; the row's update time, used as the keyset cursor anchor.
+    updated-at: string,
+  }
+
+  /// One row of a `list-result`, keyed by the requested namespace.
+  variant list-item {
+    media-item(media-item),
+    playback-progress(playback-progress),
+  }
+
+  record list-result {
+    items: list<list-item>,
+    /// Opaque cursor for the next page; absent when the set is exhausted.
+    next-cursor: option<string>,
+  }
+
+  /// Target for `ensure-watched` (U6). External ids are resolved host-side
+  /// through ordered candidates with explicit fallbacks; episode coordinates
+  /// pin an episode within the resolved show. `watched-at` (RFC3339) defaults
+  /// to now when absent.
+  record watch-target {
+    user-id: string,
+    imdb-id: option<string>,
+    tmdb-id: option<s64>,
+    tvdb-id: option<s64>,
+    season-number: option<u32>,
+    episode-number: option<u32>,
+    watched-at: option<string>,
+  }
+
+  /// Outcome of an `ensure-watched` call. Idempotent by contract: re-applying a
+  /// watch reports `already-watched` and emits no event.
+  enum ensure-watched-status {
+    changed,
+    already-watched,
+    not-found,
+  }
+
+  record ensure-watched-result {
+    status: ensure-watched-status,
+  }
+
+  /// Lifecycle status of a per-user connection.
+  enum connection-status {
+    connected,
+    error,
+  }
+
+  /// A per-user connection the host holds on the plugin's behalf. Identity and
+  /// status ONLY — never a bearer token (R22). Authenticated requests reference
+  /// a connection by `id` through `connection-request`; the host attaches the
+  /// token itself.
+  record connection {
+    id: string,
+    user-id: string,
+    external-user-id: option<string>,
+    external-username: option<string>,
+    status: connection-status,
+  }
+
+  /// Delivered to `on-schedule` (U4). `now` is Unix epoch seconds at invocation;
+  /// `config-json` is the operator settings object as a JSON string ("{}" when
+  /// empty), injected on every invocation path.
+  record schedule-tick {
+    slug: string,
+    now: s64,
+    config-json: string,
+  }
+
   /// Errors a host function may return; each carries a human-readable detail.
   variant host-error {
     /// Capability not granted (deny-by-default).
@@ -89,7 +195,9 @@ interface types {
 /// capability-checked server-side on every invocation; grants are never baked
 /// into the instance.
 interface host {
-  use types.{outbound-request, outbound-response, data-request, read-result, host-error};
+  use types.{outbound-request, outbound-response, data-request, read-result,
+             list-request, list-result, watch-target, ensure-watched-result,
+             connection, host-error};
 
   /// Outbound HTTP request, subject to the plugin's net:http grant and the SSRF
   /// egress gate. Requires net:http.
@@ -104,21 +212,64 @@ interface host {
   /// "debug" | "info" | "warn" | "error" (unrecognized values fall back to
   /// "info"). Fire-and-forget: no return, never traps the guest.
   log: func(level: string, message: string);
+
+  // ── 1.1.0 additions ──────────────────────────────────────────────────────
+
+  /// Read a per-plugin KV value. Returns `none` for a missing key. Requires
+  /// state:kv. Values are opaque UTF-8 strings to the host.
+  kv-get: func(key: string) -> result<option<string>, host-error>;
+
+  /// Upsert a per-plugin KV value (engine-native, last-write-wins). Requires
+  /// state:kv. Subject to per-plugin key-count and value-size quotas. Returns
+  /// `true` on success (the bool sidesteps unit-ok marshalling at the boundary).
+  kv-set: func(key: string, value: string) -> result<bool, host-error>;
+
+  /// Delete a per-plugin KV key (no-op if absent). Requires state:kv. Returns
+  /// `true` whether or not the key existed.
+  kv-delete: func(key: string) -> result<bool, host-error>;
+
+  /// Enumerate a cataloged namespace with cursor pagination. Requires data:read
+  /// scoped to the namespace. Cross-user namespaces are consent-scoped to users
+  /// with an active connection to the calling plugin (R21).
+  data-list: func(req: list-request) -> result<list-result, host-error>;
+
+  /// Mark an item watched for a user, idempotently, with host-side external-id
+  /// matching. Requires surfaces:write scoped to "playback:watched" and an
+  /// active connection to the target user (R21).
+  ensure-watched: func(target: watch-target) -> result<ensure-watched-result, host-error>;
+
+  /// List the plugin's per-user connections (identity + status only, never a
+  /// token — R22). Requires users:connections.
+  connections-list: func() -> result<list<connection>, host-error>;
+
+  /// Outbound HTTP request authenticated by a connection: the host verifies the
+  /// connection belongs to the calling plugin, verifies the request host matches
+  /// the manifest connection descriptor, strips any guest-supplied Authorization
+  /// header, and injects the bearer token itself (R22). Requires net:http and
+  /// users:connections. The guest never sees the token.
+  connection-request: func(connection-id: string, req: outbound-request)
+      -> result<outbound-response, host-error>;
 }
 
-/// The guest's event handler. The SDK's #[mydia::plugin] macro implements this
-/// from a plain author-written function.
+/// The guest's handlers. The SDK's #[mydia::plugin] macro implements this from a
+/// plain author-written function (plus an optional schedule handler).
 interface handler {
-  use types.{event};
+  use types.{event, schedule-tick};
 
   /// Handle one lifecycle event. Returns a small JSON result string the host
   /// reads (e.g. {"delivered":true,"status":204}); an Err string is surfaced as
   /// a plugin error.
   on-event: func(evt: event) -> result<string, string>;
+
+  /// Handle a scheduled tick (U4). Invoked only for plugins whose manifest
+  /// declares a schedule. Optional at runtime: a 1.0 guest does not export it
+  /// and the host's schedule call fails soft. Returns a small JSON result
+  /// string; an Err string is surfaced as a plugin error.
+  on-schedule: func(tick: schedule-tick) -> result<string, string>;
 }
 
 /// The Mydia plugin world: a guest imports host capabilities and exports the
-/// event handler.
+/// event + schedule handlers.
 world plugin {
   import host;
   export handler;

@@ -45,9 +45,10 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
 
-  # The WIT host interface namespace. The version suffix is the ABI version —
-  # wasmtime's linker matches it exactly at instantiation.
-  @namespace "mydia:plugin/host@1.0.0"
+  # The WIT host interface namespace. The version suffix is the ABI version.
+  # wasmtime serves this 1.1 superset to a 1.0 guest (which imports
+  # `host@1.0.0`) via component semver matching, so older guests keep working.
+  @namespace "mydia:plugin/host@1.1.0"
 
   # Per-invocation guest log-line cap. `log` is ungated, so a buggy or hostile
   # guest could spam it in a loop and flood plugin_logs before retention fires.
@@ -72,9 +73,95 @@ defmodule Mydia.Plugins.HostFunctions do
         @namespace => %{
           "http-request" => {:fn, http_import(slug, gate_opts)},
           "data-read" => {:fn, data_import(slug)},
-          "log" => {:fn, log_import(slug, ctx)}
+          "log" => {:fn, log_import(slug, ctx)},
+          # ── 1.1.0 imports (U2 contract; bodies land in U3/U5/U6/U7) ──
+          "kv-get" => {:fn, kv_get_import(slug)},
+          "kv-set" => {:fn, kv_set_import(slug)},
+          "kv-delete" => {:fn, kv_delete_import(slug)},
+          "data-list" => {:fn, data_list_import(slug)},
+          "ensure-watched" => {:fn, ensure_watched_import(slug)},
+          "connections-list" => {:fn, connections_list_import(slug)},
+          "connection-request" => {:fn, connection_request_import(slug, gate_opts)}
         }
       }
+    end
+  end
+
+  # ── 1.1.0 import closures ───────────────────────────────────────────────────
+  #
+  # Every new import is wired here so a 1.1 guest instantiates (wasmtime requires
+  # the host to provide the full imported interface). Each enforces its grant
+  # deny-by-default; the post-grant body is filled in by the owning unit. Until
+  # then a granted call returns an `internal` "not implemented" error — no plugin
+  # is granted these classes before U9, which lands after U3–U7.
+
+  defp kv_get_import(slug) do
+    fn key ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          kv_get(plugin, key)
+        end
+      end)
+    end
+  end
+
+  defp kv_set_import(slug) do
+    fn key, value ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          kv_set(plugin, key, value)
+        end
+      end)
+    end
+  end
+
+  defp kv_delete_import(slug) do
+    fn key ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          kv_delete(plugin, key)
+        end
+      end)
+    end
+  end
+
+  defp data_list_import(slug) do
+    fn req ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          data_list(plugin, req)
+        end
+      end)
+    end
+  end
+
+  defp ensure_watched_import(slug) do
+    fn target ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          ensure_watched(plugin, target)
+        end
+      end)
+    end
+  end
+
+  defp connections_list_import(slug) do
+    fn ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          connections_list(plugin)
+        end
+      end)
+    end
+  end
+
+  defp connection_request_import(slug, gate_opts) do
+    fn connection_id, req ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug) do
+          connection_request(plugin, connection_id, from_outbound_request(req), gate_opts)
+        end
+      end)
     end
   end
 
@@ -368,6 +455,72 @@ defmodule Mydia.Plugins.HostFunctions do
     }
   end
 
+  # ── 1.1.0 host functions ────────────────────────────────────────────────
+  #
+  # Capability enforcement is final here; the post-grant body is a placeholder
+  # until the owning unit implements it (U3 KV, U5 data-list, U6 ensure-watched,
+  # U7 connections). Returning `:internal` keeps a premature granted call loud.
+
+  @doc false
+  @spec kv_get(Plugin.t(), String.t()) :: {:ok, term()} | {:error, Error.t()}
+  def kv_get(%Plugin{} = plugin, _key) do
+    with :ok <- require_capability(plugin, "state:kv") do
+      {:error, Error.new(:internal, "state:kv not implemented")}
+    end
+  end
+
+  @doc false
+  @spec kv_set(Plugin.t(), String.t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
+  def kv_set(%Plugin{} = plugin, _key, _value) do
+    with :ok <- require_capability(plugin, "state:kv") do
+      {:error, Error.new(:internal, "state:kv not implemented")}
+    end
+  end
+
+  @doc false
+  @spec kv_delete(Plugin.t(), String.t()) :: {:ok, boolean()} | {:error, Error.t()}
+  def kv_delete(%Plugin{} = plugin, _key) do
+    with :ok <- require_capability(plugin, "state:kv") do
+      {:error, Error.new(:internal, "state:kv not implemented")}
+    end
+  end
+
+  @doc false
+  @spec data_list(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}
+  def data_list(%Plugin{} = plugin, req) do
+    namespace = Map.get(req, :namespace, "")
+
+    with :ok <- require_data_namespace(plugin, namespace) do
+      {:error, Error.new(:internal, "data-list not implemented")}
+    end
+  end
+
+  @doc false
+  @spec ensure_watched(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}
+  def ensure_watched(%Plugin{} = plugin, _target) do
+    with :ok <- require_surface(plugin, "playback:watched") do
+      {:error, Error.new(:internal, "ensure-watched not implemented")}
+    end
+  end
+
+  @doc false
+  @spec connections_list(Plugin.t()) :: {:ok, [map()]} | {:error, Error.t()}
+  def connections_list(%Plugin{} = plugin) do
+    with :ok <- require_capability(plugin, "users:connections") do
+      {:error, Error.new(:internal, "connections-list not implemented")}
+    end
+  end
+
+  @doc false
+  @spec connection_request(Plugin.t(), String.t(), map(), keyword()) ::
+          {:ok, map()} | {:error, Error.t()}
+  def connection_request(%Plugin{} = plugin, _connection_id, _request, _opts) do
+    with :ok <- require_capability(plugin, "net:http"),
+         :ok <- require_capability(plugin, "users:connections") do
+      {:error, Error.new(:internal, "connection-request not implemented")}
+    end
+  end
+
   # ── Capability checks (deny-by-default) ───────────────────────────────────
 
   defp require_capability(plugin, class) do
@@ -388,6 +541,22 @@ defmodule Mydia.Plugins.HostFunctions do
        Error.new(
          :capability_denied,
          "data:read namespace #{namespace} not granted to #{plugin.slug}"
+       )}
+    end
+  end
+
+  # surfaces:write is scoped to a value vocabulary (e.g. "playback:watched"),
+  # like data:read namespaces — a plain class grant is not enough.
+  defp require_surface(plugin, surface) do
+    granted = Map.get(plugin.granted_capabilities, "surfaces:write", [])
+
+    if surface in granted do
+      :ok
+    else
+      {:error,
+       Error.new(
+         :capability_denied,
+         "surfaces:write #{surface} not granted to #{plugin.slug}"
        )}
     end
   end
