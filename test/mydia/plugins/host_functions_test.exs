@@ -394,6 +394,72 @@ defmodule Mydia.Plugins.HostFunctionsTest do
     end
   end
 
+  describe "connection_request/4 (host-attached auth)" do
+    setup do
+      {:ok, _} =
+        Mydia.Settings.create_plugin_config(%{
+          slug: "tester",
+          name: "Tester",
+          version: "1.0.0",
+          source_url: "test",
+          manifest: %{
+            "slug" => "tester",
+            "name" => "Tester",
+            "version" => "1.0.0",
+            "capabilities" => %{"events:subscribe" => ["media_item.added"]}
+          },
+          granted_capabilities: %{},
+          enabled: false
+        })
+
+      user = user_fixture()
+
+      {:ok, conn} =
+        Connections.connect("tester", user.id, %{access_token: "secret-bearer"})
+
+      %{bypass: Bypass.open(), connection: conn}
+    end
+
+    test "injects the host-held bearer token and strips any guest Authorization",
+         %{bypass: bypass, connection: conn} do
+      parent = self()
+
+      Bypass.expect_once(bypass, "GET", "/sync/activities", fn c ->
+        send(parent, {:auth, Plug.Conn.get_req_header(c, "authorization")})
+        Plug.Conn.resp(c, 200, ~s({"ok":true}))
+      end)
+
+      p = plugin(%{"net:http" => ["127.0.0.1"], "users:connections" => []})
+
+      request = %{
+        "url" => "http://127.0.0.1:#{bypass.port}/sync/activities",
+        "method" => "GET",
+        "headers" => %{"authorization" => "Bearer guest-forged"}
+      }
+
+      assert {:ok, %{"status" => 200}} =
+               HostFunctions.connection_request(p, conn.id, request,
+                 resolver: loopback_resolver(),
+                 allow_private: true
+               )
+
+      assert_received {:auth, ["Bearer secret-bearer"]}
+    end
+
+    test "a connection that does not belong to the plugin is not found", %{connection: _conn} do
+      p = plugin(%{"net:http" => ["127.0.0.1"], "users:connections" => []})
+
+      assert {:error, %Error{type: :not_found}} =
+               HostFunctions.connection_request(
+                 p,
+                 Ecto.UUID.generate(),
+                 %{"url" => "http://127.0.0.1/x"},
+                 resolver: loopback_resolver(),
+                 allow_private: true
+               )
+    end
+  end
+
   describe "ensure_watched/2 (surfaces:write playback:watched)" do
     setup do
       {:ok, _} =

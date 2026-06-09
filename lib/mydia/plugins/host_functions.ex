@@ -168,8 +168,10 @@ defmodule Mydia.Plugins.HostFunctions do
   defp connection_request_import(slug, gate_opts) do
     fn connection_id, req ->
       typed_result(fn ->
-        with {:ok, plugin} <- Plugins.get_plugin(slug) do
-          connection_request(plugin, connection_id, from_outbound_request(req), gate_opts)
+        with {:ok, plugin} <- Plugins.get_plugin(slug),
+             {:ok, resp} <-
+               connection_request(plugin, connection_id, from_outbound_request(req), gate_opts) do
+          {:ok, to_outbound_response(resp)}
         end
       end)
     end
@@ -747,11 +749,52 @@ defmodule Mydia.Plugins.HostFunctions do
   @doc false
   @spec connection_request(Plugin.t(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, Error.t()}
-  def connection_request(%Plugin{} = plugin, _connection_id, _request, _opts) do
+  def connection_request(%Plugin{} = plugin, connection_id, request, opts) do
     with :ok <- require_capability(plugin, "net:http"),
-         :ok <- require_capability(plugin, "users:connections") do
-      {:error, Error.new(:internal, "connection-request not implemented")}
+         :ok <- require_capability(plugin, "users:connections"),
+         {:ok, conn} <- fetch_connection(plugin, connection_id),
+         {:ok, url} <- fetch_string(request, "url") do
+      # Strip any guest-supplied Authorization and inject the bearer token the
+      # host holds (R22) — the guest never sees the token.
+      headers =
+        request
+        |> Map.get("headers", %{})
+        |> strip_authorization()
+        |> Map.put("authorization", "Bearer #{conn.access_token}")
+
+      gate_opts =
+        [
+          allowed_hosts: Plugin.granted_http_hosts(plugin),
+          slug: plugin.slug,
+          method: Map.get(request, "method", "GET"),
+          headers: headers,
+          body: Map.get(request, "body")
+        ] ++ Keyword.take(opts, [:allow_private, :resolver, :max_bytes, :timeout])
+
+      case Gate.request(url, gate_opts) do
+        {:ok, resp} -> {:ok, http_response_map(resp)}
+        {:error, _} = err -> err
+      end
     end
+  end
+
+  defp fetch_connection(plugin, connection_id) when is_binary(connection_id) do
+    case Connections.get_by_id(plugin.slug, connection_id) do
+      %{} = conn ->
+        {:ok, conn}
+
+      nil ->
+        {:error,
+         Error.new(:not_found, "connection #{connection_id} not found for #{plugin.slug}")}
+    end
+  end
+
+  defp fetch_connection(_plugin, _),
+    do: {:error, Error.new(:invalid_request, "connection-id must be a string")}
+
+  defp strip_authorization(headers) when is_map(headers) do
+    Enum.reject(headers, fn {k, _v} -> String.downcase(to_string(k)) == "authorization" end)
+    |> Map.new()
   end
 
   # ── Capability checks (deny-by-default) ───────────────────────────────────
