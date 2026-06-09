@@ -28,10 +28,10 @@ RUN apt-get update -qq && \
 # wrappers to /opt/cargo/bin (which is what the runtime PATH expects below).
 # Without these, rustup defaults to /root/.cargo and the wrappers never land
 # on PATH at runtime.
-RUN which rustc || ( \
-    export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path && \
-    chmod -R a+w /opt/rustup /opt/cargo 2>/dev/null || true)
+RUN export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH="/opt/cargo/bin:$PATH" && \
+    (which rustc || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path) && \
+    rustup target add wasm32-unknown-unknown && \
+    chmod -R a+w /opt/rustup /opt/cargo 2>/dev/null || true
 
 # Install Flutter if not present.
 # Note: /opt/flutter/bin isn't on PATH yet at this point (the ENV directive is below),
