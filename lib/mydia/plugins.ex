@@ -400,9 +400,8 @@ defmodule Mydia.Plugins do
         )
 
       with {:ok, _pid} <-
-             Host.start_plugin(config.slug, wasm, imports: HostFunctions.imports_for(config.slug)),
-           {:ok, descriptor} <- Registry.register(config.slug, descriptor) do
-        {:ok, descriptor}
+             Host.start_plugin(config.slug, wasm, imports: HostFunctions.imports_for(config.slug)) do
+        Registry.register(config.slug, descriptor)
       end
     else
       nil ->
