@@ -28,12 +28,22 @@ defmodule Mydia.Plugins.Notifier.DeliveryTest do
     {:ok, manifest} = Manifest.parse(bundled_manifest())
     host = Keyword.get(opts, :webhook_host, "webhook.test")
     granted_host = Keyword.get(opts, :granted_host, host)
+    extra_settings = Keyword.get(opts, :settings, %{})
 
     grants = %{
       "events:subscribe" => manifest.events,
       "net:http" => [granted_host],
       "data:read" => ["media_item"]
     }
+
+    settings =
+      Map.merge(
+        %{
+          "webhook_url" => "http://#{host}:#{bypass.port}/hook",
+          "delivery" => "durable"
+        },
+        extra_settings
+      )
 
     {:ok, _} =
       Settings.create_plugin_config(%{
@@ -44,10 +54,7 @@ defmodule Mydia.Plugins.Notifier.DeliveryTest do
         wasm_module: bundled_wasm(),
         granted_capabilities: grants,
         enabled: true,
-        settings: %{
-          "webhook_url" => "http://#{host}:#{bypass.port}/hook",
-          "delivery" => "durable"
-        }
+        settings: settings
       })
 
     descriptor =
@@ -159,5 +166,73 @@ defmodule Mydia.Plugins.Notifier.DeliveryTest do
 
     # The gate denies before any request, so Bypass is never hit and delivery fails.
     assert {:error, _} = Delivery.perform(job(added_payload(item)))
+  end
+
+  describe "ntfy target (R5, R6)" do
+    test "POSTs a plain-text body with Title/Priority/Tags and Bearer auth headers", %{
+      bypass: bypass
+    } do
+      start_notifier!(bypass,
+        settings: %{
+          "target" => "ntfy",
+          "ntfy_priority" => "4",
+          "ntfy_tags" => "tada,movie",
+          "ntfy_token" => "tk_secret"
+        }
+      )
+
+      item = media_item_fixture(%{title: "Interstellar"})
+      test_pid = self()
+
+      Bypass.expect_once(bypass, "POST", "/hook", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:ntfy, body, conn.req_headers})
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      assert :ok = Delivery.perform(job(added_payload(item)))
+      assert_receive {:ntfy, body, headers}
+
+      # The message is the plain body — not the Discord JSON embed.
+      assert body =~ "Added to library"
+      refute body =~ "embeds"
+      assert {"title", "Interstellar"} in headers
+      assert {"priority", "4"} in headers
+      assert {"tags", "tada,movie"} in headers
+      assert {"authorization", "Bearer tk_secret"} in headers
+      assert {"content-type", "text/plain"} in headers
+    end
+
+    test "omits optional headers when only the URL is configured", %{bypass: bypass} do
+      start_notifier!(bypass, settings: %{"target" => "ntfy"})
+      item = media_item_fixture(%{title: "Dune"})
+      test_pid = self()
+
+      Bypass.expect_once(bypass, "POST", "/hook", fn conn ->
+        {:ok, _body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:headers, conn.req_headers})
+        Plug.Conn.resp(conn, 200, "")
+      end)
+
+      assert :ok = Delivery.perform(job(added_payload(item)))
+      assert_receive {:headers, headers}
+
+      keys = Enum.map(headers, fn {k, _} -> k end)
+      assert {"title", "Dune"} in headers
+      refute "priority" in keys
+      refute "tags" in keys
+      refute "authorization" in keys
+    end
+
+    test "an ntfy host not on the grant is still blocked by the gate", %{bypass: bypass} do
+      start_notifier!(bypass,
+        granted_host: "discord.com",
+        webhook_host: "ntfy.test",
+        settings: %{"target" => "ntfy"}
+      )
+
+      item = media_item_fixture()
+      assert {:error, _} = Delivery.perform(job(added_payload(item)))
+    end
   end
 end
