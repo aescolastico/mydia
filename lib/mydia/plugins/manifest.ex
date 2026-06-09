@@ -129,9 +129,11 @@ defmodule Mydia.Plugins.Manifest do
   # misconfigured manifest can't tick the host to death.
   @min_schedule_interval 5
 
-  # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
-  # to a curated projection in the `data_read` host function (U6).
-  @data_namespaces ~w(media_item)
+  # Read catalog: the resource namespaces `data:read` may scope to. `media_item`
+  # is served by both `data-read` (single) and `data-list` (enumerate);
+  # `playback_progress` (U5) is a `data-list`-only per-user watch projection,
+  # consent-scoped to users with an active connection to the calling plugin.
+  @data_namespaces ~w(media_item playback_progress)
 
   # Field types a `settings_schema` entry may declare. `text` renders as a
   # multiline textarea (used for template fields); otherwise like `string`.

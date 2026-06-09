@@ -242,4 +242,154 @@ defmodule Mydia.Plugins.HostFunctionsTest do
       assert {:error, %Error{type: :capability_denied}} = HostFunctions.connections_list(p)
     end
   end
+
+  describe "data_list/2 (data:read grant)" do
+    setup do
+      {:ok, _} =
+        Mydia.Settings.create_plugin_config(%{
+          slug: "tester",
+          name: "Tester",
+          version: "1.0.0",
+          source_url: "test",
+          manifest: %{
+            "slug" => "tester",
+            "name" => "Tester",
+            "version" => "1.0.0",
+            "capabilities" => %{"events:subscribe" => ["media_item.added"]}
+          },
+          granted_capabilities: %{},
+          enabled: false
+        })
+
+      :ok
+    end
+
+    defp list_req(namespace, opts \\ []) do
+      %{
+        namespace: namespace,
+        cursor: Keyword.get(opts, :cursor, :none),
+        "updated-since": Keyword.get(opts, :updated_since, :none),
+        limit: Keyword.get(opts, :limit, :none)
+      }
+    end
+
+    defp create_movie do
+      {:ok, item} =
+        Mydia.Media.create_media_item(%{
+          title: "Movie #{System.unique_integer([:positive])}",
+          type: "movie",
+          year: 2024,
+          tmdb_id: System.unique_integer([:positive]),
+          imdb_id: "tt#{System.unique_integer([:positive])}"
+        })
+
+      item
+    end
+
+    # Walk every page, collecting the variant rows.
+    defp walk(plugin, namespace, limit) do
+      walk(plugin, namespace, limit, :none, [])
+    end
+
+    defp walk(plugin, namespace, limit, cursor, acc) do
+      req = list_req(namespace, cursor: cursor, limit: {:some, limit})
+      assert {:ok, %{items: items, "next-cursor": next}} = HostFunctions.data_list(plugin, req)
+      acc = acc ++ items
+
+      case next do
+        :none -> acc
+        {:some, _} = c -> walk(plugin, namespace, limit, c, acc)
+      end
+    end
+
+    test "media_item pagination walks the full set exactly once" do
+      ids = for _ <- 1..5, do: create_movie().id
+      p = plugin(%{"data:read" => ["media_item"]})
+
+      rows = walk(p, "media_item", 2)
+      seen = Enum.map(rows, fn {:"media-item", rec} -> rec.id end)
+
+      assert Enum.sort(seen) == Enum.sort(ids)
+      assert length(seen) == length(Enum.uniq(seen))
+    end
+
+    test "an unknown but granted namespace is invalid-request" do
+      # Granting an unknown namespace passes the grant gate, so the host reaches
+      # the namespace dispatch and reports it has no backing.
+      p = plugin(%{"data:read" => ["bogus"]})
+
+      assert {:error, %Error{type: :invalid_request}} =
+               HostFunctions.data_list(p, list_req("bogus"))
+    end
+
+    test "a real namespace that is not granted is denied" do
+      p = plugin(%{"data:read" => ["media_item"]})
+
+      assert {:error, %Error{type: :capability_denied}} =
+               HostFunctions.data_list(p, list_req("playback_progress"))
+    end
+
+    test "AE3: playback_progress returns rows only for connected users" do
+      connected = user_fixture()
+      other = user_fixture()
+      movie = create_movie()
+
+      {:ok, _} = Mydia.Plugins.Connections.connect("tester", connected.id, %{access_token: "t"})
+
+      {:ok, _} =
+        Mydia.Playback.save_progress(connected.id, [media_item_id: movie.id], %{
+          position_seconds: 95,
+          duration_seconds: 100
+        })
+
+      {:ok, _} =
+        Mydia.Playback.save_progress(other.id, [media_item_id: movie.id], %{
+          position_seconds: 95,
+          duration_seconds: 100
+        })
+
+      p = plugin(%{"data:read" => ["playback_progress"]})
+      assert {:ok, %{items: items}} = HostFunctions.data_list(p, list_req("playback_progress"))
+
+      user_ids = Enum.map(items, fn {:"playback-progress", rec} -> rec[:"user-id"] end)
+      assert connected.id in user_ids
+      refute other.id in user_ids
+    end
+
+    test "an episode progress projection carries coordinates and the show's ids" do
+      user = user_fixture()
+      {:ok, _} = Mydia.Plugins.Connections.connect("tester", user.id, %{access_token: "t"})
+
+      {:ok, show} =
+        Mydia.Media.create_media_item(
+          %{title: "Show", type: "tv_show", tmdb_id: System.unique_integer([:positive])},
+          skip_episode_refresh: true
+        )
+
+      {:ok, episode} =
+        Mydia.Media.create_episode(%{
+          media_item_id: show.id,
+          season_number: 2,
+          episode_number: 4,
+          title: "Ep"
+        })
+
+      {:ok, _} =
+        Mydia.Playback.save_progress(user.id, [episode_id: episode.id], %{
+          position_seconds: 95,
+          duration_seconds: 100
+        })
+
+      p = plugin(%{"data:read" => ["playback_progress"]})
+
+      assert {:ok, %{items: [{:"playback-progress", rec}]}} =
+               HostFunctions.data_list(p, list_req("playback_progress"))
+
+      assert rec[:"item-type"] == "episode"
+      assert rec[:"season-number"] == {:some, 2}
+      assert rec[:"episode-number"] == {:some, 4}
+      assert rec[:"tmdb-id"] == {:some, show.tmdb_id}
+      assert rec.watched == true
+    end
+  end
 end

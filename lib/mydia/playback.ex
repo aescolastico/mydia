@@ -139,6 +139,44 @@ defmodule Mydia.Playback do
   end
 
   @doc """
+  Returns one keyset page of progress rows for the given users, enriched with the
+  associations a sync plugin needs (the `playback_progress` data-list namespace,
+  U5): the movie's external ids, or the episode's coordinates plus its show's
+  external ids. Ordered by `(updated_at, id)`.
+
+  ## Options
+    * `:limit` - page size (default 200)
+    * `:updated_since` - only rows updated at/after this `DateTime`
+    * `:after` - `{updated_at, id}` of the last row of the previous page
+  """
+  @spec list_user_progress_page([binary()], keyword()) :: [Progress.t()]
+  def list_user_progress_page(user_ids, opts \\ []) when is_list(user_ids) do
+    limit = Keyword.get(opts, :limit, 200)
+    since = Keyword.get(opts, :updated_since)
+    after_cursor = Keyword.get(opts, :after)
+
+    query =
+      from p in Progress,
+        where: p.user_id in ^user_ids,
+        order_by: [asc: p.updated_at, asc: p.id],
+        limit: ^limit,
+        preload: [:media_item, episode: :media_item]
+
+    query = if since, do: from(p in query, where: p.updated_at >= ^since), else: query
+
+    query =
+      case after_cursor do
+        {ts, id} ->
+          from p in query, where: p.updated_at > ^ts or (p.updated_at == ^ts and p.id > ^id)
+
+        _ ->
+          query
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Marks content as watched for a user.
 
   ## Examples

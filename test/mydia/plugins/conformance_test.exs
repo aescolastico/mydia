@@ -160,6 +160,28 @@ defmodule Mydia.Plugins.ConformanceTest do
       assert result["count"] == 1
     end
 
+    test "the guest round-trips data-list, decoding list-result + variants (U5)" do
+      slug = "listguest"
+      install_with_grant!(slug, %{"data:read" => ["media_item"]})
+
+      for _ <- 1..3 do
+        {:ok, _} =
+          Mydia.Media.create_media_item(%{
+            title: "M#{System.unique_integer([:positive])}",
+            type: "movie",
+            year: 2024,
+            tmdb_id: System.unique_integer([:positive])
+          })
+      end
+
+      bytes = File.read!(@fixture)
+      {:ok, _pid} = Host.start_plugin(slug, bytes, imports: HostFunctions.imports_for(slug))
+      on_exit(fn -> Host.stop_plugin(slug) end)
+
+      assert {:ok, %{"count" => 3, "has_next" => false}} =
+               Host.call(slug, "h", %{"event" => "data-list", "namespace" => "media_item"})
+    end
+
     test "a guest without state:kv is denied at the host boundary (U3)" do
       slug = "kvdenied"
       install_with_grant!(slug, %{"events:subscribe" => ["media_item.added"]})

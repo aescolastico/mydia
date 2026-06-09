@@ -52,6 +52,37 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Returns one keyset page of media items for the plugin `data-list` host
+  function (U5), ordered by `(updated_at, id)`.
+
+  ## Options
+    * `:limit` - page size (default 200)
+    * `:updated_since` - only items updated at/after this `DateTime`
+    * `:after` - `{updated_at, id}` of the last row of the previous page
+  """
+  @spec list_items_page(keyword()) :: [MediaItem.t()]
+  def list_items_page(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 200)
+    since = Keyword.get(opts, :updated_since)
+    after_cursor = Keyword.get(opts, :after)
+
+    query = from(m in MediaItem, order_by: [asc: m.updated_at, asc: m.id], limit: ^limit)
+
+    query = if since, do: from(m in query, where: m.updated_at >= ^since), else: query
+
+    query =
+      case after_cursor do
+        {ts, id} ->
+          from m in query, where: m.updated_at > ^ts or (m.updated_at == ^ts and m.id > ^id)
+
+        _ ->
+          query
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Gets a single media item by TMDB ID.
   """
   @spec get_media_item_by_tmdb(integer(), keyword()) :: MediaItem.t() | nil

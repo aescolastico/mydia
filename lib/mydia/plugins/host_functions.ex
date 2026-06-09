@@ -42,6 +42,7 @@ defmodule Mydia.Plugins.HostFunctions do
   require Logger
 
   alias Mydia.Media
+  alias Mydia.Playback
   alias Mydia.Plugins
   alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Error
@@ -49,6 +50,9 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Plugins.Logs
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
+
+  # Hard page cap for data-list — a guest may request fewer but never more.
+  @data_list_page_cap 200
 
   # The WIT host interface namespace. The version suffix is the ABI version.
   # wasmtime serves this 1.1 superset to a 1.0 guest (which imports
@@ -512,10 +516,130 @@ defmodule Mydia.Plugins.HostFunctions do
   def data_list(%Plugin{} = plugin, req) do
     namespace = Map.get(req, :namespace, "")
 
-    with :ok <- require_data_namespace(plugin, namespace) do
-      {:error, Error.new(:internal, "data-list not implemented")}
+    with :ok <- require_data_namespace(plugin, namespace),
+         {:ok, cursor} <- decode_list_cursor(from_option(Map.get(req, :cursor))),
+         {:ok, since} <- parse_updated_since(from_option(Map.get(req, :"updated-since"))) do
+      limit = clamp_list_limit(from_option(Map.get(req, :limit)))
+      list_namespace(plugin, namespace, cursor, since, limit)
     end
   end
+
+  defp list_namespace(_plugin, "media_item", cursor, since, limit) do
+    rows = Media.list_items_page(after: cursor, updated_since: since, limit: limit + 1)
+    {page, next} = paginate(rows, limit)
+
+    items =
+      Enum.map(page, fn item -> {:"media-item", to_media_item(project_media_item(item))} end)
+
+    {:ok, %{items: items, "next-cursor": next_cursor(next)}}
+  end
+
+  defp list_namespace(plugin, "playback_progress", cursor, since, limit) do
+    # Consent-scoped (R21): only users with an active connection to this plugin
+    # are visible — a non-connected user's rows are absent entirely.
+    case Connections.connected_user_ids(plugin.slug) do
+      [] ->
+        {:ok, %{items: [], "next-cursor": :none}}
+
+      user_ids ->
+        rows =
+          Playback.list_user_progress_page(user_ids,
+            after: cursor,
+            updated_since: since,
+            limit: limit + 1
+          )
+
+        {page, next} = paginate(rows, limit)
+        items = Enum.map(page, fn p -> {:"playback-progress", to_playback_progress(p)} end)
+        {:ok, %{items: items, "next-cursor": next_cursor(next)}}
+    end
+  end
+
+  defp list_namespace(_plugin, other, _cursor, _since, _limit) do
+    {:error, Error.new(:invalid_request, "unknown data-list namespace: #{other}")}
+  end
+
+  # Fetch limit+1 to detect a next page; the cursor is the keyset of the last
+  # *returned* row.
+  defp paginate(rows, limit) do
+    if length(rows) > limit do
+      page = Enum.take(rows, limit)
+      {page, List.last(page)}
+    else
+      {rows, nil}
+    end
+  end
+
+  defp next_cursor(nil), do: :none
+  defp next_cursor(%{updated_at: ts, id: id}), do: {:some, encode_list_cursor(ts, id)}
+
+  # Opaque, request-local cursor: base64("<rfc3339>|<id>"). binary_id collation
+  # differs between engines, so a cursor is valid only for the same engine within
+  # a single request and is never persisted.
+  defp encode_list_cursor(ts, id) do
+    Base.url_encode64("#{DateTime.to_iso8601(ts)}|#{id}", padding: false)
+  end
+
+  defp decode_list_cursor(nil), do: {:ok, nil}
+
+  defp decode_list_cursor(encoded) when is_binary(encoded) do
+    with {:ok, raw} <- Base.url_decode64(encoded, padding: false),
+         [iso, id] <- String.split(raw, "|", parts: 2),
+         {:ok, ts, _} <- DateTime.from_iso8601(iso) do
+      {:ok, {ts, id}}
+    else
+      _ -> {:error, Error.new(:invalid_request, "invalid data-list cursor")}
+    end
+  end
+
+  defp parse_updated_since(nil), do: {:ok, nil}
+
+  defp parse_updated_since(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, ts, _} -> {:ok, ts}
+      _ -> {:error, Error.new(:invalid_request, "updated-since must be an RFC3339 timestamp")}
+    end
+  end
+
+  defp clamp_list_limit(n) when is_integer(n) and n > 0, do: min(n, @data_list_page_cap)
+  defp clamp_list_limit(_), do: @data_list_page_cap
+
+  # Progress row -> the WIT playback-progress record. A movie carries the item's
+  # own external ids; an episode carries its coordinates plus the show's ids.
+  defp to_playback_progress(p) do
+    {item_type, ext, season, epnum} = progress_dimensions(p)
+
+    %{
+      "user-id": p.user_id,
+      "item-type": item_type,
+      "media-item-id": to_option(p.media_item_id),
+      "episode-id": to_option(p.episode_id),
+      "tmdb-id": to_option(ext.tmdb),
+      "tvdb-id": to_option(ext.tvdb),
+      "imdb-id": to_option(ext.imdb),
+      "season-number": to_option(season),
+      "episode-number": to_option(epnum),
+      watched: p.watched == true,
+      "last-watched-at": to_option(iso_or_nil(p.last_watched_at)),
+      "updated-at": DateTime.to_iso8601(p.updated_at)
+    }
+  end
+
+  defp progress_dimensions(%{episode_id: eid} = p) when not is_nil(eid) do
+    ep = p.episode
+    show = ep && ep.media_item
+    {"episode", external_ids(show), ep && ep.season_number, ep && ep.episode_number}
+  end
+
+  defp progress_dimensions(p) do
+    {"movie", external_ids(p.media_item), nil, nil}
+  end
+
+  defp external_ids(nil), do: %{tmdb: nil, tvdb: nil, imdb: nil}
+  defp external_ids(item), do: %{tmdb: item.tmdb_id, tvdb: item.tvdb_id, imdb: item.imdb_id}
+
+  defp iso_or_nil(nil), do: nil
+  defp iso_or_nil(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
 
   @doc false
   @spec ensure_watched(Plugin.t(), map()) :: {:ok, map()} | {:error, Error.t()}
