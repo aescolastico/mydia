@@ -48,6 +48,9 @@ defmodule Mydia.Application do
         Mydia.Plugins.Registry,
         {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
         {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
+        # Fans "events:all" out to subscribed plugins (U5). Replaces the Luerl
+        # hooks manager removed in U11.
+        Mydia.Plugins.Dispatcher,
         {Registry, keys: :unique, name: Mydia.Streaming.HlsSessionRegistry},
         Mydia.Streaming.HlsSessionSupervisor,
         {Registry, keys: :unique, name: Mydia.Downloads.TranscodeRegistry},

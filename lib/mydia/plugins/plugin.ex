@@ -18,6 +18,8 @@ defmodule Mydia.Plugins.Plugin do
 
   @type capabilities :: %{optional(String.t()) => [String.t()]}
 
+  @type delivery :: :inline | :durable
+
   @type t :: %__MODULE__{
           slug: String.t(),
           name: String.t(),
@@ -29,7 +31,8 @@ defmodule Mydia.Plugins.Plugin do
           capabilities: capabilities(),
           granted_capabilities: capabilities(),
           enabled: boolean(),
-          source: atom() | nil
+          source: atom() | nil,
+          delivery: delivery()
         }
 
   defstruct slug: nil,
@@ -42,7 +45,8 @@ defmodule Mydia.Plugins.Plugin do
             capabilities: %{},
             granted_capabilities: %{},
             enabled: false,
-            source: nil
+            source: nil,
+            delivery: :inline
 
   alias Mydia.Plugins.Manifest
 
@@ -66,7 +70,8 @@ defmodule Mydia.Plugins.Plugin do
       capabilities: manifest.capabilities,
       granted_capabilities: Keyword.get(opts, :granted_capabilities, %{}),
       enabled: Keyword.get(opts, :enabled, false),
-      source: Keyword.get(opts, :source)
+      source: Keyword.get(opts, :source),
+      delivery: Keyword.get(opts, :delivery, :inline)
     }
   end
 
