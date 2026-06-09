@@ -10,20 +10,23 @@ defmodule Mydia.PluginsTest do
   alias Mydia.Plugins.Registry
   alias Mydia.Settings
 
-  # A minimal, compilable guest implementing the handler ABI.
-  @guest_wat """
-  (module
-    (memory (export "memory") 1)
-    (data (i32.const 100) "{}")
-    (func (export "mydia_alloc") (param $len i32) (result i32) (i32.const 1024))
-    (func (export "handle") (param $ptr i32) (param $len i32) (result i64)
-      (i64.or (i64.shl (i64.const 100) (i64.const 32)) (i64.const 2))))
-  """
+  # A prebuilt wasm32-wasip2 component implementing the mydia:plugin@1.0.0
+  # contract. The host runs the component model, and WAT cannot express
+  # components, so a core-wasm `(module ...)` fixture fails to instantiate
+  # (surfaced as a :host_version "incompatible plugin contract" error). These
+  # tests only exercise the install/activation lifecycle — none invoke the
+  # guest — so any conforming component that instantiates works; reuse the
+  # checked-in host_test fixture (see test/support/fixtures/plugins/).
+  @guest_fixture Path.join([
+                   __DIR__,
+                   "..",
+                   "support",
+                   "fixtures",
+                   "plugins",
+                   "host_test_fixture.wasm"
+                 ])
 
-  defp guest_wasm do
-    {:ok, bytes} = Wasmex.Wat.to_wasm(@guest_wat)
-    bytes
-  end
+  defp guest_wasm, do: File.read!(@guest_fixture)
 
   defp manifest!(overrides \\ %{}) do
     base = %{
