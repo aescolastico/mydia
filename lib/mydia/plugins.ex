@@ -386,11 +386,12 @@ defmodule Mydia.Plugins do
   end
 
   # Builds the runtime descriptor from the persisted config + manifest and starts
-  # its pool with the gated host-function imports.
+  # its pool with the gated host-function imports. The wasm bytes are resolved
+  # through the layered resolver (override dir → DB blob → bundled priv/plugins).
   defp activate(config) do
     with manifest_map when not is_nil(manifest_map) <- config.manifest,
-         wasm when is_binary(wasm) <- config.wasm_module,
-         {:ok, manifest} <- Manifest.parse(manifest_map) do
+         {:ok, manifest} <- Manifest.parse(manifest_map),
+         {:ok, wasm} <- resolve_artifact(config) do
       descriptor =
         Plugin.from_manifest(manifest,
           granted_capabilities: config.granted_capabilities || %{},
@@ -405,12 +406,125 @@ defmodule Mydia.Plugins do
       end
     else
       nil ->
-        {:error, Error.new(:invalid_config, "plugin #{config.slug} has no artifact to activate")}
+        {:error, Error.new(:invalid_config, "plugin #{config.slug} has no manifest to activate")}
 
       {:error, _} = err ->
         err
     end
   end
+
+  ## Layered artifact resolution (U3)
+
+  @doc """
+  Resolves a plugin's wasm bytes by layer, highest precedence first:
+
+    1. **Override dir** — a `<slug>.wasm` (hyphenated or underscored) dropped in
+       `PLUGINS_OVERRIDE_DIR`, for an operator patch/dev iteration.
+    2. **DB blob** — `config.wasm_module`, the verified bytes of a network
+       (index) plugin cached at install.
+    3. **Bundled** — the image artifact at `priv/plugins/<underscored-slug>.wasm`,
+       built from source by the `:plugins` mix compiler.
+
+  Bundled/override bytes are trusted (the image, the operator's own volume), so
+  integrity is not re-verified here — network integrity already happened at fetch
+  time in `Mydia.Plugins.Index`. `opts[:override_dir]` and `opts[:bundled_dir]`
+  exist for hermetic tests; production calls pass none.
+  """
+  @spec resolve_artifact(Settings.PluginConfig.t() | map(), keyword()) ::
+          {:ok, binary()} | {:error, Error.t()}
+  def resolve_artifact(config, opts \\ []) do
+    slug = config.slug
+    override_dir = Keyword.get(opts, :override_dir, configured_override_dir())
+    bundled_dir = Keyword.get(opts, :bundled_dir, bundled_plugins_dir())
+
+    layers = [
+      fn -> from_override(slug, override_dir) end,
+      fn -> from_db(config) end,
+      fn -> from_bundled(slug, bundled_dir) end
+    ]
+
+    Enum.reduce_while(layers, :miss, fn layer, _acc ->
+      case layer.() do
+        {:ok, _bytes} = ok -> {:halt, ok}
+        {:error, _} = err -> {:halt, err}
+        :miss -> {:cont, :miss}
+      end
+    end)
+    |> case do
+      :miss ->
+        {:error, Error.new(:invalid_config, "plugin #{slug} has no artifact to activate")}
+
+      result ->
+        result
+    end
+  end
+
+  # Layer 1: operator override directory. Accepts both the hyphenated slug and
+  # the underscored form (operators see the hyphenated slug in the UI; the
+  # compiler emits the underscored filename), guarded against path traversal.
+  defp from_override(_slug, dir) when dir in [nil, ""], do: :miss
+
+  defp from_override(slug, dir) do
+    names = Enum.uniq([slug, underscored(slug)])
+
+    case Enum.find_value(names, &override_bytes(dir, &1)) do
+      {bytes, path} ->
+        Logger.info("plugin #{slug}: activating bytes from override dir #{path}")
+        {:ok, bytes}
+
+      nil ->
+        Logger.debug(
+          "plugin #{slug}: override dir #{dir} set but no matching .wasm; falling through"
+        )
+
+        :miss
+    end
+  end
+
+  defp override_bytes(dir, name) do
+    path = Path.join(dir, name <> ".wasm")
+
+    if within_dir?(dir, path) and File.regular?(path) do
+      {File.read!(path), path}
+    end
+  end
+
+  # Defence-in-depth traversal guard: the resolved candidate must stay under the
+  # override dir even though the DB slug regex already forbids `/` and `..`.
+  defp within_dir?(dir, path) do
+    String.starts_with?(Path.expand(path), Path.expand(dir) <> "/")
+  end
+
+  # Layer 2: DB-cached bytes (index plugins). Bundled rows carry nil here (U4).
+  defp from_db(%{wasm_module: bytes}) when is_binary(bytes) and byte_size(bytes) > 0,
+    do: {:ok, bytes}
+
+  defp from_db(_), do: :miss
+
+  # Layer 3: image-bundled artifact, built into priv/plugins by the compiler.
+  # Guarded the same way as the override layer (real slugs are regex-validated,
+  # but the guard is load-bearing regardless of how the slug was sourced).
+  defp from_bundled(slug, dir) do
+    path = Path.join(dir, underscored(slug) <> ".wasm")
+
+    with true <- within_dir?(dir, path),
+         {:ok, bytes} <- File.read(path) do
+      {:ok, bytes}
+    else
+      _ -> :miss
+    end
+  end
+
+  defp underscored(slug), do: String.replace(slug, "-", "_")
+
+  defp configured_override_dir do
+    case Application.get_env(:mydia, :runtime_config) do
+      %{plugins: %{override_dir: dir}} -> dir
+      _ -> nil
+    end
+  end
+
+  defp bundled_plugins_dir, do: Application.app_dir(:mydia, "priv/plugins")
 
   defp deactivate(slug) do
     Host.stop_plugin(slug)
