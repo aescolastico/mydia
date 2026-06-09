@@ -44,7 +44,7 @@ defmodule Mydia.Plugins.Notifier.Delivery do
 
     full_payload = Map.put(payload, "config", settings)
 
-    case Host.call(slug, "handle", full_payload, force_fuel: true) do
+    case Host.call(slug, "handle", full_payload) do
       {:ok, %{"delivered" => true}} ->
         :ok
 

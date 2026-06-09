@@ -67,7 +67,7 @@ defmodule Mydia.Plugins do
   end
 
   def invoke_plugin(%Plugin{} = plugin, event) do
-    Host.call(plugin.slug, plugin.entrypoint, build_payload(event), force_fuel: true)
+    Host.call(plugin.slug, plugin.entrypoint, build_payload(event))
   end
 
   @doc """
@@ -110,7 +110,7 @@ defmodule Mydia.Plugins do
         payload = build_payload(synthetic_event(event_type))
 
         Task.Supervisor.start_child(Mydia.TaskSupervisor, fn ->
-          Host.call(plugin.slug, plugin.entrypoint, payload, force_fuel: true, test_run: true)
+          Host.call(plugin.slug, plugin.entrypoint, payload, test_run: true)
         end)
 
         :ok

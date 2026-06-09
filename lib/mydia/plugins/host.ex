@@ -1,54 +1,66 @@
 defmodule Mydia.Plugins.Host do
   @moduledoc """
-  WASM runtime host for the plugin platform.
+  WASM **component-model** runtime host for the plugin platform.
 
-  Each installed plugin gets its own `NimblePool` of warm-able workers. The
-  expensive `Wasmex.Module` compilation is paid once per plugin (KTD9) and the
-  compiled module + engine are shared, immutable NIF resources held in the
-  pool's worker state. Each *invocation* checks out a slot from the pool and
-  runs against a **fresh `Wasmex.Store`** (KTD9) so guests never share mutable
-  linear memory across calls. The pool size bounds how many guests run
-  concurrently on the dirty NIF schedulers.
+  Guests are WebAssembly components built against the canonical
+  `mydia:plugin@1.0.0` WIT contract (`native/mydia_plugin_sdk/wit/plugin.wit`).
+  The host instantiates them through `Wasmex.Components.*` and calls the typed
+  `handler.on-event` export — wasmtime's component linker type-checks imports at
+  instantiation, so a guest built against a contract the host does not provide
+  fails to instantiate instead of mis-marshalling (U3).
 
-  ## Sandbox (R1)
+  Each installed plugin gets its own `NimblePool`, which bounds how many guests
+  run concurrently on the dirty NIF schedulers. Each *invocation* checks out a
+  slot and runs against a **fresh component instance + store** (KTD9), so guests
+  never share mutable linear memory across calls.
 
-  Stores are created with deny-by-default WASI: no args, no env, no preopened
-  directories, so a guest has no ambient filesystem or OS access. The only way
-  out is an explicit host function import (the gated HTTP function lands in U6).
+  ## Sandbox (R11)
+
+  `Wasmex.Wasi.WasiP2Options` defaults are *permissive* (`inherit_std* : true`),
+  so every store is built with stdin/stdout/stderr inheritance **off** and
+  `allow_http: false`. A guest therefore has no ambient stdio, filesystem, or
+  network access; the only way out is an explicit, capability-gated host-function
+  import (`Mydia.Plugins.HostFunctions`, wired in U4).
 
   ## Resource limiting (KTD4)
 
-  `Wasmex.StoreLimits` caps linear memory on every store, always. The engine is
-  compiled with `consume_fuel: true` so fuel metering is *available*; whether a
-  given invocation enforces a finite fuel budget is decided per call:
+  `Wasmex.StoreLimits` caps linear memory on every store. Two residuals of the
+  beta component runtime narrow what that buys versus the core-wasm host:
 
-    * the global default (`plugins.fuel_enabled`, defaults **off** for speed)
-      governs direct calls, and
-    * the event-dispatch path passes `force_fuel: true` (the user-chosen safety
-      floor), so a runaway guest dispatched off an event always traps rather
-      than starving a dirty NIF thread.
+    * **Memory cap is instantiation-time only.** Wasmex 0.14 enforces
+      `StoreLimits.memory_size` when a component is instantiated (one whose
+      *minimum* linear memory exceeds the cap is refused), but does **not** cap
+      runtime `memory.grow` on a component store — a guest can allocate past the
+      cap at runtime. The cap therefore bounds a plugin's declared footprint, not
+      a runaway allocation.
+    * **No CPU metering.** Fuel is not available for component stores in Wasmex
+      0.14 (`set_fuel` rejects a `Components.Store`), so the forced-fuel dispatch
+      guard of the core-wasm host is dropped. With no fuel/epoch interruption, a
+      runaway guest's dirty-NIF thread is not reclaimed until it yields.
 
-  When fuel is not enforced the store is still given a very large budget (the
-  engine has fuel checks compiled in), so the overhead is the fuel-counting
-  instrumentation, not a hard CPU cap. wasmex 0.14 exposes no epoch
-  interruption, so with fuel unenforced a hung guest holds its slot until the OS
-  reclaims the thread — an accepted, bounded residual under the curated-index
-  trust model.
+  The runtime guards that remain are the instantiation-time memory cap,
+  fresh-store isolation, and the per-call wall-clock timeout + `Process.exit(:kill)`
+  (which reclaims the Elixir process; the OS thread of a wedged guest is the
+  bounded residual). Both residuals are accepted under the curated-index trust
+  model and tracked as Wasmex upstream requests (see the plan's Deferred work).
 
   ## Boundary (KTD2)
 
-  The host↔guest boundary is JSON over linear memory. For each call the host:
+  The host↔guest boundary is the typed WIT contract, not hand-rolled JSON over
+  linear memory. The host marshals the dispatcher's event payload into the WIT
+  `event` record (the arbitrary per-event metadata bag rides along as a JSON
+  string in `metadata-json`), calls `on-event`, and decodes the guest's small
+  JSON result string. Host-function imports receive and return typed WIT records
+  directly — no `caller`-memory marshalling.
 
-    1. encodes the payload to JSON,
-    2. calls the guest's exported allocator `mydia_alloc(len) -> ptr`,
-    3. writes the JSON bytes at `ptr`,
-    4. calls the handler `fun(ptr, len) -> packed` where `packed` is an `i64`
-       holding `(out_ptr << 32) | out_len`,
-    5. reads `out_len` bytes at `out_ptr` and JSON-decodes the result.
+  ## Diagnostics
 
-  Memory is read/written through the high-level `Wasmex` GenServer's store
-  *between* calls (never inside a host-function callback, which must use the
-  `caller` to avoid the store-mutex deadlock — see U6).
+  Host markers bracket every invocation (start/end, with outcome + duration) so a
+  run is always visible in the activity timeline, even one that traps before the
+  guest emits anything. Guest narration flows through the ungated `log` host
+  function (U4). The core-wasm host's WASI stdout/stderr pipe capture is gone:
+  `WasiP2Options` exposes no pipe redirection (only inherit booleans), and the
+  sandbox denies stdio, so a locked-down component has no host-visible stdio.
   """
 
   @behaviour NimblePool
@@ -58,42 +70,44 @@ defmodule Mydia.Plugins.Host do
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Log
   alias Mydia.Plugins.Logs
-  alias Wasmex.Wasi.WasiOptions
+  alias Wasmex.Components
+  alias Wasmex.Wasi.WasiP2Options
 
   @registry Mydia.Plugins.PoolRegistry
   @supervisor Mydia.Plugins.PoolSupervisor
-  @invocation_registry Mydia.Plugins.InvocationRegistry
 
-  # Cap on captured WASI stdout/stderr per invocation (per pipe). Bounds the
-  # in-memory drain and the maximum :text row written to plugin_logs (U4).
-  @max_wasi_bytes 64 * 1024
-
-  # Large fuel budget used when fuel is not being enforced. The engine has
-  # consume_fuel compiled in, so the store must be funded or it traps at once.
-  @unenforced_fuel 0x7FFF_FFFF_FFFF_FFFF
+  # The typed handler export, addressed by its interface path. The interface
+  # version is part of the path because the WIT package version IS the ABI
+  # version (a guest built against a different major fails to instantiate).
+  @handler_export ["mydia:plugin/handler@1.0.0", "on-event"]
 
   @type slug :: String.t()
+
+  # A per-invocation context handed to an imports builder so host-function
+  # closures can correlate to the run without a shared registry.
+  @type invocation_ctx :: %{slug: slug(), invocation_id: String.t(), test_run: boolean()}
 
   # ── Public API ──────────────────────────────────────────────────────────
 
   @doc """
-  Compiles `wasm_bytes` and starts a pool for `slug`.
+  Validates `wasm_bytes` as a component and starts a pool for `slug`.
 
   Options:
 
-    * `:imports` - host-function import map passed to every instance
-      (defaults to `%{}`; U6 supplies the gated HTTP function)
+    * `:imports` - host-function imports for every instance. Either a static
+      nested map (`%{"mydia:plugin/host" => %{"http-request" => {:fn, f}}}`) or a
+      1-arity builder `(invocation_ctx -> map)` invoked per call so closures can
+      capture the invocation context (U4 supplies the latter). Defaults to `%{}`.
     * `:pool_size` - worker count (defaults to `plugins.pool_size` config)
   """
   @spec start_plugin(slug(), binary(), keyword()) ::
           {:ok, pid()} | {:error, Error.t()}
   def start_plugin(slug, wasm_bytes, opts \\ [])
       when is_binary(slug) and is_binary(wasm_bytes) do
-    with {:ok, compiled} <- compile(wasm_bytes) do
+    with :ok <- validate_component(wasm_bytes) do
       worker_arg = %{
         slug: slug,
-        engine: compiled.engine,
-        module: compiled.module,
+        bytes: wasm_bytes,
         imports: Keyword.get(opts, :imports, %{})
       }
 
@@ -128,15 +142,19 @@ defmodule Mydia.Plugins.Host do
   def running?(slug), do: Registry.lookup(@registry, slug) != []
 
   @doc """
-  Invokes exported `function` on `slug`'s guest with `payload` (a JSON-encodable
-  map), returning the decoded result map.
+  Invokes the guest's `handler.on-event` export with `payload` (the dispatcher's
+  event map, as built by `Mydia.Plugins.build_payload/1`), returning the decoded
+  result map.
+
+  The `function` argument is retained for call-site compatibility but ignored:
+  the component model addresses the typed export directly, not by name.
 
   Options:
 
-    * `:force_fuel` - enforce a finite fuel budget even when the global default
-      is off (the dispatch path sets this)
-    * `:fuel_limit` - override the fuel budget for this call
     * `:timeout` - per-call deadline in ms (defaults to config)
+    * `:test_run` - badge the markers/guest logs for this run as a test
+    * `:memory_limit_bytes` - override the linear-memory cap for this call
+      (defaults to config; a test seam for exercising `StoreLimits`)
   """
   @spec call(slug(), String.t(), map(), keyword()) ::
           {:ok, map()} | {:error, Error.t()}
@@ -145,19 +163,13 @@ defmodule Mydia.Plugins.Host do
     cfg = config()
     timeout = Keyword.get(opts, :timeout, cfg.invocation_timeout_ms)
 
-    enforce_fuel? = Keyword.get(opts, :force_fuel, false) or cfg.fuel_enabled
-
-    fuel =
-      if enforce_fuel?, do: Keyword.get(opts, :fuel_limit, cfg.fuel_limit), else: @unenforced_fuel
-
     invocation = %{
       slug: slug,
       invocation_id: Ecto.UUID.generate(),
       test_run: Keyword.get(opts, :test_run, false),
       function: function,
       payload: payload,
-      memory_limit_bytes: cfg.memory_limit_bytes,
-      fuel: fuel,
+      memory_limit_bytes: Keyword.get(opts, :memory_limit_bytes, cfg.memory_limit_bytes),
       timeout: timeout
     }
 
@@ -170,7 +182,7 @@ defmodule Mydia.Plugins.Host do
     result =
       try do
         # The checkout deadline gives the slot back even if the run wedges; the
-        # inner per-call timeouts are the primary deadline.
+        # inner per-call timeout is the primary deadline.
         NimblePool.checkout!(
           via(slug),
           :checkout,
@@ -191,19 +203,18 @@ defmodule Mydia.Plugins.Host do
     result
   end
 
-  # ── Compilation ─────────────────────────────────────────────────────────
+  # ── Component validation ──────────────────────────────────────────────────
 
   @doc false
-  @spec compile(binary()) :: {:ok, %{engine: term(), module: term()}} | {:error, Error.t()}
-  def compile(wasm_bytes) do
-    # consume_fuel is always compiled in so the dispatch path can force fuel on
-    # regardless of the global default (KTD4 + the chosen safety floor).
-    engine_config = %Wasmex.EngineConfig{} |> Wasmex.EngineConfig.consume_fuel(true)
-
-    with {:ok, engine} <- Wasmex.Engine.new(engine_config),
-         {:ok, store} <- Wasmex.Store.new(nil, engine),
-         {:ok, module} <- Wasmex.Module.compile(store, wasm_bytes) do
-      {:ok, %{engine: engine, module: module}}
+  @spec validate_component(binary()) :: :ok | {:error, Error.t()}
+  def validate_component(wasm_bytes) do
+    # Compile the component once at install time so non-component bytes or a
+    # contract the host cannot satisfy fail fast with a clear error, rather than
+    # at the first event. The throwaway store is discarded; each invocation
+    # builds its own.
+    with {:ok, store} <- Components.Store.new(),
+         {:ok, _component} <- Components.Component.new(store, wasm_bytes) do
+      :ok
     else
       {:error, reason} -> {:error, Error.new(:compile_failed, to_string_reason(reason))}
     end
@@ -212,125 +223,99 @@ defmodule Mydia.Plugins.Host do
   # ── Invocation ──────────────────────────────────────────────────────────
 
   defp run_invocation(worker, inv) do
-    %{engine: engine, module: module, imports: imports} = worker
+    %{bytes: bytes, imports: imports_spec} = worker
 
     limits = %Wasmex.StoreLimits{memory_size: inv.memory_limit_bytes}
 
-    # Fresh stdout/stderr pipes per invocation capture the guest's WASI output
-    # (println!/panic text). Fresh-store-per-call means each pipe holds exactly
-    # this run's bytes — no offset bookkeeping (U4).
-    {:ok, stdout} = Wasmex.Pipe.new()
-    {:ok, stderr} = Wasmex.Pipe.new()
+    # Re-lock the sandbox: WasiP2Options defaults inherit host stdio, so deny all
+    # three and keep HTTP off. Egress is only ever the gated host function (R11).
+    wasi = %WasiP2Options{
+      inherit_stdin: false,
+      inherit_stdout: false,
+      inherit_stderr: false,
+      allow_http: false
+    }
 
-    wasi = %WasiOptions{args: [], env: %{}, preopen: [], stdout: stdout, stderr: stderr}
+    imports = build_imports(imports_spec, inv)
 
-    with {:ok, store} <- Wasmex.Store.new_wasi(wasi, limits, engine),
-         :ok <- set_fuel(store, inv.fuel),
-         {:ok, pid} <- start_instance(store, module, imports) do
-      # Correlate guest `log` calls (which run in the instance process) to this
-      # invocation. The entry is owned by this (calling) process, so it is
-      # auto-removed if we die; we also unregister explicitly below.
-      counter = :counters.new(1, [:write_concurrency])
-
-      Registry.register(
-        @invocation_registry,
-        pid,
-        {inv.slug, inv.invocation_id, counter, inv.test_run}
-      )
-
-      try do
-        invoke(pid, store, inv)
-      after
-        # Drain the pipes BEFORE killing the instance (the store dies with it).
-        capture_wasi(inv, stdout, stderr)
-        Registry.unregister(@invocation_registry, pid)
-        Process.exit(pid, :kill)
-      end
-    else
-      {:error, %Error{} = err} -> {:error, err}
-      {:error, reason} -> {:error, Error.new(:instantiate_failed, to_string_reason(reason))}
-    end
-  end
-
-  defp start_instance(store, module, imports) do
-    # Wasmex only offers start_link, which links the instance to the checkout
-    # process. We unlink immediately so killing the disposable instance (in the
-    # `after` clause, or on a hung guest) never propagates an exit signal back
-    # to the caller. The instance is monitored implicitly via the explicit kill.
-    case Wasmex.start_link(%{store: store, module: module, imports: imports}) do
+    case Components.start_link(%{
+           bytes: bytes,
+           wasi: wasi,
+           store_limits: limits,
+           imports: imports
+         }) do
       {:ok, pid} ->
+        # start_link links the fresh instance GenServer to this checkout process;
+        # unlink so killing the disposable instance (below, or on a hung guest)
+        # never propagates an exit back to the caller.
         Process.unlink(pid)
-        {:ok, pid}
+
+        try do
+          invoke(pid, inv)
+        after
+          Process.exit(pid, :kill)
+        end
 
       {:error, reason} ->
         {:error, Error.new(:instantiate_failed, to_string_reason(reason))}
     end
   end
 
-  defp set_fuel(store, fuel) do
-    case Wasmex.StoreOrCaller.set_fuel(store, fuel) do
-      :ok ->
-        :ok
+  # A static map is used as-is; a builder is called per invocation so closures
+  # can capture this run's context (slug + invocation id, for log correlation).
+  defp build_imports(spec, inv) when is_function(spec, 1), do: spec.(invocation_ctx(inv))
+  defp build_imports(spec, _inv) when is_map(spec), do: spec
 
-      {:error, reason} ->
-        {:error, Error.new(:trap, "set_fuel failed: #{to_string_reason(reason)}")}
-    end
+  defp invocation_ctx(inv) do
+    %{slug: inv.slug, invocation_id: inv.invocation_id, test_run: inv.test_run}
   end
 
-  defp invoke(pid, store, inv) do
-    json = Jason.encode!(inv.payload)
-    len = byte_size(json)
+  defp invoke(pid, inv) do
+    args = Components.FieldConverter.maybe_convert_args([to_event_record(inv.payload)], true)
 
-    with {:ok, memory} <- Wasmex.memory(pid),
-         {:ok, in_ptr} <- alloc(pid, len, inv.timeout),
-         :ok <- Wasmex.Memory.write_binary(store, memory, in_ptr, json),
-         {:ok, packed} <- call_handler(pid, inv.function, in_ptr, len, inv.timeout),
-         {:ok, result} <- read_result(store, memory, packed) do
-      {:ok, result}
+    case Components.call_function(pid, @handler_export, args, inv.timeout) do
+      {:ok, {:ok, json}} -> decode_result(json)
+      {:ok, {:error, message}} -> {:error, Error.new(:guest_error, sanitize_message(message))}
+      {:error, reason} -> {:error, Error.new(:trap, to_string_reason(reason))}
     end
   catch
     :exit, {:timeout, _} ->
       {:error, Error.new(:timeout, "invocation timed out after #{inv.timeout}ms")}
   end
 
-  defp alloc(pid, len, timeout) do
-    case Wasmex.call_function(pid, "mydia_alloc", [len], timeout) do
-      {:ok, [ptr]} when is_integer(ptr) and ptr > 0 ->
-        {:ok, ptr}
+  # Known envelope keys that map to typed `event` record fields; everything else
+  # in the payload (the `metadata` bag, the injected `config`, any future extra)
+  # rides along verbatim in `metadata-json` so nothing is silently dropped.
+  @envelope_keys ~w(event category severity actor_type actor_id resource_type resource_id)
 
-      {:ok, other} ->
-        {:error, Error.new(:invalid_output, "mydia_alloc returned #{inspect(other)}")}
-
-      {:error, reason} ->
-        {:error, Error.new(:trap, "mydia_alloc failed: #{to_string_reason(reason)}")}
-    end
+  # Marshal the dispatcher payload into the WIT `event` record.
+  defp to_event_record(payload) do
+    %{
+      event: to_string(Map.get(payload, "event") || ""),
+      category: opt_string(Map.get(payload, "category")),
+      severity: opt_string(Map.get(payload, "severity")),
+      actor_type: opt_string(Map.get(payload, "actor_type")),
+      actor_id: opt_string(Map.get(payload, "actor_id")),
+      resource_type: opt_string(Map.get(payload, "resource_type")),
+      resource_id: opt_string(Map.get(payload, "resource_id")),
+      metadata_json: Jason.encode!(Map.drop(payload, @envelope_keys))
+    }
   end
 
-  defp call_handler(pid, function, in_ptr, len, timeout) do
-    case Wasmex.call_function(pid, function, [in_ptr, len], timeout) do
-      {:ok, [packed]} when is_integer(packed) ->
-        {:ok, packed}
+  defp opt_string(nil), do: :none
+  defp opt_string(value), do: {:some, to_string(value)}
 
-      {:ok, other} ->
-        {:error, Error.new(:invalid_output, "#{function} returned #{inspect(other)}")}
-
-      {:error, reason} ->
-        {:error, Error.new(:trap, "#{function} trapped: #{to_string_reason(reason)}")}
-    end
-  end
-
-  # Unpack the i64 (out_ptr << 32) | out_len and decode the JSON it points at.
-  defp read_result(store, memory, packed) do
-    <<out_ptr::unsigned-32, out_len::unsigned-32>> = <<packed::unsigned-64>>
+  # The guest returns a small JSON result string (`result<string, string>` ok
+  # case). An empty string means "no structured result".
+  defp decode_result(json) when is_binary(json) do
+    trimmed = String.trim(json)
 
     cond do
-      out_len == 0 ->
+      trimmed == "" ->
         {:ok, %{}}
 
       true ->
-        bytes = Wasmex.Memory.read_binary(store, memory, out_ptr, out_len)
-
-        case Jason.decode(bytes) do
+        case Jason.decode(trimmed) do
           {:ok, decoded} when is_map(decoded) ->
             {:ok, decoded}
 
@@ -344,7 +329,7 @@ defmodule Mydia.Plugins.Host do
     end
   end
 
-  # ── Debug log markers + WASI capture (U2, U4) ─────────────────────────────
+  # ── Debug log markers (U2) ────────────────────────────────────────────────
 
   defp emit_start_marker(inv) do
     Logs.create_async(%{
@@ -400,68 +385,31 @@ defmodule Mydia.Plugins.Host do
   defp classify_outcome({:error, %Error{type: type, message: message}}),
     do: {:error, to_string(type), sanitize_detail(message)}
 
-  # Defensive: every current run_invocation path is {:ok,_}|{:error,%Error{}},
-  # but a catch-all keeps an unexpected shape from raising in the marker path.
+  # Defensive: every run_invocation path is {:ok,_}|{:error,%Error{}}, but a
+  # catch-all keeps an unexpected shape from raising in the marker path.
   defp classify_outcome(_other), do: {:error, "unknown", nil}
 
-  # A guest panic message (via to_string_reason) can carry non-UTF-8 bytes; this
-  # detail lands in marker metadata which JsonMapType encodes with Jason, which
-  # raises on invalid UTF-8 — dropping the very end-marker that records the trap.
+  # A guest trap/error message can carry non-UTF-8 bytes; this detail lands in
+  # marker metadata which JsonMapType encodes with Jason, which raises on invalid
+  # UTF-8 — dropping the very end-marker that records the trap.
   defp sanitize_detail(nil), do: nil
   defp sanitize_detail(message) when is_binary(message), do: Log.sanitize(message)
   defp sanitize_detail(message), do: message
+
+  defp sanitize_message(message) when is_binary(message), do: Log.sanitize(message)
+  defp sanitize_message(message), do: to_string_reason(message)
 
   defp end_message(outcome, function, ms), do: "#{function} #{outcome} (#{ms}ms)"
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  # Drains the per-invocation WASI pipes into wasi-source log rows (U4).
-  #
-  # Target-triple dependency (U8): captured stdout/stderr only carries text for
-  # guests built against a WASI target (wasm32-wasip1), whose libc routes
-  # println!/panic output through fd 1/2. A `wasm32-unknown-unknown` guest (the
-  # bundled webhook notifier today) has no WASI stdio, so this yields nothing —
-  # the host trap marker (U2) still records the *outcome*, and the guest can
-  # still narrate via the `log` host function (target-independent), but the Rust
-  # panic *message text* is only captured for WASI-target guests. For those,
-  # also avoid `panic_immediate_abort`, which strips the message to a bare trap.
-  defp capture_wasi(inv, stdout, stderr) do
-    emit_wasi(inv, stdout, :info)
-    emit_wasi(inv, stderr, :warn)
-  end
-
-  defp emit_wasi(inv, pipe, level) do
-    Wasmex.Pipe.seek(pipe, 0)
-
-    case Wasmex.Pipe.read(pipe) do
-      bytes when is_binary(bytes) and byte_size(bytes) > 0 ->
-        Logs.create_async(%{
-          slug: inv.slug,
-          invocation_id: inv.invocation_id,
-          source: :wasi,
-          level: level,
-          message: truncate(bytes, @max_wasi_bytes),
-          test_run: inv.test_run
-        })
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp truncate(bytes, max) when byte_size(bytes) > max,
-    do: binary_part(bytes, 0, max) <> " … [truncated]"
-
-  defp truncate(bytes, _max), do: bytes
-
   # ── NimblePool callbacks ────────────────────────────────────────────────
 
   @impl NimblePool
   def init_worker(pool_state) do
-    # The compiled module + engine are immutable, shareable NIF resources; the
-    # worker just carries them. Fresh stores are made per invocation, so there
-    # is no per-worker store to build here.
+    # The worker just carries the validated component bytes + imports spec; a
+    # fresh instance is built per invocation, so there is no per-worker store.
     {:ok, pool_state, pool_state}
   end
 

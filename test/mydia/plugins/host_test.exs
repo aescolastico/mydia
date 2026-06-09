@@ -5,88 +5,53 @@ defmodule Mydia.Plugins.HostTest do
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Host
 
-  # A guest implementing the v1 ABI: mydia_alloc + handle(ptr,len) -> i64.
-  # `handle` flips a mutable global so a *reused* store would return
-  # {"first": false}; a fresh store per call always returns {"first": true}.
-  # `{"first":true}`  is 14 bytes at offset 100
-  # `{"first":false}` is 15 bytes at offset 200
-  @abi_wat """
-  (module
-    (memory (export "memory") 2)
-    (global $seen (mut i32) (i32.const 0))
-    (data (i32.const 100) "{\\"first\\":true}")
-    (data (i32.const 200) "{\\"first\\":false}")
-    (func (export "mydia_alloc") (param $len i32) (result i32)
-      (i32.const 2048))
-    (func (export "handle") (param $ptr i32) (param $len i32) (result i64)
-      (if (result i64) (global.get $seen)
-        (then
-          (i64.or (i64.shl (i64.const 200) (i64.const 32)) (i64.const 15)))
-        (else
-          (global.set $seen (i32.const 1))
-          (i64.or (i64.shl (i64.const 100) (i64.const 32)) (i64.const 14))))))
-  """
+  # A prebuilt wasm32-wasip2 component (the canonical mydia:plugin@1.0.0
+  # contract). One component, many behaviors keyed by the event type — see
+  # test/support/fixtures/plugins/host_test_fixture/ for the source. WAT cannot
+  # express components, so host/sandbox invariants are exercised against this
+  # build-produced, checked-in fixture.
+  @fixture Path.join([
+             __DIR__,
+             "..",
+             "..",
+             "support",
+             "fixtures",
+             "plugins",
+             "host_test_fixture.wasm"
+           ])
 
-  # A guest whose handle burns CPU forever — traps when fuel is enforced low.
-  @burn_wat """
-  (module
-    (memory (export "memory") 1)
-    (func (export "mydia_alloc") (param $len i32) (result i32) (i32.const 1024))
-    (func (export "handle") (param $ptr i32) (param $len i32) (result i64)
-      (loop $l (br $l))
-      (i64.const 0)))
-  """
+  defp fixture_bytes, do: File.read!(@fixture)
 
-  # Probes WASI: fd_prestat_get on fd 3 (the first preopen). With deny-all WASI
-  # (no preopen) it returns errno 8 (EBADF) — proving no filesystem access.
-  @fs_probe_wat """
-  (module
-    (import "wasi_snapshot_preview1" "fd_prestat_get"
-      (func $fd_prestat_get (param i32 i32) (result i32)))
-    (memory (export "memory") 1)
-    (func (export "probe") (result i32)
-      (call $fd_prestat_get (i32.const 3) (i32.const 0))))
-  """
-
-  # Grows memory by the requested pages; memory.grow returns -1 past the limit.
-  @grow_wat """
-  (module
-    (memory (export "memory") 1)
-    (func (export "grow") (param $pages i32) (result i32)
-      (memory.grow (local.get $pages))))
-  """
-
-  defp wasm!(wat) do
-    {:ok, bytes} = Wasmex.Wat.to_wasm(wat)
-    bytes
-  end
-
-  defp start!(slug, wat, opts \\ []) do
-    {:ok, _pid} = Host.start_plugin(slug, wasm!(wat), opts)
+  defp start!(slug, opts \\ []) do
+    {:ok, _pid} = Host.start_plugin(slug, fixture_bytes(), opts)
     on_exit(fn -> Host.stop_plugin(slug) end)
     :ok
   end
 
-  describe "call/4 — JSON (ptr,len) boundary and pooling" do
-    test "compiles a module once and decodes a JSON result from (ptr, len)" do
-      start!("abi", @abi_wat)
-      assert {:ok, %{"first" => true}} = Host.call("abi", "handle", %{"event" => "ping"})
+  # The dispatcher payload shape (see Mydia.Plugins.build_payload/1). The fixture
+  # branches on the "event" key.
+  defp payload(event), do: %{"event" => event, "metadata" => %{}}
+
+  describe "call/4 — typed component boundary and pooling" do
+    test "calls the typed handler export and decodes the JSON result" do
+      start!("hc")
+      assert {:ok, %{"first" => true}} = Host.call("hc", "handle", payload("ok"))
     end
 
-    test "each invocation runs against a fresh store (no shared mutable state)" do
-      start!("abi-iso", @abi_wat)
-      # If the store/instance were reused, the second call would see $seen = 1
-      # and return {"first": false}. Fresh store per call => always true.
-      assert {:ok, %{"first" => true}} = Host.call("abi-iso", "handle", %{})
-      assert {:ok, %{"first" => true}} = Host.call("abi-iso", "handle", %{})
+    test "each invocation runs against a fresh instance (no shared mutable state)" do
+      start!("hc-iso")
+      # A reused instance would observe SEEN = true on the second call and
+      # return {"first": false}. Fresh instance per call => always true.
+      assert {:ok, %{"first" => true}} = Host.call("hc-iso", "handle", payload("ok"))
+      assert {:ok, %{"first" => true}} = Host.call("hc-iso", "handle", payload("ok"))
     end
 
-    test "serves concurrent invocations across the pool without crashing" do
-      start!("abi-conc", @abi_wat, pool_size: 4)
+    test "serves concurrent invocations across the pool without cross-talk" do
+      start!("hc-conc", pool_size: 4)
 
       results =
         1..16
-        |> Task.async_stream(fn _ -> Host.call("abi-conc", "handle", %{}) end,
+        |> Task.async_stream(fn _ -> Host.call("hc-conc", "handle", payload("ok")) end,
           max_concurrency: 8,
           timeout: :infinity
         )
@@ -96,67 +61,56 @@ defmodule Mydia.Plugins.HostTest do
     end
 
     test "calling an unknown slug returns a not_found error" do
-      assert {:error, %Error{type: :not_found}} = Host.call("nope", "handle", %{})
+      assert {:error, %Error{type: :not_found}} = Host.call("nope", "handle", payload("ok"))
+    end
+
+    test "rejects non-component bytes at start time with a clear error" do
+      assert {:error, %Error{type: :compile_failed}} =
+               Host.start_plugin("not-a-component", <<0, 1, 2, 3>>)
     end
   end
 
-  describe "sandbox (R1) — deny-by-default WASI" do
-    test "a guest with empty WASI options cannot access the filesystem" do
-      # Exercise the same deny-all store the Host builds, then probe for a
-      # preopened fd. errno 8 (EBADF) means no preopen => no filesystem.
-      {:ok, engine} =
-        Wasmex.Engine.new(Wasmex.EngineConfig.consume_fuel(%Wasmex.EngineConfig{}, true))
-
-      {:ok, store} =
-        Wasmex.Store.new_wasi(
-          %Wasmex.Wasi.WasiOptions{args: [], env: %{}, preopen: []},
-          %Wasmex.StoreLimits{memory_size: 1_000_000},
-          engine
-        )
-
-      :ok = Wasmex.StoreOrCaller.set_fuel(store, 1_000_000_000)
-      {:ok, module} = Wasmex.Module.compile(store, wasm!(@fs_probe_wat))
-      {:ok, pid} = Wasmex.start_link(%{store: store, module: module, imports: %{}})
-
-      assert {:ok, [errno]} = Wasmex.call_function(pid, "probe", [], 5_000)
-      assert errno != 0
-    end
-  end
-
-  describe "fuel metering (R2 / AE3)" do
-    test "force_fuel with a low limit traps a runaway guest without killing the host" do
-      start!("burn", @burn_wat)
-
-      assert {:error, %Error{type: type}} =
-               Host.call("burn", "handle", %{}, force_fuel: true, fuel_limit: 100_000)
-
-      assert type in [:trap, :timeout]
-
-      # Host pool survives and other plugins keep working.
-      start!("after-burn", @abi_wat)
-      assert {:ok, %{"first" => true}} = Host.call("after-burn", "handle", %{})
+  describe "sandbox (R11) — locked-down WASI-P2" do
+    test "a guest sees none of the host's ambient capabilities" do
+      start!("hc-env")
+      # The guest reads PATH (which the host process has); locked-down WASI must
+      # not leak it in.
+      assert {:ok, %{"env_denied" => true}} = Host.call("hc-env", "handle", payload("probe-env"))
     end
   end
 
   describe "memory limiting (StoreLimits)" do
-    test "growing past memory_limit_bytes fails at grow time" do
-      {:ok, engine} =
-        Wasmex.Engine.new(Wasmex.EngineConfig.consume_fuel(%Wasmex.EngineConfig{}, true))
+    # Wasmex 0.14 enforces StoreLimits.memory_size on a component store at
+    # *instantiation* (a component whose minimum linear memory exceeds the cap is
+    # refused), but not on runtime memory.grow — see Host's moduledoc residual.
+    # This guards the instantiation-time cap, which is the verified guarantee.
+    test "a memory cap below the component's minimum refuses the invocation" do
+      start!("hc-mem")
 
-      # One page (64KiB) is allowed; limit to ~128KiB so growing many pages fails.
-      {:ok, store} =
-        Wasmex.Store.new_wasi(
-          %Wasmex.Wasi.WasiOptions{args: [], env: %{}, preopen: []},
-          %Wasmex.StoreLimits{memory_size: 131_072},
-          engine
-        )
+      # 64 KiB (one page) is far below any wasip2 component's minimum memory.
+      assert {:error, %Error{type: :instantiate_failed}} =
+               Host.call("hc-mem", "handle", payload("ok"), memory_limit_bytes: 65_536)
 
-      :ok = Wasmex.StoreOrCaller.set_fuel(store, 1_000_000_000)
-      {:ok, module} = Wasmex.Module.compile(store, wasm!(@grow_wat))
-      {:ok, pid} = Wasmex.start_link(%{store: store, module: module, imports: %{}})
+      # A normal cap still serves the invocation.
+      assert {:ok, %{"first" => true}} =
+               Host.call("hc-mem", "handle", payload("ok"), memory_limit_bytes: 64 * 1024 * 1024)
+    end
+  end
 
-      # Growing by 100 pages (6.4MiB) exceeds the 128KiB cap => -1.
-      assert {:ok, [-1]} = Wasmex.call_function(pid, "grow", [100], 5_000)
+  describe "guest failure modes" do
+    test "a guest panic surfaces as a trap, and the pool survives" do
+      start!("hc-trap")
+      assert {:error, %Error{type: :trap}} = Host.call("hc-trap", "handle", payload("trap"))
+      assert {:ok, %{"first" => true}} = Host.call("hc-trap", "handle", payload("ok"))
+    end
+
+    test "a guest result error surfaces as a guest_error" do
+      start!("hc-err")
+
+      assert {:error, %Error{type: :guest_error, message: msg}} =
+               Host.call("hc-err", "handle", payload("error"))
+
+      assert msg =~ "intentional guest error"
     end
   end
 end
