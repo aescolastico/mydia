@@ -186,10 +186,17 @@ defmodule Mydia.Plugins.Connections do
   """
   @spec mark_errored(String.t(), [binary()]) :: non_neg_integer()
   def mark_errored(slug, user_ids) when is_binary(slug) and is_list(user_ids) do
+    # Drop ids that aren't well-formed UUIDs before the `in` query. A guest result
+    # can name arbitrary strings; on Postgres a non-UUID value raises a CastError
+    # against the binary_id column (SQLite stores ids as text and would silently
+    # not match). A malformed id could never match a real connection anyway, so
+    # filtering leaves the flipped count identical on both engines.
+    valid_ids = Enum.filter(user_ids, &match?({:ok, _}, Ecto.UUID.cast(&1)))
+
     {count, _} =
       Repo.update_all(
         from(c in Connections,
-          where: c.plugin_slug == ^slug and c.user_id in ^user_ids and c.status == "connected"
+          where: c.plugin_slug == ^slug and c.user_id in ^valid_ids and c.status == "connected"
         ),
         set: [status: "error", updated_at: DateTime.utc_now() |> DateTime.truncate(:microsecond)]
       )
