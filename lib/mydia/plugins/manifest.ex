@@ -44,13 +44,29 @@ defmodule Mydia.Plugins.Manifest do
 
   An optional top-level `settings_schema` declares the operator-editable config
   fields a plugin exposes. Each field is an object with `key`, `type`
-  (`string | url | secret | enum`), and optional `label`, `required`, and (for
-  `enum`) `options`. A `url` field may carry `grants_host: true`, which marks it
-  as **host-granting**: the host of the operator-configured value is added to the
-  plugin's effective `net:http` allowlist at config time (see
-  `Mydia.Plugins` host-grant recomputation). This lets a shared plugin reach a
-  server the operator owns without the hostname ever appearing in the manifest,
-  while the host — never the guest — computes the grant.
+  (`string | url | secret | enum | text`, where `text` renders as a multiline
+  textarea), and optional `label`, `required`, and (for `enum`) `options`. A
+  `url` field may carry `grants_host: true`, which marks it as **host-granting**:
+  the host of the operator-configured value is added to the plugin's effective
+  `net:http` allowlist at config time (see `Mydia.Plugins` host-grant
+  recomputation). This lets a shared plugin reach a server the operator owns
+  without the hostname ever appearing in the manifest, while the host — never the
+  guest — computes the grant.
+
+  ## Host version floor
+
+  An optional top-level `min_host_version` (a semantic version) declares the
+  lowest Mydia version the plugin supports. `Mydia.Plugins` refuses to activate a
+  plugin whose floor exceeds the running host with a clear "requires mydia ≥ X"
+  message, before instantiation — the friendly wrapper over wasmtime's hard
+  component link-time refusal (the WIT package version is the ABI version).
+  Absent means no floor (back-compat).
+
+  A field may also carry `visible_when`, a map of `controlling_key => value`
+  (value a string or list of strings) gating its visibility in the settings UI on
+  another field's current value — e.g. `"visible_when": {"target": "ntfy"}` shows
+  the field only when the `target` setting is `ntfy`. Each referenced key must
+  name a sibling field. This is presentation only; the host does not enforce it.
   """
 
   alias Mydia.Plugins.Error
@@ -64,7 +80,8 @@ defmodule Mydia.Plugins.Manifest do
           entrypoint: String.t(),
           events: [String.t()],
           capabilities: %{optional(String.t()) => [String.t()]},
-          settings_schema: [map()]
+          settings_schema: [map()],
+          min_host_version: String.t() | nil
         }
 
   defstruct slug: nil,
@@ -75,7 +92,8 @@ defmodule Mydia.Plugins.Manifest do
             entrypoint: "handle",
             events: [],
             capabilities: %{},
-            settings_schema: []
+            settings_schema: [],
+            min_host_version: nil
 
   # v1 event catalog (KTD3): a curated subset of existing event `type` strings
   # dispatched off the "events:all" bus.
@@ -101,8 +119,9 @@ defmodule Mydia.Plugins.Manifest do
   # to a curated projection in the `data_read` host function (U6).
   @data_namespaces ~w(media_item)
 
-  # Field types a `settings_schema` entry may declare.
-  @setting_types ~w(string url secret enum)
+  # Field types a `settings_schema` entry may declare. `text` renders as a
+  # multiline textarea (used for template fields); otherwise like `string`.
+  @setting_types ~w(string url secret enum text)
 
   @doc "Returns the v1 event catalog (allowed `events:subscribe` values)."
   @spec event_catalog() :: [String.t()]
@@ -141,7 +160,8 @@ defmodule Mydia.Plugins.Manifest do
 
     with :ok <- validate_required(map),
          {:ok, capabilities} <- validate_capabilities(capabilities),
-         {:ok, settings_schema} <- validate_settings_schema(settings_schema) do
+         {:ok, settings_schema} <- validate_settings_schema(settings_schema),
+         :ok <- validate_min_host_version(Map.get(map, "min_host_version")) do
       {:ok,
        %__MODULE__{
          slug: map["slug"],
@@ -152,7 +172,8 @@ defmodule Mydia.Plugins.Manifest do
          entrypoint: Map.get(map, "entrypoint", "handle"),
          events: Map.get(capabilities, "events:subscribe", []),
          capabilities: capabilities,
-         settings_schema: settings_schema
+         settings_schema: settings_schema,
+         min_host_version: Map.get(map, "min_host_version")
        }}
     end
   end
@@ -292,6 +313,25 @@ defmodule Mydia.Plugins.Manifest do
     end
   end
 
+  # An optional `min_host_version` declares the lowest Mydia version the plugin
+  # supports — the floor `Mydia.Plugins` enforces at activation (R7). It must be a
+  # valid semantic version when present; absent means "no floor" (back-compat).
+  defp validate_min_host_version(nil), do: :ok
+
+  defp validate_min_host_version(value) when is_binary(value) do
+    case Version.parse(value) do
+      {:ok, _} ->
+        :ok
+
+      :error ->
+        {:error,
+         Error.new(:invalid_manifest, "min_host_version must be a semantic version: #{value}")}
+    end
+  end
+
+  defp validate_min_host_version(_),
+    do: {:error, Error.new(:invalid_manifest, "min_host_version must be a string")}
+
   defp validate_settings_schema(nil), do: {:ok, []}
 
   defp validate_settings_schema(schema) when not is_list(schema),
@@ -299,7 +339,8 @@ defmodule Mydia.Plugins.Manifest do
 
   defp validate_settings_schema(schema) do
     with :ok <- validate_each_setting(schema),
-         :ok <- validate_unique_setting_keys(schema) do
+         :ok <- validate_unique_setting_keys(schema),
+         :ok <- validate_visible_when_keys(schema) do
       {:ok, schema}
     end
   end
@@ -339,10 +380,38 @@ defmodule Mydia.Plugins.Manifest do
            "enum setting #{key} must declare a non-empty options list"
          )}
 
+      not valid_visible_when?(Map.get(field, "visible_when")) ->
+        {:error,
+         Error.new(
+           :invalid_manifest,
+           "visible_when on #{key} must be an object mapping a setting key to a string or list of strings"
+         )}
+
       true ->
         :ok
     end
   end
+
+  # `visible_when` (optional) gates a field's visibility in the settings UI on
+  # the value of another setting: a map of `controlling_key => value`, where
+  # value is a string or a non-empty list of strings. Absent means always shown.
+  defp valid_visible_when?(nil), do: true
+
+  defp valid_visible_when?(map) when is_map(map) and map_size(map) > 0 do
+    Enum.all?(map, fn
+      {k, v} when is_binary(k) -> valid_visible_when_value?(v)
+      _ -> false
+    end)
+  end
+
+  defp valid_visible_when?(_), do: false
+
+  defp valid_visible_when_value?(v) when is_binary(v), do: true
+
+  defp valid_visible_when_value?(v) when is_list(v) and v != [],
+    do: Enum.all?(v, &is_binary/1)
+
+  defp valid_visible_when_value?(_), do: false
 
   defp valid_options?(options) when is_list(options) and options != [],
     do: Enum.all?(options, &(is_binary(&1) and not blank?(&1)))
@@ -356,6 +425,29 @@ defmodule Mydia.Plugins.Manifest do
       :ok
     else
       {:error, Error.new(:invalid_manifest, "settings_schema keys must be unique")}
+    end
+  end
+
+  # Every key referenced by a `visible_when` must name a sibling field, so the
+  # UI can resolve the controlling value. (Shape is checked per-field above.)
+  defp validate_visible_when_keys(schema) do
+    keys = MapSet.new(schema, &Map.get(&1, "key"))
+
+    schema
+    |> Enum.flat_map(fn field ->
+      case Map.get(field, "visible_when") do
+        m when is_map(m) -> Map.keys(m)
+        _ -> []
+      end
+    end)
+    |> Enum.find(&(&1 not in keys))
+    |> case do
+      nil ->
+        :ok
+
+      missing ->
+        {:error,
+         Error.new(:invalid_manifest, "visible_when references unknown setting key: #{missing}")}
     end
   end
 

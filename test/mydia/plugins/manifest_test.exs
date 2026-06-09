@@ -128,6 +128,29 @@ defmodule Mydia.Plugins.ManifestTest do
     end
   end
 
+  describe "parse/1 min_host_version (R7)" do
+    test "defaults to nil (no floor) when absent" do
+      assert {:ok, %Manifest{min_host_version: nil}} = Manifest.parse(valid_map())
+    end
+
+    test "stores a valid semantic version" do
+      assert {:ok, %Manifest{min_host_version: "1.2.0"}} =
+               Manifest.parse(valid_map(%{"min_host_version" => "1.2.0"}))
+    end
+
+    test "rejects a non-semver value" do
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} =
+               Manifest.parse(valid_map(%{"min_host_version" => "v1"}))
+
+      assert msg =~ "min_host_version"
+    end
+
+    test "rejects a non-string value" do
+      assert {:error, %Error{type: :invalid_manifest}} =
+               Manifest.parse(valid_map(%{"min_host_version" => 1}))
+    end
+  end
+
   describe "parse/1 settings_schema" do
     defp schema_map(schema) do
       valid_map(%{"settings_schema" => schema})
@@ -208,6 +231,50 @@ defmodule Mydia.Plugins.ManifestTest do
       map = schema_map(%{"key" => "x", "type" => "string"})
       assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
       assert msg =~ "list"
+    end
+
+    test "accepts a text field type" do
+      map = schema_map([%{"key" => "body_template", "type" => "text", "label" => "Body"}])
+      assert {:ok, %Manifest{settings_schema: [field]}} = Manifest.parse(map)
+      assert field["type"] == "text"
+    end
+
+    test "accepts a field with a valid visible_when (string and list values)" do
+      map =
+        schema_map([
+          %{"key" => "target", "type" => "enum", "options" => ["discord", "ntfy"]},
+          %{"key" => "ntfy_tags", "type" => "string", "visible_when" => %{"target" => "ntfy"}},
+          %{
+            "key" => "extra",
+            "type" => "string",
+            "visible_when" => %{"target" => ["ntfy", "custom"]}
+          }
+        ])
+
+      assert {:ok, %Manifest{settings_schema: schema}} = Manifest.parse(map)
+      assert length(schema) == 3
+    end
+
+    test "rejects visible_when referencing an unknown setting key" do
+      map =
+        schema_map([
+          %{"key" => "ntfy_tags", "type" => "string", "visible_when" => %{"nope" => "ntfy"}}
+        ])
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "visible_when"
+      assert msg =~ "nope"
+    end
+
+    test "rejects a malformed visible_when value" do
+      map =
+        schema_map([
+          %{"key" => "target", "type" => "enum", "options" => ["discord"]},
+          %{"key" => "x", "type" => "string", "visible_when" => %{"target" => 5}}
+        ])
+
+      assert {:error, %Error{type: :invalid_manifest, message: msg}} = Manifest.parse(map)
+      assert msg =~ "visible_when"
     end
   end
 

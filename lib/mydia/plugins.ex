@@ -556,6 +556,7 @@ defmodule Mydia.Plugins do
   defp activate(config) do
     with manifest_map when not is_nil(manifest_map) <- config.manifest,
          {:ok, manifest} <- Manifest.parse(manifest_map),
+         :ok <- check_host_version_floor(config.slug, manifest),
          {:ok, wasm} <- resolve_artifact(config) do
       descriptor =
         Plugin.from_manifest(manifest,
@@ -565,9 +566,22 @@ defmodule Mydia.Plugins do
           delivery: delivery_for(config)
         )
 
-      with {:ok, _pid} <-
-             Host.start_plugin(config.slug, wasm, imports: HostFunctions.imports_for(config.slug)) do
-        Registry.register(config.slug, descriptor)
+      case Host.start_plugin(config.slug, wasm, imports: HostFunctions.imports_for(config.slug)) do
+        {:ok, _pid} ->
+          Registry.register(config.slug, descriptor)
+
+        # wasmtime refuses a component built against a contract the host does not
+        # provide at instantiation. Translate that link-time failure into an
+        # actionable floor message rather than surfacing a raw NIF error (R7).
+        {:error, %Error{type: type}} when type in [:compile_failed, :instantiate_failed] ->
+          {:error,
+           Error.new(
+             :host_version,
+             "plugin #{config.slug} requires a newer Mydia host (incompatible plugin contract)"
+           )}
+
+        {:error, _} = err ->
+          err
       end
     else
       nil ->
@@ -575,6 +589,42 @@ defmodule Mydia.Plugins do
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  # Refuses activation when the manifest's declared minimum host version exceeds
+  # the running Mydia version, with an actionable message — before instantiation,
+  # so the admin gets "requires mydia ≥ X" rather than a cryptic link-time trap
+  # (R7). A manifest with no floor (the common case) always passes.
+  defp check_host_version_floor(slug, %Manifest{min_host_version: floor}) do
+    cond do
+      is_nil(floor) ->
+        :ok
+
+      host_meets_floor?(floor) ->
+        :ok
+
+      true ->
+        {:error,
+         Error.new(
+           :host_version,
+           "plugin #{slug} requires mydia >= #{floor} (host is #{host_version()})"
+         )}
+    end
+  end
+
+  defp host_meets_floor?(floor) do
+    case {Version.parse(host_version()), Version.parse(floor)} do
+      {{:ok, host}, {:ok, min}} -> Version.compare(host, min) != :lt
+      # If either side is unparseable, do not block activation on the floor.
+      _ -> true
+    end
+  end
+
+  defp host_version do
+    case Application.spec(:mydia, :vsn) do
+      vsn when is_list(vsn) -> List.to_string(vsn)
+      _ -> "0.0.0"
     end
   end
 
