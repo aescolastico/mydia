@@ -114,6 +114,10 @@ defmodule Mydia.Config.Schema do
       field :memory_limit_bytes, :integer, default: 67_108_864
       field :invocation_timeout_ms, :integer, default: 5000
       field :pool_size, :integer, default: 4
+      # Official plugin index (R13). HTTPS is the v1 trust anchor (KTD10), so all
+      # index/source URLs are validated to be https at config time.
+      field :index_url, :string, default: "https://plugins.getmydia.com/index.json"
+      field :extra_source_urls, {:array, :string}, default: []
     end
 
     embeds_one :flaresolverr, FlareSolverr, on_replace: :update, primary_key: false do
@@ -340,14 +344,46 @@ defmodule Mydia.Config.Schema do
       :fuel_limit,
       :memory_limit_bytes,
       :invocation_timeout_ms,
-      :pool_size
+      :pool_size,
+      :index_url,
+      :extra_source_urls
     ])
     |> validate_required([:fuel_enabled])
     |> validate_number(:fuel_limit, greater_than: 0)
     |> validate_number(:memory_limit_bytes, greater_than: 0)
     |> validate_number(:invocation_timeout_ms, greater_than: 0)
     |> validate_number(:pool_size, greater_than: 0)
+    |> validate_https_source(:index_url)
+    |> validate_https_sources(:extra_source_urls)
   end
+
+  # KTD10: the index/source transport is the v1 trust anchor, so a non-HTTPS
+  # source URL is rejected at config-validation time (no downgrade).
+  defp validate_https_source(changeset, field) do
+    case get_field(changeset, field) do
+      nil ->
+        changeset
+
+      "" ->
+        changeset
+
+      url ->
+        if https?(url), do: changeset, else: add_error(changeset, field, "must be an https URL")
+    end
+  end
+
+  defp validate_https_sources(changeset, field) do
+    urls = get_field(changeset, field) || []
+
+    if Enum.all?(urls, &https?/1) do
+      changeset
+    else
+      add_error(changeset, field, "all plugin source URLs must be https")
+    end
+  end
+
+  defp https?(url) when is_binary(url), do: URI.parse(url).scheme == "https"
+  defp https?(_), do: false
 
   defp flaresolverr_changeset(schema, attrs) do
     schema
