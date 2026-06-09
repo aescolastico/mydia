@@ -211,8 +211,8 @@ defmodule Mydia.MixProject do
       {:argon2_elixir, "~> 4.0"},
 
       # HTTP Clients
-      {:finch, "~> 0.16"},
-      {:req, "~> 0.4"},
+      {:finch, "~> 0.22"},
+      {:req, "~> 0.6"},
       # WebSocket client for relay connections
       {:websockex, "~> 0.4.3"},
 
