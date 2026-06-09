@@ -53,6 +53,15 @@ defmodule Mydia.Config.LoaderTest do
     File.rm(@test_yaml_path)
 
     on_exit(fn ->
+      # Delete any DOWNLOAD_CLIENT_* vars the test itself set — they are not in
+      # `original_env` (captured at setup), so a plain restore would leak them
+      # into the rest of the suite, where any config reload (e.g. the plugin
+      # lifecycle) would bake phantom download clients into the global
+      # runtime config.
+      System.get_env()
+      |> Enum.filter(fn {key, _} -> String.starts_with?(key, "DOWNLOAD_CLIENT_") end)
+      |> Enum.each(fn {key, _} -> System.delete_env(key) end)
+
       # Restore original environment
       Enum.each(original_env, fn {var, value} ->
         if value do

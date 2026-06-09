@@ -10,19 +10,19 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
   alias Mydia.Plugins.Registry
   alias Mydia.Settings
 
-  @guest_wat """
-  (module
-    (memory (export "memory") 1)
-    (data (i32.const 100) "{}")
-    (func (export "mydia_alloc") (param $len i32) (result i32) (i32.const 1024))
-    (func (export "handle") (param $ptr i32) (param $len i32) (result i64)
-      (i64.or (i64.shl (i64.const 100) (i64.const 32)) (i64.const 2))))
-  """
+  # A prebuilt wasm32-wasip2 component (the host only accepts components, not
+  # core-wasm modules) — see test/support/fixtures/plugins/host_test_fixture/.
+  @guest_fixture Path.join([
+                   __DIR__,
+                   "..",
+                   "..",
+                   "support",
+                   "fixtures",
+                   "plugins",
+                   "host_test_fixture.wasm"
+                 ])
 
-  defp guest_wasm do
-    {:ok, bytes} = Wasmex.Wat.to_wasm(@guest_wat)
-    bytes
-  end
+  defp guest_wasm, do: File.read!(@guest_fixture)
 
   defp manifest_map(slug, name) do
     %{
@@ -102,7 +102,12 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
 
     {:ok, token, _} = Mydia.Auth.Guardian.encode_and_sign(user)
 
+    # Approval/lifecycle events call Plugins.reload/0, which replaces the global
+    # :runtime_config — restore it so the pollution doesn't outlive the test.
+    original_runtime = Application.get_env(:mydia, :runtime_config)
+
     on_exit(fn ->
+      Application.put_env(:mydia, :runtime_config, original_runtime)
       Enum.each(Registry.list(), &Host.stop_plugin(&1.slug))
       Registry.clear()
     end)

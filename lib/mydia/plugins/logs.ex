@@ -55,11 +55,15 @@ defmodule Mydia.Plugins.Logs do
       # Under the sandbox, insert synchronously. Guard against a missing
       # connection ownership (e.g. a caller with no checked-out sandbox conn, or
       # the instance process running a guest `log` call): logging must never
-      # crash the invocation it is observing.
+      # crash the invocation it is observing. A missing owner raises on SQLite
+      # (DBConnection.OwnershipError) but *exits* on Postgres (Holder.checkout
+      # against a dead owner), so catch both.
       try do
         insert_logged(attrs)
       rescue
         e -> Logger.debug("plugin log skipped: #{Exception.message(e)}")
+      catch
+        :exit, reason -> Logger.debug("plugin log skipped: #{inspect(reason)}")
       end
     else
       Task.Supervisor.start_child(Mydia.TaskSupervisor, fn -> insert_logged(attrs) end)

@@ -13,7 +13,12 @@ defmodule Mydia.Plugins.NotifierIntegrationTest do
   setup do
     Registry.clear()
 
+    # Plugin lifecycle calls Plugins.reload/0, which replaces the global
+    # :runtime_config — restore it so the pollution doesn't outlive the test.
+    original_runtime = Application.get_env(:mydia, :runtime_config)
+
     on_exit(fn ->
+      Application.put_env(:mydia, :runtime_config, original_runtime)
       Host.stop_plugin(@slug)
       Registry.clear()
     end)
