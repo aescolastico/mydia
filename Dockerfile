@@ -46,9 +46,15 @@ RUN apk add --no-cache \
 # `rustup target add`. The same host toolchain still builds the p2p NIF.
 # Keep the default CARGO_HOME (/root/.cargo) so the existing registry/git cache
 # mounts on the compile steps below still apply.
+#
+# PINNED to 1.96 to match nix (nix/devShells/flake-module.nix) and CI. The guest
+# is a wasip2 component whose WASI world tracks the Rust version (1.96 -> wasi
+# 0.2.6); the runtime host is wasmex 0.14 / wasmtime 39, which only validates up
+# to wasi 0.2.6. A bleeding-edge `stable` emits wasi 0.2.9 and the bundled plugin
+# would fail to instantiate at runtime. Bump together with the nix toolchain.
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
+    | sh -s -- -y --default-toolchain 1.96.0 --profile minimal --no-modify-path && \
     rustup target add wasm32-wasip2
 
 # Increase hex timeout for slow networks/CI

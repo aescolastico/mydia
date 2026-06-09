@@ -30,9 +30,13 @@ RUN apk add --no-cache \
 # Rust via rustup so the wasm32 target is available for the bundled plugin
 # guests built by the :plugins mix compiler. The e2e entrypoint boots the app,
 # which seeds bundled plugins, so the artifact must build here too.
+#
+# PINNED to 1.96 to match nix and CI: the wasip2 guest's WASI world tracks the
+# Rust version (1.96 -> wasi 0.2.6), and the host wasmex 0.14 / wasmtime 39 only
+# validates up to wasi 0.2.6 — a newer `stable` (wasi 0.2.9) fails to instantiate.
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
+    | sh -s -- -y --default-toolchain 1.96.0 --profile minimal --no-modify-path && \
     rustup target add wasm32-wasip2
 
 # Set build environment
