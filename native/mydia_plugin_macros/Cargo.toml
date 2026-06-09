@@ -1,0 +1,15 @@
+[package]
+name = "mydia-plugin-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Proc-macros for the Mydia plugin SDK (the #[mydia::plugin] attribute). Re-exported by mydia-plugin-sdk; not used directly."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/getmydia/mydia"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

@@ -13,8 +13,10 @@
 wit_bindgen::generate!({
     world: "plugin",
     // The SDK is a library; downstream plugin crates invoke the export macro it
-    // re-exports, so generate it as `pub` with this crate as the bindings module.
+    // re-exports, so generate it as `pub` with this crate as the bindings module
+    // and a stable name the #[mydia::plugin] proc-macro can call.
     pub_export_macro: true,
+    export_macro_name: "export_plugin",
     default_bindings_module: "mydia_plugin_sdk",
 });
 
@@ -24,3 +26,7 @@ wit_bindgen::generate!({
 pub use mydia::plugin::host;
 pub use mydia::plugin::types;
 pub use exports::mydia::plugin::handler::Guest;
+
+/// The `#[mydia::plugin]` attribute macro: write a plain typed handler, get a
+/// component. See `mydia-plugin-macros`.
+pub use mydia_plugin_macros::plugin;
