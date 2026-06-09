@@ -38,10 +38,18 @@ RUN apk add --no-cache \
     npm \
     sqlite-dev \
     postgresql16-dev \
-    rust \
-    cargo \
     curl \
     ca-certificates
+
+# Rust via rustup (not apk) so the wasm32 target is available for the bundled
+# plugin guests built by the :plugins mix compiler — apk's rust cannot
+# `rustup target add`. The same host toolchain still builds the p2p NIF.
+# Keep the default CARGO_HOME (/root/.cargo) so the existing registry/git cache
+# mounts on the compile steps below still apply.
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
+    rustup target add wasm32-unknown-unknown
 
 # Increase hex timeout for slow networks/CI
 ENV HEX_HTTP_TIMEOUT=300000
@@ -93,6 +101,9 @@ COPY priv ./priv
 COPY lib ./lib
 COPY assets ./assets
 COPY native ./native
+# Bundled plugin guest sources — the :plugins compiler builds them to
+# priv/plugins/*.wasm during `mix compile` below (the .wasm is gitignored).
+COPY plugins ./plugins
 
 # Copy Flutter build output from flutter-builder stage
 COPY --from=flutter-builder /app/player/build/web ./priv/static/player
