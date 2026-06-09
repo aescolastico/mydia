@@ -98,6 +98,12 @@ interface host {
   /// Read a curated projection of a domain resource. Requires data:read scoped
   /// to the requested namespace.
   data-read: func(req: data-request) -> result<read-result, host-error>;
+
+  /// Emit a diagnostic line into the plugin's activity log. Ungated — every
+  /// guest may narrate without a capability grant. `level` is one of
+  /// "debug" | "info" | "warn" | "error" (unrecognized values fall back to
+  /// "info"). Fire-and-forget: no return, never traps the guest.
+  log: func(level: string, message: string);
 }
 
 /// The guest's event handler. The SDK's #[mydia::plugin] macro implements this

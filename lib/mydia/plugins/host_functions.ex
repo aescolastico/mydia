@@ -1,6 +1,6 @@
 defmodule Mydia.Plugins.HostFunctions do
   @moduledoc """
-  Elixir host functions exposed to WASM guests (U6).
+  Typed WIT host imports exposed to component guests (U4).
 
   Host functions are the plugin platform's capability model: a guest can only
   affect the outside world by calling an imported host function, and each one
@@ -9,29 +9,31 @@ defmodule Mydia.Plugins.HostFunctions do
   revoked capability takes effect immediately (a plugin can never widen its own
   grant — KTD6).
 
-  ## Host-function ABI (v1)
+  ## Component import ABI (v1)
 
-  Imports live under the `"mydia"` namespace. Each takes a request buffer and a
-  caller-provided response buffer:
+  Imports live under the `"mydia:plugin/host@1.0.0"` interface namespace and
+  receive/return **typed WIT records** — no linear-memory marshalling. Wasmex
+  hands each import closure the decoded record (atom-keyed map; `option<T>` as
+  `{:some, v}` / `:none`; `list<tuple>` as `[{k, v}]`) and marshals the closure's
+  return value back across the boundary:
 
-      (param req_ptr i32) (param req_len i32) (param resp_ptr i32) (param resp_cap i32)
-      (result i32)
+    * `http-request(outbound-request) -> result<outbound-response, host-error>`
+    * `data-read(data-request) -> result<read-result, host-error>`
+    * `log(string, string)` — ungated, fire-and-forget
 
-  The host reads the JSON request at `req_ptr`/`req_len` (via the callback
-  `caller`, never an outer store — KTD2), does the gated work, JSON-encodes the
-  response, and writes it into the guest-provided buffer at `resp_ptr` (capacity
-  `resp_cap`). The return value is:
+  A closure must return exactly the WIT-declared shape: `{:ok, record}` /
+  `{:error, host-error}` for the `result` functions. A wrong-typed return can
+  panic the wasmex NIF, so every closure is wrapped in a shim
+  (`typed_result/1`) that converts any raise into a well-formed `internal`
+  error variant rather than letting a bad value reach the boundary.
 
-    * `>= 0` — number of response bytes written (a JSON object; on a gated
-      failure this is an `{"error": ..., "type": ...}` envelope the guest can read)
-    * `-1` — response did not fit in `resp_cap` (guest should retry with a
-      larger buffer)
-    * `-2` — request JSON was malformed
+  ## Imports are built per invocation
 
-  Writing into a buffer the guest already allocated keeps the ABI re-entrancy
-  free: the host never calls back into a guest export from inside a host-function
-  callback. (This realizes KTD2's "host writes the response into guest memory"
-  intent without the re-entrant allocator hop.)
+  Unlike the core-wasm host (one shared imports map), the component host builds
+  the imports map per invocation through `imports_for/2`, which returns a builder
+  `(invocation_ctx -> map)`. The closures capture the invocation context
+  directly, so a guest `log` line correlates to its run without a shared
+  registry; the per-invocation log-line counter lives in the builder closure.
   """
 
   require Logger
@@ -43,97 +45,151 @@ defmodule Mydia.Plugins.HostFunctions do
   alias Mydia.Plugins.Net.Gate
   alias Mydia.Plugins.Plugin
 
-  @namespace "mydia"
-
-  @overflow -1
-  @malformed -2
-
-  @invocation_registry Mydia.Plugins.InvocationRegistry
+  # The WIT host interface namespace. The version suffix is the ABI version —
+  # wasmtime's linker matches it exactly at instantiation.
+  @namespace "mydia:plugin/host@1.0.0"
 
   # Per-invocation guest log-line cap. `log` is ungated, so a buggy or hostile
-  # guest could spam it in a loop and flood plugin_logs before retention fires;
-  # fuel bounds total work but not rows inserted. Past the cap we drop further
-  # lines and emit one sentinel (U3).
+  # guest could spam it in a loop and flood plugin_logs before retention fires.
+  # Past the cap we drop further lines and emit one sentinel.
   @log_line_cap 1000
 
   @doc """
-  Builds the wasmex imports map for a plugin pool.
+  Builds the per-invocation imports builder for a plugin pool.
 
-  The closures capture the `slug`; the current grants are looked up per call, so
-  revocation is honored without restarting the pool. `gate_opts` are host-side
-  options forwarded to the gate (e.g. the `:allow_private`/`:resolver` test
-  seams) — production passes none, so a guest can never influence them.
+  Returns a 1-arity function `(invocation_ctx -> imports_map)` that
+  `Mydia.Plugins.Host` invokes for each call, so the `log` closure can capture
+  the run's `invocation_id`/`test_run` directly. The closures capture `slug`; the
+  current grants are looked up per call, so revocation is honored without
+  restarting the pool. `gate_opts` are host-side options forwarded to the gate
+  (e.g. the `:allow_private`/`:resolver` test seams) — production passes none, so
+  a guest can never influence them.
   """
-  @spec imports_for(String.t(), keyword()) :: map()
+  @spec imports_for(String.t(), keyword()) :: (map() -> map())
   def imports_for(slug, gate_opts \\ []) when is_binary(slug) do
-    %{
-      @namespace => %{
-        "http_request" => host_fn(slug, &http_request/3, gate_opts),
-        "data_read" =>
-          host_fn(slug, fn plugin, req, _opts -> data_read(plugin, req) end, gate_opts),
-        "log" => log_fn(slug)
+    fn ctx ->
+      %{
+        @namespace => %{
+          "http-request" => {:fn, http_import(slug, gate_opts)},
+          "data-read" => {:fn, data_import(slug)},
+          "log" => {:fn, log_import(slug, ctx)}
+        }
       }
+    end
+  end
+
+  # ── http-request import ────────────────────────────────────────────────────
+
+  defp http_import(slug, gate_opts) do
+    fn req ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug),
+             {:ok, resp} <- http_request(plugin, from_outbound_request(req), gate_opts) do
+          {:ok, to_outbound_response(resp)}
+        end
+      end)
+    end
+  end
+
+  # WIT outbound-request record -> the string-key request map the gated logic
+  # expects. `headers` arrives as a list of {k, v} tuples; the gate wants a map.
+  defp from_outbound_request(req) do
+    %{
+      "url" => Map.get(req, :url, ""),
+      "method" => Map.get(req, :method, "GET"),
+      "headers" => req |> Map.get(:headers, []) |> Map.new(),
+      "body" => from_option(Map.get(req, :body))
     }
   end
 
+  defp to_outbound_response(%{"status" => status} = resp) do
+    %{
+      status: status,
+      ok: Map.get(resp, "ok", false),
+      body: to_option(Map.get(resp, "body")),
+      "body-encoding": to_option(Map.get(resp, "body_encoding"))
+    }
+  end
+
+  # ── data-read import ───────────────────────────────────────────────────────
+
+  defp data_import(slug) do
+    fn req ->
+      typed_result(fn ->
+        with {:ok, plugin} <- Plugins.get_plugin(slug),
+             {:ok, projection} <- data_read(plugin, from_data_request(req)) do
+          {:ok, {:"media-item", to_media_item(projection)}}
+        end
+      end)
+    end
+  end
+
+  defp from_data_request(req) do
+    %{"resource" => Map.get(req, :namespace, ""), "id" => Map.get(req, :id, "")}
+  end
+
+  # String-key projection map -> the WIT media-item record (kebab atom keys,
+  # option-wrapped optionals). Field set mirrors project_media_item/1 exactly.
+  defp to_media_item(p) do
+    %{
+      id: get(p, "id", ""),
+      "item-type": get(p, "type", ""),
+      title: get(p, "title", ""),
+      "original-title": to_option(get(p, "original_title")),
+      year: to_option(get(p, "year")),
+      "tmdb-id": to_option(get(p, "tmdb_id")),
+      "tvdb-id": to_option(get(p, "tvdb_id")),
+      "imdb-id": to_option(get(p, "imdb_id")),
+      overview: to_option(get(p, "overview")),
+      tagline: to_option(get(p, "tagline")),
+      runtime: to_option(get(p, "runtime")),
+      genres: get(p, "genres") || [],
+      "poster-path": to_option(get(p, "poster_path")),
+      "backdrop-path": to_option(get(p, "backdrop_path")),
+      rating: to_option(get(p, "rating"))
+    }
+  end
+
+  defp get(map, key, default \\ nil), do: Map.get(map, key, default)
+
+  # ── log import (ungated) ───────────────────────────────────────────────────
+
   # `log(level, message)` is ungated — every guest may emit diagnostics with no
-  # capability grant (U3, R1). The callback runs in the instance process, so
-  # `context.pid` resolves the active invocation via the InvocationRegistry. It
-  # returns 0 (no response bytes) and never raises into the guest.
-  defp log_fn(slug) do
-    {:fn, [:i32, :i32, :i32, :i32], [:i32],
-     fn %{memory: memory, caller: caller, pid: pid}, req_ptr, req_len, _resp_ptr, _resp_cap ->
-       handle_log(slug, pid, caller, memory, req_ptr, req_len)
-       0
-     end}
-  end
+  # capability grant (R1). Built per invocation, so `ctx` correlates the line to
+  # its run and the counter (captured here) caps lines within the invocation. It
+  # returns the empty list (the WIT function has no result) and never raises into
+  # the guest.
+  defp log_import(slug, ctx) do
+    counter = :counters.new(1, [:write_concurrency])
 
-  defp handle_log(slug, pid, caller, memory, req_ptr, req_len) do
-    with {:ok, req} <- decode_request(caller, memory, req_ptr, req_len) do
-      {invocation_id, counter, test_run} = invocation_for(pid, slug)
-      record_guest_line(slug, invocation_id, counter, test_run, req)
-    end
-
-    :ok
-  rescue
-    e ->
-      Logger.warning("plugin log for #{slug} raised: #{Exception.message(e)}")
-      :ok
-  end
-
-  defp invocation_for(pid, slug) do
-    case Registry.lookup(@invocation_registry, pid) do
-      [{_owner, {^slug, invocation_id, counter, test_run}}] ->
-        {invocation_id, counter, test_run}
-
-      _ ->
-        # Defensive: a `log` call with no live correlation entry. Store it
-        # uncorrelated rather than dropping or raising.
-        {"uncorrelated", nil, false}
+    fn level, message ->
+      try do
+        record_guest_line(slug, ctx, counter, level, message)
+        []
+      rescue
+        e ->
+          Logger.warning("plugin log for #{slug} raised: #{Exception.message(e)}")
+          []
+      end
     end
   end
 
-  # No counter (uncorrelated) — store without enforcing the cap.
-  defp record_guest_line(slug, invocation_id, nil, test_run, req) do
-    write_guest_line(slug, invocation_id, test_run, req)
-  end
-
-  defp record_guest_line(slug, invocation_id, counter, test_run, req) do
+  defp record_guest_line(slug, ctx, counter, level, message) do
     :counters.add(counter, 1, 1)
     n = :counters.get(counter, 1)
 
     cond do
       n <= @log_line_cap ->
-        write_guest_line(slug, invocation_id, test_run, req)
+        write_guest_line(slug, ctx, level, message)
 
       n == @log_line_cap + 1 ->
         Logs.create_async(%{
           slug: slug,
-          invocation_id: invocation_id,
+          invocation_id: ctx[:invocation_id],
           source: :host,
           level: :warn,
           message: "log limit reached (#{@log_line_cap} lines) — further guest lines dropped",
-          test_run: test_run
+          test_run: ctx[:test_run] || false
         })
 
       true ->
@@ -141,14 +197,14 @@ defmodule Mydia.Plugins.HostFunctions do
     end
   end
 
-  defp write_guest_line(slug, invocation_id, test_run, req) do
+  defp write_guest_line(slug, ctx, level, message) do
     Logs.create_async(%{
       slug: slug,
-      invocation_id: invocation_id,
+      invocation_id: ctx[:invocation_id],
       source: :guest,
-      level: normalize_level(Map.get(req, "level")),
-      message: to_string(Map.get(req, "message", "")),
-      test_run: test_run
+      level: normalize_level(level),
+      message: to_string(message),
+      test_run: ctx[:test_run] || false
     })
   end
 
@@ -165,62 +221,49 @@ defmodule Mydia.Plugins.HostFunctions do
 
   defp normalize_level(_), do: :info
 
-  # Wraps a {plugin, request_map, gate_opts} -> {:ok, map} | {:error, Error}
-  # function as a wasmex (req_ptr, req_len, resp_ptr, resp_cap) -> i32 import.
-  defp host_fn(slug, fun, gate_opts) do
-    {:fn, [:i32, :i32, :i32, :i32], [:i32],
-     fn %{memory: memory, caller: caller}, req_ptr, req_len, resp_ptr, resp_cap ->
-       with {:ok, req} <- decode_request(caller, memory, req_ptr, req_len),
-            {:ok, plugin} <- Plugins.get_plugin(slug) do
-         response = run(fun, plugin, req, gate_opts)
-         write_response(caller, memory, resp_ptr, resp_cap, response)
-       else
-         {:error, :malformed} ->
-           @malformed
+  # ── Return-type shim ───────────────────────────────────────────────────────
 
-         {:error, %Error{} = err} ->
-           write_response(caller, memory, resp_ptr, resp_cap, error_envelope(err))
-       end
-     end}
-  end
-
-  # A host function raising must never crash the Wasmex instance process running
-  # the guest — degrade to an error envelope the guest can read.
-  defp run(fun, plugin, req, gate_opts) do
-    case fun.(plugin, req, gate_opts) do
-      {:ok, map} -> map
-      {:error, %Error{} = err} -> error_envelope(err)
+  # Guarantees the import returns a well-formed WIT `result`: maps an Error to
+  # the matching host-error variant, and catches any raise so a wrong-typed value
+  # never reaches the boundary (which can NIF-panic).
+  defp typed_result(fun) do
+    case fun.() do
+      {:ok, record} -> {:ok, record}
+      {:error, %Error{} = err} -> {:error, host_error(err)}
     end
   rescue
     e ->
-      Logger.warning("host function for #{plugin.slug} raised: #{Exception.message(e)}")
-      error_envelope(Error.new(:unknown, "host function error"))
+      Logger.warning("host function raised: #{Exception.message(e)}")
+      {:error, {:internal, "host function error"}}
   end
 
-  defp decode_request(caller, memory, ptr, len) do
-    json = Wasmex.Memory.read_binary(caller, memory, ptr, len)
+  defp host_error(%Error{type: type, message: message}) do
+    tag =
+      case type do
+        :capability_denied -> :denied
+        :invalid_request -> :"invalid-request"
+        :invalid_output -> :"invalid-request"
+        :invalid_url -> :"invalid-request"
+        :not_found -> :"not-found"
+        :network -> :network
+        :network_error -> :network
+        :timeout -> :network
+        :too_large -> :network
+        :blocked -> :network
+        _ -> :internal
+      end
 
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> {:ok, map}
-      _ -> {:error, :malformed}
-    end
+    {tag, to_string(message)}
   end
 
-  defp write_response(caller, memory, resp_ptr, resp_cap, map) do
-    json = Jason.encode!(map)
-    len = byte_size(json)
+  # ── option<T> marshalling ──────────────────────────────────────────────────
 
-    if len <= resp_cap do
-      Wasmex.Memory.write_binary(caller, memory, resp_ptr, json)
-      len
-    else
-      @overflow
-    end
-  end
+  defp to_option(nil), do: :none
+  defp to_option(value), do: {:some, value}
 
-  defp error_envelope(%Error{type: type, message: message}) do
-    %{"error" => message, "type" => to_string(type)}
-  end
+  defp from_option({:some, value}), do: value
+  defp from_option(:none), do: nil
+  defp from_option(nil), do: nil
 
   # ── http_request (net:http) ───────────────────────────────────────────────
 
@@ -228,8 +271,9 @@ defmodule Mydia.Plugins.HostFunctions do
   Performs a gated outbound HTTP request on behalf of `plugin`.
 
   Enforces the plugin's `net:http` grant (deny-by-default) and routes through
-  `Mydia.Plugins.Net.Gate`. `request` is the guest's decoded JSON map:
-  `%{"url" => url, "method" => "POST", "headers" => %{}, "body" => "..."}`.
+  `Mydia.Plugins.Net.Gate`. `request` is the string-key map adapted from the WIT
+  `outbound-request`: `%{"url" => url, "method" => "POST", "headers" => %{},
+  "body" => "..."}`.
 
   `opts` are host-side only (e.g. the `:allow_private` test seam) — never derived
   from the guest request.

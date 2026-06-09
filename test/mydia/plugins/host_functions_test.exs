@@ -110,12 +110,17 @@ defmodule Mydia.Plugins.HostFunctionsTest do
     end
   end
 
-  describe "imports_for/1" do
-    test "builds the mydia namespace with both host functions" do
-      imports = HostFunctions.imports_for("tester")
+  describe "imports_for/2" do
+    test "builds a per-invocation builder for the typed host interface" do
+      builder = HostFunctions.imports_for("tester")
+      assert is_function(builder, 1)
 
-      assert %{"mydia" => %{"http_request" => {:fn, _, _, _}, "data_read" => {:fn, _, _, _}}} =
-               imports
+      imports = builder.(%{slug: "tester", invocation_id: "x", test_run: false})
+
+      assert %{"mydia:plugin/host@1.0.0" => fns} = imports
+
+      assert %{"http-request" => {:fn, f1}, "data-read" => {:fn, f2}, "log" => {:fn, f3}} = fns
+      assert is_function(f1, 1) and is_function(f2, 1) and is_function(f3, 2)
     end
   end
 end

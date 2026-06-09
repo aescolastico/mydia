@@ -3,35 +3,30 @@ defmodule Mydia.Plugins.SandboxEgressTest do
   # registers a descriptor in the app-wide Plugins.Registry.
   use ExUnit.Case, async: false
 
+  alias Mydia.Plugins.Error
   alias Mydia.Plugins.Host
   alias Mydia.Plugins.HostFunctions
   alias Mydia.Plugins.Plugin
   alias Mydia.Plugins.Registry
 
-  # A guest whose only import is the gated http_request host function. It calls
-  # it for a request and returns the host's JSON response envelope as its result.
-  # If the platform ever granted ambient network access, this guest would still
-  # have no way to use it — there is no socket API and no other import.
-  @egress_wat """
-  (module
-    (import "mydia" "http_request"
-      (func $http (param i32 i32 i32 i32) (result i32)))
-    (memory (export "memory") 2)
-    (data (i32.const 0) "{\\"url\\":\\"https://evil.test/\\"}")
-    (func (export "mydia_alloc") (param $len i32) (result i32) (i32.const 4096))
-    (func (export "handle") (param $ptr i32) (param $len i32) (result i64)
-      (local $n i32)
-      (local.set $n
-        (call $http (i32.const 0) (i32.const 28) (i32.const 1024) (i32.const 2048)))
-      (i64.or
-        (i64.shl (i64.const 1024) (i64.const 32))
-        (i64.extend_i32_u (local.get $n)))))
-  """
+  # A component whose only host import it exercises is the gated http-request
+  # function. Its "http" branch requests https://example.test/hook and surfaces
+  # the host's typed result error as the guest's own error string. There is no
+  # socket API and no other egress import, so even an ambient-network platform
+  # would leave this guest no way out.
+  @fixture Path.join([
+             __DIR__,
+             "..",
+             "..",
+             "support",
+             "fixtures",
+             "plugins",
+             "host_fns_fixture.wasm"
+           ])
 
-  defp wasm!(wat) do
-    {:ok, bytes} = Wasmex.Wat.to_wasm(wat)
-    bytes
-  end
+  defp fixture_bytes, do: File.read!(@fixture)
+
+  defp payload(event), do: %{"event" => event, "metadata" => %{}}
 
   setup do
     Registry.clear()
@@ -39,46 +34,44 @@ defmodule Mydia.Plugins.SandboxEgressTest do
     :ok
   end
 
-  test "R1: a guest with no net:http grant cannot reach the network — egress denied" do
-    slug = "egress-probe"
-
-    # Deny-by-default: registered with no granted capabilities.
+  defp start_probe!(slug, granted) do
     {:ok, _} =
       Registry.register(slug, %Plugin{
         slug: slug,
         name: slug,
-        granted_capabilities: %{},
+        granted_capabilities: granted,
         enabled: true
       })
 
     {:ok, _pid} =
-      Host.start_plugin(slug, wasm!(@egress_wat), imports: HostFunctions.imports_for(slug))
+      Host.start_plugin(slug, fixture_bytes(), imports: HostFunctions.imports_for(slug))
 
     on_exit(fn -> Host.stop_plugin(slug) end)
-
-    assert {:ok, %{"type" => "capability_denied"}} = Host.call(slug, "handle", %{})
+    :ok
   end
 
-  test "R1: the same guest reaches the network only once net:http is granted (but still gated)" do
+  test "R1: a guest with no net:http grant cannot reach the network — egress denied" do
+    slug = "egress-probe"
+    # Deny-by-default: registered with no granted capabilities.
+    start_probe!(slug, %{})
+
+    assert {:error, %Error{type: :guest_error, message: msg}} =
+             Host.call(slug, "handle", payload("http"))
+
+    assert msg =~ "Denied"
+  end
+
+  test "R1: the same guest is still gated once net:http is granted" do
     slug = "egress-granted"
-
-    # Granted discord.com, but the guest requests evil.test — the gate's
+    # Granted discord.com, but the guest requests example.test — the gate's
     # allowlist still denies it. Egress is never ambient; it is always gated.
-    {:ok, _} =
-      Registry.register(slug, %Plugin{
-        slug: slug,
-        name: slug,
-        granted_capabilities: %{"net:http" => ["discord.com"]},
-        enabled: true
-      })
+    start_probe!(slug, %{"net:http" => ["discord.com"]})
 
-    {:ok, _pid} =
-      Host.start_plugin(slug, wasm!(@egress_wat), imports: HostFunctions.imports_for(slug))
+    assert {:error, %Error{type: :guest_error, message: msg}} =
+             Host.call(slug, "handle", payload("http"))
 
-    on_exit(fn -> Host.stop_plugin(slug) end)
-
-    # net:http is granted, so it passes the capability check, but the requested
-    # host (evil.test) is off the allowlist — still denied at the gate.
-    assert {:ok, %{"type" => "capability_denied"}} = Host.call(slug, "handle", %{})
+    # Passed the capability check, but the requested host is off the allowlist.
+    assert msg =~ "Denied"
+    assert msg =~ "allowlist"
   end
 end

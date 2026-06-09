@@ -1,0 +1,25 @@
+# Host-function test fixture (U4). A component that imports the mydia:plugin/host
+# interface and exercises each host function, keyed by event type:
+#
+#   "log"   -> calls host::log, returns {"logged":true}
+#   "http"  -> calls host::http_request, returns {"status":n,"ok":bool} or errors
+#   "data"  -> calls host::data_read(media_item), returns {"title":...} or errors
+#
+# Built once to wasm32-wasip2 and checked in at ../host_fns_fixture.wasm.
+# Rebuild: cargo build --release --target wasm32-wasip2
+[package]
+name = "mydia-host-fns-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mydia-plugin-sdk = { path = "../../../../../native/mydia_plugin_sdk" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
