@@ -18,6 +18,17 @@ and keep it in sync in the same commit. The guest uses no WASI APIs (all egress
 is through the imported `mydia.http_request` / `mydia.data_read` host functions),
 so `wasm32-unknown-unknown` is sufficient — no `wasm32-wasip1` toolchain needed.
 
+## Linting
+
+The pre-commit hook runs `scripts/check-plugins.sh` (fmt + clippy against
+`wasm32-unknown-unknown`) on any `plugins/**.rs` change. Plugin commits do not
+touch the native NIF toolchain. Run it manually with:
+
+```sh
+scripts/check-plugins.sh        # fmt --check + clippy -D warnings
+scripts/check-plugins.sh --fix  # rewrite formatting
+```
+
 ## ABI
 
 - `mydia_alloc(len) -> ptr` — the host writes the event JSON here before calling `handle`.

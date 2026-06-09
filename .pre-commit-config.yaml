@@ -9,19 +9,27 @@ repos:
         files: '\.(?:ex|exs|heex)$'
         pass_filenames: false
 
-      # Rust (native NIFs)
+      # Rust (native NIFs) — only fires on native/ changes, never on plugin guests
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --manifest-path native/mydia_p2p/Cargo.toml -- --check
         language: system
-        files: '\.rs$'
+        files: '^native/.*\.rs$'
         pass_filenames: false
 
       - id: cargo-clippy
         name: cargo clippy
         entry: cargo clippy --manifest-path native/mydia_p2p/Cargo.toml -- -D warnings
         language: system
-        files: '\.rs$'
+        files: '^native/.*\.rs$'
+        pass_filenames: false
+
+      # Rust (WASM plugin guests) — checked against wasm32, not the host toolchain
+      - id: plugins-check
+        name: cargo fmt + clippy (wasm plugins)
+        entry: scripts/check-plugins.sh
+        language: system
+        files: '^plugins/.*\.rs$'
         pass_filenames: false
 
       # Flutter / Dart
