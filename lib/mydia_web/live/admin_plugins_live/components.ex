@@ -33,6 +33,11 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def capability_label("state:kv", _),
     do: "Store its own state across runs"
 
+  def capability_label("users:connections", _),
+    do:
+      "Read connected users' linked accounts and watch history, and mark items " <>
+        "watched on their behalf"
+
   def capability_label(other, values),
     do: "#{other}: #{join(values)}"
 
@@ -43,11 +48,13 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def capability_icon("data:read"), do: "hero-book-open"
   def capability_icon("surfaces:write"), do: "hero-pencil-square"
   def capability_icon("state:kv"), do: "hero-circle-stack"
+  def capability_icon("users:connections"), do: "hero-users"
   def capability_icon(_), do: "hero-key"
 
   @doc "True when a capability class carries privacy/security weight worth emphasizing."
   @spec sensitive_capability?(String.t()) :: boolean()
-  def sensitive_capability?(class), do: class in ["net:http", "data:read", "surfaces:write"]
+  def sensitive_capability?(class),
+    do: class in ["net:http", "data:read", "surfaces:write", "users:connections"]
 
   defp join([]), do: "(none)"
   defp join(values), do: Enum.join(values, ", ")

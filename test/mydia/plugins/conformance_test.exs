@@ -3,7 +3,10 @@ defmodule Mydia.Plugins.ConformanceTest do
   # PluginConfig rows that the activation path reads.
   use Mydia.DataCase, async: false
 
+  import Mydia.AccountsFixtures
+
   alias Mydia.Plugins
+  alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Host
   alias Mydia.Plugins.HostFunctions
@@ -134,6 +137,27 @@ defmodule Mydia.Plugins.ConformanceTest do
 
       assert {:ok, %{"found" => false}} =
                Host.call(slug, "h", %{"event" => "kv-get", "key" => "k"})
+    end
+
+    test "the guest round-trips connections-list, seeing identity but no token (U7)" do
+      slug = "connguest"
+      install_with_grant!(slug, %{"users:connections" => []})
+      user = user_fixture()
+
+      {:ok, _} =
+        Connections.connect(slug, user.id, %{
+          access_token: "never-leaks",
+          external_username: "carol"
+        })
+
+      bytes = File.read!(@fixture)
+      {:ok, _pid} = Host.start_plugin(slug, bytes, imports: HostFunctions.imports_for(slug))
+      on_exit(fn -> Host.stop_plugin(slug) end)
+
+      assert {:ok, result} =
+               Host.call(slug, "h", %{"event" => "connections-list"})
+
+      assert result["count"] == 1
     end
 
     test "a guest without state:kv is denied at the host boundary (U3)" do

@@ -2,7 +2,9 @@ defmodule Mydia.Plugins.HostFunctionsTest do
   use Mydia.DataCase, async: true
 
   import Mydia.MediaFixtures
+  import Mydia.AccountsFixtures
 
+  alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.HostFunctions
   alias Mydia.Plugins.Plugin
@@ -187,6 +189,57 @@ defmodule Mydia.Plugins.HostFunctionsTest do
     test "an empty key is rejected as invalid-request" do
       p = plugin(%{"state:kv" => []})
       assert {:error, %Error{type: :invalid_request}} = HostFunctions.kv_get(p, "")
+    end
+  end
+
+  describe "connections_list/1 (users:connections grant)" do
+    setup do
+      {:ok, _} =
+        Mydia.Settings.create_plugin_config(%{
+          slug: "tester",
+          name: "Tester",
+          version: "1.0.0",
+          source_url: "test",
+          manifest: %{
+            "slug" => "tester",
+            "name" => "Tester",
+            "version" => "1.0.0",
+            "capabilities" => %{
+              "events:subscribe" => ["media_item.added"],
+              "users:connections" => []
+            }
+          },
+          granted_capabilities: %{"users:connections" => []},
+          enabled: false
+        })
+
+      %{user: user_fixture()}
+    end
+
+    test "returns identity and status, never a token", %{user: user} do
+      {:ok, _} =
+        Connections.connect("tester", user.id, %{
+          access_token: "do-not-leak",
+          external_user_id: "ext-9",
+          external_username: "bob"
+        })
+
+      p = plugin(%{"users:connections" => []})
+      assert {:ok, [record]} = HostFunctions.connections_list(p)
+
+      assert record[:"user-id"] == user.id
+      assert record.status == :connected
+      assert record[:"external-username"] == {:some, "bob"}
+
+      # No field in the record carries token material.
+      refute inspect(record) =~ "do-not-leak"
+      refute Map.has_key?(record, :access_token)
+      refute Map.has_key?(record, :"access-token")
+    end
+
+    test "AE4: a plugin without users:connections is denied" do
+      p = plugin(%{"events:subscribe" => ["media_item.added"]})
+      assert {:error, %Error{type: :capability_denied}} = HostFunctions.connections_list(p)
     end
   end
 end

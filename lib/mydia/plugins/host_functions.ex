@@ -43,6 +43,7 @@ defmodule Mydia.Plugins.HostFunctions do
 
   alias Mydia.Media
   alias Mydia.Plugins
+  alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Error
   alias Mydia.Plugins.Kv
   alias Mydia.Plugins.Logs
@@ -528,9 +529,29 @@ defmodule Mydia.Plugins.HostFunctions do
   @spec connections_list(Plugin.t()) :: {:ok, [map()]} | {:error, Error.t()}
   def connections_list(%Plugin{} = plugin) do
     with :ok <- require_capability(plugin, "users:connections") do
-      {:error, Error.new(:internal, "connections-list not implemented")}
+      records =
+        plugin.slug
+        |> Connections.list_for_plugin()
+        |> Enum.map(&to_connection_record/1)
+
+      {:ok, records}
     end
   end
+
+  # Identity + status ONLY — the WIT `connection` record has no token field, so
+  # the token cannot cross the boundary by construction (R22).
+  defp to_connection_record(conn) do
+    %{
+      id: conn.id,
+      "user-id": conn.user_id,
+      "external-user-id": to_option(conn.external_user_id),
+      "external-username": to_option(conn.external_username),
+      status: connection_status_atom(conn.status)
+    }
+  end
+
+  defp connection_status_atom("error"), do: :error
+  defp connection_status_atom(_), do: :connected
 
   @doc false
   @spec connection_request(Plugin.t(), String.t(), map(), keyword()) ::

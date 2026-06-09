@@ -81,6 +81,7 @@ defmodule Mydia.Plugins.Manifest do
           events: [String.t()],
           capabilities: %{optional(String.t()) => [String.t()]},
           settings_schema: [map()],
+          connection: map() | nil,
           min_host_version: String.t() | nil
         }
 
@@ -93,6 +94,7 @@ defmodule Mydia.Plugins.Manifest do
             events: [],
             capabilities: %{},
             settings_schema: [],
+            connection: nil,
             min_host_version: nil
 
   # v1 event catalog (KTD3): a curated subset of existing event `type` strings
@@ -112,12 +114,13 @@ defmodule Mydia.Plugins.Manifest do
 
   # All taxonomy classes (reserved + implemented). The schema/approval UI know
   # all four so they need no breaking change when the reserved ones land.
-  @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv)
+  @known_classes ~w(events:subscribe net:http data:read surfaces:write state:kv users:connections)
 
   # Implemented; the rest are reserved-but-rejected (KTD8). `data:read` is
   # honored by the `data_read` host function; `state:kv` by the kv-* host
-  # functions (U3). `surfaces:write` stays reserved until U6.
-  @available_classes ~w(events:subscribe net:http data:read state:kv)
+  # functions (U3); `users:connections` by connections-list + the connect flow
+  # (U7). `surfaces:write` stays reserved until U6.
+  @available_classes ~w(events:subscribe net:http data:read state:kv users:connections)
 
   # v1 read catalog: the resource namespaces `data:read` may scope to. Each maps
   # to a curated projection in the `data_read` host function (U6).
@@ -162,9 +165,12 @@ defmodule Mydia.Plugins.Manifest do
     capabilities = Map.get(map, "capabilities", %{})
     settings_schema = Map.get(map, "settings_schema", [])
 
+    connection = Map.get(map, "connection")
+
     with :ok <- validate_required(map),
          {:ok, capabilities} <- validate_capabilities(capabilities),
          {:ok, settings_schema} <- validate_settings_schema(settings_schema),
+         :ok <- validate_connection(connection, capabilities),
          :ok <- validate_min_host_version(Map.get(map, "min_host_version")) do
       {:ok,
        %__MODULE__{
@@ -177,6 +183,7 @@ defmodule Mydia.Plugins.Manifest do
          events: Map.get(capabilities, "events:subscribe", []),
          capabilities: capabilities,
          settings_schema: settings_schema,
+         connection: connection,
          min_host_version: Map.get(map, "min_host_version")
        }}
     end
@@ -314,6 +321,68 @@ defmodule Mydia.Plugins.Manifest do
 
       bad ->
         {:error, Error.new(:invalid_manifest, "data:read namespace not in v1 catalog: #{bad}")}
+    end
+  end
+
+  # An optional `connection` descriptor declares a host-run OAuth device flow
+  # (U7/U8): a `type` and the URL templates the host drives. Every URL — code
+  # request, poll, and the user-facing verification link — must sit on the
+  # plugin's declared net:http hosts, so the verification URL rendered in trusted
+  # host UI can never become a phishing surface, and the host never fetches an
+  # un-allowlisted endpoint.
+  defp validate_connection(nil, _capabilities), do: :ok
+
+  defp validate_connection(conn, _capabilities) when not is_map(conn),
+    do: {:error, Error.new(:invalid_manifest, "connection must be an object")}
+
+  defp validate_connection(conn, capabilities) do
+    hosts = Map.get(capabilities, "net:http", [])
+
+    with :ok <- validate_connection_type(Map.get(conn, "type")),
+         :ok <- validate_connection_url(conn, "code_url", hosts, true),
+         :ok <- validate_connection_url(conn, "poll_url", hosts, true),
+         :ok <- validate_connection_url(conn, "verification_url", hosts, false) do
+      :ok
+    end
+  end
+
+  defp validate_connection_type("oauth_device"), do: :ok
+
+  defp validate_connection_type(other),
+    do:
+      {:error,
+       Error.new(
+         :invalid_manifest,
+         "connection.type must be \"oauth_device\", got: #{inspect(other)}"
+       )}
+
+  defp validate_connection_url(conn, key, hosts, required?) do
+    case Map.get(conn, key) do
+      nil ->
+        if required?,
+          do: {:error, Error.new(:invalid_manifest, "connection.#{key} is required")},
+          else: :ok
+
+      url when is_binary(url) ->
+        host = URI.parse(url).host
+
+        cond do
+          is_nil(host) ->
+            {:error, Error.new(:invalid_manifest, "connection.#{key} is not a valid URL: #{url}")}
+
+          host in hosts ->
+            :ok
+
+          true ->
+            {:error,
+             Error.new(
+               :invalid_manifest,
+               "connection.#{key} host #{host} must be declared in net:http"
+             )}
+        end
+
+      _ ->
+        {:error, Error.new(:invalid_manifest, "connection.#{key} must be a string URL")}
     end
   end
 

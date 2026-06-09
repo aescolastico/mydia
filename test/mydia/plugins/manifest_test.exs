@@ -311,4 +311,65 @@ defmodule Mydia.Plugins.ManifestTest do
       assert plugin.source == :index
     end
   end
+
+  describe "connection descriptor (U7)" do
+    defp with_connection(connection, hosts \\ ["api.simkl.com", "simkl.com"]) do
+      valid_map(%{
+        "capabilities" => %{
+          "events:subscribe" => ["media_item.added"],
+          "net:http" => hosts,
+          "users:connections" => []
+        },
+        "connection" => connection
+      })
+    end
+
+    test "a valid oauth_device descriptor parses and is carried on the manifest" do
+      conn = %{
+        "type" => "oauth_device",
+        "code_url" => "https://api.simkl.com/oauth/pin?client_id={client_id}",
+        "poll_url" => "https://api.simkl.com/oauth/pin/{user_code}?client_id={client_id}",
+        "verification_url" => "https://simkl.com/pin",
+        "client_id" => "abc"
+      }
+
+      assert {:ok, %Manifest{connection: ^conn}} = Manifest.parse(with_connection(conn))
+    end
+
+    test "a URL whose host is not in net:http is rejected" do
+      conn = %{
+        "type" => "oauth_device",
+        "code_url" => "https://evil.test/pin",
+        "poll_url" => "https://api.simkl.com/oauth/pin/{user_code}"
+      }
+
+      assert {:error, %{type: :invalid_manifest, message: msg}} =
+               Manifest.parse(with_connection(conn))
+
+      assert msg =~ "net:http"
+    end
+
+    test "an unknown connection type is rejected" do
+      conn = %{
+        "type" => "magic",
+        "code_url" => "https://api.simkl.com/pin",
+        "poll_url" => "https://api.simkl.com/pin/x"
+      }
+
+      assert {:error, %{type: :invalid_manifest}} = Manifest.parse(with_connection(conn))
+    end
+
+    test "a missing required url is rejected" do
+      conn = %{"type" => "oauth_device", "poll_url" => "https://api.simkl.com/pin/x"}
+
+      assert {:error, %{type: :invalid_manifest, message: msg}} =
+               Manifest.parse(with_connection(conn))
+
+      assert msg =~ "code_url"
+    end
+
+    test "users:connections is an available capability class" do
+      assert "users:connections" in Manifest.available_classes()
+    end
+  end
 end
