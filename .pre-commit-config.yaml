@@ -9,25 +9,28 @@ repos:
         files: '\.(?:ex|exs|heex)$'
         pass_filenames: false
 
-      # Rust (native NIFs) — only fires on native/ changes, never on plugin guests
+      # Rust (native NIFs) — only fires on native/ changes, never on plugin guests.
+      # Runs through the flake's pinned toolchain (devShells.rust) so commits
+      # don't depend on a host rustup, whose nix-wrapped linker can rot when its
+      # store path is garbage-collected.
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt --manifest-path native/mydia_p2p/Cargo.toml -- --check
+        entry: nix develop .#rust -c cargo fmt --manifest-path native/mydia_p2p/Cargo.toml -- --check
         language: system
         files: '^native/.*\.rs$'
         pass_filenames: false
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --manifest-path native/mydia_p2p/Cargo.toml -- -D warnings
+        entry: nix develop .#rust -c cargo clippy --manifest-path native/mydia_p2p/Cargo.toml -- -D warnings
         language: system
         files: '^native/.*\.rs$'
         pass_filenames: false
 
-      # Rust (WASM plugin guests) — checked against wasm32, not the host toolchain
+      # Rust (WASM plugin guests) — checked against wasm32 via the same toolchain
       - id: plugins-check
         name: cargo fmt + clippy (wasm plugins)
-        entry: scripts/check-plugins.sh
+        entry: nix develop .#rust -c scripts/check-plugins.sh
         language: system
         files: '^plugins/.*\.rs$'
         pass_filenames: false

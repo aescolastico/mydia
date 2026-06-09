@@ -21,13 +21,17 @@ so `wasm32-unknown-unknown` is sufficient — no `wasm32-wasip1` toolchain neede
 ## Linting
 
 The pre-commit hook runs `scripts/check-plugins.sh` (fmt + clippy against
-`wasm32-unknown-unknown`) on any `plugins/**.rs` change. Plugin commits do not
-touch the native NIF toolchain. Run it manually with:
+`wasm32-unknown-unknown`) on any `plugins/**.rs` change, using the flake's
+pinned Rust toolchain (`devShells.rust`) rather than a host rustup. Run it
+manually with:
 
 ```sh
-scripts/check-plugins.sh        # fmt --check + clippy -D warnings
-scripts/check-plugins.sh --fix  # rewrite formatting
+nix develop .#rust -c scripts/check-plugins.sh        # fmt --check + clippy -D warnings
+nix develop .#rust -c scripts/check-plugins.sh --fix  # rewrite formatting
 ```
+
+(Without nix, `scripts/check-plugins.sh` also works against a host rustup that
+has the `wasm32-unknown-unknown` target installed.)
 
 ## ABI
 

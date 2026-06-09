@@ -27,10 +27,13 @@ if [ ! -d "$PLUGINS_DIR" ]; then
   exit 0
 fi
 
-# Ensure the wasm target is available before we lint against it.
-if ! rustup target list --installed 2>/dev/null | grep -qx "$TARGET"; then
+# The wasm32 target ships with the pinned nix toolchain (devShells.rust). When
+# running outside nix with a host rustup, add it once: rustup target add $TARGET
+if command -v rustup >/dev/null 2>&1 &&
+   ! rustup target list --installed 2>/dev/null | grep -qx "$TARGET"; then
   echo "Rust target $TARGET is not installed. Run:"
   echo "  rustup target add $TARGET"
+  echo "  (or lint via: nix develop .#rust -c scripts/check-plugins.sh)"
   exit 1
 fi
 
