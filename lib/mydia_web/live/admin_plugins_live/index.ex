@@ -191,14 +191,15 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
   ## Debug logs (U6) — filter + live tail
 
-  def handle_event("filter_logs", %{"level" => level}, socket) do
+  def handle_event("filter_logs", params, socket) do
     detail = socket.assigns.detail
-    min_level = parse_level(level)
-    logs = Logs.recent(detail.slug, limit: @log_limit, min_level: min_level)
+    min_level = parse_level(params["level"])
+    query = String.trim(params["query"] || "")
+    logs = Logs.recent(detail.slug, limit: @log_limit, min_level: min_level, query: query)
 
     {:noreply,
      socket
-     |> assign(:detail, %{detail | min_level: min_level})
+     |> assign(:detail, %{detail | min_level: min_level, query: query})
      |> stream(:plugin_logs, logs, reset: true)}
   end
 
@@ -220,7 +221,8 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   def handle_info({:plugin_log, %Log{} = log}, socket) do
     detail = socket.assigns.detail
 
-    if detail && log.slug == detail.slug && level_visible?(log.level, detail.min_level) do
+    if detail && log.slug == detail.slug && level_visible?(log.level, detail.min_level) &&
+         query_visible?(log.message, detail.query) do
       {:noreply, stream_insert(socket, :plugin_logs, log, at: 0)}
     else
       {:noreply, socket}
@@ -251,6 +253,11 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   end
 
   defp level_visible?(level, min_level), do: Log.level_rank(level) >= Log.level_rank(min_level)
+
+  defp query_visible?(_message, query) when query in [nil, ""], do: true
+
+  defp query_visible?(message, query),
+    do: String.contains?(String.downcase(message || ""), String.downcase(query))
 
   defp apply_lifecycle(socket, fun, success_msg) do
     socket =
@@ -434,6 +441,7 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
       settings_schema: settings_schema_of(config),
       audit: audit,
       min_level: :debug,
+      query: "",
       test_events: Map.get(config.granted_capabilities || %{}, "events:subscribe", [])
     }
   end

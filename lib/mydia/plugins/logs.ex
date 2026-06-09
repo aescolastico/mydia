@@ -87,6 +87,8 @@ defmodule Mydia.Plugins.Logs do
       (`:debug`/`:info`/`:warn`/`:error`); defaults to `:debug` (all rows). The
       threshold is uniform across sources, so an `error`-level host trap marker
       always surfaces.
+    * `:query` - only return rows whose message contains this substring
+      (case-insensitive); blank/`nil` matches everything
     * `:limit` - maximum rows to return (default 200)
   """
   @spec recent(String.t(), keyword()) :: [Log.t()]
@@ -96,6 +98,7 @@ defmodule Mydia.Plugins.Logs do
     Log
     |> where([l], l.slug == ^slug)
     |> maybe_filter_level(Keyword.get(opts, :min_level))
+    |> maybe_filter_query(Keyword.get(opts, :query))
     |> order_by([l], desc: l.inserted_at, desc: l.id)
     |> limit(^limit)
     |> Repo.all()
@@ -107,6 +110,16 @@ defmodule Mydia.Plugins.Logs do
   defp maybe_filter_level(query, level) when level in [:info, :warn, :error] do
     keep = for l <- Log.levels(), Log.level_rank(l) >= Log.level_rank(level), do: l
     where(query, [l], l.level in ^keep)
+  end
+
+  defp maybe_filter_query(query, nil), do: query
+  defp maybe_filter_query(query, ""), do: query
+
+  defp maybe_filter_query(query, term) when is_binary(term) do
+    # lower() on both sides keeps the match case-insensitive and identical on
+    # SQLite and Postgres (Postgres LIKE is case-sensitive; ilike is PG-only).
+    pattern = "%" <> String.downcase(String.trim(term)) <> "%"
+    where(query, [l], like(fragment("lower(?)", l.message), ^pattern))
   end
 
   @doc """

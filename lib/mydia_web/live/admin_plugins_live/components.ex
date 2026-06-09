@@ -161,6 +161,10 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
           Review &amp; approve
         </.button>
 
+        <%!-- Always show the Settings button so its absence is never silently
+              confusing; when it can't open it renders disabled with a reason. --%>
+        <.settings_button :if={@plugin.read_only or @plugin.pending_approval} plugin={@plugin} />
+
         <div :if={not @plugin.read_only and not @plugin.pending_approval} class="join">
           <.button
             id={"toggle-#{@plugin.slug}"}
@@ -170,15 +174,7 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
           >
             {if(@plugin.enabled, do: "Disable", else: "Enable")}
           </.button>
-          <.button
-            :if={@plugin.has_settings}
-            id={"settings-#{@plugin.slug}"}
-            class="btn btn-ghost btn-sm join-item"
-            phx-click="edit_settings"
-            phx-value-slug={@plugin.slug}
-          >
-            Settings
-          </.button>
+          <.settings_button plugin={@plugin} />
           <.button
             id={"details-#{@plugin.slug}"}
             class="btn btn-ghost btn-sm join-item"
@@ -201,6 +197,53 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
     </div>
     """
   end
+
+  @doc """
+  The per-plugin Settings button.
+
+  Always rendered so its absence is never silently confusing. When the plugin's
+  settings can't be edited (env-sourced, awaiting approval, or no configurable
+  schema) it renders disabled inside a tooltip that explains why.
+  """
+  attr :plugin, :map, required: true
+
+  def settings_button(assigns) do
+    assigns = assign(assigns, :reason, settings_disabled_reason(assigns.plugin))
+
+    ~H"""
+    <div :if={@reason} class="tooltip tooltip-left join-item" data-tip={@reason}>
+      <.button
+        id={"settings-#{@plugin.slug}"}
+        class="btn btn-ghost btn-sm join-item"
+        disabled
+      >
+        Settings
+      </.button>
+    </div>
+    <.button
+      :if={!@reason}
+      id={"settings-#{@plugin.slug}"}
+      class="btn btn-ghost btn-sm join-item"
+      phx-click="edit_settings"
+      phx-value-slug={@plugin.slug}
+    >
+      Settings
+    </.button>
+    """
+  end
+
+  # Why the Settings button can't open, or nil when it can. Precedence matters:
+  # an env-sourced row is read-only regardless of approval or schema.
+  defp settings_disabled_reason(%{read_only: true}),
+    do: "Configured via environment variables; edit those to change settings"
+
+  defp settings_disabled_reason(%{pending_approval: true}),
+    do: "Approve this plugin before editing its settings"
+
+  defp settings_disabled_reason(%{has_settings: false}),
+    do: "This plugin has no configurable settings"
+
+  defp settings_disabled_reason(_plugin), do: nil
 
   @doc "A compact summary row for one store catalog entry."
   attr :entry, :map, required: true
@@ -288,77 +331,116 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
   def detail_modal(assigns) do
     ~H"""
     <div id="detail-modal" class="modal modal-open">
-      <div class="modal-box max-w-lg">
+      <div class="modal-box max-w-3xl">
         <h3 class="text-lg font-bold">{@detail.name}</h3>
 
-        <h4 class="font-semibold mt-4 mb-2">Granted capabilities</h4>
-        <.capability_list
-          :if={@detail.granted != %{}}
-          id="detail-capabilities"
-          capabilities={@detail.granted}
-        />
-        <p :if={@detail.granted == %{}} class="text-sm text-base-content/60">
-          No capabilities granted.
-        </p>
-        <.host_grant_note id="detail-host-grant" settings_schema={@detail.settings_schema} />
+        <div role="tablist" class="tabs tabs-lift mt-4">
+          <input
+            type="radio"
+            name="detail-tabs"
+            role="tab"
+            class="tab"
+            aria-label="Details"
+            id="detail-tab-details"
+            phx-update="ignore"
+            checked
+          />
+          <div role="tabpanel" class="tab-content border-base-300 bg-base-100 p-4">
+            <h4 class="font-semibold mb-2">Granted capabilities</h4>
+            <.capability_list
+              :if={@detail.granted != %{}}
+              id="detail-capabilities"
+              capabilities={@detail.granted}
+            />
+            <p :if={@detail.granted == %{}} class="text-sm text-base-content/60">
+              No capabilities granted.
+            </p>
+            <.host_grant_note id="detail-host-grant" settings_schema={@detail.settings_schema} />
 
-        <h4 class="font-semibold mt-4 mb-2">Recent network activity</h4>
-        <div id="detail-audit" class="text-xs space-y-1 max-h-32 overflow-y-auto">
-          <p :if={@detail.audit == []} class="text-base-content/60">No recorded requests.</p>
-          <div :for={event <- @detail.audit} class="flex justify-between gap-2 font-mono">
-            <span class="truncate">{event.metadata["host"]}</span>
-            <span class="text-base-content/60">{event.metadata["outcome"]}</span>
+            <h4 class="font-semibold mt-4 mb-2">Recent network activity</h4>
+            <div id="detail-audit" class="text-xs space-y-1 max-h-32 overflow-y-auto">
+              <p :if={@detail.audit == []} class="text-base-content/60">No recorded requests.</p>
+              <div :for={event <- @detail.audit} class="flex justify-between gap-2 font-mono">
+                <span class="truncate">{event.metadata["host"]}</span>
+                <span class="text-base-content/60">{event.metadata["outcome"]}</span>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div :if={@detail.enabled and @detail.test_events != []} class="mt-4">
-          <h4 class="font-semibold mb-2">Test</h4>
-          <form phx-submit="test_plugin" class="flex gap-2 items-center">
-            <input type="hidden" name="slug" value={@detail.slug} />
-            <select name="event" class="select select-bordered select-sm flex-1">
-              <option :for={ev <- @detail.test_events} value={ev}>{ev}</option>
-            </select>
-            <.button id="test-plugin" type="submit" class="btn btn-sm btn-primary">
-              Run test
-            </.button>
-          </form>
-          <p class="text-xs text-base-content/60 mt-1">
-            Fires a synthetic event so you can confirm the plugin works without waiting for real media.
-          </p>
-        </div>
+          <input
+            type="radio"
+            name="detail-tabs"
+            role="tab"
+            class="tab"
+            aria-label="Logs & Test"
+            id="detail-tab-logs"
+            phx-update="ignore"
+          />
+          <div role="tabpanel" class="tab-content border-base-300 bg-base-100 p-4">
+            <div :if={@detail.enabled and @detail.test_events != []} class="mb-4">
+              <h4 class="font-semibold mb-2">Test</h4>
+              <form phx-submit="test_plugin" class="flex gap-2 items-center">
+                <input type="hidden" name="slug" value={@detail.slug} />
+                <select name="event" class="select select-bordered select-sm flex-1">
+                  <option :for={ev <- @detail.test_events} value={ev}>{ev}</option>
+                </select>
+                <.button id="test-plugin" type="submit" class="btn btn-sm btn-primary">
+                  Run test
+                </.button>
+              </form>
+              <p class="text-xs text-base-content/60 mt-1">
+                Fires a synthetic event so you can confirm the plugin works without waiting for real media.
+              </p>
+            </div>
 
-        <div class="flex items-center justify-between mt-4 mb-2">
-          <h4 class="font-semibold">Activity log</h4>
-          <form id="log-filter-form" phx-change="filter_logs">
-            <select name="level" class="select select-bordered select-xs" id="log-level-filter">
-              <option
-                :for={lvl <- ~w(debug info warn error)}
-                value={lvl}
-                selected={to_string(@detail.min_level) == lvl}
+            <form
+              id="log-filter-form"
+              phx-change="filter_logs"
+              class="flex items-center gap-2 mb-2"
+            >
+              <h4 class="font-semibold mr-auto">Activity log</h4>
+              <input
+                type="search"
+                name="query"
+                value={@detail.query}
+                placeholder="Search messages…"
+                phx-debounce="300"
+                class="input input-bordered input-xs w-40"
+                id="log-search"
+              />
+              <select name="level" class="select select-bordered select-xs" id="log-level-filter">
+                <option
+                  :for={lvl <- ~w(debug info warn error)}
+                  value={lvl}
+                  selected={to_string(@detail.min_level) == lvl}
+                >
+                  {String.capitalize(lvl)}+
+                </option>
+              </select>
+            </form>
+            <div
+              id="plugin-logs"
+              phx-update="stream"
+              class="text-xs font-mono space-y-1 max-h-[28rem] overflow-y-auto rounded bg-base-200 p-2"
+            >
+              <p id="plugin-logs-empty" class="hidden only:block text-base-content/60">
+                No activity yet — add media or use Run test to confirm it works.
+              </p>
+              <div
+                :for={{dom_id, log} <- @logs}
+                id={dom_id}
+                class={["flex gap-2 items-baseline", log_row_class(log)]}
               >
-                {String.capitalize(lvl)}+
-              </option>
-            </select>
-          </form>
-        </div>
-        <div
-          id="plugin-logs"
-          phx-update="stream"
-          class="text-xs font-mono space-y-1 max-h-64 overflow-y-auto rounded bg-base-200 p-2"
-        >
-          <p id="plugin-logs-empty" class="hidden only:block text-base-content/60">
-            No activity yet — add media or use Run test to confirm it works.
-          </p>
-          <div
-            :for={{dom_id, log} <- @logs}
-            id={dom_id}
-            class={["flex gap-2 items-baseline", log_row_class(log)]}
-          >
-            <span class="opacity-50 shrink-0 w-5" title={to_string(log.source)}>
-              {source_tag(log.source)}
-            </span>
-            <span class="flex-1 break-all">{log.message}</span>
-            <span :if={log.test_run} class="badge badge-warning badge-xs shrink-0">test</span>
+                <span class="opacity-40 shrink-0 tabular-nums" title={log_full_time(log.inserted_at)}>
+                  {log_time(log.inserted_at)}
+                </span>
+                <span class="opacity-50 shrink-0 w-5" title={to_string(log.source)}>
+                  {source_tag(log.source)}
+                </span>
+                <span class="flex-1 break-all">{log.message}</span>
+                <span :if={log.test_run} class="badge badge-warning badge-xs shrink-0">test</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -381,6 +463,13 @@ defmodule MydiaWeb.AdminPluginsLive.Components do
     </div>
     """
   end
+
+  # Activity-log timestamp: compact HH:MM:SS for the row, full UTC on hover.
+  defp log_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M:%S")
+  defp log_time(_), do: ""
+
+  defp log_full_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S UTC")
+  defp log_full_time(_), do: ""
 
   # Compact source marker for an activity-log line.
   defp source_tag(:guest), do: "log"

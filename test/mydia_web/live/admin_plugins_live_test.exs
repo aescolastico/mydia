@@ -287,7 +287,8 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       assert render(view) =~ "Webhook / server URL"
     end
 
-    test "a plugin without a settings schema shows no Settings button", %{conn: conn} do
+    test "a plugin without a settings schema shows a disabled Settings button with a reason",
+         %{conn: conn} do
       seed_plugin("notifier", "Notifier",
         enabled: true,
         granted: %{"net:http" => ["discord.com"]}
@@ -295,7 +296,9 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
 
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
       assert has_element?(view, "#plugin-row-notifier")
-      refute has_element?(view, "#settings-notifier")
+      # The button is always present (never silently hidden) but disabled here.
+      assert has_element?(view, "#settings-notifier[disabled]")
+      assert render(view) =~ "no configurable settings"
     end
   end
 

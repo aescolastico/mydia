@@ -211,7 +211,7 @@ defmodule Mydia.Plugins do
   defp seed_or_reconcile({manifest, raw}) do
     case Settings.get_plugin_config_by_slug(manifest.slug) do
       nil -> seed_bundled(manifest, raw)
-      %Settings.PluginConfig{} = config -> reconcile_bundled(config)
+      %Settings.PluginConfig{} = config -> reconcile_bundled(config, manifest)
     end
   end
 
@@ -241,18 +241,46 @@ defmodule Mydia.Plugins do
     end
   end
 
-  # Null stale DB bytes on a pre-existing bundled row (built-in upgrade), leaving
-  # all admin state untouched. Non-bundled rows (e.g. an index plugin) are never
-  # touched, so their cached bytes survive.
-  #
+  # Reconcile a pre-existing bundled row against the current bundled manifest
+  # (built-in upgrade): refresh the stored manifest/metadata, then null any stale
+  # DB bytes. Admin state (enabled, grants, settings) is never touched. Non-bundled
+  # rows (e.g. an index plugin) are left entirely alone.
+  defp reconcile_bundled(%Settings.PluginConfig{source_url: "bundled"} = config, manifest) do
+    config
+    |> refresh_bundled_manifest(manifest)
+    |> reconcile_bundled_artifact()
+  end
+
+  defp reconcile_bundled(_config, _manifest), do: :ok
+
+  # Re-store the manifest and display metadata when the bundled definition has
+  # changed (e.g. a newly-added `settings_schema`). Runtime privilege is gated by
+  # `granted_capabilities`, not by the manifest, so refreshing the declared
+  # manifest never widens what an already-approved plugin may actually do.
+  defp refresh_bundled_manifest(config, manifest) do
+    attrs =
+      %{}
+      |> put_changed(:manifest, manifest_to_map(manifest), config.manifest)
+      |> put_changed(:name, manifest.name, config.name)
+      |> put_changed(:version, manifest.version, config.version)
+
+    with true <- attrs != %{},
+         {:ok, updated} <- Settings.update_plugin_config(config, attrs) do
+      updated
+    else
+      _ -> config
+    end
+  end
+
+  defp put_changed(attrs, _key, value, value), do: attrs
+  defp put_changed(attrs, key, value, _current), do: Map.put(attrs, key, value)
+
   # Guard against bricking: only null the DB bytes when a filesystem replacement
   # actually resolves (override or bundled artifact present). In an environment
   # where the .wasm was not built (a toolchain-less dev compile that skipped),
   # nulling would strip an enabled plugin's only artifact, so we keep the DB
   # bytes and log instead.
-  defp reconcile_bundled(
-         %Settings.PluginConfig{source_url: "bundled", wasm_module: wasm} = config
-       )
+  defp reconcile_bundled_artifact(%Settings.PluginConfig{wasm_module: wasm} = config)
        when is_binary(wasm) do
     case resolve_artifact(%{config | wasm_module: nil}) do
       {:ok, _bytes} ->
@@ -268,7 +296,7 @@ defmodule Mydia.Plugins do
     end
   end
 
-  defp reconcile_bundled(_config), do: :ok
+  defp reconcile_bundled_artifact(_config), do: :ok
 
   ## Install lifecycle (U8)
 

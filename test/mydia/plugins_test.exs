@@ -242,6 +242,44 @@ defmodule Mydia.PluginsTest do
     end
   end
 
+  describe "ensure_bundled/0 manifest reconciliation" do
+    test "refreshes a stale stored manifest while leaving admin state untouched" do
+      # A bundled row seeded before settings_schema was added to the JSON: its
+      # stored manifest lacks the field, so the Settings UI can't render.
+      {:ok, config} =
+        Settings.create_plugin_config(%{
+          slug: "webhook-notifier",
+          name: "Webhook Notifier",
+          version: "1.0.0",
+          source_url: "bundled",
+          enabled: true,
+          granted_capabilities: %{"net:http" => ["discord.com"]},
+          settings: %{"target" => "ntfy"},
+          manifest: %{
+            "slug" => "webhook-notifier",
+            "name" => "Webhook Notifier",
+            "version" => "1.0.0",
+            "capabilities" => %{"net:http" => ["discord.com"]}
+          }
+        })
+
+      refute get_in(config.manifest, ["settings_schema"])
+
+      Plugins.ensure_bundled()
+
+      refreshed = Settings.get_plugin_config_by_slug("webhook-notifier")
+      schema = get_in(refreshed.manifest, ["settings_schema"])
+
+      assert is_list(schema) and schema != []
+      assert Enum.any?(schema, &(&1["key"] == "webhook_url" and &1["grants_host"] == true))
+
+      # Admin state must survive a built-in upgrade.
+      assert refreshed.enabled
+      assert refreshed.granted_capabilities == %{"net:http" => ["discord.com"]}
+      assert refreshed.settings == %{"target" => "ntfy"}
+    end
+  end
+
   describe "detect_updates/2 (R14)" do
     defp config(slug, version), do: %Mydia.Settings.PluginConfig{slug: slug, version: version}
 
