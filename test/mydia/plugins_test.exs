@@ -66,10 +66,16 @@ defmodule Mydia.PluginsTest do
     # Lifecycle functions call Plugins.reload/0, which replaces the global
     # :runtime_config with a snapshot computed from this test's sandboxed DB
     # and current env — restore it so the pollution doesn't outlive the test.
+    # Delete (not put nil) when it was unset: readers rely on get_env's default.
     original_runtime = Application.get_env(:mydia, :runtime_config)
 
     on_exit(fn ->
-      Application.put_env(:mydia, :runtime_config, original_runtime)
+      if original_runtime do
+        Application.put_env(:mydia, :runtime_config, original_runtime)
+      else
+        Application.delete_env(:mydia, :runtime_config)
+      end
+
       Enum.each(Registry.list(), &Host.stop_plugin(&1.slug))
       Registry.clear()
     end)

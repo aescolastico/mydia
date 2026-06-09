@@ -27,8 +27,17 @@ defmodule Mydia.Plugins.ConformanceTest do
   setup do
     # Plugin lifecycle calls Plugins.reload/0, which replaces the global
     # :runtime_config — restore it so the pollution doesn't outlive the test.
+    # Delete (not put nil) when it was unset: readers rely on get_env's default.
     original_runtime = Application.get_env(:mydia, :runtime_config)
-    on_exit(fn -> Application.put_env(:mydia, :runtime_config, original_runtime) end)
+
+    on_exit(fn ->
+      if original_runtime do
+        Application.put_env(:mydia, :runtime_config, original_runtime)
+      else
+        Application.delete_env(:mydia, :runtime_config)
+      end
+    end)
+
     :ok
   end
 
