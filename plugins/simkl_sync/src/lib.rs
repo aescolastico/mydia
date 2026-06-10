@@ -23,7 +23,7 @@ use mydia_plugin_sdk::types::{
     Connection, ConnectionStatus, Event, ListItem, ListRequest, OutboundRequest, PlaybackProgress,
     ScheduleTick, WatchTarget,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use tinyjson::JsonValue;
 
 const DEFAULT_API_BASE: &str = "https://api.simkl.com";
@@ -127,9 +127,15 @@ fn pull(conn: &Connection, api_base: &str) -> Result<(BTreeSet<String>, usize, u
     }
 
     let date_from = stored.clone().unwrap_or_default();
+    // `episode_watched_at=yes&extended=full` makes shows/anime entries carry
+    // `seasons[].episodes[].watched_at` (KTD2); without them Simkl returns only a
+    // show-level summary that cannot produce per-episode coordinates. `date_from`
+    // keeps the pull incremental (R-PULL-3).
     let items_body = simkl_get(
         conn,
-        &format!("{api_base}/sync/all-items?date_from={date_from}"),
+        &format!(
+            "{api_base}/sync/all-items?date_from={date_from}&episode_watched_at=yes&extended=full"
+        ),
     )?;
     let items = parse_all_items(&items_body);
 
@@ -453,10 +459,27 @@ fn parse_activities(body: &str) -> Option<String> {
     obj.get("all").and_then(|v| v.get::<String>()).cloned()
 }
 
-/// Parses `/sync/all-items` into pulled items. Expects the simplified shape the
-/// host integration test produces and the production Simkl categories map onto:
-///   {"movies":[{"ids":{...},"watched_at":...}],
-///    "episodes":[{"ids":{...show ids...},"season":n,"episode":n,"watched_at":...}]}
+/// Parses Simkl's real `/sync/all-items?episode_watched_at=yes&extended=full`
+/// response into pulled items. The body has three top-level arrays — `shows`,
+/// `anime`, and `movies` (there is no flat `episodes` key) — with external ids
+/// nested under a `show`/`movie` sub-object and `tvdb`/`tmdb` encoded as strings:
+///
+/// ```text
+/// {
+///   "shows": [{ "status": "watching",
+///               "show": { "ids": { "tvdb": "320724", "tmdb": "67195" } },
+///               "seasons": [{ "number": 1,
+///                             "episodes": [{ "number": 1, "watched_at": "..." }] }] }],
+///   "anime": [ ...same shape as shows... ],
+///   "movies": [{ "status": "completed", "last_watched_at": "...",
+///                "movie": { "ids": { "imdb": "tt.." } } }]
+/// }
+/// ```
+///
+/// Shows/anime emit one `PulledItem` per episode that carries a `watched_at`
+/// (KTD4); movies emit one per `completed`/`last_watched_at` entry. A structural
+/// mismatch yields an empty list rather than erroring (see the plan's deferred
+/// hardening note).
 fn parse_all_items(body: &str) -> Vec<PulledItem> {
     let mut out = Vec::new();
 
@@ -464,22 +487,23 @@ fn parse_all_items(body: &str) -> Vec<PulledItem> {
         Ok(j) => j,
         Err(_) => return out,
     };
-    let obj = match json.get::<std::collections::HashMap<String, JsonValue>>() {
+    let obj = match json.get::<HashMap<String, JsonValue>>() {
         Some(o) => o,
         None => return out,
     };
 
-    if let Some(JsonValue::Array(movies)) = obj.get("movies") {
-        for m in movies {
-            if let Some(item) = parse_item(m, false) {
-                out.push(item);
+    // Shows and anime share the same nested `show`/`seasons` shape.
+    for key in ["shows", "anime"] {
+        if let Some(JsonValue::Array(entries)) = obj.get(key) {
+            for entry in entries {
+                parse_show_entry(entry, &mut out);
             }
         }
     }
 
-    if let Some(JsonValue::Array(episodes)) = obj.get("episodes") {
-        for e in episodes {
-            if let Some(item) = parse_item(e, true) {
+    if let Some(JsonValue::Array(movies)) = obj.get("movies") {
+        for entry in movies {
+            if let Some(item) = parse_movie_entry(entry) {
                 out.push(item);
             }
         }
@@ -488,42 +512,126 @@ fn parse_all_items(body: &str) -> Vec<PulledItem> {
     out
 }
 
-fn parse_item(value: &JsonValue, episode: bool) -> Option<PulledItem> {
-    let obj = value.get::<std::collections::HashMap<String, JsonValue>>()?;
-    let ids = obj
-        .get("ids")?
-        .get::<std::collections::HashMap<String, JsonValue>>()?;
+/// A show/anime entry: ids live under `show.ids`; each `seasons[].episodes[]`
+/// with a `watched_at` becomes one `PulledItem` carrying the show ids plus the
+/// season/episode coordinates (KTD4). Entries without watched episodes (or no
+/// `seasons`, e.g. when the extended params were not honored) contribute nothing.
+fn parse_show_entry(value: &JsonValue, out: &mut Vec<PulledItem>) {
+    let Some(obj) = value.get::<HashMap<String, JsonValue>>() else {
+        return;
+    };
+    let Some(ids) = sub_ids(obj, "show") else {
+        return;
+    };
+    let (imdb, tmdb, tvdb) = extract_ids(ids);
 
-    let imdb = ids.get("imdb").and_then(|v| v.get::<String>()).cloned();
-    let tmdb = ids.get("tmdb").and_then(num_i64);
-    let tvdb = ids.get("tvdb").and_then(num_i64);
-
-    let (season, episode_num) = if episode {
-        (
-            obj.get("season").and_then(num_i64).map(|n| n as u32),
-            obj.get("episode").and_then(num_i64).map(|n| n as u32),
-        )
-    } else {
-        (None, None)
+    let Some(JsonValue::Array(seasons)) = obj.get("seasons") else {
+        return;
     };
 
+    for season in seasons {
+        let Some(season_obj) = season.get::<HashMap<String, JsonValue>>() else {
+            continue;
+        };
+        let season_num = season_obj.get("number").and_then(coerce_u32);
+
+        let Some(JsonValue::Array(episodes)) = season_obj.get("episodes") else {
+            continue;
+        };
+
+        for ep in episodes {
+            let Some(ep_obj) = ep.get::<HashMap<String, JsonValue>>() else {
+                continue;
+            };
+            // Gate on per-episode `watched_at`: a "watching" show still carries
+            // watched episodes, and only those should pull (KTD4).
+            let Some(watched_at) = ep_obj
+                .get("watched_at")
+                .and_then(|v| v.get::<String>())
+                .cloned()
+            else {
+                continue;
+            };
+            let episode_num = ep_obj.get("number").and_then(coerce_u32);
+
+            out.push(PulledItem {
+                imdb: imdb.clone(),
+                tmdb,
+                tvdb,
+                season: season_num,
+                episode: episode_num,
+                watched_at: Some(watched_at),
+            });
+        }
+    }
+}
+
+/// A movie entry: ids live under `movie.ids`; a `completed` status or a present
+/// `last_watched_at` marks it watched (KTD4).
+fn parse_movie_entry(value: &JsonValue) -> Option<PulledItem> {
+    let obj = value.get::<HashMap<String, JsonValue>>()?;
+    let ids = sub_ids(obj, "movie")?;
+    let (imdb, tmdb, tvdb) = extract_ids(ids);
+
+    let completed = obj
+        .get("status")
+        .and_then(|v| v.get::<String>())
+        .map(|s| s == "completed")
+        .unwrap_or(false);
     let watched_at = obj
-        .get("watched_at")
+        .get("last_watched_at")
         .and_then(|v| v.get::<String>())
         .cloned();
+
+    if !completed && watched_at.is_none() {
+        return None;
+    }
 
     Some(PulledItem {
         imdb,
         tmdb,
         tvdb,
-        season,
-        episode: episode_num,
+        season: None,
+        episode: None,
         watched_at,
     })
 }
 
-fn num_i64(v: &JsonValue) -> Option<i64> {
-    v.get::<f64>().map(|n| *n as i64)
+/// Reads `entry[sub]["ids"]` as an object — the nested `show.ids` / `movie.ids`
+/// location Simkl uses on `/sync/all-items` (KTD1).
+fn sub_ids<'a>(
+    obj: &'a HashMap<String, JsonValue>,
+    sub: &str,
+) -> Option<&'a HashMap<String, JsonValue>> {
+    obj.get(sub)?
+        .get::<HashMap<String, JsonValue>>()?
+        .get("ids")?
+        .get::<HashMap<String, JsonValue>>()
+}
+
+/// Extracts the three external ids from an `ids` object, coercing `tvdb`/`tmdb`
+/// from either string or number form (KTD3).
+fn extract_ids(ids: &HashMap<String, JsonValue>) -> (Option<String>, Option<i64>, Option<i64>) {
+    let imdb = ids.get("imdb").and_then(|v| v.get::<String>()).cloned();
+    let tmdb = ids.get("tmdb").and_then(coerce_i64);
+    let tvdb = ids.get("tvdb").and_then(coerce_i64);
+    (imdb, tmdb, tvdb)
+}
+
+/// Accepts a JSON value that is either a number or a numeric string and yields
+/// `i64`. Simkl returns `tvdb`/`tmdb` as strings on `/sync/all-items` but as
+/// numbers elsewhere; the coercion stays bidirectional so a future shape flip
+/// does not reintroduce the bug (KTD3).
+fn coerce_i64(v: &JsonValue) -> Option<i64> {
+    match v {
+        JsonValue::Number(n) => Some(*n as i64),
+        JsonValue::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn coerce_u32(v: &JsonValue) -> Option<u32> {
+    coerce_i64(v).and_then(|n| u32::try_from(n).ok())
 }
 
 fn parse_string_array(body: &str) -> Vec<String> {
@@ -644,6 +752,54 @@ mod tests {
         assert!(body.contains("\"episodes\":[{\"ids\":{\"tvdb\":555},\"season\":1,\"episode\":2}]"));
     }
 
+    // A trimmed but structurally faithful capture of Simkl's real
+    // `/sync/all-items?episode_watched_at=yes&extended=full` response: three
+    // top-level arrays, ids nested under `show`/`movie`, string-typed tvdb/tmdb,
+    // and per-episode `watched_at` under `seasons[].episodes[]`.
+    const REAL_ALL_ITEMS: &str = r#"{
+        "shows": [
+            {
+                "status": "watching",
+                "show": { "title": "Sherlock", "ids": { "tvdb": "176941", "tmdb": "19885" } },
+                "seasons": [
+                    {
+                        "number": 1,
+                        "episodes": [
+                            { "number": 1, "watched_at": "2013-12-01T20:06:00Z" },
+                            { "number": 2, "watched_at": "2013-12-02T20:06:00Z" }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "anime": [
+            {
+                "status": "watching",
+                "show": { "title": "Cowboy Bebop", "ids": { "tvdb": "76885", "tmdb": "30991" } },
+                "seasons": [
+                    { "number": 1, "episodes": [ { "number": 1, "watched_at": "2014-01-01T00:00:00Z" } ] }
+                ]
+            }
+        ],
+        "movies": [
+            {
+                "status": "completed",
+                "last_watched_at": "2014-02-01T00:00:00Z",
+                "movie": { "title": "Inception", "ids": { "imdb": "tt1375666", "tmdb": "27205" } }
+            }
+        ]
+    }"#;
+
+    // A trimmed capture of Simkl's real `/sync/activities`: a top-level `all`
+    // alongside nested per-type objects and a `null` sibling.
+    const REAL_ACTIVITIES: &str = r#"{
+        "all": "2024-06-01T00:00:00Z",
+        "tv_shows": { "all": "2024-05-30T00:00:00Z", "rated_at": "2024-05-29T00:00:00Z" },
+        "anime": { "all": "2024-05-28T00:00:00Z" },
+        "movies": { "all": "2024-05-27T00:00:00Z" },
+        "settings": { "all": null }
+    }"#;
+
     #[test]
     fn parse_activities_reads_the_all_timestamp() {
         assert_eq!(
@@ -654,13 +810,189 @@ mod tests {
     }
 
     #[test]
-    fn parse_all_items_reads_movies_and_episodes() {
-        let body = r#"{"movies":[{"ids":{"imdb":"tt100"}}],
-                       "episodes":[{"ids":{"tvdb":555},"season":1,"episode":2}]}"#;
+    fn parse_activities_reads_all_from_real_body() {
+        // The real body's nested objects and `null` siblings must not abort the
+        // top-level `all` read (R-PULL-3).
+        assert_eq!(
+            parse_activities(REAL_ACTIVITIES),
+            Some("2024-06-01T00:00:00Z".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_activities_returns_none_without_top_level_all() {
+        // A body that only has nested per-type `all`s (no top-level one) has no
+        // cursor.
+        assert_eq!(
+            parse_activities(r#"{"tv_shows":{"all":"2024-05-30T00:00:00Z"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_all_items_reads_a_show_with_string_tvdb() {
+        // AE1: a shows entry with a string tvdb and two watched episodes yields
+        // two items with the tvdb coerced to i64 and the right coordinates.
+        let body = r#"{
+            "shows": [
+                {
+                    "show": { "ids": { "tvdb": "320724" } },
+                    "seasons": [
+                        { "number": 1, "episodes": [
+                            { "number": 1, "watched_at": "2013-12-01T20:06:00Z" },
+                            { "number": 2, "watched_at": "2013-12-02T20:06:00Z" }
+                        ] }
+                    ]
+                }
+            ]
+        }"#;
         let items = parse_all_items(body);
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].key(), "imdb:tt100");
-        assert_eq!(items[1].key(), "tvdb:555:s1e2");
+        assert_eq!(items[0].tvdb, Some(320724));
+        assert_eq!(items[0].season, Some(1));
+        assert_eq!(items[0].episode, Some(1));
+        assert_eq!(items[0].key(), "tvdb:320724:s1e1");
+        assert_eq!(items[1].key(), "tvdb:320724:s1e2");
+    }
+
+    #[test]
+    fn parse_all_items_reads_anime_like_a_show() {
+        let body = r#"{
+            "anime": [
+                {
+                    "show": { "ids": { "tvdb": "76885" } },
+                    "seasons": [ { "number": 1, "episodes": [ { "number": 4, "watched_at": "2014-01-01T00:00:00Z" } ] } ]
+                }
+            ]
+        }"#;
+        let items = parse_all_items(body);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key(), "tvdb:76885:s1e4");
+        assert_eq!(items[0].watched_at.as_deref(), Some("2014-01-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn parse_all_items_reads_a_completed_movie() {
+        let body = r#"{
+            "movies": [
+                {
+                    "status": "completed",
+                    "last_watched_at": "2014-02-01T00:00:00Z",
+                    "movie": { "ids": { "imdb": "tt1375666" } }
+                }
+            ]
+        }"#;
+        let items = parse_all_items(body);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].season, None);
+        assert_eq!(items[0].episode, None);
+        assert_eq!(items[0].key(), "imdb:tt1375666");
+        assert_eq!(items[0].watched_at.as_deref(), Some("2014-02-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn parse_all_items_skips_episodes_without_watched_at() {
+        // Only watched episodes pull; an episode with no `watched_at` is skipped.
+        let body = r#"{
+            "shows": [
+                {
+                    "show": { "ids": { "tvdb": "1" } },
+                    "seasons": [ { "number": 1, "episodes": [
+                        { "number": 1, "watched_at": "2013-12-01T20:06:00Z" },
+                        { "number": 2 }
+                    ] } ]
+                }
+            ]
+        }"#;
+        let items = parse_all_items(body);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].episode, Some(1));
+    }
+
+    #[test]
+    fn parse_all_items_accepts_numeric_ids_too() {
+        // KTD3 both directions: tvdb/tmdb supplied as JSON numbers still parse.
+        let body = r#"{
+            "shows": [
+                {
+                    "show": { "ids": { "tvdb": 320724, "tmdb": 67195 } },
+                    "seasons": [ { "number": 1, "episodes": [ { "number": 1, "watched_at": "2013-12-01T20:06:00Z" } ] } ]
+                }
+            ],
+            "movies": [
+                { "status": "completed", "last_watched_at": "2014-02-01T00:00:00Z", "movie": { "ids": { "tmdb": 27205 } } }
+            ]
+        }"#;
+        let items = parse_all_items(body);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].tvdb, Some(320724));
+        assert_eq!(items[0].tmdb, Some(67195));
+        assert_eq!(items[1].tmdb, Some(27205));
+    }
+
+    #[test]
+    fn parse_all_items_show_without_seasons_contributes_nothing() {
+        // Params absent / nothing watched: a show with no `seasons` yields no
+        // items and does not error.
+        let body = r#"{
+            "shows": [ { "status": "watching", "show": { "ids": { "tvdb": "1" } } } ]
+        }"#;
+        assert!(parse_all_items(body).is_empty());
+    }
+
+    #[test]
+    fn parse_all_items_entry_missing_ids_is_skipped() {
+        // An entry with no ids is skipped rather than panicking.
+        let body = r#"{
+            "shows": [ { "show": { "title": "No Ids" },
+                        "seasons": [ { "number": 1, "episodes": [ { "number": 1, "watched_at": "t" } ] } ] } ],
+            "movies": [ { "status": "completed", "movie": { "title": "No Ids" } } ]
+        }"#;
+        assert!(parse_all_items(body).is_empty());
+    }
+
+    #[test]
+    fn parse_all_items_pulled_key_matches_push_side() {
+        // Echo-guard alignment: the pulled episode's key equals the key the push
+        // side computes for the same episode coordinates.
+        let body = r#"{
+            "shows": [
+                {
+                    "show": { "ids": { "tvdb": "555" } },
+                    "seasons": [ { "number": 1, "episodes": [ { "number": 2, "watched_at": "t" } ] } ]
+                }
+            ]
+        }"#;
+        let pulled = parse_all_items(body);
+        assert_eq!(pulled.len(), 1);
+
+        let push = PushItem::from_progress(&PlaybackProgress {
+            user_id: "u".into(),
+            item_type: "episode".into(),
+            media_item_id: None,
+            episode_id: None,
+            tmdb_id: None,
+            tvdb_id: Some(555),
+            imdb_id: None,
+            season_number: Some(1),
+            episode_number: Some(2),
+            watched: true,
+            last_watched_at: None,
+            updated_at: "t".into(),
+        })
+        .unwrap();
+
+        assert_eq!(pulled[0].key(), push.key);
+        assert_eq!(pulled[0].key(), "tvdb:555:s1e2");
+    }
+
+    #[test]
+    fn parse_all_items_real_capture_is_non_empty() {
+        // The direct regression for "pulled 0 against 179 items": the real
+        // multi-type response must produce a non-empty list.
+        let items = parse_all_items(REAL_ALL_ITEMS);
+        // 2 (Sherlock eps) + 1 (anime ep) + 1 (movie) = 4.
+        assert_eq!(items.len(), 4);
     }
 
     #[test]

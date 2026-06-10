@@ -3,6 +3,7 @@ defmodule Mydia.Plugins.SimklSyncIntegrationTest do
   # rows the connected invocation reads (Postgres sandbox rule).
   use Mydia.DataCase, async: false
 
+  import Ecto.Query
   import Mydia.AccountsFixtures
 
   alias Mydia.Media
@@ -11,6 +12,7 @@ defmodule Mydia.Plugins.SimklSyncIntegrationTest do
   alias Mydia.Plugins.Connections
   alias Mydia.Plugins.Host
   alias Mydia.Plugins.HostFunctions
+  alias Mydia.Plugins.Kv
   alias Mydia.Plugins.Plugin
   alias Mydia.Plugins.Registry
   alias Mydia.Settings
@@ -100,9 +102,35 @@ defmodule Mydia.Plugins.SimklSyncIntegrationTest do
     item
   end
 
+  # A TV show with a single episode, matched by tvdb id + season/episode
+  # coordinates — the shape Simkl's shows/anime entries resolve against.
+  defp show_with_episode!(tvdb, season, episode) do
+    {:ok, show} =
+      Media.create_media_item(
+        %{
+          title: "Show #{tvdb}",
+          type: "tv_show",
+          year: 2024,
+          tvdb_id: tvdb
+        },
+        skip_episode_refresh: true
+      )
+
+    {:ok, ep} =
+      Media.create_episode(%{
+        media_item_id: show.id,
+        season_number: season,
+        episode_number: episode,
+        title: "S#{season}E#{episode}"
+      })
+
+    {show, ep}
+  end
+
   test "pulls Simkl history into mydia and pushes local watches back, with echo guard",
        %{bypass: bypass, user: user} do
     pull_movie = movie!("ttPULL")
+    {_show, pull_episode} = show_with_episode!(320_724, 1, 1)
     push_movie = movie!("ttPUSH")
 
     # A local watch to push.
@@ -115,11 +143,39 @@ defmodule Mydia.Plugins.SimklSyncIntegrationTest do
     test_pid = self()
 
     Bypass.expect(bypass, "GET", "/sync/activities", fn conn ->
-      Plug.Conn.resp(conn, 200, ~s({"all":"2024-06-01T00:00:00Z"}))
+      # Real Simkl shape: a top-level `all` alongside nested per-type objects and
+      # a `null` sibling — the cursor read must not choke on those.
+      Plug.Conn.resp(conn, 200, ~s({
+        "all": "2024-06-01T00:00:00Z",
+        "tv_shows": {"all": "2024-05-30T00:00:00Z"},
+        "movies": {"all": "2024-05-27T00:00:00Z"},
+        "settings": {"all": null}
+      }))
     end)
 
     Bypass.expect(bypass, "GET", "/sync/all-items", fn conn ->
-      Plug.Conn.resp(conn, 200, ~s({"movies":[{"ids":{"imdb":"ttPULL"}}],"episodes":[]}))
+      # The request must carry the episode/extended params, or shows come back as
+      # show-level summaries with no per-episode coordinates (regression guard for
+      # the pull URL).
+      send(test_pid, {:all_items_query, conn.query_string})
+
+      # Real Simkl shape: top-level shows/anime/movies, ids nested under
+      # show/movie, string-typed tvdb, per-episode watched_at under seasons[].
+      Plug.Conn.resp(conn, 200, ~s({
+        "shows": [
+          {
+            "status": "watching",
+            "show": {"title": "Show 320724", "ids": {"tvdb": "320724"}},
+            "seasons": [
+              {"number": 1, "episodes": [{"number": 1, "watched_at": "2024-05-15T20:06:00Z"}]}
+            ]
+          }
+        ],
+        "anime": [],
+        "movies": [
+          {"status": "completed", "last_watched_at": "2024-05-20T00:00:00Z", "movie": {"ids": {"imdb": "ttPULL"}}}
+        ]
+      }))
     end)
 
     Bypass.expect(bypass, "POST", "/sync/history", fn conn ->
@@ -129,17 +185,37 @@ defmodule Mydia.Plugins.SimklSyncIntegrationTest do
     end)
 
     assert {:ok, result} = Plugins.invoke_plugin_schedule(@slug)
-    assert result["pulled"] >= 1
+    # Movie + episode both pulled.
+    assert result["pulled"] >= 2
     assert result["pushed"] >= 1
 
-    # Pull: the Simkl-watched movie is now watched locally.
+    # The pull request asked for episode-level, extended data (KTD2).
+    assert_received {:all_items_query, query}
+    assert query =~ "episode_watched_at=yes"
+    assert query =~ "extended=full"
+
+    # Pull: the Simkl-watched movie AND episode are now watched locally (AE1).
     assert Playback.get_progress(user.id, media_item_id: pull_movie.id).watched == true
+    assert Playback.get_progress(user.id, episode_id: pull_episode.id).watched == true
+
+    # R-PULL-3: the activities cursor watermark was persisted for the connection.
+    assert cursor_value() == "2024-06-01T00:00:00Z"
 
     # Push: the local watch reached Simkl, and the just-pulled item was NOT
     # echoed back.
     assert_received {:history, body}
     assert body =~ "ttPUSH"
     refute body =~ "ttPULL"
+  end
+
+  # The Simkl guest writes its pull watermark to `conn/<id>/activities`. Read it
+  # back from plugin_kv without assuming the connection id.
+  defp cursor_value do
+    Mydia.Repo.one(
+      from k in Kv,
+        where: k.plugin_slug == @slug and like(k.key, "conn/%/activities"),
+        select: k.value
+    )
   end
 
   test "a 401 from Simkl reports the connection as invalid", %{bypass: bypass, user: user} do
