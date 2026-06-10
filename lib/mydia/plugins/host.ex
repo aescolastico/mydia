@@ -481,10 +481,14 @@ defmodule Mydia.Plugins.Host do
   defp classify_outcome({:error, %Error{type: type, message: message}}),
     do: {:error, to_string(type), sanitize_detail(message)}
 
+  # Defensive: every run_invocation path is {:ok,_}|{:error,%Error{}}, but a
+  # catch-all keeps an unexpected shape from raising in the marker path.
+  defp classify_outcome(_other), do: {:error, "unknown", nil}
+
   # A compact "key=value" summary of the guest's returned result map, surfaced in
   # the end-marker so a successful run shows what it did (e.g. `pulled=2 pushed=1`)
   # instead of a bare "ok". Zero/empty/falsey values are dropped to keep the line
-  # short — so a no-op run still reads as plain "ok". Keys are sorted for a stable
+  # short, so a no-op run still reads as plain "ok". Keys are sorted for a stable
   # ordering. Returns nil when nothing is worth showing.
   defp result_summary(result) when is_map(result) and map_size(result) > 0 do
     case result |> Enum.sort() |> Enum.flat_map(&summary_pair/1) |> Enum.join(" ") do
@@ -503,10 +507,6 @@ defmodule Mydia.Plugins.Host do
     do: ["#{key}=#{value}"]
 
   defp summary_pair(_), do: []
-
-  # Defensive: every run_invocation path is {:ok,_}|{:error,%Error{}}, but a
-  # catch-all keeps an unexpected shape from raising in the marker path.
-  defp classify_outcome(_other), do: {:error, "unknown", nil}
 
   # A guest trap/error message can carry non-UTF-8 bytes; this detail lands in
   # marker metadata which JsonMapType encodes with Jason, which raises on invalid
