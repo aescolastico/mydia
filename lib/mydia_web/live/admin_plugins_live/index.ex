@@ -25,6 +25,12 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
+    # Reconcile bundled plugins on view. `ensure_bundled/0` otherwise runs only at
+    # boot, so a node that started before a bundled manifest shipped never seeds it
+    # (the common dev case: the BEAM stays up across plugin additions). Connected-
+    # only and gated, so the test suite's empty-state list stays clean.
+    if connected?(socket), do: Plugins.maybe_ensure_bundled()
+
     {:ok,
      socket
      |> assign(:page_title, "Configuration - Plugins")

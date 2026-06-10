@@ -213,7 +213,7 @@ defmodule Mydia.Plugins do
     # Gated by the same flag the app uses for boot-time side effects, so the test
     # suite's app boot doesn't write to the shared DB (tests call ensure_bundled/0
     # explicitly when they need it).
-    if Application.get_env(:mydia, :start_health_monitors, true), do: ensure_bundled()
+    maybe_ensure_bundled()
 
     Settings.get_db_plugin_configs()
     |> Enum.filter(& &1.enabled)
@@ -226,6 +226,23 @@ defmodule Mydia.Plugins do
           Logger.warning("could not activate plugin #{config.slug}: #{inspect(error)}")
       end
     end)
+  end
+
+  @doc """
+  Seeds bundled plugins (`ensure_bundled/0`) unless boot-time side effects are
+  disabled — the test suite sets `start_health_monitors: false` so neither its app
+  boot nor a connected admin-page mount writes the shared DB (and the empty-state
+  test stays deterministic).
+
+  Safe to call on every admin Plugins page view: it is idempotent (seeds only a
+  missing slug, refreshes only a changed manifest) and is the reconciliation point
+  a long-lived node otherwise lacks. `ensure_bundled/0` runs only once at boot, so
+  without this an instance that started before a bundled manifest shipped never
+  discovers the new plugin until it restarts.
+  """
+  @spec maybe_ensure_bundled() :: :ok
+  def maybe_ensure_bundled do
+    if Application.get_env(:mydia, :start_health_monitors, true), do: ensure_bundled(), else: :ok
   end
 
   @doc """

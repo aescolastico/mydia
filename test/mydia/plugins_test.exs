@@ -295,6 +295,29 @@ defmodule Mydia.PluginsTest do
     end
   end
 
+  describe "maybe_ensure_bundled/0 gate" do
+    test "no-ops when boot-time side effects are disabled (the test default)" do
+      # start_health_monitors: false in config/test.exs — the same gate that keeps
+      # the app's test boot from writing the shared DB also keeps a connected admin
+      # mount from seeding, so the empty-state list stays deterministic.
+      refute Application.get_env(:mydia, :start_health_monitors, true)
+
+      assert :ok = Plugins.maybe_ensure_bundled()
+      assert Settings.get_db_plugin_configs() == []
+    end
+
+    test "seeds bundled manifests when enabled, the way an admin page view does" do
+      Application.put_env(:mydia, :start_health_monitors, true)
+      on_exit(fn -> Application.put_env(:mydia, :start_health_monitors, false) end)
+
+      assert :ok = Plugins.maybe_ensure_bundled()
+
+      slugs = Settings.get_db_plugin_configs() |> Enum.map(& &1.slug) |> MapSet.new()
+      assert MapSet.member?(slugs, "webhook-notifier")
+      assert MapSet.member?(slugs, "simkl_sync")
+    end
+  end
+
   describe "detect_updates/2 (R14)" do
     defp config(slug, version), do: %Mydia.Settings.PluginConfig{slug: slug, version: version}
 
