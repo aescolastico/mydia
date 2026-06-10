@@ -68,12 +68,25 @@ fn on_schedule(tick: ScheduleTick) -> Result<String, String> {
 
         match sync_connection(&conn, &api_base) {
             Ok(counts) => {
+                host::log(
+                    "info",
+                    &format!(
+                        "simkl[{}]: pulled={} pushed={} unmatched={}",
+                        conn.user_id, counts.pulled, counts.pushed, counts.unmatched
+                    ),
+                );
                 pulled_total += counts.pulled;
                 pushed_total += counts.pushed;
                 unmatched += counts.unmatched;
             }
             // A 401 invalidates just this connection; other users still sync.
-            Err(SyncError::Unauthorized) => invalid.push(conn.user_id.clone()),
+            Err(SyncError::Unauthorized) => {
+                host::log(
+                    "warn",
+                    &format!("simkl[{}]: connection unauthorized (401)", conn.user_id),
+                );
+                invalid.push(conn.user_id.clone());
+            }
             Err(SyncError::Host(msg)) => host::log("warn", &format!("simkl sync error: {msg}")),
         }
     }
@@ -121,8 +134,19 @@ fn pull(conn: &Connection, api_base: &str) -> Result<(BTreeSet<String>, usize, u
     let activities_body = simkl_get(conn, &format!("{api_base}/sync/activities"))?;
     let activities = parse_activities(&activities_body);
 
+    if activities.is_none() {
+        host::log(
+            "warn",
+            "simkl: /sync/activities had no top-level 'all' cursor; pull will not advance",
+        );
+    }
+
     // Unchanged cursor → skip the pull leg only (push still runs).
     if activities.is_some() && stored == activities {
+        host::log(
+            "debug",
+            "simkl: activities cursor unchanged, skipping pull leg",
+        );
         return Ok((load_pulled_set(conn), 0, 0));
     }
 
@@ -138,6 +162,16 @@ fn pull(conn: &Connection, api_base: &str) -> Result<(BTreeSet<String>, usize, u
         ),
     )?;
     let items = parse_all_items(&items_body);
+    // The direct diagnostic for the "pulled 0 against a full account" failure:
+    // a non-trivial body that parses to nothing means a response-shape mismatch.
+    host::log(
+        "debug",
+        &format!(
+            "simkl: all-items parsed {} watched item(s) from {} bytes",
+            items.len(),
+            items_body.len()
+        ),
+    );
 
     let mut pulled_keys = load_pulled_set(conn);
     let mut applied = 0usize;

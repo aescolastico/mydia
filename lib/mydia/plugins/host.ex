@@ -470,16 +470,39 @@ defmodule Mydia.Plugins.Host do
       invocation_id: inv.invocation_id,
       source: :host,
       level: level,
-      message: end_message(outcome, inv.function, duration_ms),
+      message: end_message(outcome, inv.function, duration_ms, detail),
       metadata: metadata,
       test_run: inv.test_run
     })
   end
 
-  defp classify_outcome({:ok, _}), do: {:info, "ok", nil}
+  defp classify_outcome({:ok, result}), do: {:info, "ok", result_summary(result)}
 
   defp classify_outcome({:error, %Error{type: type, message: message}}),
     do: {:error, to_string(type), sanitize_detail(message)}
+
+  # A compact "key=value" summary of the guest's returned result map, surfaced in
+  # the end-marker so a successful run shows what it did (e.g. `pulled=2 pushed=1`)
+  # instead of a bare "ok". Zero/empty/falsey values are dropped to keep the line
+  # short — so a no-op run still reads as plain "ok". Keys are sorted for a stable
+  # ordering. Returns nil when nothing is worth showing.
+  defp result_summary(result) when is_map(result) and map_size(result) > 0 do
+    case result |> Enum.sort() |> Enum.flat_map(&summary_pair/1) |> Enum.join(" ") do
+      "" -> nil
+      summary -> summary
+    end
+  end
+
+  defp result_summary(_), do: nil
+
+  defp summary_pair({_key, value}) when value in [nil, 0, false, "", []], do: []
+  defp summary_pair({key, value}) when is_list(value), do: ["#{key}=#{length(value)}"]
+  defp summary_pair({key, value}) when is_map(value), do: ["#{key}=#{map_size(value)}"]
+
+  defp summary_pair({key, value}) when is_binary(value) or is_number(value) or is_boolean(value),
+    do: ["#{key}=#{value}"]
+
+  defp summary_pair(_), do: []
 
   # Defensive: every run_invocation path is {:ok,_}|{:error,%Error{}}, but a
   # catch-all keeps an unexpected shape from raising in the marker path.
@@ -495,7 +518,10 @@ defmodule Mydia.Plugins.Host do
   defp sanitize_message(message) when is_binary(message), do: Log.sanitize(message)
   defp sanitize_message(message), do: to_string_reason(message)
 
-  defp end_message(outcome, function, ms), do: "#{function} #{outcome} (#{ms}ms)"
+  defp end_message(outcome, function, ms, nil), do: "#{function} #{outcome} (#{ms}ms)"
+
+  defp end_message(outcome, function, ms, detail),
+    do: "#{function} #{outcome} (#{ms}ms) #{detail}"
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)

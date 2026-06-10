@@ -40,6 +40,12 @@ defmodule Mydia.Plugins.HostLogsTest do
       assert is_integer(end_marker.metadata["duration_ms"])
       # the triggering event is captured on the start marker
       assert Enum.any?(host, &(&1.metadata["event"] == "media_item.added"))
+
+      # the guest's returned result is summarized into the end-marker message
+      # (the fixture returns {"first":true}), so a successful run is not a bare
+      # "ok" but shows what it produced.
+      assert end_marker.message =~ "first=true"
+      assert end_marker.metadata["detail"] == "first=true"
     end
 
     test "a trap is recorded as an error end marker, not silence (AE1)" do
