@@ -191,6 +191,16 @@ The `./dev` script automatically starts services if they're not running and prov
 
 ### Git Guidelines
 
+**Run git commands inside `nix develop`:**
+
+Always run `git` (especially `git commit`) from inside a `nix develop` shell, or prefix the command with `nix develop -c`, e.g.:
+
+```bash
+nix develop -c git commit -m "message"
+```
+
+The pre-commit hooks lint Rust via the flake's pinned toolchain (`nix develop .#rust -c cargo ...`). Running git outside the nix environment can fail to find `nix`/the toolchain on `PATH` and is not guaranteed to use the same compiler the hooks expect.
+
 **Working with uncommitted changes:**
 
 Uncommitted changes from other agents or sessions are normal. Focus on your task and leave unrelated changes alone.

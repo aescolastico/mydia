@@ -261,7 +261,8 @@ config :mydia, Oban,
     notifications: 1,
     maintenance: 1,
     import_lists: 2,
-    integrations: 2
+    integrations: 2,
+    plugins: 1
   ],
   plugins: [
     # Keep completed jobs for 7 days
@@ -269,6 +270,9 @@ config :mydia, Oban,
     # Scheduled jobs
     {Oban.Plugins.Cron,
      crontab: [
+       # Tick scheduled plugins every minute (each plugin's manifest interval is
+       # checked inside the job; due plugins get on-schedule). U4.
+       {"* * * * *", Mydia.Jobs.PluginScheduler},
        # Monitor downloads every 2 minutes
        {"*/2 * * * *", Mydia.Jobs.DownloadMonitor},
        # Search for monitored movies every hour
@@ -296,7 +300,11 @@ config :mydia, Oban,
        # Purge expired release-blacklist rows daily at 5:30 AM (#123)
        {"30 5 * * *", Mydia.Jobs.BlacklistCleanup},
        # Analyze media files lacking tech metadata every minute (#131)
-       {"* * * * *", Mydia.Jobs.FileAnalysis}
+       {"* * * * *", Mydia.Jobs.FileAnalysis},
+       # Check installed plugins for newer versions daily at 7 AM
+       {"0 7 * * *", Mydia.Jobs.PluginUpdateCheck},
+       # Prune per-invocation plugin debug logs daily at 4:30 AM (U5)
+       {"30 4 * * *", Mydia.Jobs.PluginLogCleanup}
      ]}
   ]
 

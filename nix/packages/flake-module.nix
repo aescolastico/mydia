@@ -1,10 +1,23 @@
-{ ... }:
+{ inputs, ... }:
 
 {
   perSystem = { pkgs, system, lib, ... }:
     let
       # BEAM packages (Erlang/Elixir)
       beamPackages = pkgs.beam.packages.erlang_28;
+
+      # Pinned Rust toolchain (rust-overlay, same construction as the dev
+      # shells — pinned by flake.lock) with the wasm32-wasip2 std, so the
+      # release build compiles both the p2p NIF and the bundled wasip2 plugin
+      # guests under plugins/*/ (the guest's WASI world tracks the Rust
+      # version; keep in lockstep with CI/Docker — see ci.yml).
+      rustPkgs = import inputs.nixpkgs {
+        inherit system;
+        overlays = [ inputs.rust-overlay.overlays.default ];
+      };
+      rustToolchain = rustPkgs.rust-bin.stable.latest.minimal.override {
+        targets = [ "wasm32-wasip2" ];
+      };
 
       # Fine package (needed for lazy_html)
       fineVersion = "0.1.4";
@@ -25,6 +38,47 @@
       cargoDeps = pkgs.rustPlatform.importCargoLock {
         lockFile = ../../native/mydia_p2p/Cargo.lock;
       };
+
+      # Vendored crates for the bundled webhook_notifier plugin guest, built for
+      # wasm32-wasip2 by the plugins Mix compiler during `mix compile`.
+      webhookNotifierCargoDeps = pkgs.rustPlatform.importCargoLock {
+        lockFile = ../../plugins/webhook_notifier/Cargo.lock;
+      };
+
+      # Same for the bundled simkl_sync plugin guest. Each bundled guest is its
+      # own crate with its own lock, so a new guest needs its deps vendored here
+      # (and a `.cargo/config.toml` below) or the no-network sandbox build fails.
+      simklSyncCargoDeps = pkgs.rustPlatform.importCargoLock {
+        lockFile = ../../plugins/simkl_sync/Cargo.lock;
+      };
+
+      # Precompiled wasmex NIF (rustler_precompiled downloads this at compile
+      # time, which the Nix sandbox forbids). Pre-fetch the release tarball and
+      # point RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH at it so the wasmex build
+      # reuses the cached artifact instead of hitting the network. Hashes come
+      # from deps/wasmex/checksum-Elixir.Wasmex.Native.exs (only nif-2.15
+      # artifacts are published, which is also rustler_precompiled's default).
+      wasmexVersion = "0.14.0";
+      wasmexNifTarget = {
+        "x86_64-linux" = "x86_64-unknown-linux-gnu";
+        "aarch64-linux" = "aarch64-unknown-linux-gnu";
+        "x86_64-darwin" = "x86_64-apple-darwin";
+        "aarch64-darwin" = "aarch64-apple-darwin";
+      }.${system} or "x86_64-unknown-linux-gnu";
+      wasmexNifHash = {
+        "x86_64-unknown-linux-gnu" = "sha256-ubMR5fk21s+SutUv3ekcMHDgOOY8IvuBlejHH5dgU5I=";
+        "aarch64-unknown-linux-gnu" = "sha256-N3HvNpmkM1F6QfxYEXAjgaRU/kF11Q/4Pbk9a9JlJ9I=";
+        "x86_64-apple-darwin" = "sha256-JxOp8tgGtPW0VtbXIhfGrfVnmuWhWAFEL0btAtL1zw4=";
+        "aarch64-apple-darwin" = "sha256-BFcwJT5Z1AOtytwIBpZiHUgIzO8TEqdvjCDDAymdFfg=";
+      }.${wasmexNifTarget};
+      wasmexNifFileName = "libwasmex-v${wasmexVersion}-nif-2.15-${wasmexNifTarget}.so.tar.gz";
+      wasmexNifTarball = pkgs.fetchurl {
+        url = "https://github.com/tessi/wasmex/releases/download/v${wasmexVersion}/${wasmexNifFileName}";
+        hash = wasmexNifHash;
+      };
+      wasmexNifCache = pkgs.linkFarm "wasmex-precompiled-nif" [
+        { name = wasmexNifFileName; path = wasmexNifTarball; }
+      ];
 
       # Import Mix dependencies from deps.nix with overrides for Nix sandbox builds
       mixNixDeps = import ../../deps.nix {
@@ -75,6 +129,14 @@
               mkdir -p /tmp/.cache/elixir_make
             '';
           };
+
+          # wasmex: rustler_precompiled wants to download the NIF tarball at
+          # compile time; serve it from a pre-fetched local cache instead.
+          wasmex = prev.wasmex.override {
+            preBuild = ''
+              export RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH=${wasmexNifCache}
+            '';
+          };
         };
       };
 
@@ -105,7 +167,7 @@
       # Pre-fetch npm dependencies (required for sandbox build)
       npmDeps = pkgs.fetchNpmDeps {
         src = ../../assets;
-        hash = "sha256-NMEudc78qbm1x9+CV4a7z/c+YfMyUD/mYPMwfzYYoVc=";
+        hash = "sha256-uphoD/oJoGADVR6cTdW+Pah4pLkCS1cKFc5Dp5ZAY4o=";
       };
 
       # Tailwind CSS v4 binary (not yet in nixpkgs)
@@ -159,13 +221,13 @@
 
           mixNixDeps = mixNixDeps;
 
-          # Build-time dependencies
+          # Build-time dependencies. rustToolchain (not pkgs.rustc/cargo)
+          # carries the wasm32-wasip2 std for the bundled plugin guests.
           nativeBuildInputs = [
             pkgs.nodejs
             pkgs.git
             pkgs.npmHooks.npmConfigHook
-            pkgs.rustc
-            pkgs.cargo
+            rustToolchain
           ];
 
           # Runtime dependencies for NIFs
@@ -216,6 +278,27 @@
             [source.vendored-sources]
             directory = "${cargoDeps}"
             CARGO_EOF
+
+            # Same for the bundled webhook_notifier plugin guest (wasm32-wasip2),
+            # compiled by the plugins Mix compiler during `mix compile`.
+            mkdir -p plugins/webhook_notifier/.cargo
+            cat > plugins/webhook_notifier/.cargo/config.toml <<CARGO_EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "${webhookNotifierCargoDeps}"
+            CARGO_EOF
+
+            # Same for the bundled simkl_sync plugin guest.
+            mkdir -p plugins/simkl_sync/.cargo
+            cat > plugins/simkl_sync/.cargo/config.toml <<CARGO_EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+
+            [source.vendored-sources]
+            directory = "${simklSyncCargoDeps}"
+            CARGO_EOF
           '';
 
           # Configure asset compilation
@@ -238,6 +321,17 @@
             # Build assets (use --no-deps-check to skip lock verification for Nix-managed deps)
             export MIX_ENV=prod
             mix do compile --no-deps-check, assets.deploy
+
+            # Same guard as the Docker builders: a bundled plugin manifest must
+            # have its compiled wasm artifact, or the package ships a plugin
+            # that can never load.
+            for m in priv/plugins/*.json; do
+              w="priv/plugins/$(basename "$m" .json).wasm"
+              if [ ! -f "$w" ]; then
+                echo "ERROR: missing bundled plugin artifact: $w" >&2
+                exit 1
+              fi
+            done
           '';
 
           # MIX_ENV is set by mixRelease automatically

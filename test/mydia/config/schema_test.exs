@@ -358,6 +358,20 @@ defmodule Mydia.Config.SchemaTest do
     end
   end
 
+  describe "plugins override_dir (PLUGINS_OVERRIDE_DIR)" do
+    test "round-trips a configured override directory" do
+      changeset = Schema.changeset(%Schema{}, %{plugins: %{override_dir: "/data/plugins"}})
+      assert changeset.valid?
+
+      config = Ecto.Changeset.apply_changes(changeset)
+      assert config.plugins.override_dir == "/data/plugins"
+    end
+
+    test "defaults to nil when unset" do
+      assert Schema.defaults().plugins.override_dir == nil
+    end
+  end
+
   # Helper function to extract errors from changeset
   defp errors_on(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->

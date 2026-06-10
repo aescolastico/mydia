@@ -1,0 +1,85 @@
+{
+  "slug": "webhook-notifier",
+  "name": "Webhook Notifier",
+  "version": "1.1.0",
+  "description": "Posts a notification when media is added or a download completes. Targets Discord, your own ntfy server, or any custom webhook with templated body, query params, and headers.",
+  "author": "Mydia",
+  "entrypoint": "handle",
+  "delivery": "durable",
+  "capabilities": {
+    "events:subscribe": ["media_item.added", "download.completed"],
+    "net:http": ["discord.com"],
+    "data:read": ["media_item"]
+  },
+  "settings_schema": [
+    {
+      "key": "target",
+      "type": "enum",
+      "label": "Target service",
+      "required": true,
+      "options": ["discord", "ntfy", "custom"]
+    },
+    {
+      "key": "webhook_url",
+      "type": "url",
+      "label": "Webhook / server URL",
+      "required": true,
+      "grants_host": true
+    },
+    {
+      "key": "ntfy_priority",
+      "type": "string",
+      "label": "Priority (1-5, optional)",
+      "visible_when": { "target": "ntfy" }
+    },
+    {
+      "key": "ntfy_tags",
+      "type": "string",
+      "label": "Tags (comma-separated, optional)",
+      "visible_when": { "target": "ntfy" }
+    },
+    {
+      "key": "ntfy_token",
+      "type": "secret",
+      "label": "Access token (optional)",
+      "visible_when": { "target": "ntfy" }
+    },
+    {
+      "key": "http_method",
+      "type": "enum",
+      "label": "HTTP method",
+      "options": ["POST", "GET", "PUT"],
+      "visible_when": { "target": "custom" }
+    },
+    {
+      "key": "content_type",
+      "type": "string",
+      "label": "Content-Type (default application/json)",
+      "visible_when": { "target": "custom" }
+    },
+    {
+      "key": "body_template",
+      "type": "text",
+      "label": "Body template — use {{title}}, {{event}}, {{overview}}, etc.",
+      "visible_when": { "target": "custom" }
+    },
+    {
+      "key": "query_template",
+      "type": "string",
+      "label": "Query params — e.g. text={{title}}&event={{event}} (values are URL-encoded)",
+      "visible_when": { "target": "custom" }
+    },
+    {
+      "key": "headers_template",
+      "type": "text",
+      "label": "Extra headers — one \"Name: value\" per line (values templated)",
+      "visible_when": { "target": "custom" }
+    },
+    {
+      "key": "auth_token",
+      "type": "secret",
+      "label": "Bearer token (optional) — sent as Authorization: Bearer ...",
+      "visible_when": { "target": "custom" }
+    }
+  ]
+}

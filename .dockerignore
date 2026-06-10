@@ -31,6 +31,12 @@ player/.packages
 # Rust build artifacts
 player/rust/**/target
 native/**/target
+plugins/**/target
+
+# Built WASM plugin guests — rebuilt from source by the :plugins compiler inside
+# the image. Excluding them keeps a stale/local host artifact out of the build
+# context so the image always reflects committed source.
+priv/plugins/*.wasm
 
 # Metadata relay local build artifacts
 metadata-relay/_build

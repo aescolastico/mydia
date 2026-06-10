@@ -1,0 +1,29 @@
+# Host-runtime test fixture (U3). A single multi-behavior component, built once
+# to wasm32-wasip2 and checked in at ../host_test_fixture.wasm, that drives the
+# host_test.exs runtime-invariant scenarios by branching on the event type:
+#
+#   "ok" / default  -> {"first": true|false} via a per-instance static, proving
+#                      fresh-store isolation (every fresh instance returns true).
+#   "probe-env"     -> read a host env var; reports whether the sandbox denied it
+#                      (it must, under locked-down WASI-P2).
+#   "trap"          -> abort, surfacing as a host :trap.
+#   "error"         -> return the WIT result error variant (a guest_error).
+#
+# Built with the same SDK + macro authors use, so it doubles as an SDK smoke
+# test. Rebuild with: cargo build --release --target wasm32-wasip2
+[package]
+name = "mydia-host-test-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mydia-plugin-sdk = { path = "../../../../../native/mydia_plugin_sdk" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

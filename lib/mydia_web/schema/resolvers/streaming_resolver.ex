@@ -144,6 +144,12 @@ defmodule MydiaWeb.Schema.Resolvers.StreamingResolver do
       content_id = resolve_content_id(media_file)
       Mydia.Integrations.Trakt.Scrobbler.scrobble_start(user_id, content_id)
 
+      # Emit a playback.started lifecycle event for subscribed plugins (U1).
+      # A real client write is always player-origin.
+      if content_id != [] do
+        Mydia.Events.playback_event("started", user_id, content_id, %{"origin" => "player"})
+      end
+
       {:ok,
        %{
          session_id: info.session_id,

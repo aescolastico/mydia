@@ -41,7 +41,18 @@ defmodule Mydia.Application do
         {Task.Supervisor, name: Mydia.TaskSupervisor},
         # Request task supervisor for multiplexed request handling with independent timeouts
         {Task.Supervisor, name: Mydia.RequestTaskSupervisor},
-        Mydia.Hooks.Manager,
+        # WASM plugin platform: per-plugin pools register here and live under
+        # the dynamic supervisor (see Mydia.Plugins.Host); the Agent registry
+        # holds installed plugin descriptors (see Mydia.Plugins.Registry).
+        Mydia.Plugins.Registry,
+        {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
+        {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
+        # Per-plugin invocation single-flight lock (U4): serializes on-event /
+        # on-schedule / inline calls for one plugin so shared KV state is safe.
+        Mydia.Plugins.SingleFlight,
+        # Fans "events:all" out to subscribed plugins (U5). Replaces the Luerl
+        # hooks manager removed in U11.
+        Mydia.Plugins.Dispatcher,
         {Registry, keys: :unique, name: Mydia.Streaming.HlsSessionRegistry},
         Mydia.Streaming.HlsSessionSupervisor,
         {Registry, keys: :unique, name: Mydia.Downloads.TranscodeRegistry},
@@ -91,6 +102,8 @@ defmodule Mydia.Application do
       Mydia.Indexers.register_adapters()
       # Register metadata provider adapters
       Mydia.Metadata.register_providers()
+      # Rehydrate installed WASM plugins into the runtime registry
+      Mydia.Plugins.register_plugins()
       # Start relay service if remote access is enabled (requires Repo to be running)
       start_relay_if_enabled()
       # Ensure default quality profiles exist (skip in test environment)

@@ -82,10 +82,10 @@ defmodule Mydia.Downloads.Client.Debrid.Providers.TorBox do
     multipart =
       case input do
         {:magnet, magnet} ->
-          [{"magnet", magnet}]
+          [{:magnet, magnet}]
 
         {:file, bin} ->
-          [{"file", bin, filename: "release.torrent", content_type: "application/x-bittorrent"}]
+          [{:file, bin, filename: "release.torrent", content_type: "application/x-bittorrent"}]
       end
 
     case Req.post(base_url() <> "/torrents/createtorrent",

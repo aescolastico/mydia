@@ -177,95 +177,16 @@
         <div class="card bg-base-100 shadow-sm">
           <div class="card-body">
             <h2 class="card-title text-lg mb-4">
-              <.icon name="hero-link" class="w-5 h-5" /> Integrations
+              <.icon name="hero-puzzle-piece" class="w-5 h-5" /> Integrations
             </h2>
 
-            <div class="space-y-4">
-              <div>
-                <h3 class="font-medium mb-1">Trakt.tv</h3>
-                <p class="text-sm text-base-content/60 mb-3">
-                  Track your watch history and sync ratings with Trakt.tv.
-                </p>
-              </div>
-
-              <%= if @trakt_error do %>
-                <div class="alert alert-error" id="trakt-error">
-                  <.icon name="hero-exclamation-circle" class="w-5 h-5" />
-                  <span>{@trakt_error}</span>
-                </div>
-              <% end %>
-
-              <%= cond do %>
-                <% @trakt_user_code != nil -> %>
-                  <%!-- Device code active — waiting for user authorization --%>
-                  <div
-                    class="bg-base-200 rounded-lg p-4 text-center space-y-3"
-                    id="trakt-device-auth"
-                  >
-                    <p class="text-sm text-base-content/70">
-                      Go to the following URL and enter the code below:
-                    </p>
-                    <a
-                      href={@trakt_verification_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="link link-primary text-sm"
-                    >
-                      {@trakt_verification_url}
-                    </a>
-                    <div class="py-2">
-                      <code class="text-3xl font-mono font-bold tracking-widest select-all">
-                        {@trakt_user_code}
-                      </code>
-                    </div>
-                    <div class="flex items-center justify-center gap-2 text-sm text-base-content/60">
-                      <span class="loading loading-spinner loading-xs"></span>
-                      Waiting for authorization...
-                    </div>
-                    <button
-                      type="button"
-                      id="trakt-cancel-btn"
-                      class="btn btn-ghost btn-sm"
-                      phx-click="trakt_cancel"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                <% @trakt_integration != nil -> %>
-                  <%!-- Connected --%>
-                  <div class="flex items-center justify-between" id="trakt-connected">
-                    <div class="flex items-center gap-2">
-                      <span class="badge badge-success gap-1">
-                        <.icon name="hero-check-circle" class="w-3 h-3" /> Connected
-                      </span>
-                      <%= if @trakt_integration.external_username do %>
-                        <span class="text-sm text-base-content/70">
-                          as {@trakt_integration.external_username}
-                        </span>
-                      <% end %>
-                    </div>
-                    <button
-                      type="button"
-                      id="trakt-disconnect-btn"
-                      class="btn btn-outline btn-error btn-sm"
-                      phx-click="trakt_disconnect"
-                      data-confirm="Are you sure you want to disconnect Trakt.tv?"
-                    >
-                      Disconnect
-                    </button>
-                  </div>
-                <% true -> %>
-                  <%!-- Not connected --%>
-                  <button
-                    type="button"
-                    id="trakt-connect-btn"
-                    class="btn btn-primary btn-sm"
-                    phx-click="trakt_connect"
-                  >
-                    <.icon name="hero-link" class="w-4 h-4" /> Connect Trakt.tv
-                  </button>
-              <% end %>
-            </div>
+            <p class="text-base-content/70 mb-4">
+              Connect external services like Trakt.tv and third-party plugins to sync your watch
+              history.
+            </p>
+            <.link navigate={~p"/integrations"} id="integrations-link" class="btn btn-outline">
+              <.icon name="hero-arrow-top-right-on-square" class="w-4 h-4" /> Manage Integrations
+            </.link>
           </div>
         </div>
       </div>

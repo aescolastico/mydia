@@ -1,0 +1,34 @@
+<Layouts.app {assigns}>
+  <.admin_page active_tab={@active_tab}>
+    <MydiaWeb.AdminPluginsLive.Components.plugins_tab
+      installed={@installed}
+      catalog={@catalog}
+      updates={@updates}
+      browse_error={@browse_error}
+    />
+
+    <%!-- Capability approval modal (the emphasized surface) --%>
+    <%= if @approval do %>
+      <MydiaWeb.AdminPluginsLive.Components.approval_modal approval={@approval} />
+    <% end %>
+
+    <%!-- Per-plugin detail modal: granted caps + host grants --%>
+    <%= if @detail do %>
+      <MydiaWeb.AdminPluginsLive.Components.detail_modal detail={@detail} />
+    <% end %>
+
+    <%!-- Dedicated logs modal: activity log + network requests + test --%>
+    <%= if @logs do %>
+      <MydiaWeb.AdminPluginsLive.Components.logs_modal
+        logs={@logs}
+        log_rows={@streams.plugin_logs}
+        net_rows={@streams.plugin_net}
+      />
+    <% end %>
+
+    <%!-- Operator settings modal (host-granting config — U3) --%>
+    <%= if @settings do %>
+      <MydiaWeb.AdminPluginsLive.Components.settings_modal settings={@settings} />
+    <% end %>
+  </.admin_page>
+</Layouts.app>

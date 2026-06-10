@@ -208,10 +208,17 @@ defmodule Mydia.SettingsTest do
         }
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok
@@ -352,10 +359,17 @@ defmodule Mydia.SettingsTest do
         ]
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok
@@ -406,10 +420,17 @@ defmodule Mydia.SettingsTest do
         ]
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok

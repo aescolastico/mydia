@@ -60,10 +60,12 @@ defmodule Mydia.MediaServer.WatchedSync.Orchestrator do
   def import_watched(adapter, config, user_id) do
     Logger.info("Importing watched status from #{config.name}")
 
+    origin = "sync:#{Map.get(config, :type) || "media_server"}"
+
     with {:ok, watched_items} <- adapter.fetch_watched(config) do
       stats =
         Enum.reduce(watched_items, %{imported: 0, skipped: 0, not_found: 0}, fn item, acc ->
-          case match_and_mark_watched(user_id, item) do
+          case match_and_mark_watched(user_id, item, origin) do
             :marked -> %{acc | imported: acc.imported + 1}
             :already_watched -> %{acc | skipped: acc.skipped + 1}
             :not_found -> %{acc | not_found: acc.not_found + 1}
@@ -110,41 +112,42 @@ defmodule Mydia.MediaServer.WatchedSync.Orchestrator do
 
   # ── Import Helpers ────────────────────────────────────────────────
 
-  defp match_and_mark_watched(user_id, %{type: :movie} = item) do
+  defp match_and_mark_watched(user_id, %{type: :movie} = item, origin) do
     case Media.find_by_external_ids(item.external_ids) do
       nil ->
         :not_found
 
       media_item ->
-        ensure_watched(user_id, media_item_id: media_item.id)
+        ensure_watched(user_id, [media_item_id: media_item.id], origin)
     end
   end
 
-  defp match_and_mark_watched(user_id, %{type: :episode} = item) do
+  defp match_and_mark_watched(user_id, %{type: :episode} = item, origin) do
     with %{id: show_id} <- Media.find_by_external_ids(item.external_ids),
          %{id: ep_id} <- Media.find_episode(show_id, item.season_number, item.episode_number) do
-      ensure_watched(user_id, episode_id: ep_id)
+      ensure_watched(user_id, [episode_id: ep_id], origin)
     else
       _ -> :not_found
     end
   end
 
-  defp ensure_watched(user_id, content_id) do
+  defp ensure_watched(user_id, content_id, origin) do
     case Playback.get_progress(user_id, content_id) do
       %{watched: true} ->
         :already_watched
 
       nil ->
-        Playback.save_progress(user_id, content_id, %{
-          position_seconds: 0,
-          duration_seconds: 1,
-          watched: true
-        })
+        Playback.save_progress(
+          user_id,
+          content_id,
+          %{position_seconds: 0, duration_seconds: 1, watched: true},
+          origin: origin
+        )
 
         :marked
 
       _existing ->
-        Playback.mark_watched(user_id, content_id)
+        Playback.mark_watched(user_id, content_id, origin: origin)
         :marked
     end
   end

@@ -86,7 +86,16 @@ defmodule Mydia.MixProject do
   # because that is the order under which it actually emits its analysis in
   # this version (appending it after Mix.compilers/0 yields no report).
   defp compilers do
-    base = [:phoenix_live_view] ++ Mix.compilers()
+    # `:plugins` builds the bundled WASM guests under plugins/*/ into
+    # priv/plugins/ during mix compile (see Mix.Tasks.Compile.Plugins). It is
+    # APPENDED, not prepended: the compiler task module lives in lib/ and is only
+    # loadable after the `:elixir` compiler has run, so a fresh build can't find
+    # `compile.plugins` if it runs first. Appending also still places the build
+    # inside `mix compile`, so the artifact exists before `mix release` bundles
+    # priv/. Unlike `:unused` (which must wrap elixir, hence prepended) `:plugins`
+    # is independent. It runs on every compile in every env, including the
+    # test-env --warnings-as-errors compile.
+    base = [:phoenix_live_view] ++ Mix.compilers() ++ [:plugins]
 
     if System.get_env("UNUSED_CHECK") == "true" and Mix.env() in [:dev, :test] do
       [:unused | base]
@@ -202,16 +211,19 @@ defmodule Mydia.MixProject do
       {:argon2_elixir, "~> 4.0"},
 
       # HTTP Clients
-      {:finch, "~> 0.16"},
-      {:req, "~> 0.4"},
+      {:finch, "~> 0.22"},
+      {:req, "~> 0.6"},
       # WebSocket client for relay connections
       {:websockex, "~> 0.4.3"},
+
+      # WASM plugin runtime (wasmtime via Rustler NIF) + pooling
+      {:wasmex, "~> 0.14"},
+      {:nimble_pool, "~> 1.1"},
 
       # Utilities
       {:timex, "~> 3.7"},
       {:yaml_elixir, "~> 2.9"},
       {:ymlr, "~> 5.1"},
-      {:luerl, "~> 1.2"},
       {:sweet_xml, "~> 0.7"},
       {:floki, "~> 0.36"},
       {:nimble_parsec, "~> 1.4"},
@@ -235,8 +247,8 @@ defmodule Mydia.MixProject do
       # CORS support for cross-origin API requests (standalone player)
       {:corsica, "~> 2.1"},
 
-      # Rustler for Libp2p NIF
-      {:rustler, "~> 0.34.0", runtime: false},
+      # Rustler for Libp2p NIF (native crate is on rustler 0.37.2; wasmex needs ~> 0.37.1)
+      {:rustler, "~> 0.37", runtime: false},
 
       # GraphQL
       {:absinthe, "~> 1.7"},

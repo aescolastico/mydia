@@ -162,6 +162,9 @@ defmodule MydiaWeb.Router do
 
       # User profile and preferences (merged into one page)
       live "/profile", ProfileLive.Index, :index
+
+      # Integrations (Trakt + third-party plugin connections)
+      live "/integrations", IntegrationsLive.Index, :index
     end
   end
 
@@ -192,6 +195,7 @@ defmodule MydiaWeb.Router do
       live "/config/indexers", AdminIndexersLive.Index, :index
       live "/config/library-paths", AdminLibraryPathsLive.Index, :index
       live "/config/media-servers", AdminMediaServersLive.Index, :index
+      live "/config/plugins", AdminPluginsLive.Index, :index
       live "/config/remote-access", AdminRemoteAccessLive.Index, :index
       live "/import-lists", AdminImportListsLive.Index, :index
       live "/jobs", JobsLive.Index, :index

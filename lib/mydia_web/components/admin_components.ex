@@ -67,6 +67,13 @@ defmodule MydiaWeb.AdminComponents do
       >
         Media Servers
       </.tab_link>
+      <.tab_link
+        active={@active_tab == :plugins}
+        to="/admin/config/plugins"
+        icon="hero-puzzle-piece"
+      >
+        Plugins
+      </.tab_link>
       <%= if @remote_access_enabled do %>
         <.tab_link
           active={@active_tab == :remote_access}

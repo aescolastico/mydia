@@ -11,7 +11,8 @@ defmodule Mydia.Settings.RuntimeConfig do
     DownloadClientConfig,
     IndexerConfig,
     MediaServerConfig,
-    LibraryPath
+    LibraryPath,
+    PluginConfig
   }
 
   ## Configuration Settings (Database)
@@ -291,6 +292,17 @@ defmodule Mydia.Settings.RuntimeConfig do
     paths
   end
 
+  def get_runtime_plugins do
+    runtime_config = get_runtime_config()
+
+    if is_struct(runtime_config) and Map.has_key?(runtime_config, :plugin_installs) do
+      runtime_config.plugin_installs
+      |> Enum.map(&map_to_plugin_config/1)
+    else
+      []
+    end
+  end
+
   ## Runtime ID Helpers (public, used by other sub-modules)
 
   def runtime_config?(%{id: id}) when is_binary(id) do
@@ -365,6 +377,26 @@ defmodule Mydia.Settings.RuntimeConfig do
       category: Map.get(map, :category),
       download_directory: Map.get(map, :download_directory),
       connection_settings: Map.get(map, :connection_settings, %{}),
+      updated_by_id: nil,
+      inserted_at: nil,
+      updated_at: nil
+    }
+  end
+
+  defp map_to_plugin_config(map) when is_map(map) do
+    slug = Map.get(map, :slug)
+
+    %PluginConfig{
+      id: build_runtime_id(:plugin, slug),
+      slug: slug,
+      name: Map.get(map, :name) || slug,
+      version: Map.get(map, :version),
+      enabled: Map.get(map, :enabled, true),
+      priority: Map.get(map, :priority, 1),
+      settings: Map.get(map, :settings, %{}),
+      granted_capabilities: Map.get(map, :granted_capabilities, %{}),
+      source_url: Map.get(map, :source_url),
+      integrity_hash: Map.get(map, :integrity_hash),
       updated_by_id: nil,
       inserted_at: nil,
       updated_at: nil

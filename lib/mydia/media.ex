@@ -52,6 +52,37 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Returns one keyset page of media items for the plugin `data-list` host
+  function (U5), ordered by `(updated_at, id)`.
+
+  ## Options
+    * `:limit` - page size (default 200)
+    * `:updated_since` - only items updated at/after this `DateTime`
+    * `:after` - `{updated_at, id}` of the last row of the previous page
+  """
+  @spec list_items_page(keyword()) :: [MediaItem.t()]
+  def list_items_page(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 200)
+    since = Keyword.get(opts, :updated_since)
+    after_cursor = Keyword.get(opts, :after)
+
+    query = from(m in MediaItem, order_by: [asc: m.updated_at, asc: m.id], limit: ^limit)
+
+    query = if since, do: from(m in query, where: m.updated_at >= ^since), else: query
+
+    query =
+      case after_cursor do
+        {ts, id} ->
+          from m in query, where: m.updated_at > ^ts or (m.updated_at == ^ts and m.id > ^id)
+
+        _ ->
+          query
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Gets a single media item by TMDB ID.
   """
   @spec get_media_item_by_tmdb(integer(), keyword()) :: MediaItem.t() | nil
@@ -137,12 +168,10 @@ defmodule Mydia.Media do
       actor_type = Keyword.get(opts, :actor_type, :system)
       actor_id = Keyword.get(opts, :actor_id, "media_context")
 
+      # The media_item.added event flows through the plugin dispatcher
+      # (Mydia.Plugins.Dispatcher), which replaced the Luerl after_media_added
+      # hook (U11). No explicit hook call is needed here.
       Events.media_item_added(media_item, actor_type, actor_id)
-
-      # Execute after_media_added hooks asynchronously
-      Mydia.Hooks.execute_async("after_media_added", %{
-        media_item: serialize_media_item(media_item)
-      })
 
       # For TV shows, automatically fetch episodes unless explicitly skipped
       if media_item.type == "tv_show" and not Keyword.get(opts, :skip_episode_refresh, false) do
@@ -1704,19 +1733,6 @@ defmodule Mydia.Media do
   # Downloads are active if they haven't completed and haven't failed
   defp download_active?(download) do
     is_nil(download.completed_at) && is_nil(download.error_message)
-  end
-
-  # Serialize media item for hooks
-  defp serialize_media_item(%MediaItem{} = media_item) do
-    %{
-      id: media_item.id,
-      type: media_item.type,
-      title: media_item.title,
-      tmdb_id: media_item.tmdb_id,
-      year: media_item.year,
-      monitored: media_item.monitored,
-      metadata: media_item.metadata
-    }
   end
 
   ## Category Classification
