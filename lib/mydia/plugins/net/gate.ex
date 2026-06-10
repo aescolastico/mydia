@@ -72,6 +72,7 @@ defmodule Mydia.Plugins.Net.Gate do
   @spec request(String.t(), keyword()) :: {:ok, result()} | {:error, Error.t()}
   def request(url, opts) when is_binary(url) do
     allowed = Keyword.get(opts, :allowed_hosts, [])
+    started = System.monotonic_time()
 
     outcome =
       with {:ok, uri} <- parse_url(url),
@@ -80,7 +81,10 @@ defmodule Mydia.Plugins.Net.Gate do
         perform(uri, ip, opts)
       end
 
-    audit(url, outcome, opts)
+    duration_ms =
+      System.convert_time_unit(System.monotonic_time() - started, :native, :millisecond)
+
+    audit(url, outcome, duration_ms, opts)
     outcome
   end
 
@@ -397,8 +401,9 @@ defmodule Mydia.Plugins.Net.Gate do
 
   # Auditing must never break egress: a failure to record the event (e.g. no DB
   # connection in the caller's context) is logged and swallowed.
-  defp audit(url, outcome, opts) do
+  defp audit(url, outcome, duration_ms, opts) do
     slug = Keyword.get(opts, :slug, "unknown")
+    method = opts |> Keyword.get(:method, "GET") |> to_string() |> String.upcase()
     {status, severity, bytes} = audit_fields(outcome)
 
     Events.create_event_async(%{
@@ -409,10 +414,12 @@ defmodule Mydia.Plugins.Net.Gate do
       severity: severity,
       metadata: %{
         "slug" => slug,
+        "method" => method,
         "url" => url,
         "host" => URI.parse(url).host,
         "status" => status,
         "bytes" => bytes,
+        "duration_ms" => duration_ms,
         "outcome" => outcome_label(outcome)
       }
     })

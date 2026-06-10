@@ -479,12 +479,12 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       log
     end
 
-    test "the detail modal renders the activity log with existing rows", %{conn: conn} do
+    test "the logs modal renders the activity log with existing rows", %{conn: conn} do
       seed_enabled_notifier()
       log!(%{message: "posting to webhook"})
 
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
-      view |> element("#details-notifier") |> render_click()
+      view |> element("#logs-notifier") |> render_click()
 
       assert has_element?(view, "#plugin-logs")
       assert render(view) =~ "posting to webhook"
@@ -496,7 +496,7 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
       log!(%{source: :host, level: :error, message: "boom trap"})
 
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
-      view |> element("#details-notifier") |> render_click()
+      view |> element("#logs-notifier") |> render_click()
       assert render(view) =~ "debug noise"
 
       html = view |> form("#log-filter-form") |> render_change(%{"level" => "error"})
@@ -507,7 +507,7 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
     test "a broadcast log line appends to the open timeline live", %{conn: conn} do
       seed_enabled_notifier()
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
-      view |> element("#details-notifier") |> render_click()
+      view |> element("#logs-notifier") |> render_click()
 
       log!(%{invocation_id: "live", message: "live tail line"})
 
@@ -517,9 +517,42 @@ defmodule MydiaWeb.AdminPluginsLiveTest do
     test "the Test control renders for an enabled plugin with subscribed events", %{conn: conn} do
       seed_enabled_notifier()
       {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
-      view |> element("#details-notifier") |> render_click()
+      view |> element("#logs-notifier") |> render_click()
 
       assert has_element?(view, "#test-plugin")
+    end
+
+    test "the network tab renders a recorded http_request with method, status and timing",
+         %{conn: conn} do
+      seed_enabled_notifier()
+
+      {:ok, _event} =
+        Mydia.Events.create_event(%{
+          category: "plugin",
+          type: "plugin.http_request",
+          actor_type: :system,
+          actor_id: "notifier",
+          severity: :info,
+          metadata: %{
+            "slug" => "notifier",
+            "method" => "POST",
+            "url" => "https://hooks.example.com/notify?x=1",
+            "host" => "hooks.example.com",
+            "status" => 200,
+            "bytes" => 2048,
+            "duration_ms" => 118,
+            "outcome" => "ok"
+          }
+        })
+
+      {:ok, view, _} = live(conn, ~p"/admin/config/plugins")
+      view |> element("#logs-notifier") |> render_click()
+
+      html = render(view)
+      assert html =~ "hooks.example.com/notify"
+      assert html =~ "POST"
+      assert html =~ "200"
+      assert html =~ "118ms"
     end
   end
 end

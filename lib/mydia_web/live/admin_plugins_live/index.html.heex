@@ -12,11 +12,17 @@
       <MydiaWeb.AdminPluginsLive.Components.approval_modal approval={@approval} />
     <% end %>
 
-    <%!-- Per-plugin detail modal: granted caps + recent egress audit --%>
+    <%!-- Per-plugin detail modal: granted caps + host grants --%>
     <%= if @detail do %>
-      <MydiaWeb.AdminPluginsLive.Components.detail_modal
-        detail={@detail}
-        logs={@streams.plugin_logs}
+      <MydiaWeb.AdminPluginsLive.Components.detail_modal detail={@detail} />
+    <% end %>
+
+    <%!-- Dedicated logs modal: activity log + network requests + test --%>
+    <%= if @logs do %>
+      <MydiaWeb.AdminPluginsLive.Components.logs_modal
+        logs={@logs}
+        log_rows={@streams.plugin_logs}
+        net_rows={@streams.plugin_net}
       />
     <% end %>
 

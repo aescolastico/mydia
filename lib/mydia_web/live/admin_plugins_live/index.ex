@@ -40,9 +40,12 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
      |> assign(:browse_error, nil)
      |> assign(:approval, nil)
      |> assign(:detail, nil)
+     |> assign(:logs, nil)
      |> assign(:settings, nil)
      |> assign(:log_topic, nil)
+     |> assign(:net_subscribed?, false)
      |> stream(:plugin_logs, [])
+     |> stream(:plugin_net, [])
      |> load_installed()
      |> load_updates()}
   end
@@ -183,9 +186,22 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
     end
   end
 
-  ## Detail modal (granted caps + egress audit)
+  ## Detail modal (granted caps + host grants)
 
   def handle_event("show_detail", %{"slug" => slug}, socket) do
+    case Settings.get_plugin_config_by_slug(slug) do
+      nil -> {:noreply, socket}
+      config -> {:noreply, assign(socket, :detail, detail_for(config))}
+    end
+  end
+
+  def handle_event("close_detail", _params, socket) do
+    {:noreply, assign(socket, :detail, nil)}
+  end
+
+  ## Logs modal (U6/U7) — activity log + network activity + test
+
+  def handle_event("show_logs", %{"slug" => slug}, socket) do
     case Settings.get_plugin_config_by_slug(slug) do
       nil ->
         {:noreply, socket}
@@ -196,31 +212,33 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
         {:noreply,
          socket
-         |> assign(:detail, detail_for(config))
-         |> stream(:plugin_logs, logs, reset: true)}
+         |> assign(:logs, logs_for(config))
+         |> stream(:plugin_logs, logs, reset: true)
+         |> stream(:plugin_net, network_events(slug), reset: true)}
     end
   end
 
-  def handle_event("close_detail", _params, socket) do
+  def handle_event("close_logs", _params, socket) do
     {:noreply,
      socket
      |> unsubscribe_logs()
-     |> assign(:detail, nil)
-     |> stream(:plugin_logs, [], reset: true)}
+     |> assign(:logs, nil)
+     |> stream(:plugin_logs, [], reset: true)
+     |> stream(:plugin_net, [], reset: true)}
   end
 
   ## Debug logs (U6) — filter + live tail
 
   def handle_event("filter_logs", params, socket) do
-    detail = socket.assigns.detail
+    logs = socket.assigns.logs
     min_level = parse_level(params["level"])
     query = String.trim(params["query"] || "")
-    logs = Logs.recent(detail.slug, limit: @log_limit, min_level: min_level, query: query)
+    rows = Logs.recent(logs.slug, limit: @log_limit, min_level: min_level, query: query)
 
     {:noreply,
      socket
-     |> assign(:detail, %{detail | min_level: min_level, query: query})
-     |> stream(:plugin_logs, logs, reset: true)}
+     |> assign(:logs, %{logs | min_level: min_level, query: query})
+     |> stream(:plugin_logs, rows, reset: true)}
   end
 
   ## Test trigger (U7)
@@ -235,15 +253,25 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
     end
   end
 
-  ## Live tail (U6)
+  ## Live tail (U6) — activity log + network activity
 
   @impl true
   def handle_info({:plugin_log, %Log{} = log}, socket) do
-    detail = socket.assigns.detail
+    logs = socket.assigns.logs
 
-    if detail && log.slug == detail.slug && level_visible?(log.level, detail.min_level) &&
-         query_visible?(log.message, detail.query) do
+    if logs && log.slug == logs.slug && level_visible?(log.level, logs.min_level) &&
+         query_visible?(log.message, logs.query) do
       {:noreply, stream_insert(socket, :plugin_logs, log, at: 0)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:event_created, event}, socket) do
+    logs = socket.assigns.logs
+
+    if logs && network_event_for?(event, logs.slug) do
+      {:noreply, stream_insert(socket, :plugin_net, event, at: 0)}
     else
       {:noreply, socket}
     end
@@ -251,18 +279,42 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
 
   ## Helpers
 
+  defp network_event_for?(%{type: "plugin.http_request"} = event, slug),
+    do: event.actor_id == slug
+
+  defp network_event_for?(_event, _slug), do: false
+
+  # Subscribes to both the per-plugin activity-log topic and the global events
+  # feed (filtered to this plugin's http_request audit rows) so the logs modal
+  # live-tails activity and network requests together.
   defp subscribe_logs(socket, slug) do
     socket = unsubscribe_logs(socket)
     topic = Logs.topic(slug)
-    if connected?(socket), do: Phoenix.PubSub.subscribe(Mydia.PubSub, topic)
-    assign(socket, :log_topic, topic)
+
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Mydia.PubSub, topic)
+      Events.subscribe()
+    end
+
+    socket
+    |> assign(:log_topic, topic)
+    |> assign(:net_subscribed?, true)
   end
 
-  defp unsubscribe_logs(%{assigns: %{log_topic: nil}} = socket), do: socket
+  defp unsubscribe_logs(%{assigns: %{log_topic: nil, net_subscribed?: false}} = socket),
+    do: socket
 
-  defp unsubscribe_logs(%{assigns: %{log_topic: topic}} = socket) do
-    if connected?(socket), do: Phoenix.PubSub.unsubscribe(Mydia.PubSub, topic)
-    assign(socket, :log_topic, nil)
+  defp unsubscribe_logs(socket) do
+    if connected?(socket) do
+      if socket.assigns.log_topic,
+        do: Phoenix.PubSub.unsubscribe(Mydia.PubSub, socket.assigns.log_topic)
+
+      if socket.assigns.net_subscribed?, do: Events.unsubscribe()
+    end
+
+    socket
+    |> assign(:log_topic, nil)
+    |> assign(:net_subscribed?, false)
   end
 
   defp parse_level(level) do
@@ -451,25 +503,36 @@ defmodule MydiaWeb.AdminPluginsLive.Index do
   end
 
   defp detail_for(config) do
-    audit =
-      Events.list_events(
-        type: "plugin.http_request",
-        actor_type: :system,
-        actor_id: config.slug,
-        limit: 10
-      )
-
     %{
       slug: config.slug,
       name: config.name,
       enabled: config.enabled,
       granted: config.granted_capabilities || %{},
-      settings_schema: settings_schema_of(config),
-      audit: audit,
+      settings_schema: settings_schema_of(config)
+    }
+  end
+
+  # State for the dedicated logs modal: activity log filters + Test event list.
+  # The network and activity rows themselves live in streams, not here.
+  defp logs_for(config) do
+    %{
+      slug: config.slug,
+      name: config.name,
+      enabled: config.enabled,
       min_level: :debug,
       query: "",
       test_events: Map.get(config.granted_capabilities || %{}, "events:subscribe", [])
     }
+  end
+
+  # Recent gated HTTP requests for the network tab, newest first.
+  defp network_events(slug) do
+    Events.list_events(
+      type: "plugin.http_request",
+      actor_type: :system,
+      actor_id: slug,
+      limit: @log_limit
+    )
   end
 
   defp error_message(%{__struct__: _} = error) do

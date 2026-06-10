@@ -236,6 +236,14 @@ defmodule Mydia.Events do
     |> offset(^offset)
   end
 
+  @doc "Subscribes the calling process to the global event feed (`{:event_created, event}`)."
+  @spec subscribe() :: :ok | {:error, term()}
+  def subscribe, do: PubSub.subscribe(@pubsub_name, @events_topic)
+
+  @doc "Unsubscribes the calling process from the global event feed."
+  @spec unsubscribe() :: :ok
+  def unsubscribe, do: PubSub.unsubscribe(@pubsub_name, @events_topic)
+
   defp broadcast_event(event) do
     PubSub.broadcast(@pubsub_name, @events_topic, {:event_created, event})
   end

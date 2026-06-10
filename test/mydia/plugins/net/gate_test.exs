@@ -178,14 +178,20 @@ defmodule Mydia.Plugins.Net.GateTest do
       Gate.request("https://evil.test/",
         allowed_hosts: ["discord.com"],
         slug: "auditor",
+        method: "POST",
         resolver: resolver({1, 1, 1, 1})
       )
 
       events = Mydia.Events.list_events(category: "plugin", type: "plugin.http_request")
 
-      assert Enum.any?(events, fn e ->
-               e.actor_id == "auditor" and e.metadata["outcome"] == "capability_denied"
-             end)
+      event =
+        Enum.find(events, fn e ->
+          e.actor_id == "auditor" and e.metadata["outcome"] == "capability_denied"
+        end)
+
+      assert event
+      assert event.metadata["method"] == "POST"
+      assert is_integer(event.metadata["duration_ms"])
     end
   end
 end
