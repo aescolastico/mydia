@@ -162,6 +162,9 @@ defmodule MydiaWeb.Router do
 
       # User profile and preferences (merged into one page)
       live "/profile", ProfileLive.Index, :index
+
+      # Integrations (Trakt + third-party plugin connections)
+      live "/integrations", IntegrationsLive.Index, :index
     end
   end
 

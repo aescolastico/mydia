@@ -225,6 +225,14 @@ defmodule MydiaWeb.Layouts do
                   <.icon name="hero-folder" class="w-5 h-5" /> Collections
                 </.link>
               </li>
+              <li>
+                <.link
+                  navigate="/integrations"
+                  class={nav_active?(@current_path, "/integrations", false) && "active"}
+                >
+                  <.icon name="hero-puzzle-piece" class="w-5 h-5" /> Integrations
+                </.link>
+              </li>
               <%= if @current_user && @current_user.role == "admin" do %>
                 <li class="menu-title mt-4">
                   <span>Administration</span>
