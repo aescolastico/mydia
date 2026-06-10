@@ -903,7 +903,9 @@ defmodule Mydia.Plugins do
       "author" => m.author,
       "entrypoint" => m.entrypoint,
       "capabilities" => m.capabilities,
-      "settings_schema" => m.settings_schema
+      "settings_schema" => m.settings_schema,
+      "connection" => m.connection,
+      "schedule" => m.schedule
     }
   end
 

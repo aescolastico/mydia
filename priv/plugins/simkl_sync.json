@@ -22,7 +22,7 @@
     "code_url": "https://api.simkl.com/oauth/pin?client_id={client_id}",
     "poll_url": "https://api.simkl.com/oauth/pin/{user_code}?client_id={client_id}",
     "verification_url": "https://simkl.com/pin",
-    "client_id": "SIMKL_PUBLIC_CLIENT_ID_PLACEHOLDER"
+    "client_id": "a419f0c96f1071ef4a8459a0fc8cc45f4615e7863d836e877c98e8850ca0603e"
   },
   "settings_schema": [
     {

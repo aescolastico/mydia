@@ -39,10 +39,29 @@ defmodule Mydia.Plugins.DeviceFlowTest do
 
       assert {:ok, result} = DeviceFlow.request_code(descriptor, "client-1", opts())
       assert result.user_code == "AB12CD"
-      assert result.poll_token == "AB12CD"
+      assert result.device_code == nil
       assert result.verification_url == "https://simkl.com/pin"
       assert result.interval_ms == 5000
       assert result.expires_in_s == 900
+    end
+
+    test "carries the device_code verbatim when present", %{
+      bypass: bypass,
+      descriptor: descriptor
+    } do
+      # Simkl returns a literal "DEVICE_CODE" placeholder alongside the real
+      # user_code; the host must carry it as-is and never poll by it.
+      Bypass.expect_once(bypass, "GET", "/oauth/pin", fn conn ->
+        Plug.Conn.resp(
+          conn,
+          200,
+          ~s({"user_code":"AB12CD","device_code":"DEVICE_CODE","verification_url":"https://simkl.com/pin"})
+        )
+      end)
+
+      assert {:ok, result} = DeviceFlow.request_code(descriptor, "client-1", opts())
+      assert result.user_code == "AB12CD"
+      assert result.device_code == "DEVICE_CODE"
     end
 
     test "a response without a user code is an error", %{bypass: bypass, descriptor: descriptor} do
@@ -66,7 +85,7 @@ defmodule Mydia.Plugins.DeviceFlowTest do
       end)
 
       assert {:ok, %{access_token: "the-token"}} =
-               DeviceFlow.poll(descriptor, "CODE", "c", opts())
+               DeviceFlow.poll(descriptor, %{user_code: "CODE"}, "c", opts())
     end
 
     test "a 200 KO body is pending", %{bypass: bypass, descriptor: descriptor} do
@@ -74,7 +93,7 @@ defmodule Mydia.Plugins.DeviceFlowTest do
         Plug.Conn.resp(conn, 200, ~s({"result":"KO"}))
       end)
 
-      assert :pending = DeviceFlow.poll(descriptor, "CODE", "c", opts())
+      assert :pending = DeviceFlow.poll(descriptor, %{user_code: "CODE"}, "c", opts())
     end
 
     test "a 429 signals slow down", %{bypass: bypass, descriptor: descriptor} do
@@ -82,7 +101,7 @@ defmodule Mydia.Plugins.DeviceFlowTest do
         Plug.Conn.resp(conn, 429, "")
       end)
 
-      assert :slow_down = DeviceFlow.poll(descriptor, "CODE", "c", opts())
+      assert :slow_down = DeviceFlow.poll(descriptor, %{user_code: "CODE"}, "c", opts())
     end
 
     test "a standard expired_token error is terminal", %{bypass: bypass, descriptor: descriptor} do
@@ -90,7 +109,7 @@ defmodule Mydia.Plugins.DeviceFlowTest do
         Plug.Conn.resp(conn, 400, ~s({"error":"expired_token"}))
       end)
 
-      assert :expired = DeviceFlow.poll(descriptor, "CODE", "c", opts())
+      assert :expired = DeviceFlow.poll(descriptor, %{user_code: "CODE"}, "c", opts())
     end
 
     test "a standard access_denied error is terminal", %{bypass: bypass, descriptor: descriptor} do
@@ -98,7 +117,7 @@ defmodule Mydia.Plugins.DeviceFlowTest do
         Plug.Conn.resp(conn, 400, ~s({"error":"access_denied"}))
       end)
 
-      assert :denied = DeviceFlow.poll(descriptor, "CODE", "c", opts())
+      assert :denied = DeviceFlow.poll(descriptor, %{user_code: "CODE"}, "c", opts())
     end
 
     test "the poll url substitutes the user code", %{bypass: bypass, descriptor: descriptor} do
@@ -106,7 +125,28 @@ defmodule Mydia.Plugins.DeviceFlowTest do
         Plug.Conn.resp(conn, 200, ~s({"access_token":"t"}))
       end)
 
-      assert {:ok, _} = DeviceFlow.poll(descriptor, "XYZ", "c", opts())
+      assert {:ok, _} = DeviceFlow.poll(descriptor, %{user_code: "XYZ"}, "c", opts())
+    end
+
+    test "a {user_code} poll url ignores a junk device_code (Simkl)", %{
+      bypass: bypass,
+      descriptor: descriptor
+    } do
+      # Regression: Simkl hands back device_code: "DEVICE_CODE". The descriptor's
+      # poll_url uses {user_code}, so the poll must hit /oauth/pin/UC123, never
+      # /oauth/pin/DEVICE_CODE — otherwise the flow polls a code Simkl never
+      # issued and the user sees "Code not found or expired".
+      Bypass.expect_once(bypass, "GET", "/oauth/pin/UC123", fn conn ->
+        Plug.Conn.resp(conn, 200, ~s({"result":"OK","access_token":"t"}))
+      end)
+
+      assert {:ok, _} =
+               DeviceFlow.poll(
+                 descriptor,
+                 %{user_code: "UC123", device_code: "DEVICE_CODE"},
+                 "c",
+                 opts()
+               )
     end
   end
 end

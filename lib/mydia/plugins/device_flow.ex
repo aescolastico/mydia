@@ -30,10 +30,15 @@ defmodule Mydia.Plugins.DeviceFlow do
 
   @type code_result :: %{
           user_code: String.t(),
-          poll_token: String.t(),
+          device_code: String.t() | nil,
           verification_url: String.t() | nil,
           interval_ms: pos_integer(),
           expires_in_s: pos_integer()
+        }
+
+  @type codes :: %{
+          optional(:user_code) => String.t() | nil,
+          optional(:device_code) => String.t() | nil
         }
 
   @type poll_result ::
@@ -52,7 +57,7 @@ defmodule Mydia.Plugins.DeviceFlow do
   """
   @spec request_code(map(), String.t(), keyword()) :: {:ok, code_result()} | {:error, term()}
   def request_code(descriptor, client_id, opts) when is_map(descriptor) do
-    url = render(descriptor["code_url"], client_id, nil)
+    url = render(descriptor["code_url"], client_id, %{})
 
     with {:ok, %{status: 200, body: body}} <- get(url, opts),
          {:ok, data} when is_map(data) <- Jason.decode(body),
@@ -60,8 +65,11 @@ defmodule Mydia.Plugins.DeviceFlow do
       {:ok,
        %{
          user_code: user_code,
-         # Simkl polls by user_code; a standard device grant by device_code.
-         poll_token: data["device_code"] || user_code,
+         # Both codes are carried verbatim; the descriptor's `poll_url` picks which
+         # one it polls by (`{user_code}` for Simkl, `{device_code}` for a standard
+         # device grant). Simkl returns a literal "DEVICE_CODE" placeholder here,
+         # so the host must never assume device_code is the thing to poll.
+         device_code: data["device_code"],
          verification_url: data["verification_url"] || descriptor["verification_url"],
          interval_ms: max((data["interval"] || 5) * 1000, 1000),
          expires_in_s: data["expires_in"] || 900
@@ -78,9 +86,9 @@ defmodule Mydia.Plugins.DeviceFlow do
   Polls the descriptor's `poll_url` once, returning the token, a transient state
   (`:pending` / `:slow_down`), or a terminal failure (`:expired` / `:denied`).
   """
-  @spec poll(map(), String.t(), String.t(), keyword()) :: poll_result()
-  def poll(descriptor, poll_token, client_id, opts) when is_map(descriptor) do
-    url = render(descriptor["poll_url"], client_id, poll_token)
+  @spec poll(map(), codes(), String.t(), keyword()) :: poll_result()
+  def poll(descriptor, codes, client_id, opts) when is_map(descriptor) and is_map(codes) do
+    url = render(descriptor["poll_url"], client_id, codes)
 
     case get(url, opts) do
       {:ok, %{status: 200, body: body}} -> classify_200(body)
@@ -135,12 +143,12 @@ defmodule Mydia.Plugins.DeviceFlow do
     Gate.request(url, gate_opts)
   end
 
-  defp render(nil, _client_id, _token), do: ""
+  defp render(nil, _client_id, _codes), do: ""
 
-  defp render(template, client_id, token) do
+  defp render(template, client_id, codes) do
     template
     |> String.replace("{client_id}", client_id || "")
-    |> String.replace("{user_code}", token || "")
-    |> String.replace("{device_code}", token || "")
+    |> String.replace("{user_code}", Map.get(codes, :user_code) || "")
+    |> String.replace("{device_code}", Map.get(codes, :device_code) || "")
   end
 end
