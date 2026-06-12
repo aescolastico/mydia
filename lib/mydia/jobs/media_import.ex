@@ -189,6 +189,11 @@ defmodule Mydia.Jobs.MediaImport do
   defp terminal_failure?(:no_importable_files, _attempt), do: true
   defp terminal_failure?({:path_not_found, _path}, attempt) when attempt >= 3, do: true
   defp terminal_failure?({:path_not_accessible, _path}, attempt) when attempt >= 3, do: true
+  # {:destination_not_accessible, _} is intentionally NOT terminal: it's almost
+  # always a fixable library-volume permission/disk issue. Retrying indefinitely
+  # lets the import self-heal once the path becomes writable (the exact recovery
+  # we want), and keeps the download "occupying" its episode (import_next_retry_at
+  # stays set) so the auto-searcher doesn't grab a duplicate release meanwhile.
   defp terminal_failure?(_reason, _attempt), do: false
 
   defp fetch_download(download_id) do
@@ -1230,7 +1235,7 @@ defmodule Mydia.Jobs.MediaImport do
           reason: inspect(reason)
         )
 
-        {:error, {:path_not_accessible, dest_dir}}
+        {:error, {:destination_not_accessible, dest_dir}}
     end
   end
 
@@ -1660,6 +1665,12 @@ defmodule Mydia.Jobs.MediaImport do
   defp format_import_error({:path_not_accessible, path}, _download) do
     "Download path is not accessible: #{path}. " <>
       "Check filesystem permissions and path accessibility."
+  end
+
+  defp format_import_error({:destination_not_accessible, path}, _download) do
+    "Could not create the library destination directory: #{path}. " <>
+      "Check filesystem permissions and available disk space on the library volume. " <>
+      "Import will retry automatically once the path is writable."
   end
 
   defp format_import_error(:no_library_path, download) do

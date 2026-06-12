@@ -799,8 +799,10 @@ defmodule Mydia.Jobs.MediaImportTest do
       File.write!(dest_dir, "occupied")
 
       # First attempt: a handled error (NOT a raised exception), with a retry
-      # scheduled and the failure recorded on the download row.
-      assert {:error, {:path_not_accessible, ^dest_dir}} =
+      # scheduled and the failure recorded on the download row. A destination
+      # permission/disk problem is non-terminal so it can self-heal once the path
+      # becomes writable.
+      assert {:error, {:destination_not_accessible, ^dest_dir}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => download_dir
@@ -809,7 +811,7 @@ defmodule Mydia.Jobs.MediaImportTest do
       updated = Mydia.Downloads.get_download!(download.id)
       assert updated.import_failed_at != nil
       assert updated.import_next_retry_at != nil
-      assert updated.import_last_error =~ "not accessible"
+      assert updated.import_last_error =~ "library destination directory"
       assert is_nil(updated.imported_at)
     end
   end
