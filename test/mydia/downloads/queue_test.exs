@@ -338,12 +338,42 @@ defmodule Mydia.Downloads.QueueTest do
                {:error, :duplicate_download}
     end
 
-    test "a completed download does NOT block a new request (only active ones count)" do
+    test "a completed-but-not-imported download DOES block a new request (still awaiting import)" do
+      # The download finished but hasn't been imported yet — it still occupies
+      # the movie, so grabbing a second release here is the duplicate bug we fixed.
       movie = media_item_fixture(%{type: "movie"})
 
       active_download(movie.id, %{
         title: "The Movie 1080p",
         completed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+
+      assert Queue.check_for_active_download(search_result(nil), movie.id, nil) ==
+               {:error, :duplicate_download}
+    end
+
+    test "an imported download does NOT block a new request" do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+      movie = media_item_fixture(%{type: "movie"})
+
+      active_download(movie.id, %{
+        title: "The Movie 1080p",
+        completed_at: now,
+        imported_at: now
+      })
+
+      assert Queue.check_for_active_download(search_result(nil), movie.id, nil) == :ok
+    end
+
+    test "a terminally-failed import does NOT block a new request" do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+      movie = media_item_fixture(%{type: "movie"})
+
+      active_download(movie.id, %{
+        title: "The Movie 1080p",
+        completed_at: now,
+        import_failed_at: now,
+        import_next_retry_at: nil
       })
 
       assert Queue.check_for_active_download(search_result(nil), movie.id, nil) == :ok

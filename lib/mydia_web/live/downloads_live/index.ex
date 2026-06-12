@@ -1140,6 +1140,33 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
+  # An import problem that should be surfaced on the row even though the torrent
+  # client still reports the download as completed/seeding. The torrent finishing
+  # is only half the job — if the post-download import keeps failing (e.g. a
+  # filesystem permission error) the user otherwise sees a healthy "seeding" row
+  # with no hint that nothing landed in the library. Returns:
+  #
+  #   * `:failed`   — import failed terminally (no further automatic retries)
+  #   * `:retrying` — import failed but a retry is scheduled
+  #   * `nil`       — no import problem (not yet attempted, or already imported)
+  def import_issue(download) do
+    cond do
+      not is_nil(download.imported_at) -> nil
+      is_nil(download.import_failed_at) and is_nil(download.import_last_error) -> nil
+      not is_nil(download.import_next_retry_at) -> :retrying
+      true -> :failed
+    end
+  end
+
+  # Status dot color for a row, letting an import problem override the (otherwise
+  # green) client status.
+  defp row_status_dot_class(_download, :failed), do: "status-error"
+  defp row_status_dot_class(_download, :retrying), do: "status-warning"
+  defp row_status_dot_class(download, nil), do: status_dot_class(download.status)
+
+  defp import_issue_label(:failed), do: "Import failed"
+  defp import_issue_label(:retrying), do: "Import retrying"
+
   @doc false
   # Returns `{class, label}` for the download's status badge.
   # When the download has been flagged stalled by `DownloadMonitor` (see #126),
