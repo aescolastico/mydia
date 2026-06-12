@@ -173,13 +173,16 @@
           </div>
           <%!-- Content --%>
           <div class="list-col-grow min-w-0">
+            <% import_issue = import_issue(download) %>
             <%!-- Line 1: status dot + title + episode --%>
             <div class="flex items-center gap-2 min-w-0">
               <% {_badge_class, status_label} = status_badge(download) %>
+              <% dot_label =
+                if(import_issue, do: import_issue_label(import_issue), else: status_label) %>
               <span
-                class={["status status-md shrink-0", status_dot_class(download.status)]}
-                title={status_label}
-                aria-label={status_label}
+                class={["status status-md shrink-0", row_status_dot_class(download, import_issue)]}
+                title={dot_label}
+                aria-label={dot_label}
               >
               </span>
               <span class="font-medium text-sm truncate">{get_display_title(download)}</span>
@@ -192,6 +195,27 @@
             <%!-- Line 2: release title (muted), only when it differs from the display title --%>
             <%= if get_display_title(download) != download.title do %>
               <div class="text-xs text-base-content/40 truncate">{download.title}</div>
+            <% end %>
+            <%!-- Import problem: surfaced even when the torrent client reports the
+                 download as seeding/completed, so a silently-failing import is
+                 visible without digging into the Issues tab. --%>
+            <%= if import_issue do %>
+              <div class="text-xs text-error flex flex-wrap items-center gap-1.5 mt-0.5">
+                <.icon name="hero-exclamation-triangle" class="size-3 shrink-0" />
+                <span class="truncate">
+                  {import_issue_label(import_issue)}: {download.import_last_error}
+                </span>
+                <%= if download.import_retry_count && download.import_retry_count > 0 do %>
+                  <span>•</span>
+                  <span class="shrink-0">Attempt #{download.import_retry_count}</span>
+                <% end %>
+                <%= if download.import_next_retry_at do %>
+                  <span>•</span>
+                  <span class="shrink-0">
+                    Next retry: {format_next_retry(download.import_next_retry_at)}
+                  </span>
+                <% end %>
+              </div>
             <% end %>
             <%!-- Line 3: compact metadata cluster (every metric carries an icon) --%>
             <div class="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-xs text-base-content/60">

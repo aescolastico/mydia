@@ -403,4 +403,65 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
       assert Downloads.get_download!(download.id).media_item_id == new_movie.id
     end
   end
+
+  describe "import failure surfacing on the queue row" do
+    test "import_issue/1 classifies the download's import state" do
+      alias MydiaWeb.DownloadsLive.Index
+      dt = DateTime.utc_now()
+
+      assert Index.import_issue(%{
+               imported_at: nil,
+               import_failed_at: dt,
+               import_last_error: "boom",
+               import_next_retry_at: nil
+             }) == :failed
+
+      assert Index.import_issue(%{
+               imported_at: nil,
+               import_failed_at: dt,
+               import_last_error: "boom",
+               import_next_retry_at: dt
+             }) == :retrying
+
+      # Already imported: no problem to show even if a stale error lingers.
+      assert Index.import_issue(%{
+               imported_at: dt,
+               import_failed_at: dt,
+               import_last_error: "boom",
+               import_next_retry_at: nil
+             }) == nil
+
+      # No import attempted yet.
+      assert Index.import_issue(%{
+               imported_at: nil,
+               import_failed_at: nil,
+               import_last_error: nil,
+               import_next_retry_at: nil
+             }) == nil
+    end
+
+    test "renders the import error on a completed-but-not-imported row", %{conn: conn} do
+      # Mirrors the incident: the torrent finished but the import keeps failing.
+      # The user must see the error on the activity list, not a healthy row.
+      media_item = media_item_fixture(%{title: "Perm Fail Show"})
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      download_fixture(%{
+        media_item_id: media_item.id,
+        title: "Perm.Fail.S01E01",
+        completed_at: now,
+        imported_at: nil,
+        import_failed_at: now,
+        import_last_error: "Download path is not accessible: /media/Series: permission denied",
+        import_next_retry_at: DateTime.add(now, 3600, :second),
+        import_retry_count: 2
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/downloads")
+
+      assert html =~ "Import retrying"
+      assert html =~ "permission denied"
+      assert html =~ "Attempt #2"
+    end
+  end
 end

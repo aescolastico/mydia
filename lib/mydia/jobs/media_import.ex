@@ -660,10 +660,26 @@ defmodule Mydia.Jobs.MediaImport do
 
       {:error, :no_importable_files}
     else
-      # Import each file - destination path is determined per-file for TV shows
+      # Import each file - destination path is determined per-file for TV shows.
+      # Wrap each per-file import so a raised exception (e.g. a filesystem error
+      # from a bang call deep in the path) is captured as {:error, ...} and
+      # routed through handle_import_failure, instead of crashing the Oban job
+      # silently and leaving the download stuck with no error on its row.
       results =
         Enum.map(files_to_import, fn file ->
-          import_file(file, download, library_path, args, parser_opts)
+          try do
+            import_file(file, download, library_path, args, parser_opts)
+          rescue
+            exception ->
+              Logger.error("Unhandled exception importing file",
+                download_id: download.id,
+                file: file.name,
+                exception: Exception.message(exception),
+                stacktrace: Exception.format_stacktrace(__STACKTRACE__)
+              )
+
+              {:error, {:import_exception, Exception.message(exception)}}
+          end
         end)
 
       # Separate results into imported, unresolved, and errors
@@ -692,12 +708,29 @@ defmodule Mydia.Jobs.MediaImport do
           flag_unresolved_files(download, unresolved)
           {:error, :all_files_unresolved}
 
-        # Errors (but no unresolved)
+        # Total failure (nothing imported, nothing unresolved — only errors).
+        # Surface a representative error reason instead of a generic
+        # :partial_import so retry/terminal classification and the user-facing
+        # message reflect the real cause (e.g. {:path_not_accessible, dir} when a
+        # whole destination directory is unwritable, which is terminal after a
+        # few attempts rather than retrying forever).
+        imported == [] ->
+          {:error, representative_error(errors)}
+
+        # Some files imported, some failed — keep the generic partial-import
+        # signal so the successfully-imported files are not undone by a terminal
+        # cancel.
         true ->
           {:error, :partial_import}
       end
     end
   end
+
+  # Picks a single error reason to represent a batch of per-file failures. When
+  # the failures are uniform (the common case — e.g. the entire season directory
+  # is unwritable) the first reason represents them all.
+  defp representative_error([{:error, reason} | _]), do: reason
+  defp representative_error(_), do: :partial_import
 
   # Returns "partial_pack" if a season-pack download delivered fewer distinct
   # episodes than the search-time metadata promised; otherwise nil. The infinite
@@ -1183,9 +1216,25 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp import_file_to_destination(file, episode, dest_dir, download, library_path, args) do
-    # Ensure destination directory exists
-    File.mkdir_p!(dest_dir)
+    # Ensure destination directory exists. Use the non-raising variant so a
+    # permission/filesystem error becomes a handled {:error, ...} that flows
+    # through handle_import_failure (persisting import_last_error and surfacing
+    # in the UI) instead of crashing the Oban job silently.
+    case File.mkdir_p(dest_dir) do
+      :ok ->
+        import_file_to_existing_dir(file, episode, dest_dir, download, library_path, args)
 
+      {:error, reason} ->
+        Logger.error("Failed to create destination directory",
+          dest_dir: dest_dir,
+          reason: inspect(reason)
+        )
+
+        {:error, {:path_not_accessible, dest_dir}}
+    end
+  end
+
+  defp import_file_to_existing_dir(file, episode, dest_dir, download, library_path, args) do
     # Generate filename (optionally renamed with TRaSH format)
     final_filename = generate_filename(download, episode, file.name, args.rename_files)
     dest_path = Path.join(dest_dir, final_filename)
@@ -1630,6 +1679,12 @@ defmodule Mydia.Jobs.MediaImport do
   defp format_import_error(:partial_import, _download) do
     "Some files could not be imported. " <>
       "Check library path permissions and available disk space."
+  end
+
+  defp format_import_error({:import_exception, message}, _download) do
+    "Unexpected error during import: #{message}. " <>
+      "This is often a filesystem permission or disk-space issue. " <>
+      "Import will retry automatically."
   end
 
   defp format_import_error(:download_not_completed, download) do

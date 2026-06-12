@@ -1043,4 +1043,65 @@ defmodule Mydia.Jobs.TVShowSearchTest do
       assert TVShowSearch.should_prefer_season_pack?(missing, tv_show, 1)
     end
   end
+
+  describe "load_monitored_episodes_without_files/0 download occupancy" do
+    test "excludes an episode with a completed-but-not-yet-imported download" do
+      # The duplicate-grab bug: a download that finished downloading but hasn't
+      # imported yet must still keep the episode out of the "missing" set so the
+      # hourly search doesn't grab a second release for it.
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Occupied Show", monitored: true})
+
+      episode =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: ~D[2020-01-01]
+        })
+
+      {:ok, _download} =
+        Mydia.Downloads.create_download(%{
+          title: "Occupied.S01E01",
+          download_url: "magnet:?xt=occupied",
+          download_client: "test-transmission",
+          download_client_id: "occupied-1",
+          media_item_id: tv_show.id,
+          episode_id: episode.id,
+          completed_at: DateTime.utc_now()
+        })
+
+      ids = TVShowSearch.load_monitored_episodes_without_files() |> Enum.map(& &1.id)
+      refute episode.id in ids
+    end
+
+    test "includes an episode whose download import has failed terminally" do
+      # Once an import has failed terminally (no retry scheduled) the download no
+      # longer occupies the episode, so it becomes eligible for a fresh grab.
+      tv_show = media_item_fixture(%{type: "tv_show", title: "Terminal Show", monitored: true})
+
+      episode =
+        episode_fixture(%{
+          media_item_id: tv_show.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: ~D[2020-01-01]
+        })
+
+      {:ok, _download} =
+        Mydia.Downloads.create_download(%{
+          title: "Terminal.S01E01",
+          download_url: "magnet:?xt=terminal",
+          download_client: "test-transmission",
+          download_client_id: "terminal-1",
+          media_item_id: tv_show.id,
+          episode_id: episode.id,
+          completed_at: DateTime.utc_now(),
+          import_failed_at: DateTime.utc_now(),
+          import_next_retry_at: nil
+        })
+
+      ids = TVShowSearch.load_monitored_episodes_without_files() |> Enum.map(& &1.id)
+      assert episode.id in ids
+    end
+  end
 end

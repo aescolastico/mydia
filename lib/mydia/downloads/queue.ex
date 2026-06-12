@@ -232,10 +232,11 @@ defmodule Mydia.Downloads.Queue do
   end
 
   def check_for_active_download(search_result, media_item_id, episode_id) do
-    # Query for active downloads (not completed and not failed)
-    base_query =
-      Download
-      |> where([d], is_nil(d.completed_at) and is_nil(d.error_message))
+    # Query for downloads still occupying their target — actively downloading,
+    # downloaded-but-awaiting-import, or import-retrying. A completed-but-not-yet
+    # imported download still counts, so we don't grab a duplicate while the
+    # first one is queued for import. See Mydia.Downloads.Download.occupying/1.
+    base_query = Download.occupying()
 
     # Add filters based on what we're downloading
     query =

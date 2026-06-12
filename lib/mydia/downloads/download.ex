@@ -4,6 +4,7 @@ defmodule Mydia.Downloads.Download do
   """
   use Ecto.Schema
   import Ecto.Changeset
+  import Ecto.Query, only: [from: 2]
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -74,6 +75,34 @@ defmodule Mydia.Downloads.Download do
     belongs_to :library_path, Mydia.Settings.LibraryPath
 
     timestamps(type: :utc_datetime, updated_at: :updated_at)
+  end
+
+  @doc """
+  Composable query scope for downloads that still "occupy" their episode/season —
+  i.e. work is still in flight toward a successful import, so a second release must
+  not be grabbed for the same target.
+
+  A download occupies its target unless it has reached a terminal state:
+
+    * imported successfully (`imported_at` set), or
+    * the client-side download failed (`error_message` set), or
+    * the import failed *terminally* with no further retries scheduled
+      (`import_failed_at` set AND `import_next_retry_at` is nil).
+
+  Everything else is occupying: actively downloading, downloaded-but-awaiting-import,
+  and import-retrying (transient failures still have `import_next_retry_at` set).
+
+  Note: a transient import failure sets `import_failed_at` on the first attempt
+  (see `MediaImport.handle_import_failure/3`), so `import_failed_at` alone does not
+  mean "done" — the `import_next_retry_at` nil check distinguishes terminal from
+  retrying.
+  """
+  def occupying(query \\ __MODULE__) do
+    from(d in query,
+      where:
+        is_nil(d.imported_at) and is_nil(d.error_message) and
+          (is_nil(d.import_failed_at) or not is_nil(d.import_next_retry_at))
+    )
   end
 
   @doc """

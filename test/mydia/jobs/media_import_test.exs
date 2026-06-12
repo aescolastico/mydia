@@ -747,6 +747,71 @@ defmodule Mydia.Jobs.MediaImportTest do
       assert is_nil(updated.import_next_retry_at)
       assert updated.import_last_error =~ "Download path is not accessible"
     end
+
+    @tag :tmp_dir
+    test "records import failure (no silent crash) when destination dir cannot be created",
+         %{tmp_dir: tmp_dir} do
+      # Reproduces the production incident: a completed download whose import
+      # failed because the destination directory could not be created (a
+      # permission error on the media volume). Previously `File.mkdir_p!` raised
+      # and crashed the Oban job, so the download row never recorded the error
+      # and the UI showed a healthy "seeding" row for ~2.5h. The job must now
+      # capture the failure as a handled {:error, ...} and persist it.
+      library_path = create_test_library_path(tmp_dir, :movies)
+
+      download_dir = Path.join(tmp_dir, "blocked-download")
+      File.mkdir_p!(download_dir)
+      File.write!(Path.join(download_dir, "Blocked Movie 2024 1080p.mkv"), "video")
+
+      media_item = media_item_fixture(%{type: "movie", title: "Blocked Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "BlockedDestClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "BlockedDestClient",
+          download_client_id: "blocked-dest-1"
+        })
+
+      # Occupy the destination directory path with a regular file so File.mkdir_p
+      # fails deterministically — this works even when tests run as root (where a
+      # chmod-based restriction would not).
+      preloaded =
+        Mydia.Downloads.get_download!(download.id,
+          preload: [{:media_item, :episodes}, :episode, :library_path]
+        )
+
+      dest_dir = MediaImport.build_destination_path(preloaded, library_path)
+      File.mkdir_p!(Path.dirname(dest_dir))
+      File.write!(dest_dir, "occupied")
+
+      # First attempt: a handled error (NOT a raised exception), with a retry
+      # scheduled and the failure recorded on the download row.
+      assert {:error, {:path_not_accessible, ^dest_dir}} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_failed_at != nil
+      assert updated.import_next_retry_at != nil
+      assert updated.import_last_error =~ "not accessible"
+      assert is_nil(updated.imported_at)
+    end
   end
 
   # Helper functions
