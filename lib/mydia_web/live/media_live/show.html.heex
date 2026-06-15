@@ -149,7 +149,7 @@
                 <div class="text-sm">
                   {format_download_status(download.status)}
                   <%= if download.progress do %>
-                    - {download.progress}%
+                    - {format_progress(download.progress)}%
                   <% end %>
                 </div>
               </div>

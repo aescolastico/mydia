@@ -7,6 +7,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
   alias Mydia.Media
   alias Phoenix.PubSub
   alias MydiaWeb.Live.Authorization
+  import MydiaWeb.Formatters
 
   @items_per_page 50
 
@@ -1085,9 +1086,6 @@ defmodule MydiaWeb.DownloadsLive.Index do
       true -> "#{div(seconds, 86400)}d"
     end
   end
-
-  defp format_progress(nil), do: 0.0
-  defp format_progress(progress), do: Float.round(progress * 1.0, 1)
 
   # A percentage is only meaningful when the client is reporting a real
   # byte-for-byte transfer. Provider-side waits — debrid magnet conversion,
