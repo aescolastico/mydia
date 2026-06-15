@@ -15,6 +15,7 @@ defmodule MydiaWeb.MediaLive.Show do
 
   # Import helper modules
   import MydiaWeb.MediaLive.Show.Formatters
+  import MydiaWeb.Formatters, only: [format_progress: 1]
   import MydiaWeb.MediaLive.Show.Helpers
   import MydiaWeb.MediaLive.Show.SearchHelpers
   import MydiaWeb.MediaLive.Show.Loaders
