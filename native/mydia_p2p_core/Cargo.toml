@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 # Iroh for p2p networking (QUIC-based, simpler than libp2p)
-iroh = "1.0.0-rc.1"
-iroh-relay = "1.0.0-rc.1"
+iroh = "1.0.0"
+iroh-relay = "1.0.0"
 
 # Async runtime
 tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "macros", "time", "io-util"] }
