@@ -354,7 +354,9 @@ defmodule Mydia.Config.SchemaTest do
 
       [mapping_changeset] = Ecto.Changeset.get_change(changeset, :path_mappings)
       assert Ecto.Changeset.get_change(mapping_changeset, :remote_prefix) == "/downloads/complete"
-      assert Ecto.Changeset.get_change(mapping_changeset, :local_prefix) == "/data/torrents/complete"
+
+      assert Ecto.Changeset.get_change(mapping_changeset, :local_prefix) ==
+               "/data/torrents/complete"
     end
 
     test "validates path mapping runtime config entries with DB-equivalent rules" do

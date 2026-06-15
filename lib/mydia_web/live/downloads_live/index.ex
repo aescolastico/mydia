@@ -1008,7 +1008,9 @@ defmodule MydiaWeb.DownloadsLive.Index do
                   nil ->
                     count =
                       length(
-                        Downloads.list_path_mapping_mismatches_under_prefix(suggestion.remote_prefix)
+                        Downloads.list_path_mapping_mismatches_under_prefix(
+                          suggestion.remote_prefix
+                        )
                       )
 
                     {count, count}
