@@ -264,7 +264,7 @@ git commit -m "message"
 - Out of the box **only the app.js and app.css bundles are supported**
   - You cannot reference an external vendor'd script `src` or link `href` in the layouts
   - You must import the vendor deps into app.js and app.css to use them
-  - **Never write inline <script>custom js</script> tags within templates**
+  - **Prefer** file-based hooks in `assets/js/` for hooks longer than a few lines. Colocated JS (`<script :type={ColocatedJS}>`) is available for template-local hooks. Raw `<script>` tags without `:type={ColocatedJS}` remain discouraged.
 
 ### DaisyUI Component Guidelines
 
@@ -517,7 +517,17 @@ Components follow a three-tier system:
 - **Avoid LiveComponent's** unless you have a strong, specific need for them
 - LiveViews should be named like `AppWeb.WeatherLive`, with a `Live` suffix. When you go to add LiveView routes to the router, the default `:browser` scope is **already aliased** with the `AppWeb` module, so you can just do `live "/weather", WeatherLive`
 - Remember anytime you use `phx-hook="MyHook"` and that js hook manages its own DOM, you **must** also set the `phx-update="ignore"` attribute
-- **Never** write embedded `<script>` tags in HEEx. Instead always write your scripts and hooks in the `assets/js` directory and integrate them with the `assets/js/app.js` file
+- **Prefer** file-based hooks in `assets/js/` for hooks longer than a few lines. Colocated JS (`<script :type={ColocatedJS}>`) is available for template-local hooks.
+
+### LiveView 1.2 features
+
+Mydia runs on LiveView 1.2. The following features are available:
+- **Colocated CSS** (`<style :type={ColocatedCSS}>`) — template-local CSS extracted at compile time. Not currently in use; Tailwind/DaisyUI via `assets/css/` remains the primary styling path.
+- **Colocated JS** (`<script :type={ColocatedJS}>`) — template-local JS extracted at compile time. Available for new hooks; existing hooks remain file-based in `assets/js/`.
+- **JS struct auto-encoding** — `Phoenix.LiveView.JS` structs are automatically encoded when passed to `push_event`. No code changes needed.
+- **Per-module debug annotations** — `@debug_heex_annotations` can be set per LiveView module to override the global config.
+- **Test warning configuration** — individual test warning categories can be raised, warned, or ignored via `config :phoenix_live_view, :test_warnings`.
+- **TagFormatter** — a behaviour for formatting `<script>` and `<style>` tags in HEEx at compile time. Not currently in use.
 
 ### LiveView streams
 
