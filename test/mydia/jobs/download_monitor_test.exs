@@ -704,7 +704,10 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client: client_config.name,
           download_client_id: "nzo-progress-1",
           last_progress_at: first_seen,
-          last_known_bytes: prev_bytes
+          last_known_bytes: prev_bytes,
+          # Observed one poll ago — within the observation-gap window, so the
+          # gap reset doesn't pre-empt progress evaluation.
+          last_observed_at: ~U[2026-05-14 11:58:00.000000Z]
         })
 
       now = ~U[2026-05-14 12:00:00.000000Z]
@@ -714,7 +717,9 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       # Bytes increased from ~50MB to ~60MB — progress recorded, no stall flag.
       assert updated.last_progress_at == now
       assert updated.last_known_bytes == round(60.0 * 1024 * 1024)
+      assert updated.last_observed_at == now
       assert is_nil(updated.import_failed_at)
+      assert is_nil(updated.stalled_since)
     end
 
     test "leaves last_progress_at unchanged when bytes are unchanged within grace window" do
@@ -736,7 +741,8 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client: client_config.name,
           download_client_id: "nzo-stuck-1",
           last_progress_at: first_seen,
-          last_known_bytes: same_bytes
+          last_known_bytes: same_bytes,
+          last_observed_at: ~U[2026-05-14 11:58:00.000000Z]
         })
 
       # 30 minutes after first_seen — still within the 60-minute grace window.
@@ -746,7 +752,10 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       updated = Downloads.get_download!(download.id)
       assert updated.last_progress_at == first_seen
       assert updated.last_known_bytes == same_bytes
+      # last_observed_at is stamped every poll even when nothing else changes.
+      assert updated.last_observed_at == now
       assert is_nil(updated.import_failed_at)
+      assert is_nil(updated.stalled_since)
     end
 
     test "does not stall at the exact grace boundary (strict >)" do
@@ -770,7 +779,8 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client: client_config.name,
           download_client_id: "nzo-boundary-1",
           last_progress_at: first_seen,
-          last_known_bytes: same_bytes
+          last_known_bytes: same_bytes,
+          last_observed_at: ~U[2026-05-14 11:58:00.000000Z]
         })
 
       assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
@@ -778,9 +788,10 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       updated = Downloads.get_download!(download.id)
       assert is_nil(updated.import_failed_at)
       assert is_nil(updated.import_last_error)
+      assert is_nil(updated.stalled_since)
     end
 
-    test "flags as stalled when bytes are unchanged past the grace window" do
+    test "soft-stalls (not terminal) when bytes are unchanged past the grace window" do
       {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
 
       same_bytes = round(50.0 * 1024 * 1024)
@@ -792,7 +803,8 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       media_item = media_item_fixture()
 
       first_seen = ~U[2026-05-14 10:00:00.000000Z]
-      # 61 minutes later — past the 60m grace window by 1 minute.
+      # 61 minutes later — past the 60m grace window by 1 minute. Observed
+      # continuously (recent last_observed_at) so no gap reset.
       now = ~U[2026-05-14 11:01:00.000000Z]
 
       download =
@@ -801,20 +813,23 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client: client_config.name,
           download_client_id: "nzo-stalled-1",
           last_progress_at: first_seen,
-          last_known_bytes: same_bytes
+          last_known_bytes: same_bytes,
+          last_observed_at: ~U[2026-05-14 10:59:00.000000Z]
         })
 
       assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
 
       updated = Downloads.get_download!(download.id)
-      # import_failed_at is :utc_datetime (second precision), so compare via diff.
-      assert updated.import_failed_at != nil
-      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
-      assert updated.import_last_error =~ "stalled"
-      assert updated.import_last_error == "stalled after 60m without progress"
+      # Soft-stall: stalled_since set, but NOT terminal — import_failed_at stays
+      # nil so the episode is still occupied (no re-grab).
+      assert updated.stalled_since != nil
+      assert DateTime.diff(updated.stalled_since, now, :second) == 0
+      assert updated.last_observed_at == now
+      assert is_nil(updated.import_failed_at)
+      assert is_nil(updated.import_last_error)
     end
 
-    test "respects per-client incomplete_grace_minutes" do
+    test "respects per-client incomplete_grace_minutes for soft-stall" do
       {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 15)
 
       same_bytes = round(50.0 * 1024 * 1024)
@@ -835,15 +850,16 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client: client_config.name,
           download_client_id: "nzo-grace15-1",
           last_progress_at: first_seen,
-          last_known_bytes: same_bytes
+          last_known_bytes: same_bytes,
+          last_observed_at: ~U[2026-05-14 10:14:00.000000Z]
         })
 
       assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
 
       updated = Downloads.get_download!(download.id)
-      assert updated.import_failed_at != nil
-      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
-      assert updated.import_last_error == "stalled after 15m without progress"
+      assert updated.stalled_since != nil
+      assert DateTime.diff(updated.stalled_since, now, :second) == 0
+      assert is_nil(updated.import_failed_at)
     end
 
     test "does not flag stalled in terminal state (completed)" do

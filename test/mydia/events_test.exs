@@ -677,6 +677,40 @@ defmodule Mydia.EventsTest do
       assert event.metadata["title"] == "Failed Download"
     end
 
+    test "download_stalled/3 creates a warning event distinct from download.failed" do
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Stalled Download",
+        download_client: "transmission"
+      }
+
+      Events.download_stalled(download, "stalled after 60m without progress")
+      Process.sleep(100)
+
+      assert [] = Events.list_events(type: "download.failed")
+      [event] = Events.list_events(type: "download.stalled")
+      assert event.category == "downloads"
+      assert event.actor_type == :system
+      assert event.severity == :warning
+      assert event.metadata["title"] == "Stalled Download"
+    end
+
+    test "download_unstalled/2 creates a recovery event referencing the download" do
+      download = %Mydia.Downloads.Download{
+        id: Ecto.UUID.generate(),
+        title: "Recovered Download",
+        download_client: "transmission"
+      }
+
+      Events.download_unstalled(download)
+      Process.sleep(100)
+
+      [event] = Events.list_events(type: "download.unstalled")
+      assert event.category == "downloads"
+      assert event.severity == :info
+      assert event.metadata["download_id"] == download.id
+    end
+
     test "download_cancelled/3 creates correct event" do
       user_id = Ecto.UUID.generate()
 
