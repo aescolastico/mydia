@@ -1942,10 +1942,40 @@ defmodule MydiaWeb.ImportMediaLive.Index do
         file_name: Path.basename(file.path),
         status: :failed,
         media_item_title: match_result && match_result.title,
-        error_message: "Unexpected error: #{Exception.message(error)}",
+        error_message: friendly_db_error(error),
         action_taken: nil,
         metadata: %{size: file.size}
       }
+  end
+
+  @doc false
+  # Maps a raised exception to a user-friendly per-file error message.
+  #
+  # A `varchar(255)` overflow on PostgreSQL raises a `Postgrex.Error` with
+  # pg_code `:string_data_right_truncation` (22001) from `Repo.insert` rather
+  # than returning an `{:error, %Ecto.Changeset{}}` — Ecto only maps *declared*
+  # constraint violations to changeset errors, and these free-text columns
+  # declare no length constraint. Referencing the `Postgrex.Error` struct is
+  # safe under SQLite (the dep is compiled in; the match simply never succeeds).
+  #
+  # Public (with `@doc false`) so it can be unit-tested without a live Postgres
+  # connection by synthesizing a `%Postgrex.Error{}`.
+  def friendly_db_error(%Postgrex.Error{postgres: %{code: :string_data_right_truncation} = pg}) do
+    location =
+      case {Map.get(pg, :table), Map.get(pg, :column)} do
+        {table, column} when is_binary(table) and is_binary(column) ->
+          " (#{table}.#{column})"
+
+        _ ->
+          ""
+      end
+
+    "A metadata value is too long to store#{location}. " <>
+      "If your database schema is out of date, run database migrations to widen the affected column."
+  end
+
+  def friendly_db_error(error) do
+    "Unexpected error: #{Exception.message(error)}"
   end
 
   defp build_success_message(match_result, _is_orphaned) do
@@ -1970,8 +2000,10 @@ defmodule MydiaWeb.ImportMediaLive.Index do
   defp library_type_label(:adult), do: "Adult"
   defp library_type_label(type), do: to_string(type)
 
-  # Formats changeset errors with user-friendly messages for known issues
-  defp format_changeset_errors_friendly(%Ecto.Changeset{} = changeset) do
+  @doc false
+  # Formats changeset errors with user-friendly messages for known issues.
+  # Public (with `@doc false`) so the friendly-error mapping can be unit-tested.
+  def format_changeset_errors_friendly(%Ecto.Changeset{} = changeset) do
     # Check for specific known error patterns
     cond do
       has_size_error?(changeset) ->
@@ -1980,17 +2012,33 @@ defmodule MydiaWeb.ImportMediaLive.Index do
       has_library_type_mismatch?(changeset) ->
         "File type doesn't match the library type"
 
+      has_truncation_error?(changeset) ->
+        "A metadata value is too long to store. If your database schema is out of date, run database migrations to widen the affected column."
+
       true ->
         "Database error: #{format_changeset_errors(changeset)}"
     end
   end
 
-  defp format_changeset_errors_friendly(other), do: format_error(other)
+  def format_changeset_errors_friendly(other), do: format_error(other)
 
   defp has_size_error?(changeset) do
     Enum.any?(changeset.errors, fn
       {:size, {_msg, _opts}} -> true
       _ -> false
+    end)
+  end
+
+  # Defends the `{:error, changeset}` branch in case any path ever surfaces a
+  # length overflow as a changeset error (e.g. a value-too-long validation
+  # rather than a raised Postgrex.Error). Matches Ecto's `:length` validation
+  # metadata or a message mentioning the value being too long.
+  defp has_truncation_error?(changeset) do
+    Enum.any?(changeset.errors, fn {_field, {msg, opts}} ->
+      Keyword.get(opts, :validation) == :length or
+        Keyword.has_key?(opts, :count) or
+        String.contains?(msg, "too long") or
+        String.contains?(msg, "should be at most")
     end)
   end
 
