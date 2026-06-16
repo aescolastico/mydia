@@ -7,7 +7,7 @@ defmodule Mydia.Library do
   import Mydia.DB
   import Mydia.QueryHelpers
   alias Mydia.Repo
-  alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator}
+  alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator, Text}
   alias Mydia.Library.ReleaseParser, as: FileParser
 
   require Logger
@@ -733,10 +733,15 @@ defmodule Mydia.Library do
       "Found #{length(unmatched_files)} unmatched files for media item #{media_item_id}"
     )
 
+    # Title of the show these files are being matched against, used to reject a
+    # stray file whose filename clearly belongs to a different show (see
+    # title_belongs_to_other_show?/2).
+    show_title = media_item_title(media_item_id)
+
     # Match each file to an episode
     matched_count =
       Enum.reduce(unmatched_files, 0, fn media_file, count ->
-        case match_file_to_episode(media_file, media_item_id) do
+        case match_file_to_episode(media_file, media_item_id, show_title) do
           {:ok, _} -> count + 1
           {:error, _} -> count
         end
@@ -747,7 +752,7 @@ defmodule Mydia.Library do
     {:ok, matched_count}
   end
 
-  defp match_file_to_episode(media_file, media_item_id) do
+  defp match_file_to_episode(media_file, media_item_id, show_title) do
     # Use relative_path for filename parsing
     filename =
       case media_file.relative_path do
@@ -771,50 +776,88 @@ defmodule Mydia.Library do
       season = parsed_info.season
       episode_numbers = parsed_info.episodes
 
-      if is_integer(season) and is_list(episode_numbers) and length(episode_numbers) > 0 do
-        # For multi-episode files, we'll just match to the first episode
-        episode_number = List.first(episode_numbers)
+      cond do
+        not (is_integer(season) and is_list(episode_numbers) and length(episode_numbers) > 0) ->
+          Logger.debug("File did not contain valid episode information", filename: filename)
+          {:error, :no_episode_info}
 
-        # Find the matching episode
-        case Mydia.Media.get_episode_by_number(media_item_id, season, episode_number) do
-          nil ->
-            Logger.debug("No episode found for file",
+        title_belongs_to_other_show?(parsed_info.title, show_title) ->
+          # A file carrying an SxxEyy pattern must not be bound to this show
+          # purely because the numbers line up — e.g. a stray "Shark Tank India
+          # S04E07" must not match "FROM" S04E07. Guard on the parsed title.
+          Logger.debug("Skipping file: parsed title belongs to a different show",
+            filename: filename,
+            parsed_title: parsed_info.title,
+            show_title: show_title
+          )
+
+          {:error, :title_mismatch}
+
+        true ->
+          match_parsed_episode(media_file, media_item_id, filename, season, episode_numbers)
+      end
+    end
+  end
+
+  # Rejects a file whose parsed title clearly belongs to a different show. Only
+  # guards when both a parsed title and a show title are present; an
+  # unparseable/blank title falls through so ambiguous filenames keep matching
+  # on season/episode numbers as before.
+  @title_match_threshold 0.5
+  defp title_belongs_to_other_show?(parsed_title, show_title)
+       when is_binary(parsed_title) and is_binary(show_title) and
+              parsed_title != "" and show_title != "" do
+    Text.title_similarity(parsed_title, show_title) < @title_match_threshold
+  end
+
+  defp title_belongs_to_other_show?(_parsed_title, _show_title), do: false
+
+  defp media_item_title(media_item_id) do
+    case Repo.get(Mydia.Media.MediaItem, media_item_id) do
+      %{title: title} -> title
+      _ -> nil
+    end
+  end
+
+  defp match_parsed_episode(media_file, media_item_id, filename, season, episode_numbers) do
+    # For multi-episode files, we'll just match to the first episode
+    episode_number = List.first(episode_numbers)
+
+    # Find the matching episode
+    case Mydia.Media.get_episode_by_number(media_item_id, season, episode_number) do
+      nil ->
+        Logger.debug("No episode found for file",
+          filename: filename,
+          season: season,
+          episode: episode_number
+        )
+
+        {:error, :episode_not_found}
+
+      episode ->
+        # Update the media file with the episode_id
+        case update_media_file(media_file, %{
+               media_item_id: nil,
+               episode_id: episode.id
+             }) do
+          {:ok, updated_file} ->
+            Logger.debug("Matched file to episode",
               filename: filename,
               season: season,
-              episode: episode_number
+              episode: episode_number,
+              episode_id: episode.id
             )
 
-            {:error, :episode_not_found}
+            {:ok, updated_file}
 
-          episode ->
-            # Update the media file with the episode_id
-            case update_media_file(media_file, %{
-                   media_item_id: nil,
-                   episode_id: episode.id
-                 }) do
-              {:ok, updated_file} ->
-                Logger.debug("Matched file to episode",
-                  filename: filename,
-                  season: season,
-                  episode: episode_number,
-                  episode_id: episode.id
-                )
+          {:error, reason} ->
+            Logger.warning("Failed to update media file",
+              filename: filename,
+              reason: inspect(reason)
+            )
 
-                {:ok, updated_file}
-
-              {:error, reason} ->
-                Logger.warning("Failed to update media file",
-                  filename: filename,
-                  reason: inspect(reason)
-                )
-
-                {:error, reason}
-            end
+            {:error, reason}
         end
-      else
-        Logger.debug("File did not contain valid episode information", filename: filename)
-        {:error, :no_episode_info}
-      end
     end
   end
 

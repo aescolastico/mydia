@@ -622,7 +622,8 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
 
     @tag :tmp_dir
-    test "returns error when save_path points to non-existent path", %{tmp_dir: _tmp_dir} do
+    test "classifies a path with no visible parent as a mapping mismatch and goes terminal",
+         %{tmp_dir: _tmp_dir} do
       media_item =
         media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
 
@@ -647,17 +648,24 @@ defmodule Mydia.Jobs.MediaImportTest do
           download_client_id: "test123"
         })
 
-      assert {:error, {:path_not_found, "/no/such/path/exists"}} =
+      # Neither the leaf nor its parent are visible -> mount mismatch, terminal
+      # on the first attempt (returns :cancel, not :error).
+      assert {:cancel, {:path_mapping_mismatch, "/no/such/path/exists"}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => "/no/such/path/exists"
                })
 
       updated = Mydia.Downloads.get_download!(download.id)
-      assert updated.import_last_error =~ "Download path not found"
+      assert updated.import_last_error =~ "can't access the download path"
+      assert updated.import_failure_reason == "path_mapping_mismatch"
+      assert updated.import_reported_path == "/no/such/path/exists"
     end
 
-    test "cancels missing path after the third attempt and clears retry metadata" do
+    @tag :tmp_dir
+    test "cancels missing path after the third attempt and clears retry metadata", %{
+      tmp_dir: tmp_dir
+    } do
       media_item =
         media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
 
@@ -682,12 +690,17 @@ defmodule Mydia.Jobs.MediaImportTest do
           download_client_id: "missing-path-terminal"
         })
 
-      assert {:cancel, {:path_not_found, "/no/such/path/exists"}} =
+      # A deleted leaf whose parent directory IS visible stays :path_not_found
+      # (a genuinely missing file), which retries up to three times before
+      # going terminal.
+      missing_leaf = Path.join(tmp_dir, "missing-leaf")
+
+      assert {:cancel, {:path_not_found, ^missing_leaf}} =
                perform_job(
                  MediaImport,
                  %{
                    "download_id" => download.id,
-                   "save_path" => "/no/such/path/exists"
+                   "save_path" => missing_leaf
                  },
                  attempt: 3
                )
@@ -813,6 +826,52 @@ defmodule Mydia.Jobs.MediaImportTest do
       assert updated.import_next_retry_at != nil
       assert updated.import_last_error =~ "library destination directory"
       assert is_nil(updated.imported_at)
+    end
+
+    @tag :tmp_dir
+    @tag skip: @running_as_root and "chmod 000 does not restrict root; parent stays accessible"
+    test "classifies a missing leaf under an inaccessible parent as path_not_accessible",
+         %{tmp_dir: tmp_dir} do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Restricted Parent Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "RestrictedParentTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      restricted_parent = Path.join(tmp_dir, "restricted-parent")
+      File.mkdir_p!(restricted_parent)
+      File.chmod!(restricted_parent, 0o000)
+      on_exit(fn -> File.chmod!(restricted_parent, 0o755) end)
+
+      missing_leaf = Path.join(restricted_parent, "missing-leaf")
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "RestrictedParentTerminalClient",
+          download_client_id: "restricted-parent-terminal"
+        })
+
+      assert {:cancel, {:path_not_accessible, ^missing_leaf}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => missing_leaf
+                 },
+                 attempt: 3
+               )
     end
   end
 

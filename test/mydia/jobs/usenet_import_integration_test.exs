@@ -215,7 +215,7 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
                perform_job(MediaImport, %{"download_id" => download.id})
     end
 
-    test "returns error when save_path points to non-existent directory", %{
+    test "classifies a save_path with no visible parent as a mapping mismatch", %{
       bypass: bypass,
       client_config: client_config
     } do
@@ -242,7 +242,11 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
           download_client_id: "777"
         })
 
-      assert {:error, {:path_not_found, "/nonexistent/path/that/does/not/exist"}} =
+      # Neither the leaf nor its immediate parent is visible inside Mydia's
+      # filesystem view — the container volume mount-mismatch signature. This is
+      # classified as a path-mapping mismatch and goes terminal on the first
+      # attempt (returns :cancel, not :error).
+      assert {:cancel, {:path_mapping_mismatch, "/nonexistent/path/that/does/not/exist"}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => "/nonexistent/path/that/does/not/exist"
