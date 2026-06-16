@@ -1448,12 +1448,12 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
-  describe "TV release rejection for movie searches" do
-    test "rejects TV season release when searching for a movie with overlapping title words" do
+  describe "TV release penalty for movie searches (soft)" do
+    test "penalizes (does not remove) a TV season release in a movie search" do
       # Real-world bug: searching for movie "Frozen 2013" matched
-      # "Frozen Planet II S01 1080p BluRay x265" because the word "Frozen"
-      # overlapped, giving a non-zero title match score (~4.25).
-      # Releases with season patterns (S01, S01E05) should never match movie searches.
+      # "Frozen Planet II S01" because the word "Frozen" overlapped. The TV
+      # release is now kept but softly penalized as an identity mismatch, so the
+      # real movie still wins.
       gb = 1024 * 1024 * 1024
 
       results = [
@@ -1478,18 +1478,17 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           min_seeders: 0
         )
 
-      # The TV show should be filtered out
       tv_release = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen Planet II"))
+      movie = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.2013"))
 
-      assert tv_release == nil,
-             "TV season release should be filtered out when searching for a movie"
-
-      # The correct movie should remain
-      assert length(ranked) == 1
+      # The TV release is kept but penalized; the movie wins on score.
+      assert tv_release != nil
+      assert tv_release.breakdown.identity_penalty < 0.0
+      assert movie.breakdown.identity_penalty == 0.0
       assert String.contains?(List.first(ranked).result.title, "Frozen.2013")
     end
 
-    test "rejects releases with S01E05 episode pattern in movie search" do
+    test "penalizes a release with an S01E05 episode pattern in a movie search" do
       gb = 1024 * 1024 * 1024
 
       results = [
@@ -1508,8 +1507,9 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           min_seeders: 0
         )
 
-      assert ranked == [],
-             "TV episode with S01E05 pattern should be filtered out in movie search"
+      # Kept (soft), but penalized as an identity mismatch.
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
     end
 
     test "does not reject TV releases when media_type is :episode" do
@@ -1556,6 +1556,218 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
       assert length(ranked) == 1,
              "Without media_type, TV releases should not be filtered"
+    end
+  end
+
+  describe "episode/season identity penalty (U3)" do
+    test "AE1: legit S09E01 releases rank above an identity-less parody, parody last but present" do
+      # The reported Rick and Morty bug: the parody has no season/episode
+      # identity, so it must sink below every real S09E01 release while staying
+      # selectable at the bottom.
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP",
+          seeders: 5,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.720p.WEB.h264-OTHER",
+          seeders: 20,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.720p.WEB.h264-OTHER")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p",
+          seeders: 500,
+          quality: QualityParser.parse("Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      titles = Enum.map(ranked, & &1.result.title)
+
+      # Parody is present...
+      assert "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p" in titles
+      # ...but last, behind both real S09E01 releases.
+      assert List.last(ranked).result.title ==
+               "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p"
+
+      parody = List.last(ranked)
+      assert parody.breakdown.identity_penalty < 0.0
+
+      real_matches =
+        Enum.reject(ranked, &String.contains?(&1.result.title, "Parody"))
+
+      assert Enum.all?(real_matches, &(&1.breakdown.identity_penalty == 0.0))
+      assert Enum.all?(real_matches, &(&1.score > parody.score))
+    end
+
+    test "AE4: a wrong-episode release is kept (penalized) and selectable" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "a parseable title with no episode identity is penalized" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.Complete.Collection.1080p.WEB",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.Complete.Collection.1080p.WEB")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "fail-open: an unparseable title gets no identity penalty even with expected_episode" do
+      # No expected_title supplied, so no prior parse ran; the identity stage
+      # must parse and, finding nothing, fail open.
+      results = [
+        build_result(%{
+          title: "1080p.x264.AAC",
+          seeders: 10,
+          quality: nil
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty == 0.0
+    end
+
+    test "season search: a correct-season pack matches; a wrong-season pack is penalized" do
+      correct =
+        build_result(%{
+          title: "Rick.and.Morty.S09.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09.1080p.WEB.h264-GROUP")
+        })
+
+      wrong =
+        build_result(%{
+          title: "Rick.and.Morty.S08.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S08.1080p.WEB.h264-GROUP")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([correct, wrong],
+          media_type: :episode,
+          expected_season: 9,
+          min_seeders: 0
+        )
+
+      correct_ranked = Enum.find(ranked, &String.contains?(&1.result.title, "S09"))
+      wrong_ranked = Enum.find(ranked, &String.contains?(&1.result.title, "S08"))
+
+      assert correct_ranked.breakdown.identity_penalty == 0.0
+      assert wrong_ranked.breakdown.identity_penalty < 0.0
+    end
+
+    test "AE4: an episode search with only season packs returns a selectable penalized pack" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      # Season pack matches season but lacks the episode → penalized, not removed.
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "movie search: a TV-pattern release is penalized as an identity mismatch" do
+      results = [
+        build_result(%{
+          title: "Frozen.Planet.II.S01.1080p.BluRay.x265",
+          seeders: 50,
+          quality: QualityParser.parse("Frozen.Planet.II.S01.1080p.BluRay.x265")
+        }),
+        build_result(%{
+          title: "Frozen.2013.1080p.BluRay.x264-Group",
+          seeders: 50,
+          quality: QualityParser.parse("Frozen.2013.1080p.BluRay.x264-Group")
+        })
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, media_type: :movie, min_seeders: 0)
+
+      tv = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.Planet"))
+      movie = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.2013"))
+
+      # TV-pattern release is kept now (soft), but penalized below the movie.
+      assert tv != nil
+      assert tv.breakdown.identity_penalty < 0.0
+      assert movie.breakdown.identity_penalty == 0.0
+      assert movie.score > tv.score
+    end
+
+    test "no expected identity (generic episode search): no identity penalty applied" do
+      results = [
+        build_result(%{
+          title: "Some.Show.S02E10.1080p.WEB-DL",
+          seeders: 50,
+          quality: QualityParser.parse("Some.Show.S02E10.1080p.WEB-DL")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          search_query: "Some Show",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty == 0.0
     end
   end
 

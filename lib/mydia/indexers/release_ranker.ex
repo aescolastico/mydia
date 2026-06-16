@@ -68,12 +68,22 @@ defmodule Mydia.Indexers.ReleaseRanker do
           quality_profile: QualityProfile.t() | nil,
           media_type: :movie | :episode | nil,
           expected_title: String.t() | nil,
+          expected_season: non_neg_integer() | nil,
+          expected_episode: non_neg_integer() | nil,
           min_post_age_minutes: non_neg_integer() | nil,
           now: DateTime.t() | nil
         ]
 
   @default_min_seeders 0
   @title_match_threshold 0.7
+
+  # Identity penalty: a large tier separator (not a nudge). It deliberately
+  # exceeds the maximum achievable base score (quality·0.6 ≈ 60 + seeders ≈ 30
+  # + title ≈ 10 + tag_bonus, which is 10 per preferred tag with no documented
+  # cap). At -1000 it dwarfs even a heavily-tagged title, so every
+  # identity-matching release outranks every identity-mismatching one while the
+  # mismatch stays selectable (finite, deeply negative score).
+  @identity_penalty -1000.0
 
   @doc """
   Selects the best result from a list based on ranking criteria.
@@ -121,15 +131,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
     )
 
     search_query = Keyword.get(opts, :search_query)
-
-    media_type = Keyword.get(opts, :media_type)
     expected_title = Keyword.get(opts, :expected_title)
 
+    # Note: TV-pattern-in-movie-search is no longer a hard removal. A movie
+    # search expects no season/episode, so a TV-pattern release is treated as an
+    # identity mismatch and softly penalized inside calculate_score_breakdown
+    # (see identity_penalty/2), per the Open Question default.
     ranked =
       results
       |> reject_invalid_releases()
       |> filter_acceptable(opts)
-      |> reject_tv_releases_for_movies(media_type)
       |> reject_title_mismatches(expected_title)
       |> Enum.map(fn result ->
         breakdown = calculate_score_breakdown(result, opts)
@@ -390,29 +401,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
       end
     end)
   end
-
-  ## Private Functions - Media Type Filtering
-
-  # When searching for a movie, reject releases that contain TV season/episode
-  # patterns (S01, S01E05, etc.) since they're clearly TV content, not movies.
-  # This prevents false matches like "Frozen Planet II S01" matching "Frozen 2013".
-  @tv_season_pattern ~r/\bS\d{1,2}(?:E\d{1,3})?\b/i
-
-  defp reject_tv_releases_for_movies(results, :movie) do
-    Enum.filter(results, fn result ->
-      if Regex.match?(@tv_season_pattern, result.title) do
-        Logger.info(
-          "[ReleaseRanker] Filtered out (TV season/episode pattern in movie search): #{result.title}"
-        )
-
-        false
-      else
-        true
-      end
-    end)
-  end
-
-  defp reject_tv_releases_for_movies(results, _media_type), do: results
 
   ## Private Functions - Title Mismatch Filtering
 
@@ -768,8 +756,73 @@ defmodule Mydia.Indexers.ReleaseRanker do
     seeder_part + ratio_part
   end
 
-  # Identity penalty placeholder (implemented in U3). Returns a value <= 0.0.
-  defp identity_penalty(_result, _opts), do: 0.0
+  # Identity penalty: penalize releases whose parsed season/episode does not
+  # match the requested one (or is absent) when an expected identity is
+  # supplied. The penalty is a large tier separator so identity matches always
+  # outrank mismatches while mismatches stay selectable.
+  #
+  # - Episode search (expected_episode set): match season AND episode.
+  # - Season search (expected_season set, no episode): match season only.
+  # - Movie search (media_type == :movie): expect NO season/episode; a parsed
+  #   TV pattern is an identity mismatch (folds in reject_tv_releases_for_movies
+  #   as a soft penalty per the Open Question default).
+  # - Fail open: an unparseable title (no ParsedFileInfo) gets no penalty.
+  defp identity_penalty(%SearchResult{} = result, opts) do
+    media_type = Keyword.get(opts, :media_type)
+    expected_season = Keyword.get(opts, :expected_season)
+    expected_episode = Keyword.get(opts, :expected_episode)
+
+    cond do
+      media_type == :movie ->
+        movie_identity_penalty(result)
+
+      expected_season != nil or expected_episode != nil ->
+        tv_identity_penalty(result, expected_season, expected_episode)
+
+      true ->
+        0.0
+    end
+  end
+
+  # Movie: any parsed season/episode marker is an identity mismatch. Fail open
+  # when the parser couldn't identify the release (no title), mirroring the
+  # title-mismatch convention, to protect formats the parser cannot read.
+  defp movie_identity_penalty(%SearchResult{title: title}) do
+    case ReleaseParser.parse(title) do
+      %ParsedFileInfo{title: parsed_title, season: season, episodes: episodes}
+      when is_binary(parsed_title) and
+             (not is_nil(season) or (is_list(episodes) and episodes != [])) ->
+        @identity_penalty
+
+      _ ->
+        0.0
+    end
+  end
+
+  defp tv_identity_penalty(%SearchResult{title: title}, expected_season, expected_episode) do
+    case ReleaseParser.parse(title) do
+      %ParsedFileInfo{title: parsed_title} = parsed when is_binary(parsed_title) ->
+        if identity_matches?(parsed, expected_season, expected_episode),
+          do: 0.0,
+          else: @identity_penalty
+
+      _ ->
+        # Parser couldn't identify the release (no title) — fail open, no penalty.
+        0.0
+    end
+  end
+
+  # Identity matches when the parsed season equals the expected season and,
+  # for an episode search, the parsed primary episode equals the expected
+  # episode. A nil parsed season/episode never matches a non-nil expectation.
+  defp identity_matches?(%ParsedFileInfo{} = parsed, expected_season, expected_episode) do
+    season_ok = expected_season == nil or parsed.season == expected_season
+
+    episode_ok =
+      expected_episode == nil or ParsedFileInfo.primary_episode(parsed) == expected_episode
+
+    season_ok and episode_ok
+  end
 
   # Calculate bonus points for matching preferred_tags in the title
   # Each matching tag adds 10 points to help preferred releases rank higher
