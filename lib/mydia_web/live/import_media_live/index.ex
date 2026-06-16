@@ -1971,7 +1971,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
       end
 
     "A metadata value is too long to store#{location}. " <>
-      "This title or path exceeds the database column limit."
+      "If your database schema is out of date, run database migrations to widen the affected column."
   end
 
   def friendly_db_error(error) do
@@ -2013,7 +2013,7 @@ defmodule MydiaWeb.ImportMediaLive.Index do
         "File type doesn't match the library type"
 
       has_truncation_error?(changeset) ->
-        "A metadata value is too long to store. This title or path exceeds the database column limit."
+        "A metadata value is too long to store. If your database schema is out of date, run database migrations to widen the affected column."
 
       true ->
         "Database error: #{format_changeset_errors(changeset)}"
