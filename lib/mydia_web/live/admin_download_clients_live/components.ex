@@ -5,9 +5,8 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
   alias Mydia.Settings
 
   # Client types that surface category configuration in the admin form.
-  # Blackhole uses filesystem paths (no concept of a per-content-type
-  # category); HTTP is a generic transport with no client-side category
-  # taxonomy either.
+  # Blackhole uses filesystem paths and debrid uses a hosted service, so
+  # neither has a per-content-type category taxonomy.
   @category_aware_types ~w(qbittorrent transmission rtorrent sabnzbd nzbget)
 
   # Client types that surface the 5-tier priority profile UI. Same set as
@@ -351,7 +350,6 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                     {"Blackhole", "blackhole"},
                     {"SABnzbd", "sabnzbd"},
                     {"NZBGet", "nzbget"},
-                    {"HTTP", "http"},
                     {"Debrid", "debrid"}
                   ]}
                   required
@@ -552,7 +550,7 @@ defmodule MydiaWeb.AdminDownloadClientsLive.Components do
                 </div>
             <% end %>
 
-            <%!-- Per-content-type categories. Hidden for blackhole and HTTP transports. --%>
+            <%!-- Per-content-type categories. Hidden for blackhole and debrid clients. --%>
             <%= if @show_categories? do %>
               <div class="space-y-3" id="download-client-categories">
                 <div class="flex items-center gap-2 text-sm font-medium text-base-content/80">

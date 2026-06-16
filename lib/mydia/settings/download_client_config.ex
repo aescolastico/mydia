@@ -55,7 +55,6 @@ defmodule Mydia.Settings.DownloadClientConfig do
     :rqbit,
     :rtorrent,
     :blackhole,
-    :http,
     :sabnzbd,
     :nzbget,
     :debrid

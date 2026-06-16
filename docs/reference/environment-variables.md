@@ -107,12 +107,12 @@ Configure multiple clients using numbered variables (`<N>` = 1, 2, 3, etc.):
 | `DOWNLOAD_CLIENT_<N>_CATEGORY` | Default category | - |
 | `DOWNLOAD_CLIENT_<N>_DOWNLOAD_DIRECTORY` | Download directory | - |
 | `DOWNLOAD_CLIENT_<N>_PROVIDER` | Debrid provider (debrid only) | `real_debrid` |
+| `DOWNLOAD_CLIENT_<N>_WATCH_FOLDER` | Watch folder (blackhole only) | `/downloads/watch` |
+| `DOWNLOAD_CLIENT_<N>_COMPLETED_FOLDER` | Completed folder (blackhole only) | `/downloads/complete` |
 
 > `DOWNLOAD_CLIENT_<N>_NAME` is required — clients are discovered by their `_NAME` variable, so a block without it is ignored.
 
-**Client Types (env-configurable):** `qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `sabnzbd`, `nzbget`, `debrid`
-
-> The `blackhole` client is also supported, but its watch/completed folder paths can only be set through the Admin UI today, not via environment variables.
+**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `blackhole`, `sabnzbd`, `nzbget`, `debrid`
 
 Example rqbit client:
 
@@ -146,6 +146,20 @@ Swap `PROVIDER` for any of the values above (e.g. `all_debrid`, `premiumize`,
 `tor_box`) to use a different service. Debrid clients default to a 24-hour
 stall-detection grace period (vs. 60 minutes for other clients), since remote
 caching can take longer to resolve a download.
+
+### Blackhole Clients
+
+Blackhole clients drop `.torrent` files into a watched folder for an external
+client to pick up, and detect finished downloads in a completed folder. They
+require `TYPE=blackhole`, a `WATCH_FOLDER`, and a `COMPLETED_FOLDER` instead of
+host/port.
+
+```bash
+DOWNLOAD_CLIENT_3_NAME=Blackhole
+DOWNLOAD_CLIENT_3_TYPE=blackhole
+DOWNLOAD_CLIENT_3_WATCH_FOLDER=/downloads/watch
+DOWNLOAD_CLIENT_3_COMPLETED_FOLDER=/downloads/complete
+```
 
 See the [Download Clients user guide](../user-guide/download-clients.md#via-environment-variables)
 for per-type examples of the remaining client types.

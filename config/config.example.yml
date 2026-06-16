@@ -273,17 +273,26 @@ download_clients:
   #   password: "adminpass"
   #   download_directory: "/downloads"
 
-  # HTTP download client example (commented out)
-  # - name: "HTTP Downloader"
-  #   type: "http"
+  # Debrid client example (commented out)
+  # Provider must be one of: real_debrid, all_debrid, premiumize, tor_box.
+  # Debrid clients need only an api_key and a provider; host/port are ignored.
+  # - name: "Real-Debrid"
+  #   type: "debrid"
   #   enabled: true
   #   priority: 3
-  #   host: "localhost"
-  #   port: 8081
-  #   use_ssl: false
-  #   # API key for authentication (if required)
-  #   api_key: "your-api-key-here"
-  #   download_directory: "/downloads/http"
+  #   api_key: "your-debrid-api-key"
+  #   connection_settings:
+  #     provider: "real_debrid"
+
+  # Blackhole client example (commented out)
+  # Blackhole drops .torrent files in a watched folder for an external client.
+  # - name: "Blackhole"
+  #   type: "blackhole"
+  #   enabled: true
+  #   priority: 4
+  #   connection_settings:
+  #     watch_folder: "/downloads/watch"
+  #     completed_folder: "/downloads/complete"
 
 # Indexer Configuration
 # ----------------------

@@ -4,7 +4,7 @@ Download clients handle the actual downloading of media files. Mydia supports bo
 
 ## Supported Clients
 
-Mydia supports the following client types. All are configurable via the Admin UI; most are also configurable via environment variables (see the notes below).
+Mydia supports the following client types. All are configurable via the Admin UI or environment variables.
 
 ### Torrent Clients
 
@@ -28,8 +28,6 @@ Mydia supports the following client types. All are configurable via the Admin UI
 | Client | Type value | Providers |
 |--------|------------|-----------|
 | Debrid | `debrid` | `real_debrid`, `all_debrid`, `premiumize`, `tor_box` |
-
-Blackhole and Debrid clients are configurable through the Admin UI; Debrid is also configurable via environment variables. Blackhole's folder paths are Admin-UI only.
 
 ## Adding Download Clients
 
@@ -100,13 +98,16 @@ DOWNLOAD_CLIENT_7_NAME=Real-Debrid
 DOWNLOAD_CLIENT_7_TYPE=debrid
 DOWNLOAD_CLIENT_7_API_KEY=your-debrid-api-key
 DOWNLOAD_CLIENT_7_PROVIDER=real_debrid
+
+# Blackhole (drops .torrent files in a watched directory)
+DOWNLOAD_CLIENT_8_NAME=Blackhole
+DOWNLOAD_CLIENT_8_TYPE=blackhole
+DOWNLOAD_CLIENT_8_WATCH_FOLDER=/downloads/watch
+DOWNLOAD_CLIENT_8_COMPLETED_FOLDER=/downloads/complete
 ```
 
 Every client needs a `_NAME` — Mydia discovers clients by their `_NAME`
 variable, so a block without one is silently ignored.
-
-Blackhole clients require watch and completed folder paths that are not yet
-exposed as environment variables; add them through the Admin UI instead.
 
 ## Configuration Options
 
@@ -148,6 +149,18 @@ Use these values when adding a debrid client:
 - Provider: one of `real_debrid`, `all_debrid`, `premiumize`, `tor_box`
 
 Debrid clients use a 24-hour stall-detection grace period by default (other clients use 60 minutes), because remote caching can take longer to resolve a download before it begins transferring. The provider's API endpoint is built in, so `Host`/`Port` are ignored.
+
+## Blackhole
+
+A blackhole client writes `.torrent` files into a watched folder for a separate torrent client to pick up, then detects finished downloads in a completed folder. It uses no host or port — only the two folder paths.
+
+Use these values when adding a blackhole client:
+
+- Type: `blackhole`
+- Watch Folder: where Mydia drops `.torrent` files (`WATCH_FOLDER`)
+- Completed Folder: where the external client places finished downloads (`COMPLETED_FOLDER`)
+
+Both folders must be readable and writable by Mydia. Final organization still happens during import when Mydia moves or links completed files into the configured library.
 
 ## Client Priority
 

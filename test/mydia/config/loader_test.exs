@@ -383,6 +383,29 @@ defmodule Mydia.Config.LoaderTest do
       assert client.password == "envpass"
     end
 
+    test "keeps YAML connection_settings keys as strings for debrid clients" do
+      yaml_content = """
+      download_clients:
+        - name: "Real-Debrid"
+          type: "debrid"
+          api_key: "rd-key"
+          connection_settings:
+            provider: "real_debrid"
+      """
+
+      File.mkdir_p!("test/fixtures")
+      File.write!(@test_yaml_path, yaml_content)
+
+      {:ok, config} = Loader.load(config_file: @test_yaml_path)
+
+      client = List.first(config.download_clients)
+
+      assert client.type == :debrid
+      # String keys are required — adapters and validation read
+      # connection_settings["provider"], not the atomized :provider.
+      assert client.connection_settings == %{"provider" => "real_debrid"}
+    end
+
     test "merges download clients from YAML and environment variables" do
       yaml_content = """
       download_clients:
@@ -437,6 +460,52 @@ defmodule Mydia.Config.LoaderTest do
 
       assert client2.type == :transmission
       assert client2.port == 9091
+    end
+
+    test "loads a debrid client's provider into connection_settings" do
+      System.put_env("DOWNLOAD_CLIENT_1_NAME", "Real-Debrid")
+      System.put_env("DOWNLOAD_CLIENT_1_TYPE", "debrid")
+      System.put_env("DOWNLOAD_CLIENT_1_API_KEY", "rd-key")
+      System.put_env("DOWNLOAD_CLIENT_1_PROVIDER", "real_debrid")
+
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+
+      client = List.first(config.download_clients)
+
+      assert client.type == :debrid
+      assert client.api_key == "rd-key"
+      assert client.connection_settings == %{"provider" => "real_debrid"}
+    end
+
+    test "loads a blackhole client's watch/completed folders into connection_settings" do
+      System.put_env("DOWNLOAD_CLIENT_1_NAME", "Blackhole")
+      System.put_env("DOWNLOAD_CLIENT_1_TYPE", "blackhole")
+      System.put_env("DOWNLOAD_CLIENT_1_WATCH_FOLDER", "/downloads/watch")
+      System.put_env("DOWNLOAD_CLIENT_1_COMPLETED_FOLDER", "/downloads/complete")
+
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+
+      client = List.first(config.download_clients)
+
+      assert client.type == :blackhole
+
+      assert client.connection_settings == %{
+               "watch_folder" => "/downloads/watch",
+               "completed_folder" => "/downloads/complete"
+             }
+    end
+
+    test "omits connection_settings when no provider or folder vars are set" do
+      System.put_env("DOWNLOAD_CLIENT_1_NAME", "Plain")
+      System.put_env("DOWNLOAD_CLIENT_1_TYPE", "qbittorrent")
+      System.put_env("DOWNLOAD_CLIENT_1_HOST", "host")
+      System.put_env("DOWNLOAD_CLIENT_1_PORT", "8080")
+
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+
+      client = List.first(config.download_clients)
+
+      assert client.connection_settings == %{}
     end
   end
 
