@@ -458,8 +458,7 @@ defmodule MydiaWeb.AdminMediaServersLive.Components do
                               <div class="card-body flex-row items-center gap-3 p-3">
                                 <%= case status do %>
                                   <% :testing -> %>
-                                    <span class="loading loading-spinner loading-sm text-warning">
-                                    </span>
+                                    <span class="loading loading-spinner loading-sm text-warning"></span>
                                   <% :ok -> %>
                                     <div class="bg-success/10 p-1.5 rounded-lg">
                                       <.icon name="hero-check-circle" class="w-4 h-4 text-success" />

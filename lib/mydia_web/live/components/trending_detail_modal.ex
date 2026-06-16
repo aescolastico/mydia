@@ -120,8 +120,7 @@ defmodule MydiaWeb.Live.Components.TrendingDetailModal do
                         class="w-full h-full"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowfullscreen
-                      >
-                      </iframe>
+                      ></iframe>
                     </div>
                   </div>
                 <% end %>

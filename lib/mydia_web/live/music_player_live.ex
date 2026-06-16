@@ -42,8 +42,8 @@ defmodule MydiaWeb.MusicPlayerLive do
             </div>
           <% end %>
         </div>
-        
-    <!-- Controls -->
+
+        <!-- Controls -->
         <div class="flex gap-4 justify-center w-1/3">
           <button
             class="btn btn-ghost btn-circle btn-sm"
@@ -64,15 +64,14 @@ defmodule MydiaWeb.MusicPlayerLive do
             <.icon name="hero-forward" class="w-5 h-5" />
           </button>
         </div>
-        
-    <!-- Progress -->
+
+        <!-- Progress -->
         <div
           class="w-1/3 flex items-center gap-2"
           x-data="{ progress: 0 }"
           @music:timeupdate.window="progress = ($event.detail.currentTime / $event.detail.duration) * 100 || 0"
         >
-          <progress class="progress progress-primary w-full" x-bind:value="progress" max="100">
-          </progress>
+          <progress class="progress progress-primary w-full" x-bind:value="progress" max="100"></progress>
         </div>
       </div>
     </div>

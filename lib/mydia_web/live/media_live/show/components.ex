@@ -530,8 +530,7 @@ defmodule MydiaWeb.MediaLive.Show.Components do
                   class="progress progress-success w-16 shrink-0"
                   value={season_available}
                   max={season_total}
-                >
-                </progress>
+                ></progress>
 
                 <%!-- Season actions --%>
                 <div class="flex items-center gap-1">

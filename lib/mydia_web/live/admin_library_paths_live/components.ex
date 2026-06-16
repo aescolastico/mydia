@@ -536,74 +536,6 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
     """
   end
 
-  # Renders the auto-organize section for library paths (legacy, kept for compatibility).
-  # This section allows users to enable automatic file organization by media category
-  # and configure category-specific subfolder paths.
-  attr :form, :any, required: true
-
-  defp auto_organize_section(assigns) do
-    library_type = get_library_type_from_form(assigns.form)
-    categories = Mydia.Media.MediaCategory.for_library_type(library_type)
-
-    assigns =
-      assigns
-      |> assign(:library_type, library_type)
-      |> assign(:categories, categories)
-      |> assign(:show_section, categories != [])
-
-    ~H"""
-    <div :if={@show_section} class="space-y-4">
-      <%!-- Auto-Organize Toggle --%>
-      <div class="form-control bg-base-200 rounded-lg p-4">
-        <label class="label cursor-pointer justify-start gap-4">
-          <input
-            type="checkbox"
-            name={@form[:auto_organize].name}
-            value="true"
-            checked={
-              Phoenix.HTML.Form.normalize_value(
-                "checkbox",
-                @form[:auto_organize].value
-              )
-            }
-            class="toggle toggle-secondary"
-          />
-          <div>
-            <span class="label-text font-medium">Auto-organize by Category</span>
-            <p class="text-xs text-base-content/50 mt-0.5">
-              Automatically organize imported files into category-specific subfolders
-            </p>
-          </div>
-        </label>
-      </div>
-
-      <%!-- Category Path Inputs (shown when auto-organize is enabled) --%>
-      <%= if auto_organize_enabled?(@form) do %>
-        <div class="bg-base-200 rounded-lg p-4 space-y-4">
-          <div class="flex items-center gap-2 mb-2">
-            <.icon name="hero-folder-open" class="w-5 h-5 text-secondary" />
-            <h4 class="font-medium">Category Paths</h4>
-          </div>
-          <p class="text-xs text-base-content/60 mb-4">
-            Define subfolder paths for each category. Leave empty to use the library root.
-          </p>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
-            <.category_path_input
-              :for={category <- @categories}
-              form={@form}
-              category={category}
-            />
-          </div>
-
-          <%!-- Path Preview --%>
-          <.category_path_preview form={@form} categories={@categories} />
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
   # Renders a single category path input field.
   attr :form, :any, required: true
   attr :category, :atom, required: true
@@ -679,8 +611,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
         <span class={[
           "w-1.5 h-1.5 rounded-full shrink-0",
           if(rp.is_root, do: "bg-base-content/30", else: "bg-secondary")
-        ]}>
-        </span>
+        ]}></span>
         <span class="text-base-content/70">{rp.label}</span>
         <span class="text-base-content/40">→</span>
         <span class={if(rp.is_root, do: "text-base-content/50", else: "text-secondary")}>

@@ -183,8 +183,7 @@
                 class={["status status-md shrink-0", row_status_dot_class(download, import_issue)]}
                 title={dot_label}
                 aria-label={dot_label}
-              >
-              </span>
+              ></span>
               <span class="font-medium text-sm truncate">{get_display_title(download)}</span>
               <%= if get_episode_details(download) do %>
                 <span class="text-xs text-base-content/50 shrink-0 truncate">
@@ -300,8 +299,7 @@
                     class="progress progress-primary h-1.5 flex-1"
                     value={format_progress(download.progress)}
                     max="100"
-                  >
-                  </progress>
+                  ></progress>
                   <span class="text-xs tabular-nums text-base-content/70 shrink-0 whitespace-nowrap w-12 text-right">
                     {format_progress(download.progress)}%
                   </span>

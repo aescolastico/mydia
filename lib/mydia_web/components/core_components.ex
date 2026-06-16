@@ -88,7 +88,7 @@ defmodule MydiaWeb.CoreComponents do
       <.button phx-click="go" variant="primary">Send!</.button>
       <.button navigate={~p"/"}>Home</.button>
   """
-  attr :rest, :global, include: ~w(href navigate patch method download name value disabled)
+  attr :rest, :global, include: ~w(href navigate patch method download name value disabled type)
   attr :class, :string
   attr :variant, :string, values: ~w(primary)
   slot :inner_block, required: true
@@ -704,8 +704,7 @@ defmodule MydiaWeb.CoreComponents do
                 'bg-orange-500/20 text-orange-400 border-orange-500/30': streamingMode === 'transcode'
               }"
               class="px-2 py-0.5 text-xs font-medium rounded border"
-            >
-            </span>
+            ></span>
           </div>
 
           <div class="flex-1"></div>

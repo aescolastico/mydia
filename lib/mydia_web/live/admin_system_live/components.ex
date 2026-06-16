@@ -333,8 +333,7 @@ defmodule MydiaWeb.AdminSystemLive.Components do
             class="progress progress-primary w-full h-1"
             value={@job.progress * 100}
             max="100"
-          >
-          </progress>
+          ></progress>
         <% end %>
 
         <div class="flex justify-between text-xs mt-2 opacity-60 font-mono">
