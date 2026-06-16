@@ -4,7 +4,7 @@ Download clients handle the actual downloading of media files. Mydia supports bo
 
 ## Supported Clients
 
-Mydia supports the following client types. All are configurable via the Admin UI or environment variables.
+Mydia supports the following client types. All are configurable via the Admin UI, environment variables, or a YAML config file.
 
 ### Torrent Clients
 

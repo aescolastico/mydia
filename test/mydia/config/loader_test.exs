@@ -361,6 +361,31 @@ defmodule Mydia.Config.LoaderTest do
       assert client2.port == 9091
     end
 
+    test "downcases connection_settings keys so adapters find them" do
+      yaml_content = """
+      download_clients:
+        - name: "Blackhole"
+          type: "blackhole"
+          enabled: true
+          priority: 1
+          connection_settings:
+            Watch_Folder: "/downloads/watch"
+            PROVIDER: "real_debrid"
+      """
+
+      File.mkdir_p!("test/fixtures")
+      File.write!(@test_yaml_path, yaml_content)
+
+      {:ok, config} = Loader.load(config_file: @test_yaml_path)
+
+      [client] = config.download_clients
+
+      # Keys must be lowercase strings regardless of YAML casing, matching the
+      # lowercase string keys adapters look up.
+      assert client.connection_settings["watch_folder"] == "/downloads/watch"
+      assert client.connection_settings["provider"] == "real_debrid"
+    end
+
     test "loads download clients from environment variables" do
       System.put_env("DOWNLOAD_CLIENT_1_NAME", "EnvClient")
       System.put_env("DOWNLOAD_CLIENT_1_TYPE", "qbittorrent")

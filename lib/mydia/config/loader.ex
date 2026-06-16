@@ -143,8 +143,12 @@ defmodule Mydia.Config.Loader do
   defp normalize_yaml_value(value) when is_map(value), do: normalize_yaml_keys(value)
   defp normalize_yaml_value(value), do: value
 
+  # Keys are downcased to match `normalize_yaml_keys/1` (which lowercases every
+  # other YAML key) and the lowercase string keys the download client adapters
+  # look up, e.g. connection_settings["provider"], ["watch_folder"]. Without this
+  # a YAML key like `Provider:` would survive as "Provider" and never match.
   defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn {key, value} -> {to_string(key), value} end)
+    Map.new(map, fn {key, value} -> {key |> to_string() |> String.downcase(), value} end)
   end
 
   defp load_database_config do

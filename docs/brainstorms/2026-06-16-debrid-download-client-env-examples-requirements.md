@@ -65,7 +65,7 @@ five clients but the reference doc shows only one (rqbit), and three types
 **General example fill-in**
 
 - R5. Add a worked env-var example for each client type that currently has none
-  — `blackhole`, `http`, and `rtorrent` — placed at least in the user guide
+  — `blackhole` and `rtorrent` — placed at least in the user guide
   alongside the existing examples.
 - R6. Bring the reference doc's example coverage up from the single rqbit block
   so it is not the thinnest of the three surfaces, without duplicating the user
@@ -78,7 +78,8 @@ five clients but the reference doc shows only one (rqbit), and three types
   An example missing `NAME` would silently register nothing.
 - R8. The documented client-type list must match the code's `@client_types`
   exactly (`qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `blackhole`,
-  `http`, `sabnzbd`, `nzbget`, `debrid`) so no supported type is omitted.
+  `sabnzbd`, `nzbget`, `debrid`) so no supported type is omitted. (The dead
+  `http` type was removed from `@client_types` in this PR.)
 
 ## Acceptance Examples
 
@@ -92,7 +93,7 @@ five clients but the reference doc shows only one (rqbit), and three types
   of the four valid strings to correct it — matching the validation error the
   app would emit (`download_client_config.ex:228`).
 - AE3. **Covers R8.** A reader scanning the reference doc's client-type list
-  sees all nine supported types, including `blackhole`, `http`, `rtorrent`, and
+  sees all supported types, including `blackhole`, `rtorrent`, and
   `debrid`, which are currently absent from that list.
 
 ## Scope Boundaries
@@ -102,8 +103,11 @@ five clients but the reference doc shows only one (rqbit), and three types
 - **Deferred:** runtime env-var overrides for provider base URLs (compile-time
   config only today); a structural overhaul of the download-clients user guide
   (per-type sections, troubleshooting, UI-vs-env decision guidance).
-- **Not building:** any code change to download client config, validation, or
-  loading. This is documentation only.
+- **Adjusted during implementation:** the work was originally scoped as
+  documentation-only, but landing it surfaced loader/config defects that blocked
+  debrid + blackhole env/YAML config from working at all. Those minimal code
+  fixes (YAML key handling in `loader.ex`, removal of the dead `http` type) were
+  included so the documented configuration actually works end-to-end.
 
 ## Sources / Research
 
