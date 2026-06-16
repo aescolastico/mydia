@@ -85,9 +85,13 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     ]
   end
 
-  # Note: ReleaseRanker now uses the unified SearchScorer algorithm for all scoring.
-  # The breakdown struct always has size=0, age=0, tag_bonus=0 since these are not
-  # part of the unified scoring formula.
+  # Note: ReleaseRanker uses the unified SearchScorer algorithm for all scoring.
+  # The breakdown struct surfaces the real file-size sub-score (from the quality
+  # profile) under `:size`, and the raw 0-10 title bonus under `:title_match`
+  # (no longer inflated ×100). `:age` and `:tag_bonus` remain 0.0 because the
+  # unified formula has no separate age or tag component. Soft-penalty fields
+  # (`:size_penalty`, `:seeder_penalty`, `:identity_penalty`) default to 0.0 and
+  # are only non-zero when the corresponding ranking option fires.
 
   # Tests for select_best_result/2
 
@@ -230,7 +234,13 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         assert Map.has_key?(item.breakdown, :total)
         assert item.breakdown.total == item.score
 
-        # Unified scoring doesn't use size, age, or tag_bonus
+        # New soft-penalty fields default to 0.0 when no penalty applies
+        assert item.breakdown.size_penalty == 0.0
+        assert item.breakdown.seeder_penalty == 0.0
+        assert item.breakdown.identity_penalty == 0.0
+
+        # Without a quality profile there is no file-size sub-score; age and
+        # tag_bonus have no component in the unified formula.
         assert item.breakdown.size == 0.0
         assert item.breakdown.age == 0.0
         assert item.breakdown.tag_bonus == 0.0
@@ -798,6 +808,95 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       for item <- ranked do
         assert item.breakdown.tag_bonus == 0.0
       end
+    end
+  end
+
+  describe "score breakdown display (U1)" do
+    test "title_match is the raw 0-10 bonus, not inflated ×100" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "The.Studio.2025.S01E01.1080p.WEB-DL.x264",
+          seeders: 30,
+          quality: QualityParser.parse("The.Studio.2025.S01E01.1080p.WEB-DL.x264")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result],
+          quality_profile: profile,
+          media_type: :episode,
+          search_query: "The Studio S01E01",
+          min_seeders: 0
+        )
+
+      title_match = List.first(ranked).breakdown.title_match
+
+      assert title_match > 0.0
+      assert title_match <= 10.0, "title_match should be in the raw 0-10 range, got #{title_match}"
+    end
+
+    test "size carries the real file-size sub-score when a profile is set" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "Movie.2023.1080p.BluRay.x264",
+          seeders: 50,
+          quality: QualityParser.parse("Movie.2023.1080p.BluRay.x264")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result], quality_profile: profile, media_type: :movie, min_seeders: 0)
+
+      # Real contribution surfaced, not hardcoded 0.0
+      assert List.first(ranked).breakdown.size > 0.0
+    end
+
+    test "penalty fields default to 0.0 and total still equals the documented sum" do
+      result = build_result(%{seeders: 50})
+
+      ranked = ReleaseRanker.rank_all([result]) |> List.first()
+      breakdown = ranked.breakdown
+
+      assert breakdown.size_penalty == 0.0
+      assert breakdown.seeder_penalty == 0.0
+      assert breakdown.identity_penalty == 0.0
+
+      # total = base components + penalties (all zero here), and the ranked
+      # result's score mirrors the breakdown total.
+      assert breakdown.total == ranked.score
+    end
+
+    test "ScoreBreakdown.new/1 raises when a required base field is omitted" do
+      assert_raise ArgumentError, fn ->
+        Mydia.Indexers.Structs.ScoreBreakdown.new(%{
+          quality: 1.0,
+          seeders: 1.0,
+          size: 1.0,
+          age: 1.0,
+          title_match: 1.0,
+          tag_bonus: 1.0
+          # :total intentionally omitted (enforced key)
+        })
+      end
+    end
+
+    test "removing the ×100 inflation does not cross the zero-title-match threshold" do
+      # A release with a real title match keeps title_match > 0.0 (just not ×100),
+      # so reject_zero_title_match still keeps it.
+      result =
+        build_result(%{
+          title: "The.Matrix.1999.1080p.BluRay.x264-Group",
+          seeders: 50,
+          quality: QualityParser.parse("The.Matrix.1999.1080p.BluRay.x264-Group")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result], search_query: "The Matrix 1999", min_seeders: 0)
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.title_match > 0.0
     end
   end
 
@@ -1489,8 +1588,10 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert length(ranked_with_profile) == 1
       item = List.first(ranked_with_profile)
 
-      # Size and age are always 0 in unified scoring
-      assert item.breakdown.size == 0.0
+      # With a quality profile, `:size` surfaces the real file-size sub-score.
+      # No size standards are configured here, so the unconstrained file-size
+      # score is 100.0. Age has no component in the unified formula.
+      assert item.breakdown.size == 100.0
       assert item.breakdown.age == 0.0
       assert item.score > 0
 
@@ -1500,7 +1601,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert length(ranked_without_profile) == 1
       item_no_profile = List.first(ranked_without_profile)
 
-      # Size and age are still 0 (unified scoring is always used)
+      # Without a profile there is no file-size sub-score, so size stays 0.0.
       assert item_no_profile.breakdown.size == 0.0
       assert item_no_profile.breakdown.age == 0.0
     end

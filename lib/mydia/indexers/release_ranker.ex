@@ -343,9 +343,21 @@ defmodule Mydia.Indexers.ReleaseRanker do
     quality_score = Map.get(breakdown, :quality_score, 0.0)
     seeder_score = Map.get(breakdown, :seeder_score, 0.0)
     title_bonus = Map.get(breakdown, :title_bonus, 0.0)
+    # The unified quality score already folds file-size into its sub-score.
+    # Surface that real contribution rather than hardcoding 0.0 so the
+    # breakdown display is honest. There is no separate age component in the
+    # unified model, so :age stays 0.0.
+    size_score = Map.get(breakdown, :file_size, 0.0)
 
     # Calculate tag bonus from preferred_tags
     tag_bonus = calculate_tag_bonus(result.title, preferred_tags)
+
+    # Soft penalties derived per-result from the ranking options. Each helper
+    # returns a value <= 0.0 that is layered onto the base score. They stay at
+    # 0.0 when the relevant option is absent or the result is within bounds.
+    size_penalty = size_penalty(result, Keyword.get(opts, :size_range))
+    seeder_penalty = seeder_penalty(result, opts)
+    identity_penalty = identity_penalty(result, opts)
 
     size_mb = bytes_to_mb(result.size)
     seeders = result.seeders || 0
@@ -353,8 +365,8 @@ defmodule Mydia.Indexers.ReleaseRanker do
     total_peers = seeders + leechers
     seeder_ratio = if total_peers > 0, do: seeders / total_peers, else: 0.0
 
-    # Add tag_bonus to total score
-    total_score = score_result.score + tag_bonus
+    # Add tag_bonus to the base score, then subtract any soft penalties.
+    total_score = score_result.score + tag_bonus + size_penalty + seeder_penalty + identity_penalty
 
     Logger.info("""
     [ReleaseRanker] Score breakdown for: #{result.title}
@@ -376,11 +388,14 @@ defmodule Mydia.Indexers.ReleaseRanker do
     ScoreBreakdown.new(%{
       quality: round_score(quality_score),
       seeders: round_score(seeder_score),
-      size: 0.0,
+      size: round_score(size_score),
       age: 0.0,
-      title_match: round_score(title_bonus * 100),
+      title_match: round_score(title_bonus),
       tag_bonus: round_score(tag_bonus),
-      total: round_score(total_score)
+      total: round_score(total_score),
+      size_penalty: round_score(size_penalty),
+      seeder_penalty: round_score(seeder_penalty),
+      identity_penalty: round_score(identity_penalty)
     })
   end
 
@@ -722,6 +737,17 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   ## Private Functions - Helpers
+
+  ## Private Functions - Soft Penalties
+
+  # Size penalty placeholder (implemented in U2). Returns a value <= 0.0.
+  defp size_penalty(_result, _size_range), do: 0.0
+
+  # Seeder/ratio penalty placeholder (implemented in U2). Returns a value <= 0.0.
+  defp seeder_penalty(_result, _opts), do: 0.0
+
+  # Identity penalty placeholder (implemented in U3). Returns a value <= 0.0.
+  defp identity_penalty(_result, _opts), do: 0.0
 
   # Calculate bonus points for matching preferred_tags in the title
   # Each matching tag adds 10 points to help preferred releases rank higher
