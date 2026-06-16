@@ -649,14 +649,29 @@ jobs:
         working-directory: ${{ env.PLAYER_PATH }}/build/macos/Build/Products/Release
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
+          VERSION_CODE="${{ needs.prepare.outputs.version_code }}"
           DMG_FILE="Mydia Player.dmg"
           DMG_URL="https://github.com/getmydia/mydia/releases/download/v${VERSION}/mydia-player-macos-v${VERSION}.dmg"
 
-          # Sign the DMG and get the EdDSA signature
+          # sign_update prints a ready-to-paste XML attribute fragment, e.g.
+          #   sparkle:edSignature="…" length="71098585"
+          # It must be embedded in the enclosure verbatim. Do NOT wrap it in
+          # another sparkle:edSignature="…" or add a separate length=, or the
+          # enclosure ends up with a duplicated length attribute and a signature
+          # value that is not valid base64 — which Sparkle rejects.
           SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | $GITHUB_WORKSPACE/sparkle-tools/bin/sign_update "$DMG_FILE" --ed-key-file -)
-          FILE_SIZE=$(stat -f%z "$DMG_FILE")
 
-          # Generate appcast.xml
+          # Catch any future sign_update output-format drift before it reaches the
+          # XML (cheap, no dependency).
+          if ! printf '%s' "$SIGNATURE" | grep -Eq '^sparkle:edSignature="[^"]+" length="[0-9]+"$'; then
+            echo "::error::Unexpected sign_update output, refusing to build appcast: $SIGNATURE"
+            exit 1
+          fi
+
+          # sparkle:version must be the integer CFBundleVersion (VERSION_CODE) that
+          # `flutter build macos` writes into the bundle — Sparkle compares
+          # <sparkle:version> against the installed app's CFBundleVersion. The
+          # marketing string stays in <sparkle:shortVersionString> for display only.
           cat > appcast.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -664,17 +679,59 @@ jobs:
               <title>Mydia Player</title>
               <item>
                 <title>Version ${VERSION}</title>
-                <sparkle:version>${VERSION}</sparkle:version>
+                <sparkle:version>${VERSION_CODE}</sparkle:version>
                 <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
                 <pubDate>$(date -R)</pubDate>
                 <enclosure url="${DMG_URL}"
-                           sparkle:edSignature="${SIGNATURE}"
-                           length="${FILE_SIZE}"
+                           ${SIGNATURE}
                            type="application/octet-stream" />
               </item>
             </channel>
           </rss>
           EOF
+
+      - name: Validate appcast
+        if: steps.check_macos.outputs.enabled == 'true' && env.SPARKLE_EDDSA_KEY != ''
+        env:
+          SPARKLE_EDDSA_KEY: ${{ secrets.SPARKLE_EDDSA_KEY }}
+        working-directory: ${{ env.PLAYER_PATH }}/build/macos/Build/Products/Release
+        run: |
+          # Fail the release here rather than ship an appcast Sparkle can't read.
+          # xmllint is the load-bearing check — it catches the malformed-XML class
+          # (e.g. the historical double-wrapped enclosure with a duplicated length
+          # attribute). Shipped on GitHub macos runners, but don't silently no-op
+          # if it is ever absent.
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "::error::xmllint not found on runner; cannot validate appcast"
+            exit 1
+          fi
+
+          xmllint --noout appcast.xml
+
+          # Exactly one signature and one length attribute in the enclosure
+          # (guards against re-nesting / sign_update output drift).
+          ed_count=$(grep -o 'sparkle:edSignature="' appcast.xml | wc -l | tr -d ' ' || true)
+          len_count=$(grep -o 'length="' appcast.xml | wc -l | tr -d ' ' || true)
+          if [ "$ed_count" -ne 1 ] || [ "$len_count" -ne 1 ]; then
+            echo "::error::appcast enclosure malformed: edSignature=$ed_count length=$len_count (expected 1 each)"
+            cat appcast.xml
+            exit 1
+          fi
+
+          # sparkle:version must be the integer build number, not the marketing
+          # string, or Sparkle's newer-than comparison never offers the update.
+          sparkle_version=$(sed -n 's#.*<sparkle:version>\(.*\)</sparkle:version>.*#\1#p' appcast.xml)
+          if ! printf '%s' "$sparkle_version" | grep -Eq '^[0-9]+$'; then
+            echo "::error::sparkle:version must be an integer build number, got '$sparkle_version'"
+            exit 1
+          fi
+
+          # NOTE: a cryptographic self-verify (sign_update --verify) is deliberately
+          # NOT wired here — the 2.x verify invocation and key material (it checks
+          # against a public key; the pipeline holds the private one) are unresolved
+          # on the pinned 2.8.1 toolchain. The guard therefore proves well-formedness
+          # and enclosure shape, not signature validity. See the plan's KTD3 / R4.
+          echo "appcast.xml validated (well-formed, single signature/length, sparkle:version=$sparkle_version)"
 
       - name: Upload DMG artifact
         if: steps.check_macos.outputs.enabled == 'true'
@@ -880,6 +937,55 @@ jobs:
 
           [ -d "mydia-player-macos-appcast" ] && \
             mv mydia-player-macos-appcast/appcast.xml . || true
+
+      - name: Validate appcast (publish gate)
+        working-directory: artifacts
+        run: |
+          # Defense-in-depth gate on the appcast actually about to ship. Generation-
+          # time malformation is already caught upstream: the player-macos "Validate
+          # appcast" step fails the job before "Upload appcast artifact" runs, so a
+          # malformed appcast never becomes an artifact and never reaches here. This
+          # re-runs the same well-formedness/shape checks against the downloaded
+          # artifact to catch corruption-in-transit (or a well-formed-but-wrong
+          # appcast) before upload — failing publish rather than shipping it.
+          #
+          # `always()` only governs whether this job runs when an upstream build
+          # failed; it does NOT make this check non-blocking. Two outcomes:
+          #   - No appcast present (fork run, missing secret, or a failed macOS
+          #     job that produced no artifact): the guard below exits 0, so the
+          #     other platforms still publish.
+          #   - An appcast IS present but fails these checks: this step fails the
+          #     entire `publish` job. That is intentional — we refuse to ship a
+          #     release with a broken auto-update feed rather than silently
+          #     dropping just the macOS assets.
+          if [ ! -f appcast.xml ]; then
+            echo "No appcast.xml in artifacts — nothing to validate (non-macOS or fork run)."
+            exit 0
+          fi
+
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "Installing libxml2-utils for xmllint"
+            sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils
+          fi
+
+          xmllint --noout appcast.xml
+
+          ed_count=$(grep -o 'sparkle:edSignature="' appcast.xml | wc -l | tr -d ' ' || true)
+          len_count=$(grep -o 'length="' appcast.xml | wc -l | tr -d ' ' || true)
+          if [ "$ed_count" -ne 1 ] || [ "$len_count" -ne 1 ]; then
+            echo "::error::Refusing to publish malformed appcast: edSignature=$ed_count length=$len_count (expected 1 each)"
+            cat appcast.xml
+            exit 1
+          fi
+
+          # Mirror the macOS-job check: sparkle:version must be the integer build
+          # number, or Sparkle never offers the update even though the release ships.
+          sparkle_version=$(sed -n 's#.*<sparkle:version>\(.*\)</sparkle:version>.*#\1#p' appcast.xml)
+          if ! printf '%s' "$sparkle_version" | grep -Eq '^[0-9]+$'; then
+            echo "::error::Refusing to publish: sparkle:version must be an integer build number, got '$sparkle_version'"
+            exit 1
+          fi
+          echo "appcast.xml passed publish-gate validation (sparkle:version=$sparkle_version)."
 
       - name: Upload release assets
         env:
