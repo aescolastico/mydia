@@ -941,10 +941,15 @@ jobs:
       - name: Validate appcast (publish gate)
         working-directory: artifacts
         run: |
-          # The player-macos job is gated by `always()` in this job's needs, so a
-          # failed appcast validation there does not by itself block publish. Re-run
-          # the well-formedness/shape checks here against the artifact actually about
-          # to ship, so a malformed appcast fails the release instead of publishing.
+          # Defense-in-depth gate on the appcast actually about to ship. Generation-
+          # time malformation is already caught upstream: the player-macos "Validate
+          # appcast" step fails the job before "Upload appcast artifact" runs, so a
+          # malformed appcast never becomes an artifact and never reaches here. This
+          # re-runs the same well-formedness/shape checks against the downloaded
+          # artifact to catch corruption-in-transit (or a well-formed-but-wrong
+          # appcast) before upload — failing publish rather than shipping it. Because
+          # this job runs under `always()`, a macOS build that fails validation simply
+          # omits the macOS assets from the release; it does not block other platforms.
           if [ ! -f appcast.xml ]; then
             echo "No appcast.xml in artifacts — nothing to validate (non-macOS or fork run)."
             exit 0
