@@ -101,7 +101,12 @@ class ProgressService {
   ) async {
     final progress = resolveSync(player.state.position, player.state.duration);
     if (progress == null) {
-      debugPrint('[ProgressService] Skipping movie sync: invalid position/duration');
+      debugPrint(
+        '[ProgressService] Skipping movie sync: invalid position/duration '
+        '(position=${player.state.position.inSeconds}s, '
+        'playerDuration=${player.state.duration.inSeconds}s, '
+        'resolvedDuration=${DurationOverride.getDuration(player.state.duration).inSeconds}s)',
+      );
       return;
     }
 
@@ -143,7 +148,12 @@ class ProgressService {
   ) async {
     final progress = resolveSync(player.state.position, player.state.duration);
     if (progress == null) {
-      debugPrint('[ProgressService] Skipping episode sync: invalid position/duration');
+      debugPrint(
+        '[ProgressService] Skipping episode sync: invalid position/duration '
+        '(position=${player.state.position.inSeconds}s, '
+        'playerDuration=${player.state.duration.inSeconds}s, '
+        'resolvedDuration=${DurationOverride.getDuration(player.state.duration).inSeconds}s)',
+      );
       return;
     }
 

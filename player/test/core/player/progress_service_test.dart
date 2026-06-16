@@ -17,11 +17,11 @@ void main() {
 
       final progress = ProgressService.resolveSync(
         const Duration(seconds: 12), // a few seconds watched
-        const Duration(seconds: 120), // partial transcoded length so far
+        const Duration(seconds: 40), // partial transcoded length so far
       );
 
       expect(progress, isNotNull);
-      // Without the fix, duration would be 120 → 12/120 = 10% (inflated).
+      // Without the fix, duration would be 40 → 12/40 = 30% (inflated).
       expect(progress!.durationSeconds, 3452);
       expect(progress.positionSeconds, 12);
       // Sanity: the resulting completion fraction is tiny, as it should be.
