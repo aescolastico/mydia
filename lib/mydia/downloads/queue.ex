@@ -232,10 +232,11 @@ defmodule Mydia.Downloads.Queue do
   end
 
   def check_for_active_download(search_result, media_item_id, episode_id) do
-    # Query for active downloads (not completed and not failed)
-    base_query =
-      Download
-      |> where([d], is_nil(d.completed_at) and is_nil(d.error_message))
+    # Query for downloads still occupying their target — actively downloading,
+    # downloaded-but-awaiting-import, or import-retrying. A completed-but-not-yet
+    # imported download still counts, so we don't grab a duplicate while the
+    # first one is queued for import. See Mydia.Downloads.Download.occupying/1.
+    base_query = Download.occupying()
 
     # Add filters based on what we're downloading
     query =
@@ -259,6 +260,16 @@ defmodule Mydia.Downloads.Queue do
             [d],
             ^Mydia.DB.json_integer_equals(:metadata, "$.season_number", season_number)
           )
+
+        # Unscoped TV show request (no episode_id, not a season pack): a TV show
+        # legitimately has many concurrent downloads across seasons/episodes, so
+        # an active download for a *different* season/episode doesn't make THIS
+        # request a duplicate. Dedupe by the exact release URL instead of by
+        # media_item: different seasons have different torrent hashes (so
+        # cross-season requests are allowed), while re-submitting the same
+        # release (e.g. a double-clicked manual result) is still blocked.
+        media_item_id && tv_show?(media_item_id) ->
+          where(base_query, [d], d.download_url == ^search_result.download_url)
 
         # For movies or other media, check if there's an active download for this media_item
         media_item_id ->
@@ -295,6 +306,13 @@ defmodule Mydia.Downloads.Queue do
 
           {:error, :duplicate_download}
       end
+    end
+  end
+
+  defp tv_show?(media_item_id) do
+    case Repo.get(MediaItem, media_item_id) do
+      %MediaItem{type: "tv_show"} -> true
+      _ -> false
     end
   end
 
@@ -414,17 +432,21 @@ defmodule Mydia.Downloads.Queue do
 
     case History.update_download(download, attrs) do
       {:ok, updated} ->
-        %{
-          "download_id" => updated.id,
-          "save_path" => save_path,
-          "cleanup_client" => true,
-          "use_hardlinks" => true,
-          "move_files" => false
-        }
-        |> Mydia.Jobs.MediaImport.new()
-        |> Oban.insert()
+        job_result =
+          %{
+            "download_id" => updated.id,
+            "save_path" => save_path,
+            "cleanup_client" => true,
+            "use_hardlinks" => true,
+            "move_files" => false
+          }
+          |> Mydia.Jobs.MediaImport.new()
+          |> insert_job()
 
-        {:ok, updated}
+        case job_result do
+          {:ok, _job} -> {:ok, updated}
+          {:error, _changeset} = error -> error
+        end
 
       {:error, _changeset} = error ->
         error
@@ -432,10 +454,10 @@ defmodule Mydia.Downloads.Queue do
   end
 
   def refresh_match_suggestions(%Download{} = download) do
-    alias Mydia.Downloads.{TorrentParser, TorrentMatcher}
+    alias Mydia.Downloads.{ReleaseIntake, TorrentMatcher}
 
     suggestions =
-      case TorrentParser.parse(download.title) do
+      case ReleaseIntake.parse_release(download.title) do
         {:ok, parsed_info} ->
           try do
             TorrentMatcher.find_top_candidates(parsed_info,
@@ -480,9 +502,116 @@ defmodule Mydia.Downloads.Queue do
            "move_files" => false
          }
          |> Mydia.Jobs.MediaImport.new()
-         |> Oban.insert() do
+         |> insert_job() do
       {:ok, _job} -> {:ok, download}
       {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  @doc """
+  Re-matches an already-imported download to a corrected movie or episode.
+
+  Validates lifecycle, scope, and library-type compatibility before any mutation,
+  then enqueues `Mydia.Jobs.MediaRematch` to move + relink the file. Single-target
+  only: a download whose provenance resolves to multiple imported files (a pack)
+  is refused.
+
+  Returns:
+    * `{:ok, :enqueued}` — a re-match job was scheduled
+    * `{:ok, :unchanged}` — the target already matches; nothing to do
+    * `{:error, :not_imported}` — not imported yet (use in-flight correction)
+    * `{:error, :not_single_target}` — partial_pack / unresolved_files / unmatched
+    * `{:error, :multiple_files}` — pack: per-file re-match not supported
+    * `{:error, :no_imported_file}` — could not locate the imported file
+    * `{:error, :no_library_path}` — no monitored, compatible destination library
+    * `{:error, :library_type_mismatch}` — target type incompatible with library
+  """
+  def rematch_imported_download(%Download{} = download, media_item_id, episode_id \\ nil) do
+    cond do
+      is_nil(download.imported_at) ->
+        {:error, :not_imported}
+
+      not is_nil(download.match_status) ->
+        {:error, :not_single_target}
+
+      download.media_item_id == media_item_id and download.episode_id == episode_id ->
+        {:ok, :unchanged}
+
+      true ->
+        do_rematch(download, media_item_id, episode_id)
+    end
+  end
+
+  defp do_rematch(download, media_item_id, episode_id) do
+    media_item = media_item_id && Repo.get(MediaItem, media_item_id)
+    episode = episode_id && Repo.get(Episode, episode_id)
+
+    with {:ok, _file} <- locate_single_imported_file(download),
+         {:ok, library_path} <- resolve_rematch_destination(media_item, episode),
+         :ok <- ensure_type_compatible(library_path, media_item, episode_id) do
+      case History.update_download(download, %{
+             media_item_id: media_item_id,
+             episode_id: episode_id
+           }) do
+        {:ok, updated} ->
+          case %{"download_id" => updated.id}
+               |> Mydia.Jobs.MediaRematch.new()
+               |> insert_job() do
+            {:ok, _job} -> {:ok, :enqueued}
+            {:error, _changeset} = error -> error
+          end
+
+        {:error, _changeset} = error ->
+          error
+      end
+    end
+  end
+
+  # Insert an Oban job, falling back to a direct Repo insert when Oban's engine
+  # is disabled (test mode). Mirrors the pattern in DownloadMonitor.
+  defp insert_job(changeset) do
+    Oban.insert(changeset)
+  rescue
+    RuntimeError -> Repo.insert(changeset)
+  end
+
+  defp locate_single_imported_file(download) do
+    case Mydia.Library.list_media_files_for_download(download) do
+      [%MediaFile{} = file] -> {:ok, file}
+      [] -> {:error, :no_imported_file}
+      _multiple -> {:error, :multiple_files}
+    end
+  end
+
+  defp resolve_rematch_destination(media_item, episode) do
+    # Build a probe reflecting the NEW target so determine_library_path resolves
+    # the correct destination (the download row still holds the old target here).
+    probe = %Download{
+      media_item_id: media_item && media_item.id,
+      media_item: media_item,
+      episode_id: episode && episode.id,
+      episode: episode,
+      library_path: nil,
+      library_path_id: nil
+    }
+
+    case Mydia.Jobs.MediaImport.determine_library_path(probe) do
+      nil -> {:error, :no_library_path}
+      library_path -> {:ok, library_path}
+    end
+  end
+
+  defp ensure_type_compatible(library_path, media_item, episode_id) do
+    media_item_type = media_item && media_item.type
+
+    if MediaFile.library_type_compatible?(
+         library_path.type,
+         media_item_type,
+         not is_nil(episode_id)
+       ) do
+      :ok
+    else
+      {:error, :library_type_mismatch}
     end
   end
 
@@ -694,20 +823,18 @@ defmodule Mydia.Downloads.Queue do
     client_name = Keyword.get(opts, :client_name)
     download_type = Keyword.get(opts, :download_type)
 
-    cond do
-      # Use specific client if requested
-      client_name ->
-        case find_client_by_name(client_name) do
-          nil -> {:error, {:client_not_found, client_name}}
-          client -> {:ok, client}
-        end
-
+    # Use specific client if requested
+    if client_name do
+      case find_client_by_name(client_name) do
+        nil -> {:error, {:client_not_found, client_name}}
+        client -> {:ok, client}
+      end
+    else
       # Otherwise select by priority, filtered by download type
-      true ->
-        case select_client_by_priority(download_type) do
-          nil -> {:error, :no_clients_configured}
-          client -> {:ok, client}
-        end
+      case select_client_by_priority(download_type) do
+        nil -> {:error, :no_clients_configured}
+        client -> {:ok, client}
+      end
     end
   end
 
@@ -719,8 +846,7 @@ defmodule Mydia.Downloads.Queue do
   defp select_client_by_priority(download_type) do
     client =
       Settings.list_download_client_configs()
-      |> Enum.filter(& &1.enabled)
-      |> Enum.filter(&supports_download_type?(&1, download_type))
+      |> Enum.filter(&(&1.enabled and supports_download_type?(&1, download_type)))
       |> Enum.sort_by(& &1.priority, :asc)
       |> List.first()
 
@@ -965,11 +1091,10 @@ defmodule Mydia.Downloads.Queue do
         encoded_path =
           path
           |> String.split("/")
-          |> Enum.map(fn segment ->
+          |> Enum.map_join("/", fn segment ->
             # URI.encode/2 encodes special characters but preserves already-encoded ones
             URI.encode(segment, &URI.char_unreserved?/1)
           end)
-          |> Enum.join("/")
 
         URI.to_string(%{uri | path: encoded_path})
     end
@@ -1051,10 +1176,7 @@ defmodule Mydia.Downloads.Queue do
   defp download_via_flaresolverr(url, cookies) do
     alias Mydia.Indexers.FlareSolverr
 
-    if not FlareSolverr.enabled?() do
-      Logger.error("FlareSolverr required but not enabled/configured")
-      {:error, {:download_failed, "FlareSolverr required but not configured"}}
-    else
+    if FlareSolverr.enabled?() do
       # Pass cookies to FlareSolverr request
       flaresolverr_opts =
         if cookies != [] do
@@ -1079,6 +1201,9 @@ defmodule Mydia.Downloads.Queue do
           Logger.error("FlareSolverr download failed: #{inspect(reason)}")
           {:error, {:download_failed, "FlareSolverr error: #{inspect(reason)}"}}
       end
+    else
+      Logger.error("FlareSolverr required but not enabled/configured")
+      {:error, {:download_failed, "FlareSolverr required but not configured"}}
     end
   end
 

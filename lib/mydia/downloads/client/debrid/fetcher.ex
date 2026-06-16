@@ -173,10 +173,8 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
          {:ok, urls} <- prepare_urls(urls_or_descriptors, state),
          {:ok, download} <- persist_urls(urls_or_descriptors, state),
          download_dir <- download_dir!(state),
-         :ok <- File.mkdir_p(download_dir),
-         {:ok, final_state} <-
-           stream_all(urls, download_dir, %{state | provider_module: provider_module}, download) do
-      {:ok, final_state}
+         :ok <- File.mkdir_p(download_dir) do
+      stream_all(urls, download_dir, %{state | provider_module: provider_module}, download)
     end
   end
 
@@ -487,9 +485,10 @@ defmodule Mydia.Downloads.Client.Debrid.Fetcher do
   # Dockerfile's `VOLUME ["/config", "/data", "/media"]`); falling back to
   # `System.tmp_dir!()` covers dev, tests, and non-Docker installs.
   defp default_download_root do
-    cond do
-      writable_dir?("/data") -> "/data/debrid-downloads"
-      true -> Path.join(System.tmp_dir!(), "mydia-debrid-downloads")
+    if writable_dir?("/data") do
+      "/data/debrid-downloads"
+    else
+      Path.join(System.tmp_dir!(), "mydia-debrid-downloads")
     end
   end
 

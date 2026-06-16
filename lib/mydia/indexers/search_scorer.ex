@@ -258,8 +258,9 @@ defmodule Mydia.Indexers.SearchScorer do
       # Penalty for extra unrelated words (not in query, not quality/episode markers)
       extra_words =
         title_words
-        |> Enum.reject(&Enum.member?(query_words, &1))
-        |> Enum.reject(&quality_or_episode_word?/1)
+        |> Enum.reject(fn word ->
+          Enum.member?(query_words, word) or quality_or_episode_word?(word)
+        end)
         |> length()
 
       # More extra words = bigger penalty (max -10 points)

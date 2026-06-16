@@ -1,0 +1,17 @@
+[package]
+name = "mydia-plugin-minimal"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Minimal Mydia plugin — the scaffold starter and the SDK smoke test."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mydia-plugin-sdk = { path = "../.." }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

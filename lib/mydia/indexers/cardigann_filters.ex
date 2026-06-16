@@ -394,8 +394,7 @@ defmodule Mydia.Indexers.CardigannFilters do
                       @go_token_map
                       |> Map.keys()
                       |> Enum.sort_by(&byte_size/1, :desc)
-                      |> Enum.map(&Regex.escape/1)
-                      |> Enum.join("|")
+                      |> Enum.map_join("|", &Regex.escape/1)
 
                     {:ok, regex} = Regex.compile(tokens)
                     regex
@@ -412,32 +411,30 @@ defmodule Mydia.Indexers.CardigannFilters do
     now = DateTime.utc_now()
     input = value |> String.downcase() |> String.trim()
 
-    cond do
-      String.contains?(input, "now") ->
+    if String.contains?(input, "now") do
+      {:ok, DateTime.to_iso8601(now)}
+    else
+      cleaned =
+        input
+        |> String.replace(",", "")
+        |> String.replace("ago", "")
+        |> String.replace("and", "")
+        |> String.trim()
+
+      matches = Regex.scan(~r/([\d.]+)\s*([a-z]+)/, cleaned)
+
+      if matches == [] do
         {:ok, DateTime.to_iso8601(now)}
+      else
+        total_seconds =
+          Enum.reduce(matches, 0.0, fn [_full, num_str, unit], acc ->
+            {num, _} = Float.parse(num_str)
+            acc + timeago_unit_seconds(unit, num)
+          end)
 
-      true ->
-        cleaned =
-          input
-          |> String.replace(",", "")
-          |> String.replace("ago", "")
-          |> String.replace("and", "")
-          |> String.trim()
-
-        matches = Regex.scan(~r/([\d.]+)\s*([a-z]+)/, cleaned)
-
-        if matches == [] do
-          {:ok, DateTime.to_iso8601(now)}
-        else
-          total_seconds =
-            Enum.reduce(matches, 0.0, fn [_full, num_str, unit], acc ->
-              {num, _} = Float.parse(num_str)
-              acc + timeago_unit_seconds(unit, num)
-            end)
-
-          result = DateTime.add(now, -round(total_seconds), :second)
-          {:ok, DateTime.to_iso8601(result)}
-        end
+        result = DateTime.add(now, -round(total_seconds), :second)
+        {:ok, DateTime.to_iso8601(result)}
+      end
     end
   end
 

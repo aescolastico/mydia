@@ -30,9 +30,8 @@ defmodule Mydia.Config.Loader do
     with {:ok, yaml_config} <- load_yaml(config_file),
          {:ok, db_config} <- load_database_config(),
          env_config <- load_env(),
-         merged <- merge_all_configs(yaml_config, db_config, env_config),
-         {:ok, validated} <- validate(merged) do
-      {:ok, validated}
+         merged <- merge_all_configs(yaml_config, db_config, env_config) do
+      validate(merged)
     end
   end
 
@@ -54,6 +53,27 @@ defmodule Mydia.Config.Loader do
 
       {:error, reason} ->
         raise "Configuration loading failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Reloads configuration from all sources and refreshes the cached runtime config
+  in the application environment.
+
+  Use after persisting database-backed settings so the change takes effect
+  without an application restart. Returns `{:ok, config}` on success or
+  `{:error, reason}` when the merged configuration fails validation; on error the
+  previously cached config is left untouched.
+  """
+  @spec reload(keyword()) :: {:ok, Mydia.Config.Schema.t()} | {:error, term()}
+  def reload(opts \\ []) do
+    case load(opts) do
+      {:ok, config} ->
+        Application.put_env(:mydia, :runtime_config, config)
+        {:ok, config}
+
+      error ->
+        error
     end
   end
 
@@ -130,9 +150,20 @@ defmodule Mydia.Config.Loader do
       download_clients: load_download_clients_env(),
       indexers: load_indexers_env(),
       media_servers: load_media_servers_env(),
-      library_paths: load_library_paths_env()
+      library_paths: load_library_paths_env(),
+      plugin_installs: load_plugins_env(),
+      plugins: load_plugins_runtime_env(),
+      path_mappings: load_path_mappings_env()
     }
     |> remove_empty_maps()
+  end
+
+  # Runtime keys for the plugin platform (the singular :plugins embed), distinct
+  # from PLUGIN_<N>_* installs handled by load_plugins_env/0. Only the filesystem
+  # override directory is env-configurable today.
+  defp load_plugins_runtime_env do
+    %{}
+    |> put_if_present(:override_dir, System.get_env("PLUGINS_OVERRIDE_DIR"))
   end
 
   defp load_server_env do
@@ -322,6 +353,48 @@ defmodule Mydia.Config.Loader do
     |> Enum.reject(&(&1 == %{}))
   end
 
+  defp load_plugins_env do
+    # Support environment variables for installed plugins in the format:
+    # PLUGIN_<N>_SLUG, PLUGIN_<N>_NAME, PLUGIN_<N>_SOURCE_URL, etc.
+    # Capabilities/settings are JSON strings:
+    # PLUGIN_<N>_GRANTED_CAPABILITIES='{"net:http":["discord.com"]}'
+    env_vars = System.get_env()
+
+    indices =
+      env_vars
+      |> Enum.filter(fn {key, _value} ->
+        String.starts_with?(key, "PLUGIN_") and String.ends_with?(key, "_SLUG")
+      end)
+      |> Enum.map(fn {key, _value} ->
+        key
+        |> String.replace_prefix("PLUGIN_", "")
+        |> String.replace_suffix("_SLUG", "")
+      end)
+      |> Enum.uniq()
+
+    Enum.map(indices, fn index ->
+      prefix = "PLUGIN_#{index}_"
+
+      %{}
+      |> put_if_present(:slug, System.get_env("#{prefix}SLUG"))
+      |> put_if_present(:name, System.get_env("#{prefix}NAME"))
+      |> put_if_present(:version, System.get_env("#{prefix}VERSION"))
+      |> put_if_present(:enabled, System.get_env("#{prefix}ENABLED"), &parse_boolean/1)
+      |> put_if_present(:priority, System.get_env("#{prefix}PRIORITY"), &parse_integer/1)
+      |> put_if_present(:source_url, System.get_env("#{prefix}SOURCE_URL"))
+      |> put_if_present(:integrity_hash, System.get_env("#{prefix}INTEGRITY_HASH"))
+      |> put_if_present(:settings, System.get_env("#{prefix}SETTINGS"), &parse_json/1)
+      |> put_if_present(
+        :granted_capabilities,
+        System.get_env("#{prefix}GRANTED_CAPABILITIES"),
+        &parse_json/1
+      )
+      # A plugin install with no name falls back to its slug.
+      |> then(fn map -> Map.put_new(map, :name, map[:slug]) end)
+    end)
+    |> Enum.reject(&(&1 == %{} or is_nil(&1[:slug])))
+  end
+
   defp load_media_servers_env do
     # Support environment variables for media servers in the format:
     # MEDIA_SERVER_<N>_NAME, MEDIA_SERVER_<N>_TYPE, etc.
@@ -399,6 +472,35 @@ defmodule Mydia.Config.Loader do
         System.get_env("#{prefix}CATEGORY_PATHS"),
         &parse_json/1
       )
+    end)
+    |> Enum.reject(&(&1 == %{}))
+  end
+
+  defp load_path_mappings_env do
+    # Support environment variables for path mappings in the format:
+    # PATH_MAPPING_<N>_REMOTE, PATH_MAPPING_<N>_LOCAL
+    # where N is 1, 2, 3, etc.
+    env_vars = System.get_env()
+
+    # Find all path mapping indices by looking for *_REMOTE vars
+    indices =
+      env_vars
+      |> Enum.filter(fn {key, _value} ->
+        String.starts_with?(key, "PATH_MAPPING_") and String.ends_with?(key, "_REMOTE")
+      end)
+      |> Enum.map(fn {key, _value} ->
+        key
+        |> String.replace_prefix("PATH_MAPPING_", "")
+        |> String.replace_suffix("_REMOTE", "")
+      end)
+      |> Enum.uniq()
+
+    Enum.map(indices, fn index ->
+      prefix = "PATH_MAPPING_#{index}_"
+
+      %{}
+      |> put_if_present(:remote_prefix, System.get_env("#{prefix}REMOTE"))
+      |> put_if_present(:local_prefix, System.get_env("#{prefix}LOCAL"))
     end)
     |> Enum.reject(&(&1 == %{}))
   end
@@ -483,8 +585,15 @@ defmodule Mydia.Config.Loader do
   defp deep_merge(left, right) when is_map(left) and is_map(right) do
     Map.merge(left, right, fn key, left_val, right_val ->
       cond do
-        # For download_clients, indexers, media_servers, and library_paths, merge lists (env entries are appended)
-        key in [:download_clients, :indexers, :media_servers, :library_paths] and
+        # For service-config lists, merge (env entries are appended)
+        key in [
+          :download_clients,
+          :indexers,
+          :media_servers,
+          :library_paths,
+          :plugin_installs,
+          :path_mappings
+        ] and
           is_list(left_val) and
             is_list(right_val) ->
           left_val ++ right_val

@@ -183,8 +183,13 @@ defmodule Mydia.Accounts do
 
   @doc """
   Deletes a user.
+
+  Sweeps the user's plugin connections (and their per-connection KV state) first:
+  the `user_id` FK cascades the connection rows on its own, but the KV keys are
+  not user-scoped, so the application sweep removes them before the cascade.
   """
   def delete_user(%User{} = user) do
+    Mydia.Plugins.Connections.delete_for_user(user.id)
     Repo.delete(user)
   end
 

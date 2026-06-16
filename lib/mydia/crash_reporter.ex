@@ -55,6 +55,7 @@ defmodule Mydia.CrashReporter do
 
   require Logger
 
+  alias ErrorTracker.Error
   alias Mydia.CrashReporter.{Sanitizer, Queue, Sender}
 
   @doc """
@@ -133,10 +134,14 @@ defmodule Mydia.CrashReporter do
   @doc """
   Returns statistics about the crash reporter.
 
+  `tracked_errors` is the number of errors stored locally by ErrorTracker (the
+  same total shown on the `/admin/errors` dashboard), not a count of reports
+  sent to the metadata relay.
+
   ## Examples
 
       iex> Mydia.CrashReporter.stats()
-      %{enabled: false, queued_reports: 0, sent_reports: 42}
+      %{enabled: false, queued_reports: 0, tracked_errors: 42, metadata_relay_url: "https://relay.mydia.dev"}
 
   """
   @spec stats() :: map()
@@ -144,8 +149,19 @@ defmodule Mydia.CrashReporter do
     %{
       enabled: enabled?(),
       queued_reports: Queue.count(),
+      tracked_errors: tracked_error_count(),
       metadata_relay_url: Mydia.Metadata.metadata_relay_url()
     }
+  end
+
+  # Count of errors stored locally by ErrorTracker. Mirrors the dashboard's own
+  # `Repo.aggregate(_, :count)` over grouped error records. Guarded like
+  # `Queue.count/0` so a momentarily-unavailable DB renders 0 instead of crashing
+  # the settings page.
+  defp tracked_error_count do
+    Mydia.Repo.aggregate(Error, :count)
+  rescue
+    _ -> 0
   end
 
   @doc """
@@ -272,10 +288,14 @@ defmodule Mydia.CrashReporter do
     end)
   end
 
-  defp format_file(nil), do: nil
-  defp format_file(file) when is_binary(file), do: file
+  @doc false
+  # Normalizes a stacktrace location file (charlist, binary, or nil) to a
+  # string. Public so Mydia.CrashReporter.TowerReporter reuses the same
+  # charlist handling instead of duplicating it.
+  def format_file(nil), do: nil
+  def format_file(file) when is_binary(file), do: file
 
-  defp format_file(file) when is_list(file) do
+  def format_file(file) when is_list(file) do
     # Try to convert charlist to string
     case :unicode.characters_to_binary(file) do
       {:error, _, _} -> inspect(file)
@@ -284,7 +304,7 @@ defmodule Mydia.CrashReporter do
     end
   end
 
-  defp format_file(file), do: inspect(file)
+  def format_file(file), do: inspect(file)
 
   defp get_current_stacktrace do
     try do

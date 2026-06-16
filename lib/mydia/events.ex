@@ -236,6 +236,14 @@ defmodule Mydia.Events do
     |> offset(^offset)
   end
 
+  @doc "Subscribes the calling process to the global event feed (`{:event_created, event}`)."
+  @spec subscribe() :: :ok | {:error, term()}
+  def subscribe, do: PubSub.subscribe(@pubsub_name, @events_topic)
+
+  @doc "Unsubscribes the calling process from the global event feed."
+  @spec unsubscribe() :: :ok
+  def unsubscribe, do: PubSub.unsubscribe(@pubsub_name, @events_topic)
+
   defp broadcast_event(event) do
     PubSub.broadcast(@pubsub_name, @events_topic, {:event_created, event})
   end
@@ -595,6 +603,86 @@ defmodule Mydia.Events do
       resource_type: resource_type,
       resource_id: resource_id,
       severity: :error,
+      metadata: metadata
+    })
+  end
+
+  @doc """
+  Records a download.stalled event — a recoverable *soft* stall detected by the
+  `DownloadMonitor`. Unlike `download_failed/3` this is a warning: the download
+  keeps occupying its episode and may auto-clear on resumed progress.
+
+  ## Parameters
+    - `download` - The Download struct
+    - `message` - The stall message describing the soft-stall
+    - `opts` - Additional options (e.g., media_item for context)
+  """
+  def download_stalled(download, message, opts \\ []) do
+    media_item = opts[:media_item]
+
+    {resource_type, resource_id} =
+      if media_item do
+        {"media_item", media_item.id}
+      else
+        {"download", download.id}
+      end
+
+    metadata =
+      %{
+        "title" => download.title,
+        "download_client" => download.download_client,
+        "message" => message,
+        "download_id" => download.id
+      }
+      |> maybe_add_media_context(media_item)
+
+    create_event_async(%{
+      category: "downloads",
+      type: "download.stalled",
+      actor_type: :system,
+      actor_id: "download_monitor",
+      resource_type: resource_type,
+      resource_id: resource_id,
+      severity: :warning,
+      metadata: metadata
+    })
+  end
+
+  @doc """
+  Records a download.unstalled event — a soft-stall that recovered (the client
+  reported progress, or an observation-gap reset cleared the stall). Ensures a
+  recovered stall does not leave a `download.stalled` event as the last word.
+
+  ## Parameters
+    - `download` - The Download struct
+    - `opts` - Additional options (e.g., media_item for context)
+  """
+  def download_unstalled(download, opts \\ []) do
+    media_item = opts[:media_item]
+
+    {resource_type, resource_id} =
+      if media_item do
+        {"media_item", media_item.id}
+      else
+        {"download", download.id}
+      end
+
+    metadata =
+      %{
+        "title" => download.title,
+        "download_client" => download.download_client,
+        "download_id" => download.id
+      }
+      |> maybe_add_media_context(media_item)
+
+    create_event_async(%{
+      category: "downloads",
+      type: "download.unstalled",
+      actor_type: :system,
+      actor_id: "download_monitor",
+      resource_type: resource_type,
+      resource_id: resource_id,
+      severity: :info,
       metadata: metadata
     })
   end
@@ -1552,4 +1640,47 @@ defmodule Mydia.Events do
         "show"
     end
   end
+
+  ## Playback Event Helpers (U1)
+
+  @playback_actions ~w(started progressed paused finished)
+
+  @doc """
+  Records a `playback.<action>` event for a user's watch activity.
+
+  `action` is one of `"started"`, `"progressed"`, `"paused"`, or `"finished"`.
+  `content_id` is the keyword tuple used throughout `Mydia.Playback`
+  (`[media_item_id: id]` or `[episode_id: id]`); the user rides in the event
+  envelope as `actor_id`. `meta` is a string-key map carrying playback context
+  including `"origin"` (`"player"`, `"sync:<provider>"`, or `"plugin:<slug>"`),
+  which the plugin dispatcher reads to suppress echo delivery (R14).
+
+  Emission is throttled by the caller (`Mydia.Playback`, R19); this function
+  always emits.
+
+  ## Examples
+
+      iex> playback_event("finished", user_id, [episode_id: id], %{"origin" => "player"})
+      :ok
+  """
+  def playback_event(action, user_id, content_id, meta \\ %{})
+      when action in @playback_actions and is_list(content_id) and is_map(meta) do
+    {resource_type, resource_id, ids} = playback_resource(content_id)
+
+    create_event_async(%{
+      category: "playback",
+      type: "playback.#{action}",
+      actor_type: :user,
+      actor_id: user_id,
+      resource_type: resource_type,
+      resource_id: resource_id,
+      metadata: Map.merge(ids, meta)
+    })
+  end
+
+  defp playback_resource(media_item_id: id),
+    do: {"media_item", id, %{"media_item_id" => id}}
+
+  defp playback_resource(episode_id: id),
+    do: {"episode", id, %{"episode_id" => id}}
 end

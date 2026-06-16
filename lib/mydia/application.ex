@@ -41,7 +41,18 @@ defmodule Mydia.Application do
         {Task.Supervisor, name: Mydia.TaskSupervisor},
         # Request task supervisor for multiplexed request handling with independent timeouts
         {Task.Supervisor, name: Mydia.RequestTaskSupervisor},
-        Mydia.Hooks.Manager,
+        # WASM plugin platform: per-plugin pools register here and live under
+        # the dynamic supervisor (see Mydia.Plugins.Host); the Agent registry
+        # holds installed plugin descriptors (see Mydia.Plugins.Registry).
+        Mydia.Plugins.Registry,
+        {Registry, keys: :unique, name: Mydia.Plugins.PoolRegistry},
+        {DynamicSupervisor, name: Mydia.Plugins.PoolSupervisor, strategy: :one_for_one},
+        # Per-plugin invocation single-flight lock (U4): serializes on-event /
+        # on-schedule / inline calls for one plugin so shared KV state is safe.
+        Mydia.Plugins.SingleFlight,
+        # Fans "events:all" out to subscribed plugins (U5). Replaces the Luerl
+        # hooks manager removed in U11.
+        Mydia.Plugins.Dispatcher,
         {Registry, keys: :unique, name: Mydia.Streaming.HlsSessionRegistry},
         Mydia.Streaming.HlsSessionSupervisor,
         {Registry, keys: :unique, name: Mydia.Downloads.TranscodeRegistry},
@@ -50,6 +61,7 @@ defmodule Mydia.Application do
          name: Mydia.Downloads.Client.Debrid.FetcherSupervisor, strategy: :one_for_one},
         Mydia.Downloads.Client.Debrid.RateLimiter,
         Mydia.Downloads.JobManager,
+        Mydia.CrashReporter.Throttle,
         Mydia.CrashReporter.Queue,
         Mydia.RemoteAccess.ClaimRateLimiter,
         Mydia.Accounts.ApiKeyRateLimiter,
@@ -77,25 +89,8 @@ defmodule Mydia.Application do
     opts = [strategy: :one_for_one, name: Mydia.Supervisor]
 
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
-      # Install the crash-reporter Logger backend. In Elixir 1.15+ legacy
-      # gen_event backends require the :logger_backends package and must be
-      # added at runtime; the old `config :logger, backends: [...]` path is
-      # deprecated and silently does nothing.
-      case LoggerBackends.add(Mydia.CrashReporter.LoggerBackend) do
-        {:ok, _} ->
-          :ok
-
-        {:error, :already_present} ->
-          :ok
-
-        {:error, reason} ->
-          if not cli_mode?() do
-            Logger.warning(
-              "[CrashReporter] Failed to install Logger backend: #{inspect(reason)}. " <>
-                "Crash reporting will not capture errors via Logger."
-            )
-          end
-      end
+      # Crash capture is handled by Tower (see Mydia.CrashReporter.TowerReporter),
+      # which auto-attaches its :logger handler on application start.
 
       # Reset any jobs stuck in executing state from previous runs
       reset_stale_jobs()
@@ -107,6 +102,8 @@ defmodule Mydia.Application do
       Mydia.Indexers.register_adapters()
       # Register metadata provider adapters
       Mydia.Metadata.register_providers()
+      # Rehydrate installed WASM plugins into the runtime registry
+      Mydia.Plugins.register_plugins()
       # Start relay service if remote access is enabled (requires Repo to be running)
       start_relay_if_enabled()
       # Ensure default quality profiles exist (skip in test environment)
@@ -236,7 +233,7 @@ defmodule Mydia.Application do
     end
   end
 
-  defp skip_migrations?() do
+  defp skip_migrations? do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
   end

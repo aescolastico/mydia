@@ -506,11 +506,13 @@ defmodule Mydia.DownloadsTest do
       assert {:error, :duplicate_download} = result
     end
 
-    test "allows episode download when previous download completed", %{
+    test "prevents episode download when previous download completed but not imported", %{
       search_result: search_result,
       episode: episode
     } do
-      # Create completed download for episode
+      # A download that finished downloading but hasn't been imported yet still
+      # occupies the episode — grabbing a second release here is what produced
+      # the duplicate 720p/1080p packs in production.
       {:ok, _first_download} =
         Downloads.create_download(%{
           title: "First Download",
@@ -521,7 +523,29 @@ defmodule Mydia.DownloadsTest do
           completed_at: DateTime.utc_now()
         })
 
-      # Should allow new download since previous one is completed
+      result = Downloads.initiate_download(search_result, episode_id: episode.id)
+
+      assert {:error, :duplicate_download} = result
+    end
+
+    test "allows episode download when previous import failed terminally", %{
+      search_result: search_result,
+      episode: episode
+    } do
+      # A terminally-failed import (no retry scheduled) no longer occupies the
+      # episode, so a fresh release may be grabbed.
+      {:ok, _first_download} =
+        Downloads.create_download(%{
+          title: "First Download",
+          download_url: "magnet:?xt=first",
+          download_client: "test-client",
+          download_client_id: "client-123",
+          episode_id: episode.id,
+          completed_at: DateTime.utc_now(),
+          import_failed_at: DateTime.utc_now(),
+          import_next_retry_at: nil
+        })
+
       result = Downloads.initiate_download(search_result, episode_id: episode.id)
 
       assert {:ok, _download} = result
@@ -628,11 +652,12 @@ defmodule Mydia.DownloadsTest do
       assert {:ok, _download} = result
     end
 
-    test "allows movie download when previous download completed", %{
+    test "prevents movie download when previous download completed but not imported", %{
       search_result: search_result,
       movie: movie
     } do
-      # Create completed download for movie
+      # Completed-but-not-imported still occupies the movie: don't grab a second
+      # release while the first is queued for import.
       {:ok, _first_download} =
         Downloads.create_download(%{
           title: "First Download",
@@ -643,10 +668,9 @@ defmodule Mydia.DownloadsTest do
           completed_at: DateTime.utc_now()
         })
 
-      # Should allow new download since previous one is completed
       result = Downloads.initiate_download(search_result, media_item_id: movie.id)
 
-      assert {:ok, _download} = result
+      assert {:error, :duplicate_download} = result
     end
 
     test "prevents episode download when media files already exist", %{

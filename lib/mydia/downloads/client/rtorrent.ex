@@ -443,8 +443,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
   defp build_xmlrpc_request(method, params) do
     params_xml =
       params
-      |> Enum.map(&encode_xmlrpc_value/1)
-      |> Enum.join("")
+      |> Enum.map_join("", &encode_xmlrpc_value/1)
 
     """
     <?xml version="1.0"?>
@@ -482,8 +481,7 @@ defmodule Mydia.Downloads.Client.Rtorrent do
   defp encode_xmlrpc_value(values) when is_list(values) do
     array_values =
       values
-      |> Enum.map(&encode_xmlrpc_array_value/1)
-      |> Enum.join("")
+      |> Enum.map_join("", &encode_xmlrpc_array_value/1)
 
     "<param><value><array><data>#{array_values}</data></array></value></param>"
   end

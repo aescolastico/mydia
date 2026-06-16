@@ -38,10 +38,24 @@ RUN apk add --no-cache \
     npm \
     sqlite-dev \
     postgresql16-dev \
-    rust \
-    cargo \
     curl \
     ca-certificates
+
+# Rust via rustup (not apk) so the wasm32 target is available for the bundled
+# plugin guests built by the :plugins mix compiler — apk's rust cannot
+# `rustup target add`. The same host toolchain still builds the p2p NIF.
+# Keep the default CARGO_HOME (/root/.cargo) so the existing registry/git cache
+# mounts on the compile steps below still apply.
+#
+# PINNED to 1.96 to match nix (nix/devShells/flake-module.nix) and CI. The guest
+# is a wasip2 component whose WASI world tracks the Rust version (1.96 -> wasi
+# 0.2.6); the runtime host is wasmex 0.14 / wasmtime 39, which only validates up
+# to wasi 0.2.6. A bleeding-edge `stable` emits wasi 0.2.9 and the bundled plugin
+# would fail to instantiate at runtime. Bump together with the nix toolchain.
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain 1.96.0 --profile minimal --no-modify-path && \
+    rustup target add wasm32-wasip2
 
 # Increase hex timeout for slow networks/CI
 ENV HEX_HTTP_TIMEOUT=300000
@@ -93,6 +107,9 @@ COPY priv ./priv
 COPY lib ./lib
 COPY assets ./assets
 COPY native ./native
+# Bundled plugin guest sources — the :plugins compiler builds them to
+# priv/plugins/*.wasm during `mix compile` below (the .wasm is gitignored).
+COPY plugins ./plugins
 
 # Copy Flutter build output from flutter-builder stage
 COPY --from=flutter-builder /app/player/build/web ./priv/static/player
@@ -107,6 +124,15 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/root/.cargo/git,sharing=locked \
     --mount=type=cache,target=/app/native/mydia_p2p_core/target,sharing=locked \
     mix compile
+
+# Fail the build if a bundled plugin's wasm artifact was not produced (the
+# :plugins compiler graceful-skips a missing toolchain, so this is the guard
+# that a release image never ships without its bundled plugins).
+RUN for m in priv/plugins/*.json; do \
+      [ -e "$m" ] || continue; \
+      w="priv/plugins/$(basename "$m" .json).wasm"; \
+      test -f "$w" || { echo "ERROR: missing built plugin artifact $w" >&2; exit 1; }; \
+    done
 
 # Build Phoenix assets
 # Cache npm packages to avoid re-downloading each build

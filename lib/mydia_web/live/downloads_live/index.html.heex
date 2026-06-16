@@ -173,15 +173,17 @@
           </div>
           <%!-- Content --%>
           <div class="list-col-grow min-w-0">
+            <% import_issue = import_issue(download) %>
             <%!-- Line 1: status dot + title + episode --%>
             <div class="flex items-center gap-2 min-w-0">
               <% {_badge_class, status_label} = status_badge(download) %>
+              <% dot_label =
+                if(import_issue, do: import_issue_label(import_issue), else: status_label) %>
               <span
-                class={["status status-md shrink-0", status_dot_class(download.status)]}
-                title={status_label}
-                aria-label={status_label}
-              >
-              </span>
+                class={["status status-md shrink-0", row_status_dot_class(download, import_issue)]}
+                title={dot_label}
+                aria-label={dot_label}
+              ></span>
               <span class="font-medium text-sm truncate">{get_display_title(download)}</span>
               <%= if get_episode_details(download) do %>
                 <span class="text-xs text-base-content/50 shrink-0 truncate">
@@ -192,6 +194,27 @@
             <%!-- Line 2: release title (muted), only when it differs from the display title --%>
             <%= if get_display_title(download) != download.title do %>
               <div class="text-xs text-base-content/40 truncate">{download.title}</div>
+            <% end %>
+            <%!-- Import problem: surfaced even when the torrent client reports the
+                 download as seeding/completed, so a silently-failing import is
+                 visible without digging into the Issues tab. --%>
+            <%= if import_issue do %>
+              <div class="text-xs text-error flex flex-wrap items-center gap-1.5 mt-0.5">
+                <.icon name="hero-exclamation-triangle" class="size-3 shrink-0" />
+                <span class="truncate">
+                  {import_issue_label(import_issue)}: {download.import_last_error}
+                </span>
+                <%= if download.import_retry_count && download.import_retry_count > 0 do %>
+                  <span>•</span>
+                  <span class="shrink-0">Attempt #{download.import_retry_count}</span>
+                <% end %>
+                <%= if download.import_next_retry_at do %>
+                  <span>•</span>
+                  <span class="shrink-0">
+                    Next retry: {format_next_retry(download.import_next_retry_at)}
+                  </span>
+                <% end %>
+              </div>
             <% end %>
             <%!-- Line 3: compact metadata cluster (every metric carries an icon) --%>
             <div class="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-xs text-base-content/60">
@@ -276,8 +299,7 @@
                     class="progress progress-primary h-1.5 flex-1"
                     value={format_progress(download.progress)}
                     max="100"
-                  >
-                  </progress>
+                  ></progress>
                   <span class="text-xs tabular-nums text-base-content/70 shrink-0 whitespace-nowrap w-12 text-right">
                     {format_progress(download.progress)}%
                   </span>
@@ -289,6 +311,16 @@
           <div class="flex items-center gap-1 shrink-0">
             <%= cond do %>
               <% @active_tab == :queue -> %>
+                <button
+                  type="button"
+                  class="btn btn-square btn-ghost btn-sm"
+                  phx-click="open_match_modal"
+                  phx-value-id={download.id}
+                  phx-value-mode="inflight"
+                  title="Change match"
+                >
+                  <.icon name="hero-pencil-square" class="size-4" />
+                </button>
                 <%= if download.status == "paused" do %>
                   <button
                     type="button"
@@ -321,6 +353,17 @@
                   <.icon name="hero-x-mark" class="size-4" />
                 </button>
               <% @active_tab == :completed -> %>
+                <button
+                  :if={is_nil(download.match_status) and download.rematch_eligible?}
+                  type="button"
+                  class="btn btn-square btn-ghost btn-sm"
+                  phx-click="open_match_modal"
+                  phx-value-id={download.id}
+                  phx-value-mode="postimport"
+                  title="Re-match to the correct title"
+                >
+                  <.icon name="hero-arrow-path" class="size-4" />
+                </button>
                 <button
                   type="button"
                   class="btn btn-square btn-ghost btn-sm hover:btn-error"
@@ -364,7 +407,10 @@
             phx-update="stream"
             class="list bg-base-100 rounded-box shadow-lg"
           >
-            <li class="hidden only:block p-6 text-center text-base-content/50">
+            <li
+              id="no-unmatched-downloads"
+              class="hidden only:block p-6 text-center text-base-content/50"
+            >
               No unmatched downloads
             </li>
             <li
@@ -493,7 +539,10 @@
             phx-update="stream"
             class="list bg-base-100 rounded-box shadow-lg"
           >
-            <li class="hidden only:block p-6 text-center text-base-content/50">
+            <li
+              id="no-unresolved-files"
+              class="hidden only:block p-6 text-center text-base-content/50"
+            >
               No unresolved files
             </li>
             <li
@@ -606,7 +655,10 @@
             <% end %>
           </div>
           <ul id="other-issues" phx-update="stream" class="list bg-base-100 rounded-box shadow-lg">
-            <li class="hidden only:block p-6 text-center text-base-content/50">
+            <li
+              id="no-other-issues"
+              class="hidden only:block p-6 text-center text-base-content/50"
+            >
               No other issues
             </li>
             <li :for={{id, download} <- @streams.other_issues} id={id} class="list-row py-2">
@@ -647,6 +699,52 @@
                       <span class="text-error">Removed from client</span>
                   <% end %>
                 </div>
+                <%= if download.import_failure_reason == "path_mapping_mismatch" do %>
+                  <div class="mt-2 rounded-lg border border-warning/40 bg-warning/5 p-2 text-xs">
+                    <div class="opacity-70">
+                      Mydia can't see the download client's path. This usually means its
+                      volume isn't mounted into the Mydia container at the same path.
+                    </div>
+                    <%= if download.path_mapping_suggestion do %>
+                      <div class="mt-1 font-mono text-[11px] break-all">
+                        {download.path_mapping_suggestion.remote_prefix}
+                        <span class="opacity-50">→</span>
+                        {download.path_mapping_suggestion.local_prefix}
+                      </div>
+                      <div class="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          id={"apply-mapping-#{download.id}"}
+                          class="btn btn-warning btn-xs"
+                          phx-click="apply_mapping_and_retry"
+                          phx-value-remote_prefix={download.path_mapping_suggestion.remote_prefix}
+                          phx-value-local_prefix={download.path_mapping_suggestion.local_prefix}
+                          phx-disable-with="Applying…"
+                          aria-label={"Apply mapping #{download.path_mapping_suggestion.remote_prefix} to #{download.path_mapping_suggestion.local_prefix} and retry"}
+                        >
+                          Apply mapping &amp; retry
+                        </button>
+                        <%= if download.path_mapping_affected_count do %>
+                          <span class="opacity-60">
+                            Retries {download.path_mapping_affected_count} download{if download.path_mapping_affected_count ==
+                                                                                         1,
+                                                                                       do: "",
+                                                                                       else: "s"}
+                          </span>
+                        <% end %>
+                      </div>
+                    <% else %>
+                      <div class="mt-2">
+                        <.link
+                          navigate={~p"/admin/config/path-mappings"}
+                          class="link link-warning"
+                        >
+                          Add a path mapping
+                        </.link>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
               </div>
               <div class="flex gap-1">
                 <%= if download.import_last_error do %>
@@ -718,6 +816,76 @@
           class={["btn", (@delete_files && "btn-error") || "btn-primary"]}
         >
           {if @delete_files, do: "Clear and Delete Files", else: "Clear Completed"}
+        </button>
+      </:actions>
+    </.modal>
+
+    <%!-- Match / re-match modal (in-flight correction + post-import re-match) --%>
+    <.modal :if={@match_modal} id="match-modal" show={true} on_cancel="close_match_modal">
+      <:title>
+        {if @match_modal.mode == :inflight, do: "Change match", else: "Re-match download"}
+      </:title>
+
+      <%= if @match_modal.selected do %>
+        <p class="text-sm text-base-content/80">
+          Choose the episode for <span class="font-medium">{@match_modal.selected.title}</span>:
+        </p>
+        <div
+          :if={@match_modal.episodes == []}
+          class="text-sm text-base-content/50 mt-2"
+        >
+          No episodes found for this show.
+        </div>
+        <div class="mt-2 max-h-64 overflow-y-auto flex flex-col gap-1">
+          <button
+            :for={ep <- @match_modal.episodes}
+            type="button"
+            class="btn btn-sm btn-ghost justify-start"
+            phx-click="match_modal_pick_episode"
+            phx-value-episode_id={ep.id}
+          >
+            S{String.pad_leading("#{ep.season_number}", 2, "0")}E{String.pad_leading(
+              "#{ep.episode_number}",
+              2,
+              "0"
+            )}
+            <span :if={ep.title} class="text-base-content/60">- {ep.title}</span>
+          </button>
+        </div>
+      <% else %>
+        <form id="match-modal-search-form" phx-change="match_modal_search">
+          <input
+            type="text"
+            name="q"
+            value={@match_modal.query}
+            class="input input-bordered w-full"
+            phx-debounce="300"
+            autocomplete="off"
+            placeholder="Search your library by title..."
+          />
+        </form>
+        <div class="mt-2 max-h-64 overflow-y-auto flex flex-col gap-1">
+          <button
+            :for={item <- @match_modal.results}
+            type="button"
+            class="btn btn-sm btn-ghost justify-start"
+            phx-click="match_modal_pick_item"
+            phx-value-media_item_id={item.id}
+            phx-value-type={item.type}
+            phx-value-title={item.title}
+          >
+            <span class="font-medium">{item.title}</span>
+            <span :if={item.year} class="text-base-content/60">({item.year})</span>
+            <span class="badge badge-xs badge-outline">
+              {if item.type == "tv_show", do: "TV", else: "Movie"}
+            </span>
+          </button>
+        </div>
+      <% end %>
+
+      <:actions>
+        <button type="button" class="btn btn-ghost" phx-click="close_match_modal">
+          Cancel
         </button>
       </:actions>
     </.modal>

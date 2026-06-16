@@ -43,8 +43,9 @@ defmodule Mydia.Streaming.HlsCleanup do
           stale_dirs =
             session_dirs
             |> Enum.map(&Path.join(@temp_base_dir, &1))
-            |> Enum.filter(&File.dir?/1)
-            |> Enum.filter(&is_stale?(&1, force))
+            |> Enum.filter(fn dir ->
+              File.dir?(dir) and is_stale?(dir, force)
+            end)
 
           if dry_run do
             Logger.info("DRY RUN: Would remove #{length(stale_dirs)} stale directories")

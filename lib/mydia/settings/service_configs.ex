@@ -9,7 +9,9 @@ defmodule Mydia.Settings.ServiceConfigs do
   alias Mydia.Settings.{
     DownloadClientConfig,
     IndexerConfig,
-    MediaServerConfig
+    MediaServerConfig,
+    PathMappingConfig,
+    PluginConfig
   }
 
   alias Mydia.Settings.RuntimeConfig, as: RC
@@ -283,4 +285,177 @@ defmodule Mydia.Settings.ServiceConfigs do
   def change_media_server_config(%MediaServerConfig{} = config, attrs \\ %{}) do
     MediaServerConfig.changeset(config, attrs)
   end
+
+  ## Plugin Configs
+
+  def list_plugin_configs(opts \\ []) do
+    db_configs =
+      PluginConfig
+      |> maybe_preload(opts[:preload])
+      |> order_by([p], desc: p.enabled, asc: p.priority, asc: p.name)
+      |> Repo.all()
+
+    # Env/index plugins take precedence over DB rows by slug (env > DB per the
+    # documented layered model). A DB upsert for an env-sourced slug therefore
+    # never wins, so an env-configured plugin stays read-only (AE6). This is the
+    # one place plugins intentionally diverge from the sibling service lists,
+    # which use DB precedence.
+    runtime = RC.get_runtime_plugins()
+    runtime_slugs = MapSet.new(runtime, & &1.slug)
+    db_filtered = Enum.reject(db_configs, &MapSet.member?(runtime_slugs, &1.slug))
+    runtime ++ db_filtered
+  end
+
+  def get_plugin_config!(id, opts \\ [])
+
+  def get_plugin_config!(id, opts) when is_binary(id) do
+    if RC.runtime_id?(id) do
+      case RC.parse_runtime_id(id) do
+        {:ok, {:plugin, slug}} ->
+          case Enum.find(RC.get_runtime_plugins(), &(&1.slug == slug)) do
+            nil -> raise "Runtime plugin not found: #{slug}"
+            plugin -> plugin
+          end
+
+        _ ->
+          raise "Invalid runtime plugin ID: #{id}"
+      end
+    else
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} ->
+          PluginConfig
+          |> maybe_preload(opts[:preload])
+          |> Repo.get!(uuid)
+
+        :error ->
+          raise "Invalid plugin ID: #{id}"
+      end
+    end
+  end
+
+  @doc "Fetches a plugin config by slug (DB rows only), or nil."
+  def get_plugin_config_by_slug(slug) when is_binary(slug) do
+    Repo.get_by(PluginConfig, slug: slug)
+  end
+
+  @doc """
+  Returns the raw DB plugin-config rows (no runtime/env merge).
+
+  Unlike `list_plugin_configs/1`, this carries the persisted artifact and
+  manifest, so it is what boot-time activation (`Mydia.Plugins.register_plugins/0`)
+  iterates.
+  """
+  def get_db_plugin_configs do
+    PluginConfig
+    |> order_by([p], asc: p.priority, asc: p.name)
+    |> Repo.all()
+  end
+
+  def create_plugin_config(attrs) do
+    %PluginConfig{}
+    |> PluginConfig.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def update_plugin_config(%PluginConfig{} = config, attrs) do
+    config
+    |> PluginConfig.changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
+  Inserts or updates a plugin config keyed by slug (DB rows only).
+
+  Env/index-sourced (`runtime::`) plugins are never written here — they are
+  read-only overlays, so AE6's "DB upsert does not overwrite an env-sourced
+  field" holds: the env value wins at merge time regardless of any DB row.
+  """
+  def upsert_plugin_config(%{slug: slug} = attrs) when is_binary(slug) do
+    case get_plugin_config_by_slug(slug) do
+      nil -> create_plugin_config(attrs)
+      existing -> update_plugin_config(existing, attrs)
+    end
+  end
+
+  def delete_plugin_config(%PluginConfig{} = config) do
+    Repo.delete(config)
+  end
+
+  def change_plugin_config(%PluginConfig{} = config, attrs \\ %{}) do
+    PluginConfig.changeset(config, attrs)
+  end
+
+  ## Path Mapping Configs
+
+  @doc """
+  Lists path mappings from both the database and env, merged (a DB row shadows an
+  env entry with the same `remote_prefix`) and sorted longest-prefix-first so the
+  most specific match wins at rewrite time.
+  """
+  def list_path_mapping_configs(opts \\ []) do
+    db_configs =
+      PathMappingConfig
+      |> maybe_preload(opts[:preload])
+      |> Repo.all()
+
+    db_configs
+    |> RC.merge_with_runtime_config(&RC.get_runtime_path_mappings/0, :remote_prefix)
+    |> Enum.sort_by(&String.length(&1.remote_prefix || ""), :desc)
+  end
+
+  def get_path_mapping_config!(id, opts \\ [])
+
+  def get_path_mapping_config!(id, opts) when is_binary(id) do
+    if RC.runtime_id?(id) do
+      case RC.parse_runtime_id(id) do
+        {:ok, {:path_mapping, remote_prefix}} ->
+          case Enum.find(RC.get_runtime_path_mappings(), &(&1.remote_prefix == remote_prefix)) do
+            nil -> raise "Runtime path mapping not found: #{remote_prefix}"
+            mapping -> mapping
+          end
+
+        _ ->
+          raise "Invalid runtime path mapping ID: #{id}"
+      end
+    else
+      case Ecto.UUID.cast(id) do
+        {:ok, uuid} ->
+          PathMappingConfig
+          |> maybe_preload(opts[:preload])
+          |> Repo.get!(uuid)
+
+        :error ->
+          raise "Invalid path mapping ID: #{id}"
+      end
+    end
+  end
+
+  def create_path_mapping_config(attrs) do
+    %PathMappingConfig{}
+    |> PathMappingConfig.changeset(attrs)
+    |> Repo.insert()
+    |> tap_reload()
+  end
+
+  def update_path_mapping_config(%PathMappingConfig{} = config, attrs) do
+    config
+    |> PathMappingConfig.changeset(attrs)
+    |> Repo.update()
+    |> tap_reload()
+  end
+
+  def delete_path_mapping_config(%PathMappingConfig{} = config) do
+    config
+    |> Repo.delete()
+    |> tap_reload()
+  end
+
+  # Refresh the cached runtime config after a successful DB write so the new
+  # mapping takes effect on the next import without an application restart.
+  defp tap_reload({:ok, _} = result) do
+    Mydia.Config.Loader.reload()
+    result
+  end
+
+  defp tap_reload(result), do: result
 end

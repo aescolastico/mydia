@@ -39,6 +39,18 @@ defmodule Mydia.Jobs.DownloadMonitor do
   # config. The DB schema's default is also 60; this just guards against a nil.
   @default_grace_minutes 60
 
+  # A soft-stall escalates to a terminal failure only after it has persisted for
+  # `grace_minutes × @stall_escalation_multiplier` (default 60 × 3 = 180 min).
+  # A dedicated per-client knob is deferred.
+  @stall_escalation_multiplier 3
+
+  # An observation gap larger than this resets the stall clock instead of
+  # accruing stall time — covers client outages, Mydia restarts, and torrents
+  # that sat paused/queued. 360s is ~3 cron cycles at the 120s DownloadMonitor
+  # interval; the 15s adaptive fast-followup chain keeps live polling well
+  # inside this window.
+  @observation_gap_seconds 360
+
   # Adaptive polling: when downloads are actively running, the cron plugin's
   # 2-minute interval is too slow — completed downloads land in the library
   # 0–120s after the client says so. To shorten that gap without configuring
@@ -97,13 +109,15 @@ defmodule Mydia.Jobs.DownloadMonitor do
         d.match_status == "unmatched" and d.in_client? == false
       end)
 
-    # Active downloads we should track for stall detection. Skip terminal
-    # states (completed/seeding/failed/missing/imported) and anything already
-    # flagged as import_failed_at — the latter prevents stomping a previous
-    # stall annotation on every subsequent poll.
+    # Active downloads we should track for stall detection. Only genuinely
+    # *downloading* torrents accrue stall time — paused/queued/checking/seeding
+    # are not observed, so their stale clock is neutralised by the gap reset on
+    # resume. Terminal rows (import_failed_at set) stay excluded
+    # so an escalated stall isn't re-evaluated; soft-stalled rows keep
+    # import_failed_at nil and so remain in the set for auto-clear/escalation.
     active_for_stall_check =
       Enum.filter(downloads, fn d ->
-        d.status in ["downloading", "checking"] and
+        d.status == "downloading" and
           is_nil(d.import_failed_at) and
           is_nil(d.imported_at)
       end)
@@ -464,75 +478,198 @@ defmodule Mydia.Jobs.DownloadMonitor do
   end
 
   # Iterate active downloads and apply the StallDetector decision. Returns the
-  # number of downloads newly flagged as stalled.
+  # number of downloads newly entering a stalled state (soft-stall or escalation)
+  # this poll. Every observed download has `last_observed_at` refreshed to `now`
+  # (throttled — see `apply_progress_decision/3` for `:no_change`) so the gap
+  # reset doesn't fire on the next poll.
   defp check_progress(active_downloads, grace_map, now) do
     Enum.reduce(active_downloads, 0, fn download, stalled_acc ->
       grace = grace_minutes_for(download.download_client, grace_map)
+      escalation = grace * @stall_escalation_multiplier
 
       decision =
         StallDetector.evaluate(
           download.last_progress_at,
           download.last_known_bytes,
+          download.last_observed_at,
+          download.stalled_since,
           download.downloaded || 0,
-          grace,
+          %StallDetector.Thresholds{
+            grace_minutes: grace,
+            escalation_minutes: escalation,
+            gap_threshold_seconds: @observation_gap_seconds
+          },
           now
         )
 
-      apply_progress_decision(download, decision) + stalled_acc
+      increment =
+        try do
+          apply_progress_decision(download, decision, now)
+        rescue
+          # The row was deleted between the poll's status snapshot and this
+          # write (e.g. a concurrent import that deletes the download, or a
+          # manual delete). Skip it — the rest of the poll must still run.
+          Ecto.NoResultsError ->
+            Logger.debug("Download disappeared mid-poll; skipping stall update",
+              download_id: download.id
+            )
+
+            0
+        end
+
+      increment + stalled_acc
     end)
   end
 
-  defp apply_progress_decision(_download, :no_change), do: 0
+  # No stall transition, but record that we observed this download so the gap
+  # reset doesn't fire on the next poll, and a held soft-stall keeps maturing
+  # toward escalation without self-resetting. Throttled: refreshing on every
+  # poll would issue a write + PubSub broadcast (which re-polls the client for
+  # every open Downloads view) for an otherwise-idle download. A refresh only
+  # has to keep `now - last_observed_at` under @observation_gap_seconds, so
+  # writing once it is half-stale is sufficient and far cheaper.
+  defp apply_progress_decision(download, :no_change, now) do
+    if observation_stale?(download.last_observed_at, now) do
+      update_progress(download, %{last_observed_at: now})
+    end
 
-  defp apply_progress_decision(download, {:initialize, now}) do
+    0
+  end
+
+  defp apply_progress_decision(download, {:initialize, now}, _now) do
     update_progress(download, %{
       last_progress_at: now,
-      last_known_bytes: download.downloaded || 0
+      last_known_bytes: download.downloaded || 0,
+      last_observed_at: now,
+      stalled_since: nil
     })
 
     0
   end
 
-  defp apply_progress_decision(download, {:progress, new_bytes, now}) do
-    update_progress(download, %{
+  # Observation gap — fresh baseline, clears any in-flight soft-stall. Bytes were
+  # unchanged so `last_known_bytes` is left as-is.
+  defp apply_progress_decision(download, {:reset, now}, _now) do
+    apply_recovery(download, %{
       last_progress_at: now,
-      last_known_bytes: new_bytes
+      last_observed_at: now,
+      stalled_since: nil
     })
 
     0
   end
 
-  defp apply_progress_decision(download, {:stalled, error_message, now}) do
-    Logger.warning("Download stalled — no progress within grace window",
+  defp apply_progress_decision(download, {:progress, new_bytes, now}, _now) do
+    apply_recovery(download, %{
+      last_progress_at: now,
+      last_known_bytes: new_bytes,
+      last_observed_at: now,
+      stalled_since: nil
+    })
+
+    0
+  end
+
+  # A recoverable soft-stall: keep `import_failed_at` nil so the episode stays
+  # occupied, record `stalled_since`, and emit a warning event.
+  defp apply_progress_decision(download, {:soft_stall, message, now}, _now) do
+    Logger.warning("Download soft-stalled — no progress within grace window",
       download_id: download.id,
       download_client: download.download_client,
       last_progress_at: download.last_progress_at,
       last_known_bytes: download.last_known_bytes,
       downloaded: download.downloaded,
-      error: error_message
+      message: message
     )
 
-    # IMPORTANT: do NOT cast `:status` here — `Download.changeset/2` silently
-    # drops it (known bug, tracked separately). Use `import_failed_at` +
-    # `import_last_error` as the stalled signal.
     db_download = Downloads.get_download!(download.id, preload: [:media_item])
 
     case Downloads.update_download(db_download, %{
-           import_failed_at: now,
-           import_last_error: error_message
+           stalled_since: now,
+           last_observed_at: now
          }) do
       {:ok, updated} ->
-        Events.download_failed(updated, error_message, media_item: updated.media_item)
+        Events.download_stalled(updated, message, media_item: updated.media_item)
         1
 
       {:error, changeset} ->
-        Logger.error("Failed to flag stalled download",
+        Logger.error("Failed to flag soft-stalled download",
           download_id: download.id,
           errors: inspect(changeset.errors)
         )
 
         0
     end
+  end
+
+  # Escalation — a soft-stall that outlasted the longer threshold becomes a
+  # terminal failure, releasing the episode for re-search (today's terminal
+  # behaviour, now reached only after escalation).
+  #
+  # IMPORTANT: do NOT cast `:status` here — `Download.changeset/2` silently
+  # drops it (known bug, tracked separately). Use `import_failed_at` +
+  # `import_last_error` as the terminal signal.
+  defp apply_progress_decision(download, {:escalate, error_message, now}, _now) do
+    Logger.warning("Download stall escalated to terminal failure",
+      download_id: download.id,
+      download_client: download.download_client,
+      stalled_since: download.stalled_since,
+      error: error_message
+    )
+
+    db_download = Downloads.get_download!(download.id, preload: [:media_item])
+
+    case Downloads.update_download(db_download, %{
+           import_failed_at: now,
+           import_last_error: error_message,
+           last_observed_at: now
+         }) do
+      {:ok, updated} ->
+        Events.download_failed(updated, error_message, media_item: updated.media_item)
+        1
+
+      {:error, changeset} ->
+        Logger.error("Failed to escalate stalled download",
+          download_id: download.id,
+          errors: inspect(changeset.errors)
+        )
+
+        0
+    end
+  end
+
+  # Persist a progress/reset decision that clears any in-flight soft-stall,
+  # emitting a recovery event only when a soft-stall was actually cleared.
+  defp apply_recovery(download, attrs) do
+    if is_nil(download.stalled_since) do
+      update_progress(download, attrs)
+    else
+      db_download = Downloads.get_download!(download.id, preload: [:media_item])
+
+      case Downloads.update_download(db_download, attrs) do
+        {:ok, updated} ->
+          Events.download_unstalled(updated, media_item: updated.media_item)
+          :ok
+
+        {:error, changeset} ->
+          Logger.warning("Failed to clear soft-stall on download",
+            download_id: download.id,
+            errors: inspect(changeset.errors)
+          )
+
+          :ok
+      end
+    end
+  end
+
+  # Whether `last_observed_at` is stale enough to be worth refreshing on an
+  # otherwise-idle poll. Half the gap threshold leaves ample margin: even with
+  # the slowest (cron) poll spacing, the next observation stays well under
+  # @observation_gap_seconds, so the gap reset never false-fires.
+  defp observation_stale?(nil, _now), do: true
+
+  defp observation_stale?(last_observed_at, now) do
+    DateTime.diff(now, last_observed_at, :second) > div(@observation_gap_seconds, 2)
   end
 
   defp update_progress(download, attrs) do

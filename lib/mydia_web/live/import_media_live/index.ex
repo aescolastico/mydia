@@ -1264,6 +1264,8 @@ defmodule MydiaWeb.ImportMediaLive.Index do
       liveview_pid = self()
       metadata_config = socket.assigns.metadata_config
       total_files = length(files)
+      # New matches use the selected library's configured TV metadata source.
+      provider = library_path && library_path.tv_metadata_source
 
       Task.Supervisor.start_child(Mydia.TaskSupervisor, fn ->
         # Use Task.async_stream for concurrent matching with back-pressure
@@ -1274,7 +1276,10 @@ defmodule MydiaWeb.ImportMediaLive.Index do
           |> Task.async_stream(
             fn file ->
               match_result =
-                case MetadataMatcher.match_file(file.path, config: metadata_config) do
+                case MetadataMatcher.match_file(file.path,
+                       config: metadata_config,
+                       provider: provider
+                     ) do
                   {:ok, match} -> match
                   {:error, _reason} -> nil
                 end

@@ -359,12 +359,10 @@ defmodule Mydia.Library.FileParser do
     case Regex.run(@resolution_pattern, text) do
       [match | _] ->
         # Normalize resolution to lowercase 'p' format (1080p not 1080P)
-        cond do
-          String.match?(match, ~r/^\d+[pP]$/) ->
-            String.replace(match, ~r/[pP]$/, "p")
-
-          true ->
-            match
+        if String.match?(match, ~r/^\d+[pP]$/) do
+          String.replace(match, ~r/[pP]$/, "p")
+        else
+          match
         end
 
       nil ->
@@ -542,8 +540,7 @@ defmodule Mydia.Library.FileParser do
     |> String.trim()
     |> String.split(~r/\s+/)
     |> Enum.reject(&(&1 == "" || &1 == "-" || &1 == "_" || &1 == "+"))
-    |> Enum.map(&String.capitalize/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &String.capitalize/1)
   end
 
   defp calculate_movie_confidence(title, year, quality) do

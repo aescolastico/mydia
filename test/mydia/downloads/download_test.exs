@@ -109,4 +109,63 @@ defmodule Mydia.Downloads.DownloadTest do
       assert reloaded.bytes_pulled == 1024
     end
   end
+
+  describe "stall observation fields (last_observed_at / stalled_since)" do
+    test "both default to nil when not provided" do
+      {:ok, download} =
+        %Download{}
+        |> Download.changeset(@valid_attrs)
+        |> Repo.insert()
+
+      assert download.last_observed_at == nil
+      assert download.stalled_since == nil
+    end
+
+    test "last_observed_at and stalled_since round-trip through the changeset" do
+      now = DateTime.utc_now()
+
+      attrs =
+        @valid_attrs
+        |> Map.put(:last_observed_at, now)
+        |> Map.put(:stalled_since, now)
+
+      download =
+        %Download{}
+        |> Download.changeset(attrs)
+        |> Ecto.Changeset.apply_changes()
+
+      assert DateTime.compare(download.last_observed_at, now) == :eq
+      assert DateTime.compare(download.stalled_since, now) == :eq
+    end
+
+    test "accepts nil for both (existing-row compatibility)" do
+      now = DateTime.utc_now()
+
+      {:ok, download} =
+        %Download{}
+        |> Download.changeset(Map.put(@valid_attrs, :stalled_since, now))
+        |> Repo.insert()
+
+      {:ok, cleared} =
+        download
+        |> Download.changeset(%{last_observed_at: nil, stalled_since: nil})
+        |> Repo.update()
+
+      reloaded = Repo.get!(Download, cleared.id)
+      assert reloaded.last_observed_at == nil
+      assert reloaded.stalled_since == nil
+    end
+
+    test "a soft-stalled row (stalled_since set, import_failed_at nil) is still occupying" do
+      now = DateTime.utc_now()
+
+      {:ok, download} =
+        %Download{}
+        |> Download.changeset(Map.put(@valid_attrs, :stalled_since, now))
+        |> Repo.insert()
+
+      occupying_ids = Download.occupying() |> Repo.all() |> Enum.map(& &1.id)
+      assert download.id in occupying_ids
+    end
+  end
 end

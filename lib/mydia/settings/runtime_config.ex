@@ -11,7 +11,9 @@ defmodule Mydia.Settings.RuntimeConfig do
     DownloadClientConfig,
     IndexerConfig,
     MediaServerConfig,
-    LibraryPath
+    LibraryPath,
+    PathMappingConfig,
+    PluginConfig
   }
 
   ## Configuration Settings (Database)
@@ -42,6 +44,64 @@ defmodule Mydia.Settings.RuntimeConfig do
   def delete_config_setting(%ConfigSetting{} = config_setting) do
     Repo.delete(config_setting)
   end
+
+  @doc """
+  Resolves the source of a config value for UI display:
+
+    - `:env` when the given environment variable is set
+    - `:database` when the key has a row in the prefetched `all_db_settings` map
+    - `:default` otherwise
+
+  `all_db_settings` is a `key => ConfigSetting` map (build it once via
+  `list_config_settings/0` and pass it in) so resolving many fields does not
+  trigger an N+1 of per-key lookups.
+  """
+  def config_source(env_var_name, key, all_db_settings) do
+    cond do
+      env_var_name != nil and System.get_env(env_var_name) != nil -> :env
+      Map.has_key?(all_db_settings, key) -> :database
+      true -> :default
+    end
+  end
+
+  @doc """
+  Creates or updates a `ConfigSetting` by key.
+
+  Accepts an attrs map (or struct) carrying `:key`, `:value`, `:category`, and
+  optionally `:updated_by_id`. The caller supplies `:category` directly (e.g.
+  `:flaresolverr`); this function does not derive it from a display string.
+  """
+  def upsert_config_setting(attrs) do
+    attrs_map = if is_struct(attrs), do: Map.from_struct(attrs), else: attrs
+    key = Map.get(attrs_map, :key) || Map.get(attrs_map, "key")
+
+    string_attrs = %{
+      "key" => key,
+      "value" => Map.get(attrs_map, :value) || Map.get(attrs_map, "value"),
+      "category" => Map.get(attrs_map, :category) || Map.get(attrs_map, "category"),
+      "updated_by_id" => Map.get(attrs_map, :updated_by_id) || Map.get(attrs_map, "updated_by_id")
+    }
+
+    case get_config_setting_by_key(key) do
+      nil -> create_config_setting(string_attrs)
+      existing -> update_config_setting(existing, string_attrs)
+    end
+  end
+
+  @doc """
+  Parses a stored or submitted config-setting value into a boolean.
+
+  Accepts the lenient truthy tokens that DB rows and UI form params may carry
+  (`"true"`, `"1"`, `"yes"`, `"on"`); booleans pass through unchanged; anything
+  else (including `nil`) is `false`. This is the single canonical parser for
+  config-setting booleans — do not reintroduce per-module copies.
+  """
+  def parse_setting_boolean(value) when is_boolean(value), do: value
+  def parse_setting_boolean("true"), do: true
+  def parse_setting_boolean("1"), do: true
+  def parse_setting_boolean("yes"), do: true
+  def parse_setting_boolean("on"), do: true
+  def parse_setting_boolean(_), do: false
 
   ## Runtime Configuration Loading
 
@@ -150,6 +210,17 @@ defmodule Mydia.Settings.RuntimeConfig do
     end
   end
 
+  def get_runtime_path_mappings do
+    runtime_config = get_runtime_config()
+
+    if is_struct(runtime_config) and Map.has_key?(runtime_config, :path_mappings) do
+      runtime_config.path_mappings
+      |> Enum.map(&map_to_path_mapping/1)
+    else
+      []
+    end
+  end
+
   def get_runtime_library_paths do
     runtime_config = get_runtime_config()
 
@@ -233,6 +304,17 @@ defmodule Mydia.Settings.RuntimeConfig do
     paths
   end
 
+  def get_runtime_plugins do
+    runtime_config = get_runtime_config()
+
+    if is_struct(runtime_config) and Map.has_key?(runtime_config, :plugin_installs) do
+      runtime_config.plugin_installs
+      |> Enum.map(&map_to_plugin_config/1)
+    else
+      []
+    end
+  end
+
   ## Runtime ID Helpers (public, used by other sub-modules)
 
   def runtime_config?(%{id: id}) when is_binary(id) do
@@ -313,6 +395,26 @@ defmodule Mydia.Settings.RuntimeConfig do
     }
   end
 
+  defp map_to_plugin_config(map) when is_map(map) do
+    slug = Map.get(map, :slug)
+
+    %PluginConfig{
+      id: build_runtime_id(:plugin, slug),
+      slug: slug,
+      name: Map.get(map, :name) || slug,
+      version: Map.get(map, :version),
+      enabled: Map.get(map, :enabled, true),
+      priority: Map.get(map, :priority, 1),
+      settings: Map.get(map, :settings, %{}),
+      granted_capabilities: Map.get(map, :granted_capabilities, %{}),
+      source_url: Map.get(map, :source_url),
+      integrity_hash: Map.get(map, :integrity_hash),
+      updated_by_id: nil,
+      inserted_at: nil,
+      updated_at: nil
+    }
+  end
+
   defp map_to_indexer_config(map) when is_map(map) do
     name = Map.get(map, :name)
 
@@ -345,6 +447,23 @@ defmodule Mydia.Settings.RuntimeConfig do
       url: Map.get(map, :url),
       token: Map.get(map, :token),
       connection_settings: Map.get(map, :connection_settings, %{}),
+      updated_by_id: nil,
+      inserted_at: nil,
+      updated_at: nil
+    }
+  end
+
+  defp map_to_path_mapping(map) when is_map(map) do
+    # Build the synthetic id from the NORMALIZED remote prefix so it round-trips
+    # with the same value the merge keys on — otherwise an env mapping with a
+    # trailing slash could not be resolved by `get_path_mapping_config!/1`.
+    remote_prefix = PathMappingConfig.normalize_prefix(Map.get(map, :remote_prefix))
+    local_prefix = PathMappingConfig.normalize_prefix(Map.get(map, :local_prefix))
+
+    %PathMappingConfig{
+      id: build_runtime_id(:path_mapping, remote_prefix),
+      remote_prefix: remote_prefix,
+      local_prefix: local_prefix,
       updated_by_id: nil,
       inserted_at: nil,
       updated_at: nil

@@ -43,9 +43,31 @@ defmodule MydiaWeb.Formatters do
         String.replace(acc, "%{#{key}}", to_string(value))
       end)
     end)
-    |> Enum.map(fn {field, errors} ->
+    |> Enum.map_join("; ", fn {field, errors} ->
       "#{field}: #{Enum.join(errors, ", ")}"
     end)
-    |> Enum.join("; ")
   end
+
+  @doc """
+  Formats a download progress percentage (0.0..100.0) for display.
+
+  Returns a string with one decimal place, guaranteed clean of
+  floating-point noise (unlike Float.round/2 + interpolation).
+
+  ## Examples
+
+      iex> MydiaWeb.Formatters.format_progress(45.5)
+      "45.5"
+
+      iex> MydiaWeb.Formatters.format_progress(0.899999999999)
+      "0.9"
+
+      iex> MydiaWeb.Formatters.format_progress(0)
+      "0.0"
+
+  """
+  def format_progress(nil), do: "0.0"
+
+  def format_progress(progress) when is_number(progress),
+    do: :erlang.float_to_binary(progress * 1.0, decimals: 1)
 end

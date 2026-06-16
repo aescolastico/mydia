@@ -80,6 +80,11 @@ nav:
       - PostgreSQL: advanced/postgresql.md
       - SSO/OIDC: advanced/oidc.md
       - Cardigann Indexers: advanced/cardigann.md
+  - Plugin Development:
+      - Introduction: plugins/index.md
+      - Cookbook: plugins/cookbook.md
+      - Manifest & Settings: plugins/manifest.md
+      - Reference: plugins/authoring.md
   - Development:
       - Setup: development/setup.md
       - Testing: development/testing.md

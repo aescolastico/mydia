@@ -8,13 +8,16 @@ defmodule Mydia.Indexers.FlareSolverr do
 
   ## Configuration
 
-  FlareSolverr is configured via application environment:
+  FlareSolverr settings flow through Mydia's layered config (env > DB/UI > YAML >
+  defaults), read here via `Mydia.Settings.get_runtime_config/0`. Configure it in
+  any of these layers:
 
-      config :mydia, :flaresolverr,
-        enabled: true,
-        url: "http://flaresolverr:8191",
-        timeout: 60_000,
-        max_timeout: 120_000
+    * Environment: `FLARESOLVERR_ENABLED`, `FLARESOLVERR_URL`,
+      `FLARESOLVERR_TIMEOUT`, `FLARESOLVERR_MAX_TIMEOUT` (highest priority)
+    * Admin UI / database: the FlareSolverr row on the Indexers tab persists
+      `flaresolverr.*` `ConfigSetting` rows, then calls
+      `Mydia.Config.Loader.reload/0` so the change takes effect without a restart
+    * `config/config.yml` under the `flaresolverr` key
 
   ## Usage
 
@@ -167,30 +170,66 @@ defmodule Mydia.Indexers.FlareSolverr do
     end
   end
 
+  @doc """
+  Probes the current FlareSolverr status for UI display.
+
+  Returns a map with:
+    * `configured` - boolean, whether a URL is set
+    * `status` - `:healthy`, `:unhealthy`, or `:disabled`
+    * `url` - the configured URL
+    * `version` / `sessions` - present when `:healthy`
+    * `error` - present when `:unhealthy`
+  """
+  @spec status() :: map()
+  def status do
+    config = config()
+
+    if config && config.enabled && is_binary(config.url) && config.url != "" do
+      case health_check() do
+        {:ok, info} ->
+          %{
+            configured: true,
+            status: :healthy,
+            url: config.url,
+            version: info[:version],
+            sessions: info[:sessions] || []
+          }
+
+        {:error, reason} ->
+          %{
+            configured: true,
+            status: :unhealthy,
+            url: config.url,
+            error: reason
+          }
+      end
+    else
+      %{
+        configured: config != nil && is_binary(config[:url]) && config[:url] != "",
+        status: :disabled,
+        url: config && config[:url]
+      }
+    end
+  end
+
   ## Private Functions
 
+  # Reads the merged runtime config (env > DB/UI > YAML > defaults) so that
+  # FlareSolverr settings managed in the admin UI actually take effect. The
+  # runtime config is refreshed by `Mydia.Config.Loader.reload/0` after a save.
   defp get_config do
-    case Application.get_env(:mydia, :flaresolverr) do
-      nil ->
-        {:error, :not_configured}
-
-      config when is_list(config) ->
+    case Mydia.Settings.get_runtime_config() do
+      %{flaresolverr: %{} = config} ->
         {:ok,
          %{
-           enabled: Keyword.get(config, :enabled, false),
-           url: Keyword.get(config, :url),
-           timeout: Keyword.get(config, :timeout, 60_000),
-           max_timeout: Keyword.get(config, :max_timeout, 120_000)
-         }}
-
-      config when is_map(config) ->
-        {:ok,
-         %{
-           enabled: Map.get(config, :enabled, false),
+           enabled: Map.get(config, :enabled, false) || false,
            url: Map.get(config, :url),
-           timeout: Map.get(config, :timeout, 60_000),
-           max_timeout: Map.get(config, :max_timeout, 120_000)
+           timeout: Map.get(config, :timeout) || 60_000,
+           max_timeout: Map.get(config, :max_timeout) || 120_000
          }}
+
+      _ ->
+        {:error, :not_configured}
     end
   end
 

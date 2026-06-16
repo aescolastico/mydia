@@ -187,8 +187,17 @@ defmodule Mydia.Jobs.MediaImport do
   # that hasn't finished moving files yet — so they get a small budget of
   # retries before we give up.
   defp terminal_failure?(:no_importable_files, _attempt), do: true
+  # A path-mapping mismatch cannot self-heal by retrying — only an operator
+  # applying a mapping resolves it — so go terminal immediately instead of
+  # burning the retry budget (and flooding telemetry) across three attempts.
+  defp terminal_failure?({:path_mapping_mismatch, _path}, _attempt), do: true
   defp terminal_failure?({:path_not_found, _path}, attempt) when attempt >= 3, do: true
   defp terminal_failure?({:path_not_accessible, _path}, attempt) when attempt >= 3, do: true
+  # {:destination_not_accessible, _} is intentionally NOT terminal: it's almost
+  # always a fixable library-volume permission/disk issue. Retrying indefinitely
+  # lets the import self-heal once the path becomes writable (the exact recovery
+  # we want), and keeps the download "occupying" its episode (import_next_retry_at
+  # stays set) so the auto-searcher doesn't grab a duplicate release meanwhile.
   defp terminal_failure?(_reason, _attempt), do: false
 
   defp fetch_download(download_id) do
@@ -277,7 +286,7 @@ defmodule Mydia.Jobs.MediaImport do
           )
 
           if args.save_path && args.save_path != "" do
-            case list_files_in_path(args.save_path) do
+            case list_files_in_path(mapped_path(args.save_path, download.id)) do
               {:ok, files} when files != [] ->
                 Logger.info("Found files via save_path fallback",
                   download_id: download.id,
@@ -324,8 +333,10 @@ defmodule Mydia.Jobs.MediaImport do
     library_path = determine_library_path(download)
 
     if library_path do
-      # Apply library path's auto_rename setting at execution time
-      args = if library_path.auto_rename, do: %{args | rename_files: true}, else: args
+      # The resolved library path's auto_rename policy is authoritative at
+      # execution time: it drives renaming in both directions, overriding
+      # whatever rename_files the job was enqueued with.
+      args = %{args | rename_files: library_path.auto_rename}
 
       # Organize files into library structure
       case organize_and_import_files(download, files, library_path, args) do
@@ -530,7 +541,9 @@ defmodule Mydia.Jobs.MediaImport do
     case Client.get_status(client_info.adapter, client_info.config, client_info.client_id) do
       {:ok, status} ->
         if status.save_path && status.save_path != "" do
-          list_files_in_path(status.save_path)
+          status.save_path
+          |> mapped_path(download.id)
+          |> list_files_in_path()
         else
           Logger.warning("No save_path in status", download_id: download.id)
           {:error, :no_save_path}
@@ -541,8 +554,33 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
+  # Apply configured remote→local path mappings before touching the filesystem,
+  # logging the rewrite when one applies so the original and mapped paths are
+  # both visible in the import logs.
+  defp mapped_path(reported_path, download_id) do
+    case Mydia.Library.PathMapping.rewrite(reported_path) do
+      ^reported_path ->
+        reported_path
+
+      mapped ->
+        Logger.info("Applied path mapping",
+          download_id: download_id,
+          reported_path: reported_path,
+          mapped_path: mapped
+        )
+
+        mapped
+    end
+  end
+
   defp list_files_in_path(path) do
+    path_stat = File.stat(path)
+    parent_stat = File.stat(Path.dirname(path))
+
     cond do
+      stat_eacces?(path_stat) or stat_eacces?(parent_stat) ->
+        {:error, {:path_not_accessible, path}}
+
       File.exists?(path) ->
         if File.dir?(path) do
           files = list_files_recursive(path)
@@ -558,16 +596,23 @@ defmodule Mydia.Jobs.MediaImport do
           |> then(&{:ok, &1})
         end
 
+      # Parent directory is visible but the leaf is gone — a genuinely missing
+      # or deleted file. Keep the existing message.
       File.exists?(Path.dirname(path)) ->
         {:error, {:path_not_found, path}}
 
+      # Even the immediate parent isn't visible inside Mydia's filesystem — this
+      # is the container volume mount-mismatch signature, not a deleted file.
       true ->
-        {:error, {:path_not_found, path}}
+        {:error, {:path_mapping_mismatch, path}}
     end
   rescue
     _e in File.Error ->
       {:error, {:path_not_accessible, path}}
   end
+
+  defp stat_eacces?({:error, :eacces}), do: true
+  defp stat_eacces?(_), do: false
 
   defp list_files_recursive(dir) do
     File.ls!(dir)
@@ -593,7 +638,8 @@ defmodule Mydia.Jobs.MediaImport do
     end)
   end
 
-  defp determine_library_path(download) do
+  @doc false
+  def determine_library_path(download) do
     # If download has a direct library_path association (specialized libraries),
     # use that directly
     if download.library_path do
@@ -659,10 +705,26 @@ defmodule Mydia.Jobs.MediaImport do
 
       {:error, :no_importable_files}
     else
-      # Import each file - destination path is determined per-file for TV shows
+      # Import each file - destination path is determined per-file for TV shows.
+      # Wrap each per-file import so a raised exception (e.g. a filesystem error
+      # from a bang call deep in the path) is captured as {:error, ...} and
+      # routed through handle_import_failure, instead of crashing the Oban job
+      # silently and leaving the download stuck with no error on its row.
       results =
         Enum.map(files_to_import, fn file ->
-          import_file(file, download, library_path, args, parser_opts)
+          try do
+            import_file(file, download, library_path, args, parser_opts)
+          rescue
+            exception ->
+              Logger.error("Unhandled exception importing file",
+                download_id: download.id,
+                file: file.name,
+                exception: Exception.message(exception),
+                stacktrace: Exception.format_stacktrace(__STACKTRACE__)
+              )
+
+              {:error, {:import_exception, Exception.message(exception)}}
+          end
         end)
 
       # Separate results into imported, unresolved, and errors
@@ -691,12 +753,29 @@ defmodule Mydia.Jobs.MediaImport do
           flag_unresolved_files(download, unresolved)
           {:error, :all_files_unresolved}
 
-        # Errors (but no unresolved)
+        # Total failure (nothing imported, nothing unresolved — only errors).
+        # Surface a representative error reason instead of a generic
+        # :partial_import so retry/terminal classification and the user-facing
+        # message reflect the real cause (e.g. {:path_not_accessible, dir} when a
+        # whole destination directory is unwritable, which is terminal after a
+        # few attempts rather than retrying forever).
+        imported == [] ->
+          {:error, representative_error(errors)}
+
+        # Some files imported, some failed — keep the generic partial-import
+        # signal so the successfully-imported files are not undone by a terminal
+        # cancel.
         true ->
           {:error, :partial_import}
       end
     end
   end
+
+  # Picks a single error reason to represent a batch of per-file failures. When
+  # the failures are uniform (the common case — e.g. the entire season directory
+  # is unwritable) the first reason represents them all.
+  defp representative_error([{:error, reason} | _]), do: reason
+  defp representative_error(_), do: :partial_import
 
   # Returns "partial_pack" if a season-pack download delivered fewer distinct
   # episodes than the search-time metadata promised; otherwise nil. The infinite
@@ -708,28 +787,26 @@ defmodule Mydia.Jobs.MediaImport do
     metadata = download.metadata || %{}
     expected_count = metadata["episode_count"]
 
-    cond do
-      not is_integer(expected_count) or expected_count <= 0 ->
-        nil
+    if not is_integer(expected_count) or expected_count <= 0 do
+      nil
+    else
+      actual_count =
+        imported_files
+        |> Enum.map(& &1.episode_id)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> length()
 
-      true ->
-        actual_count =
-          imported_files
-          |> Enum.map(& &1.episode_id)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
-          |> length()
+      if actual_count < expected_count do
+        Logger.warning("Season pack delivered fewer episodes than promised",
+          download_id: download.id,
+          title: download.title,
+          expected_episode_count: expected_count,
+          matched_episode_count: actual_count
+        )
 
-        if actual_count < expected_count do
-          Logger.warning("Season pack delivered fewer episodes than promised",
-            download_id: download.id,
-            title: download.title,
-            expected_episode_count: expected_count,
-            matched_episode_count: actual_count
-          )
-
-          "partial_pack"
-        end
+        "partial_pack"
+      end
     end
   end
 
@@ -770,7 +847,8 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
-  defp build_destination_path(download, library_path) when is_struct(library_path, LibraryPath) do
+  @doc false
+  def build_destination_path(download, library_path) when is_struct(library_path, LibraryPath) do
     # Use FileOrganizer for category-aware destination paths when auto_organize is enabled
     cond do
       # Movie with auto_organize enabled
@@ -819,7 +897,7 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   # Legacy clause for string library_root (used internally)
-  defp build_destination_path(download, library_root) when is_binary(library_root) do
+  def build_destination_path(download, library_root) when is_binary(library_root) do
     cond do
       # TV episode
       download.episode && download.media_item ->
@@ -852,7 +930,8 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   # Helper to build category-aware base path for TV series
-  defp build_series_base_path(media_item, library_path) do
+  @doc false
+  def build_series_base_path(media_item, library_path) do
     if library_path.auto_organize do
       FileOrganizer.destination_path(media_item, library_path)
     else
@@ -1182,11 +1261,27 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp import_file_to_destination(file, episode, dest_dir, download, library_path, args) do
-    # Ensure destination directory exists
-    File.mkdir_p!(dest_dir)
+    # Ensure destination directory exists. Use the non-raising variant so a
+    # permission/filesystem error becomes a handled {:error, ...} that flows
+    # through handle_import_failure (persisting import_last_error and surfacing
+    # in the UI) instead of crashing the Oban job silently.
+    case File.mkdir_p(dest_dir) do
+      :ok ->
+        import_file_to_existing_dir(file, episode, dest_dir, download, library_path, args)
 
+      {:error, reason} ->
+        Logger.error("Failed to create destination directory",
+          dest_dir: dest_dir,
+          reason: inspect(reason)
+        )
+
+        {:error, {:destination_not_accessible, dest_dir}}
+    end
+  end
+
+  defp import_file_to_existing_dir(file, episode, dest_dir, download, library_path, args) do
     # Generate filename (optionally renamed with TRaSH format)
-    final_filename = generate_filename(download, episode, file.name, args)
+    final_filename = generate_filename(download, episode, file.name, args.rename_files)
     dest_path = Path.join(dest_dir, final_filename)
 
     # Check if file already exists
@@ -1258,61 +1353,27 @@ defmodule Mydia.Jobs.MediaImport do
   end
 
   defp copy_or_move_file(source, dest, %Args{} = args) do
-    # Priority: hardlink > move > copy
-    cond do
-      # Try hardlink first if enabled and on same filesystem
-      args.use_hardlinks && same_filesystem?(source, dest) ->
-        case File.ln(source, dest) do
-          :ok ->
-            Logger.debug("Created hardlink", from: source, to: dest)
-            :ok
+    # Import keeps the source file (seeding) after a hardlink, so
+    # remove_source_after_hardlink stays false. Non-hardlink fallback is move
+    # only when move_files is set, otherwise copy.
+    case FileOrganizer.place_file(source, dest,
+           use_hardlinks: args.use_hardlinks,
+           fallback: if(args.move_files, do: :move, else: :copy)
+         ) do
+      {:ok, action} ->
+        Logger.debug("Placed file", from: source, to: dest, action: action)
+        :ok
 
-          {:error, reason} ->
-            Logger.warning("Hardlink failed, falling back to copy",
-              from: source,
-              to: dest,
-              reason: inspect(reason)
-            )
-
-            # Fallback to copy
-            File.cp(source, dest)
-        end
-
-      # Move file if requested
-      args.move_files ->
-        case File.rename(source, dest) do
-          :ok ->
-            Logger.debug("Moved file", from: source, to: dest)
-            :ok
-
-          {:error, :exdev} ->
-            # Cross-device move not supported, fall back to copy + delete
-            with :ok <- File.cp(source, dest),
-                 :ok <- File.rm(source) do
-              Logger.debug("Moved file via copy+delete", from: source, to: dest)
-              :ok
-            end
-
-          error ->
-            error
-        end
-
-      # Default to copy
-      true ->
-        case File.cp(source, dest) do
-          :ok ->
-            Logger.debug("Copied file", from: source, to: dest)
-            :ok
-
-          error ->
-            error
-        end
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp generate_filename(download, episode, original_filename, %Args{} = args) do
+  @doc false
+  def generate_filename(download, episode, original_filename, rename_files?)
+      when is_boolean(rename_files?) do
     # Only rename if explicitly enabled (default: false for safety)
-    if args.rename_files do
+    if rename_files? do
       # Parse quality information from download title or original filename
       quality_info =
         QualityParser.parse(download.title || original_filename)
@@ -1344,41 +1405,6 @@ defmodule Mydia.Jobs.MediaImport do
     else
       # Renaming disabled - use original filename
       original_filename
-    end
-  end
-
-  defp same_filesystem?(path1, path2) do
-    # Use File.stat!/1 to check if both paths are on the same device
-    # path2 might not exist yet, so check its parent directory
-    with %{device: dev1} <- File.stat(path1),
-         parent_path2 = Path.dirname(path2),
-         %{device: dev2} <- File.stat(parent_path2) do
-      same = dev1 == dev2
-
-      if same do
-        Logger.debug("Paths on same filesystem",
-          path1: path1,
-          path2: path2,
-          device: dev1
-        )
-      else
-        Logger.debug("Paths on different filesystems, hardlink not possible",
-          path1: path1,
-          path2: path2,
-          device1: dev1,
-          device2: dev2
-        )
-      end
-
-      same
-    else
-      _ ->
-        Logger.debug("Could not determine filesystem, assuming different",
-          path1: path1,
-          path2: path2
-        )
-
-        false
     end
   end
 
@@ -1589,14 +1615,12 @@ defmodule Mydia.Jobs.MediaImport do
     # Attempt is 1-indexed, but we want 0-indexed for the schedule
     index = attempt - 1
 
-    cond do
-      # For attempts within our schedule, use the configured value
-      index < length(@backoff_schedule) ->
-        Enum.at(@backoff_schedule, index)
-
+    # For attempts within our schedule, use the configured value
+    if index < length(@backoff_schedule) do
+      Enum.at(@backoff_schedule, index)
+    else
       # For attempts beyond our schedule, use the last value (24 hours)
-      true ->
-        List.last(@backoff_schedule)
+      List.last(@backoff_schedule)
     end
   end
 
@@ -1619,6 +1643,8 @@ defmodule Mydia.Jobs.MediaImport do
     attrs = %{
       import_retry_count: attempt,
       import_last_error: error_message,
+      import_failure_reason: failure_reason_tag(reason),
+      import_reported_path: failure_reported_path(reason),
       import_next_retry_at: next_retry_at,
       import_failed_at: import_failed_at
     }
@@ -1652,6 +1678,18 @@ defmodule Mydia.Jobs.MediaImport do
     end
   end
 
+  # Structured failure classification persisted alongside the human message, so
+  # the Issues tab can filter (e.g. on "path_mapping_mismatch") without parsing
+  # prose.
+  defp failure_reason_tag({tag, _path}) when is_atom(tag), do: Atom.to_string(tag)
+  defp failure_reason_tag(tag) when is_atom(tag), do: Atom.to_string(tag)
+  defp failure_reason_tag(_), do: nil
+
+  # The client-reported path Mydia could not see, persisted for path-bearing
+  # failures so the Issues tab can compute a mapping suggestion later.
+  defp failure_reported_path({_tag, path}) when is_binary(path), do: path
+  defp failure_reported_path(_), do: nil
+
   # Format error messages with actionable context for users
   defp format_import_error(:no_client, download) do
     client_name = download.download_client || "Unknown"
@@ -1673,6 +1711,12 @@ defmodule Mydia.Jobs.MediaImport do
       "Import will retry automatically."
   end
 
+  defp format_import_error({:path_mapping_mismatch, path}, _download) do
+    "Mydia can't access the download path: #{path}. " <>
+      "This usually means the download client's volume isn't mounted into the " <>
+      "Mydia container at the same path. Add a path mapping or fix the mount."
+  end
+
   defp format_import_error({:path_not_found, path}, _download) do
     "Download path not found: #{path}. " <>
       "The download may have been moved, deleted, or not yet available."
@@ -1681,6 +1725,12 @@ defmodule Mydia.Jobs.MediaImport do
   defp format_import_error({:path_not_accessible, path}, _download) do
     "Download path is not accessible: #{path}. " <>
       "Check filesystem permissions and path accessibility."
+  end
+
+  defp format_import_error({:destination_not_accessible, path}, _download) do
+    "Could not create the library destination directory: #{path}. " <>
+      "Check filesystem permissions and available disk space on the library volume. " <>
+      "Import will retry automatically once the path is writable."
   end
 
   defp format_import_error(:no_library_path, download) do
@@ -1700,6 +1750,12 @@ defmodule Mydia.Jobs.MediaImport do
   defp format_import_error(:partial_import, _download) do
     "Some files could not be imported. " <>
       "Check library path permissions and available disk space."
+  end
+
+  defp format_import_error({:import_exception, message}, _download) do
+    "Unexpected error during import: #{message}. " <>
+      "This is often a filesystem permission or disk-space issue. " <>
+      "Import will retry automatically."
   end
 
   defp format_import_error(:download_not_completed, download) do

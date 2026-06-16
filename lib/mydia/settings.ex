@@ -41,7 +41,9 @@ defmodule Mydia.Settings do
     DownloadClientConfig,
     IndexerConfig,
     MediaServerConfig,
-    LibraryPath
+    LibraryPath,
+    PathMappingConfig,
+    PluginConfig
   }
 
   # ── Quality Profiles ─────────────────────────────────────────────────
@@ -443,6 +445,42 @@ defmodule Mydia.Settings do
           {:ok, DownloadClientConfig.t()} | {:error, Ecto.Changeset.t()}
   defdelegate delete_download_client_config(config), to: Mydia.Settings.ServiceConfigs
 
+  # ── Path Mappings ────────────────────────────────────────────────────
+
+  @doc """
+  Lists remote→local path mappings from the database and env, merged and sorted
+  longest-prefix-first.
+  """
+  @spec list_path_mapping_configs(keyword()) :: [PathMappingConfig.t()]
+  defdelegate list_path_mapping_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc """
+  Gets a path mapping by database UUID or runtime identifier.
+  """
+  @spec get_path_mapping_config!(binary(), keyword()) :: PathMappingConfig.t()
+  defdelegate get_path_mapping_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc """
+  Creates a path mapping and refreshes the runtime config.
+  """
+  @spec create_path_mapping_config(map()) ::
+          {:ok, PathMappingConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate create_path_mapping_config(attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc """
+  Updates a path mapping and refreshes the runtime config.
+  """
+  @spec update_path_mapping_config(PathMappingConfig.t(), map()) ::
+          {:ok, PathMappingConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate update_path_mapping_config(config, attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc """
+  Deletes a path mapping and refreshes the runtime config.
+  """
+  @spec delete_path_mapping_config(PathMappingConfig.t()) ::
+          {:ok, PathMappingConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate delete_path_mapping_config(config), to: Mydia.Settings.ServiceConfigs
+
   @doc """
   Lists all indexer configurations.
 
@@ -586,6 +624,49 @@ defmodule Mydia.Settings do
   @spec change_media_server_config(MediaServerConfig.t(), map()) :: Ecto.Changeset.t()
   defdelegate change_media_server_config(config, attrs \\ %{}), to: Mydia.Settings.ServiceConfigs
 
+  # ── Plugin Configs ───────────────────────────────────────────────────
+
+  @doc """
+  Lists installed plugin configs from the database and runtime (env/YAML)
+  config. Runtime plugins are read-only `runtime::plugin::<slug>` rows.
+  """
+  @spec list_plugin_configs(keyword()) :: [PluginConfig.t()]
+  defdelegate list_plugin_configs(opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Gets a plugin config by ID (DB UUID or `runtime::plugin::<slug>`)."
+  @spec get_plugin_config!(binary(), keyword()) :: PluginConfig.t()
+  defdelegate get_plugin_config!(id, opts \\ []), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Gets a DB-sourced plugin config by slug, or nil."
+  @spec get_plugin_config_by_slug(String.t()) :: PluginConfig.t() | nil
+  defdelegate get_plugin_config_by_slug(slug), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Returns the raw DB plugin-config rows (with artifact + manifest, no env merge)."
+  @spec get_db_plugin_configs() :: [PluginConfig.t()]
+  defdelegate get_db_plugin_configs(), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Creates a plugin config."
+  @spec create_plugin_config(map()) :: {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate create_plugin_config(attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Updates a plugin config."
+  @spec update_plugin_config(PluginConfig.t(), map()) ::
+          {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate update_plugin_config(config, attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Inserts or updates a DB plugin config keyed by slug."
+  @spec upsert_plugin_config(map()) :: {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate upsert_plugin_config(attrs), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Deletes a plugin config."
+  @spec delete_plugin_config(PluginConfig.t()) ::
+          {:ok, PluginConfig.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate delete_plugin_config(config), to: Mydia.Settings.ServiceConfigs
+
+  @doc "Returns a changeset for tracking plugin config changes."
+  @spec change_plugin_config(PluginConfig.t(), map()) :: Ecto.Changeset.t()
+  defdelegate change_plugin_config(config, attrs \\ %{}), to: Mydia.Settings.ServiceConfigs
+
   # ── Library Paths ────────────────────────────────────────────────────
 
   @doc """
@@ -597,6 +678,14 @@ defmodule Mydia.Settings do
   """
   @spec list_library_paths(keyword()) :: [LibraryPath.t()]
   defdelegate list_library_paths(opts \\ []), to: Mydia.Settings.LibraryPaths
+
+  @doc """
+  Derives the TV metadata source implied by the configured `:series`/`:mixed`
+  libraries: unanimous source, `:tvdb` when none configured, or `nil` on
+  conflict. See `Mydia.Settings.LibraryPaths.derive_tv_metadata_source/0`.
+  """
+  @spec derive_tv_metadata_source() :: :tvdb | :tmdb | nil
+  defdelegate derive_tv_metadata_source(), to: Mydia.Settings.LibraryPaths
 
   @doc """
   Gets a library path by ID.
@@ -693,6 +782,30 @@ defmodule Mydia.Settings do
   @spec delete_config_setting(ConfigSetting.t()) ::
           {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
   defdelegate delete_config_setting(config_setting), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Resolves the source (`:env` / `:database` / `:default`) of a config key for UI
+  display. Pass the prefetched `all_db_settings` map to avoid per-key N+1 lookups.
+  """
+  @spec config_source(String.t() | nil, String.t(), %{optional(String.t()) => ConfigSetting.t()}) ::
+          :env | :database | :default
+  defdelegate config_source(env_var_name, key, all_db_settings), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Creates or updates a `ConfigSetting` by key from an attrs map (or struct)
+  carrying `:key`, `:value`, `:category`, and optionally `:updated_by_id`.
+  """
+  @spec upsert_config_setting(map() | struct()) ::
+          {:ok, ConfigSetting.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate upsert_config_setting(attrs), to: Mydia.Settings.RuntimeConfig
+
+  @doc """
+  Parses a stored or submitted config-setting value into a boolean, accepting the
+  lenient truthy tokens (`"true"`, `"1"`, `"yes"`, `"on"`) that DB rows and form
+  params may carry. The canonical parser for config-setting booleans.
+  """
+  @spec parse_setting_boolean(term()) :: boolean()
+  defdelegate parse_setting_boolean(value), to: Mydia.Settings.RuntimeConfig
 
   @doc """
   Loads database configuration settings and converts them to a nested map structure.

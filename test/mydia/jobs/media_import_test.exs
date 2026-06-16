@@ -3,8 +3,13 @@ defmodule Mydia.Jobs.MediaImportTest do
   use Oban.Testing, repo: Mydia.Repo
 
   alias Mydia.Jobs.MediaImport
+  alias Mydia.Library
   alias Mydia.Repo
   alias Mydia.Settings
+
+  # Scene-style source filename used by the auto_rename describe block; the
+  # standardized form differs from this, which is what those tests assert on.
+  @rename_scene_name "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv"
   import Mydia.MediaFixtures
   import Mydia.DownloadsFixtures
 
@@ -622,7 +627,8 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
 
     @tag :tmp_dir
-    test "returns error when save_path points to non-existent path", %{tmp_dir: _tmp_dir} do
+    test "classifies a path with no visible parent as a mapping mismatch and goes terminal",
+         %{tmp_dir: _tmp_dir} do
       media_item =
         media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
 
@@ -647,17 +653,24 @@ defmodule Mydia.Jobs.MediaImportTest do
           download_client_id: "test123"
         })
 
-      assert {:error, {:path_not_found, "/no/such/path/exists"}} =
+      # Neither the leaf nor its parent are visible -> mount mismatch, terminal
+      # on the first attempt (returns :cancel, not :error).
+      assert {:cancel, {:path_mapping_mismatch, "/no/such/path/exists"}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => "/no/such/path/exists"
                })
 
       updated = Mydia.Downloads.get_download!(download.id)
-      assert updated.import_last_error =~ "Download path not found"
+      assert updated.import_last_error =~ "can't access the download path"
+      assert updated.import_failure_reason == "path_mapping_mismatch"
+      assert updated.import_reported_path == "/no/such/path/exists"
     end
 
-    test "cancels missing path after the third attempt and clears retry metadata" do
+    @tag :tmp_dir
+    test "cancels missing path after the third attempt and clears retry metadata", %{
+      tmp_dir: tmp_dir
+    } do
       media_item =
         media_item_fixture(%{type: "movie", title: "Bad Path Movie", year: 2024})
 
@@ -682,12 +695,17 @@ defmodule Mydia.Jobs.MediaImportTest do
           download_client_id: "missing-path-terminal"
         })
 
-      assert {:cancel, {:path_not_found, "/no/such/path/exists"}} =
+      # A deleted leaf whose parent directory IS visible stays :path_not_found
+      # (a genuinely missing file), which retries up to three times before
+      # going terminal.
+      missing_leaf = Path.join(tmp_dir, "missing-leaf")
+
+      assert {:cancel, {:path_not_found, ^missing_leaf}} =
                perform_job(
                  MediaImport,
                  %{
                    "download_id" => download.id,
-                   "save_path" => "/no/such/path/exists"
+                   "save_path" => missing_leaf
                  },
                  attempt: 3
                )
@@ -747,20 +765,222 @@ defmodule Mydia.Jobs.MediaImportTest do
       assert is_nil(updated.import_next_retry_at)
       assert updated.import_last_error =~ "Download path is not accessible"
     end
+
+    @tag :tmp_dir
+    test "records import failure (no silent crash) when destination dir cannot be created",
+         %{tmp_dir: tmp_dir} do
+      # Reproduces the production incident: a completed download whose import
+      # failed because the destination directory could not be created (a
+      # permission error on the media volume). Previously `File.mkdir_p!` raised
+      # and crashed the Oban job, so the download row never recorded the error
+      # and the UI showed a healthy "seeding" row for ~2.5h. The job must now
+      # capture the failure as a handled {:error, ...} and persist it.
+      library_path = create_test_library_path(tmp_dir, :movies)
+
+      download_dir = Path.join(tmp_dir, "blocked-download")
+      File.mkdir_p!(download_dir)
+      File.write!(Path.join(download_dir, "Blocked Movie 2024 1080p.mkv"), "video")
+
+      media_item = media_item_fixture(%{type: "movie", title: "Blocked Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "BlockedDestClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "BlockedDestClient",
+          download_client_id: "blocked-dest-1"
+        })
+
+      # Occupy the destination directory path with a regular file so File.mkdir_p
+      # fails deterministically — this works even when tests run as root (where a
+      # chmod-based restriction would not).
+      preloaded =
+        Mydia.Downloads.get_download!(download.id,
+          preload: [{:media_item, :episodes}, :episode, :library_path]
+        )
+
+      dest_dir = MediaImport.build_destination_path(preloaded, library_path)
+      File.mkdir_p!(Path.dirname(dest_dir))
+      File.write!(dest_dir, "occupied")
+
+      # First attempt: a handled error (NOT a raised exception), with a retry
+      # scheduled and the failure recorded on the download row. A destination
+      # permission/disk problem is non-terminal so it can self-heal once the path
+      # becomes writable.
+      assert {:error, {:destination_not_accessible, ^dest_dir}} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      updated = Mydia.Downloads.get_download!(download.id)
+      assert updated.import_failed_at != nil
+      assert updated.import_next_retry_at != nil
+      assert updated.import_last_error =~ "library destination directory"
+      assert is_nil(updated.imported_at)
+    end
+
+    @tag :tmp_dir
+    @tag skip: @running_as_root and "chmod 000 does not restrict root; parent stays accessible"
+    test "classifies a missing leaf under an inaccessible parent as path_not_accessible",
+         %{tmp_dir: tmp_dir} do
+      media_item =
+        media_item_fixture(%{type: "movie", title: "Restricted Parent Movie", year: 2024})
+
+      {:ok, _} =
+        Settings.create_download_client_config(%{
+          name: "RestrictedParentTerminalClient",
+          type: :qbittorrent,
+          host: "nonexistent.invalid",
+          port: 9999,
+          username: "test",
+          password: "test",
+          enabled: true,
+          priority: 1
+        })
+
+      restricted_parent = Path.join(tmp_dir, "restricted-parent")
+      File.mkdir_p!(restricted_parent)
+      File.chmod!(restricted_parent, 0o000)
+      on_exit(fn -> File.chmod!(restricted_parent, 0o755) end)
+
+      missing_leaf = Path.join(restricted_parent, "missing-leaf")
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          status: "completed",
+          completed_at: DateTime.utc_now(),
+          download_client: "RestrictedParentTerminalClient",
+          download_client_id: "restricted-parent-terminal"
+        })
+
+      assert {:cancel, {:path_not_accessible, ^missing_leaf}} =
+               perform_job(
+                 MediaImport,
+                 %{
+                   "download_id" => download.id,
+                   "save_path" => missing_leaf
+                 },
+                 attempt: 3
+               )
+    end
+  end
+
+  describe "auto_rename from library path" do
+    # MediaImport reads auto_rename from the resolved library path at execution
+    # time (process_import/3) and overrides rename_files accordingly, so the
+    # destination filename follows the library's policy rather than whatever the
+    # job was enqueued with.
+    @tag :tmp_dir
+    test "renames to the standardized format when the library path enables auto_rename",
+         %{tmp_dir: tmp_dir} do
+      {_lp, download, download_dir} =
+        seed_rename_import(tmp_dir, "RenameOnClient", "rename-on-1", true)
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      name = imported_basename()
+      assert is_binary(name), "expected an imported .mkv file, found none"
+      refute name == @rename_scene_name
+      assert name =~ "The Matrix (1999)"
+      assert String.ends_with?(name, ".mkv")
+    end
+
+    @tag :tmp_dir
+    test "keeps the original filename when the library path disables auto_rename, even if the job requested renaming",
+         %{tmp_dir: tmp_dir} do
+      {_lp, download, download_dir} =
+        seed_rename_import(tmp_dir, "RenameOffClient", "rename-off-1", false)
+
+      # Enqueue with rename_files: true to prove the library path's
+      # auto_rename: false overrides it at execution time.
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir,
+                 "rename_files" => true
+               })
+
+      assert imported_basename() == @rename_scene_name
+    end
   end
 
   # Helper functions
 
-  defp create_test_library_path(base_path, type) do
+  defp seed_rename_import(tmp_dir, client_name, download_id, auto_rename) do
+    library_path = create_test_library_path(tmp_dir, :movies, auto_rename: auto_rename)
+
+    download_dir = Path.join(tmp_dir, "downloads")
+    File.mkdir_p!(download_dir)
+    File.write!(Path.join(download_dir, @rename_scene_name), "fake video content for rename test")
+
+    media_item = media_item_fixture(%{type: "movie", title: "The Matrix", year: 1999})
+
+    {:ok, _} =
+      Settings.create_download_client_config(%{
+        name: client_name,
+        type: :qbittorrent,
+        host: "nonexistent.invalid",
+        port: 9999,
+        username: "test",
+        password: "test",
+        enabled: true,
+        priority: 1
+      })
+
+    download =
+      download_fixture(%{
+        media_item_id: media_item.id,
+        title: "The.Matrix.1999.1080p.BluRay.x264-GROUP",
+        status: "completed",
+        completed_at: DateTime.utc_now(),
+        download_client: client_name,
+        download_client_id: download_id
+      })
+
+    {library_path, download, download_dir}
+  end
+
+  defp imported_basename do
+    Library.list_media_files()
+    |> Enum.find(&String.ends_with?(&1.relative_path, ".mkv"))
+    |> case do
+      nil -> nil
+      media_file -> Path.basename(media_file.relative_path)
+    end
+  end
+
+  defp create_test_library_path(base_path, type, opts \\ []) do
     library_path = Path.join(base_path, "library")
     File.mkdir_p!(library_path)
 
-    {:ok, path_record} =
-      Settings.create_library_path(%{
-        path: library_path,
-        type: type,
-        monitored: true
-      })
+    attrs = %{path: library_path, type: type, monitored: true}
+
+    attrs =
+      case Keyword.fetch(opts, :auto_rename) do
+        {:ok, value} -> Map.put(attrs, :auto_rename, value)
+        :error -> attrs
+      end
+
+    {:ok, path_record} = Settings.create_library_path(attrs)
 
     path_record
   end

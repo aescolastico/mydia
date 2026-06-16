@@ -73,9 +73,10 @@ defmodule Mydia.MediaFixtures do
       else
         # Determine library type based on media_item or episode
         library_type =
-          cond do
-            Map.has_key?(attrs, :episode_id) -> "series"
-            true -> "movies"
+          if Map.has_key?(attrs, :episode_id) do
+            "series"
+          else
+            "movies"
           end
 
         library_path = library_path_fixture(%{type: library_type})
@@ -84,14 +85,12 @@ defmodule Mydia.MediaFixtures do
 
     # Ensure either media_item_id or episode_id is provided
     attrs =
-      cond do
-        Map.has_key?(attrs, :media_item_id) or Map.has_key?(attrs, :episode_id) ->
-          attrs
-
-        true ->
-          # Create a movie by default
-          media_item = media_item_fixture(%{type: "movie"})
-          Map.put(attrs, :media_item_id, media_item.id)
+      if Map.has_key?(attrs, :media_item_id) or Map.has_key?(attrs, :episode_id) do
+        attrs
+      else
+        # Create a movie by default
+        media_item = media_item_fixture(%{type: "movie"})
+        Map.put(attrs, :media_item_id, media_item.id)
       end
 
     # Get library_path to construct full path (for backward compatibility during migration)

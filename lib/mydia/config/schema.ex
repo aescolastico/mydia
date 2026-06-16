@@ -7,6 +7,8 @@ defmodule Mydia.Config.Schema do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias Mydia.Settings.PathMappingConfig
+
   @primary_key false
 
   @type t :: %__MODULE__{
@@ -18,12 +20,14 @@ defmodule Mydia.Config.Schema do
           downloads: __MODULE__.Downloads.t() | nil,
           logging: __MODULE__.Logging.t() | nil,
           oban: __MODULE__.Oban.t() | nil,
-          hooks: __MODULE__.Hooks.t() | nil,
+          plugins: __MODULE__.Plugins.t() | nil,
           flaresolverr: __MODULE__.FlareSolverr.t() | nil,
           download_clients: [__MODULE__.DownloadClient.t()],
           indexers: [__MODULE__.Indexer.t()],
           media_servers: [__MODULE__.MediaServer.t()],
-          library_paths: [__MODULE__.LibraryPath.t()]
+          library_paths: [__MODULE__.LibraryPath.t()],
+          plugin_installs: [__MODULE__.PluginInstall.t()],
+          path_mappings: [__MODULE__.PathMapping.t()]
         }
 
   embedded_schema do
@@ -96,11 +100,29 @@ defmodule Mydia.Config.Schema do
       field :max_age_days, :integer, default: 7
     end
 
-    embeds_one :hooks, Hooks, on_replace: :update, primary_key: false do
-      field :enabled, :boolean, default: true
-      field :directory, :string, default: "hooks"
-      field :default_timeout_ms, :integer, default: 5000
-      field :max_timeout_ms, :integer, default: 30000
+    embeds_one :plugins, Plugins, on_replace: :update, primary_key: false do
+      # WASM plugin runtime sandbox limits (KTD4). Fuel metering defaults OFF
+      # for raw speed; the event-dispatch path forces it ON regardless (the
+      # safety floor against a hung guest draining the pool).
+      field :fuel_enabled, :boolean, default: false
+      field :fuel_limit, :integer, default: 10_000_000_000
+      field :memory_limit_bytes, :integer, default: 67_108_864
+      field :invocation_timeout_ms, :integer, default: 5000
+      # on-schedule gets its own (larger) budget than on-event: a sync chunks and
+      # checkpoints across this window, with wall-clock kill as the only guard
+      # (no fuel metering on component stores).
+      field :schedule_timeout_ms, :integer, default: 60_000
+      field :pool_size, :integer, default: 4
+      # Official plugin index (R13). HTTPS is the v1 trust anchor (KTD10), so all
+      # index/source URLs are validated to be https at config time.
+      field :index_url, :string, default: "https://plugins.getmydia.com/index.json"
+      field :extra_source_urls, {:array, :string}, default: []
+      # Filesystem override directory (PLUGINS_OVERRIDE_DIR). When set, a
+      # `<slug>.wasm` dropped here takes precedence over the DB blob and the
+      # image-bundled artifact at activation (layered artifact resolution).
+      # Overrides the bytes of a known/bundled slug; capability approval still
+      # gates what the plugin may do.
+      field :override_dir, :string
     end
 
     embeds_one :flaresolverr, FlareSolverr, on_replace: :update, primary_key: false do
@@ -168,6 +190,26 @@ defmodule Mydia.Config.Schema do
       field :scan_interval, :integer, default: 3600
       field :quality_profile_id, :integer
     end
+
+    # Env/YAML-sourced installed plugins (PLUGIN_<N>_*). DB-sourced installs
+    # live in the `plugin_configs` table; these merge in read-only with a
+    # source badge (see Mydia.Settings.RuntimeConfig.get_runtime_plugins/0).
+    embeds_many :plugin_installs, PluginInstall, on_replace: :delete, primary_key: false do
+      field :slug, :string
+      field :name, :string
+      field :version, :string
+      field :enabled, :boolean, default: true
+      field :priority, :integer, default: 1
+      field :source_url, :string
+      field :integrity_hash, :string
+      field :settings, :map, default: %{}
+      field :granted_capabilities, :map, default: %{}
+    end
+
+    embeds_many :path_mappings, PathMapping, on_replace: :delete, primary_key: false do
+      field :remote_prefix, :string
+      field :local_prefix, :string
+    end
   end
 
   @doc """
@@ -185,12 +227,14 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:downloads, with: &downloads_changeset/2)
     |> cast_embed(:logging, with: &logging_changeset/2)
     |> cast_embed(:oban, with: &oban_changeset/2)
-    |> cast_embed(:hooks, with: &hooks_changeset/2)
+    |> cast_embed(:plugins, with: &plugins_changeset/2)
     |> cast_embed(:flaresolverr, with: &flaresolverr_changeset/2)
     |> cast_embed(:download_clients, with: &download_client_changeset/2)
     |> cast_embed(:indexers, with: &indexer_changeset/2)
     |> cast_embed(:media_servers, with: &media_server_changeset/2)
     |> cast_embed(:library_paths, with: &library_path_changeset/2)
+    |> cast_embed(:plugin_installs, with: &plugin_install_changeset/2)
+    |> cast_embed(:path_mappings, with: &path_mapping_changeset/2)
     |> validate_configuration()
   end
 
@@ -295,13 +339,56 @@ defmodule Mydia.Config.Schema do
     |> validate_number(:max_age_days, greater_than: 0)
   end
 
-  defp hooks_changeset(schema, attrs) do
+  defp plugins_changeset(schema, attrs) do
     schema
-    |> cast(attrs, [:enabled, :directory, :default_timeout_ms, :max_timeout_ms])
-    |> validate_required([:enabled, :directory])
-    |> validate_number(:default_timeout_ms, greater_than: 0)
-    |> validate_number(:max_timeout_ms, greater_than: 0)
+    |> cast(attrs, [
+      :fuel_enabled,
+      :fuel_limit,
+      :memory_limit_bytes,
+      :invocation_timeout_ms,
+      :schedule_timeout_ms,
+      :pool_size,
+      :index_url,
+      :extra_source_urls,
+      :override_dir
+    ])
+    |> validate_required([:fuel_enabled])
+    |> validate_number(:fuel_limit, greater_than: 0)
+    |> validate_number(:memory_limit_bytes, greater_than: 0)
+    |> validate_number(:invocation_timeout_ms, greater_than: 0)
+    |> validate_number(:schedule_timeout_ms, greater_than: 0)
+    |> validate_number(:pool_size, greater_than: 0)
+    |> validate_https_source(:index_url)
+    |> validate_https_sources(:extra_source_urls)
   end
+
+  # KTD10: the index/source transport is the v1 trust anchor, so a non-HTTPS
+  # source URL is rejected at config-validation time (no downgrade).
+  defp validate_https_source(changeset, field) do
+    case get_field(changeset, field) do
+      nil ->
+        changeset
+
+      "" ->
+        changeset
+
+      url ->
+        if https?(url), do: changeset, else: add_error(changeset, field, "must be an https URL")
+    end
+  end
+
+  defp validate_https_sources(changeset, field) do
+    urls = get_field(changeset, field) || []
+
+    if Enum.all?(urls, &https?/1) do
+      changeset
+    else
+      add_error(changeset, field, "all plugin source URLs must be https")
+    end
+  end
+
+  defp https?(url) when is_binary(url), do: URI.parse(url).scheme == "https"
+  defp https?(_), do: false
 
   defp flaresolverr_changeset(schema, attrs) do
     schema
@@ -438,6 +525,88 @@ defmodule Mydia.Config.Schema do
     |> validate_number(:quality_profile_id, greater_than: 0)
   end
 
+  defp plugin_install_changeset(schema, attrs) do
+    schema
+    |> cast(attrs, [
+      :slug,
+      :name,
+      :version,
+      :enabled,
+      :priority,
+      :source_url,
+      :integrity_hash,
+      :settings,
+      :granted_capabilities
+    ])
+    |> validate_required([:slug, :name])
+    |> validate_number(:priority, greater_than: 0)
+  end
+
+  defp path_mapping_changeset(schema, attrs) do
+    schema
+    |> cast(attrs, [:remote_prefix, :local_prefix])
+    |> update_change(:remote_prefix, &PathMappingConfig.normalize_prefix/1)
+    |> update_change(:local_prefix, &PathMappingConfig.normalize_prefix/1)
+    |> validate_required([:remote_prefix, :local_prefix])
+    |> validate_path_mapping_absolute(:remote_prefix)
+    |> validate_path_mapping_absolute(:local_prefix)
+    |> validate_path_mapping_no_traversal(:remote_prefix)
+    |> validate_path_mapping_no_traversal(:local_prefix)
+    |> validate_path_mapping_remote_prefix_specific()
+    |> validate_path_mapping_distinct_prefixes()
+  end
+
+  defp validate_path_mapping_absolute(changeset, field) do
+    case get_field(changeset, field) do
+      "/" <> _ -> changeset
+      nil -> changeset
+      _ -> add_error(changeset, field, "must be an absolute path (start with /)")
+    end
+  end
+
+  defp validate_path_mapping_no_traversal(changeset, field) do
+    case get_field(changeset, field) do
+      value when is_binary(value) ->
+        if ".." in Path.split(value) do
+          add_error(changeset, field, "must not contain '..' segments")
+        else
+          changeset
+        end
+
+      _ ->
+        changeset
+    end
+  end
+
+  defp validate_path_mapping_remote_prefix_specific(changeset) do
+    case get_field(changeset, :remote_prefix) do
+      value when is_binary(value) ->
+        if length(Path.split(value)) < 3 do
+          add_error(
+            changeset,
+            :remote_prefix,
+            "must be at least two path segments deep (e.g. /downloads/complete)"
+          )
+        else
+          changeset
+        end
+
+      _ ->
+        changeset
+    end
+  end
+
+  defp validate_path_mapping_distinct_prefixes(changeset) do
+    remote = get_field(changeset, :remote_prefix)
+    local = get_field(changeset, :local_prefix)
+
+    if not is_nil(remote) and remote == local do
+      add_error(changeset, :local_prefix, "must differ from the remote prefix")
+    else
+      changeset
+    end
+  end
+
   defp validate_oidc_config(changeset) do
     oidc_enabled = get_field(changeset, :oidc_enabled)
 
@@ -508,12 +677,14 @@ defmodule Mydia.Config.Schema do
       downloads: %__MODULE__.Downloads{},
       logging: %__MODULE__.Logging{},
       oban: %__MODULE__.Oban{},
-      hooks: %__MODULE__.Hooks{},
+      plugins: %__MODULE__.Plugins{},
       flaresolverr: %__MODULE__.FlareSolverr{},
       download_clients: [],
       indexers: [],
       media_servers: [],
-      library_paths: []
+      library_paths: [],
+      plugin_installs: [],
+      path_mappings: []
     }
 
     # Run through changeset to apply defaults from field definitions

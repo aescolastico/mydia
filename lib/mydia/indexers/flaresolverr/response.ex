@@ -95,8 +95,7 @@ defmodule Mydia.Indexers.FlareSolverr.Response do
   def cookie_header(%__MODULE__{} = response) do
     response
     |> cookies()
-    |> Enum.map(fn cookie -> "#{cookie.name}=#{cookie.value}" end)
-    |> Enum.join("; ")
+    |> Enum.map_join("; ", fn cookie -> "#{cookie.name}=#{cookie.value}" end)
   end
 
   @doc """

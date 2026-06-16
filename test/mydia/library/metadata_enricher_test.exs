@@ -1,8 +1,11 @@
 defmodule Mydia.Library.MetadataEnricherTest do
   use Mydia.DataCase, async: true
 
+  import Mydia.MediaFixtures
+
   alias Mydia.Library.MetadataEnricher
-  alias Mydia.{Library, Settings}
+  alias Mydia.{Library, Media, Settings}
+  alias Mydia.Media.MediaItem
 
   describe "enrich/2 with invalid input" do
     test "returns error for match result missing provider_id" do
@@ -392,4 +395,407 @@ defmodule Mydia.Library.MetadataEnricherTest do
 
   defp media_type_to_string(:movie), do: "movie"
   defp media_type_to_string(:tv_show), do: "tv_show"
+
+  describe "metadata_source stamping for new TV shows" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "stamps :tmdb when the show was matched via TMDB", %{bypass: bypass, config: config} do
+      # Unique id keeps the metadata cache key unique so the fetch hits Bypass.
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tv_body(id, "TMDB Sourced Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tmdb,
+        title: "TMDB Sourced Show",
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.type == "tv_show"
+      assert media_item.metadata_source == :tmdb
+      assert media_item.tmdb_id == id
+      assert is_nil(media_item.tvdb_id)
+    end
+
+    test "stamps :tvdb when the show was matched via TVDB", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tvdb/series/#{id}/extended", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tvdb_body(id, "TVDB Sourced Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tvdb,
+        title: "TVDB Sourced Show",
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.type == "tv_show"
+      assert media_item.metadata_source == :tvdb
+      assert media_item.tvdb_id == id
+      assert is_nil(media_item.tmdb_id)
+    end
+  end
+
+  describe "metadata_source adoption on the update path (U3)" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "nil-source item adopts the match's TMDB provider on scan",
+         %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Nil Source",
+          tmdb_id: id,
+          metadata_source: nil
+        })
+        |> backdate()
+
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/tmdb/tv/shows/#{id}",
+        &respond_json(&1, tv_body(id, "Nil Source"))
+      )
+
+      match = tv_match(id, :tmdb, "Nil Source")
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tmdb
+    end
+
+    test "nil-source item adopts the match's TVDB provider on scan",
+         %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Nil Source TVDB",
+          tvdb_id: id,
+          metadata_source: nil
+        })
+        |> backdate()
+
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/tvdb/series/#{id}/extended",
+        &respond_json(&1, tvdb_body(id, "Nil Source TVDB"))
+      )
+
+      match = tv_match(id, :tvdb, "Nil Source TVDB")
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tvdb
+    end
+
+    test "an already-stamped source is not switched on scan (regression guard for f1e4840f)",
+         %{bypass: bypass, config: config} do
+      tmdb_id = System.unique_integer([:positive])
+      tvdb_id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Stamped TMDB",
+          tmdb_id: tmdb_id,
+          tvdb_id: tvdb_id,
+          metadata_source: :tmdb
+        })
+        |> backdate()
+
+      # Scanned into a TVDB library (match provider_type :tvdb, found via tvdb_id).
+      # The preserved :tmdb provenance means the refresh fetches TMDB.
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/tmdb/tv/shows/#{tvdb_id}",
+        &respond_json(&1, tv_body(tvdb_id, "Stamped TMDB"))
+      )
+
+      match = tv_match(tvdb_id, :tvdb, "Stamped TMDB")
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tmdb
+    end
+
+    test "nil-source item still stamps within the recently-enriched window",
+         %{config: config} do
+      # Not backdated → recently enriched → fast path. No relay stub: the
+      # stamp-only path makes no relay call, so the test passing proves it.
+      id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Fresh Nil",
+          tmdb_id: id,
+          metadata_source: nil
+        })
+
+      match = tv_match(id, :tmdb, "Fresh Nil")
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tmdb
+    end
+
+    test "a stamped item within the recently-enriched window is left untouched",
+         %{config: config} do
+      id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Fresh Stamped",
+          tvdb_id: id,
+          metadata_source: :tvdb
+        })
+
+      match = tv_match(id, :tvdb, "Fresh Stamped")
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tvdb
+    end
+
+    test "movie on the update path keeps metadata_source nil",
+         %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{type: "movie", title: "A Movie", tmdb_id: id})
+        |> backdate()
+
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/tmdb/movies/#{id}",
+        &respond_json(&1, movie_body(id, "A Movie"))
+      )
+
+      match = %{
+        provider_id: to_string(id),
+        provider_type: :tmdb,
+        title: "A Movie",
+        metadata: %{media_type: :movie}
+      }
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert is_nil(updated.metadata_source)
+    end
+  end
+
+  describe "episode enrichment threads original language (U5)" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        # Korean has no translation in the stubbed bundle, so selection must
+        # fall back to the show's original language (Japanese), not English.
+        options: %{language: "ko", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "episodes use the original language when the configured language is missing",
+         %{bypass: bypass, config: config} do
+      series_id = System.unique_integer([:positive])
+      season_id = System.unique_integer([:positive])
+      episode_id = System.unique_integer([:positive])
+
+      media_item_fixture(%{
+        type: "tv_show",
+        title: "Original Lang Show",
+        tvdb_id: series_id,
+        metadata_source: :tvdb
+      })
+      |> backdate()
+
+      # Series extended: carries the original language and one official season.
+      Bypass.stub(bypass, "GET", "/tvdb/series/#{series_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "id" => series_id,
+            "name" => "Original Lang Show",
+            "overview" => "ov",
+            "originalLanguage" => "jpn",
+            "firstAired" => "2010-01-01",
+            "genres" => [],
+            "seasons" => [
+              %{
+                "id" => season_id,
+                "number" => 1,
+                "type" => %{"type" => "official"},
+                "name" => "Season 1"
+              }
+            ]
+          }
+        })
+      end)
+
+      # Season extended: episodes without translation text (only ids).
+      Bypass.stub(bypass, "GET", "/tvdb/seasons/#{season_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "number" => 1,
+            "name" => "Season 1",
+            "episodes" => [
+              %{"id" => episode_id, "seasonNumber" => 1, "number" => 1, "name" => "Raw Episode"}
+            ]
+          }
+        })
+      end)
+
+      # Episode extended: translation bundle with Japanese + English, no Korean.
+      Bypass.stub(bypass, "GET", "/tvdb/episodes/#{episode_id}/extended", fn conn ->
+        respond_json(conn, %{
+          "data" => %{
+            "translations" => %{
+              "nameTranslations" => [
+                %{"language" => "jpn", "name" => "日本語タイトル"},
+                %{"language" => "eng", "name" => "English Title"}
+              ],
+              "overviewTranslations" => [
+                %{"language" => "jpn", "overview" => "概要"},
+                %{"language" => "eng", "overview" => "English overview"}
+              ]
+            }
+          }
+        })
+      end)
+
+      match = tv_match(series_id, :tvdb, "Original Lang Show")
+
+      assert {:ok, updated} = MetadataEnricher.enrich(match, config: config, fetch_episodes: true)
+
+      [episode] = Media.list_episodes(updated.id)
+      # Without original-language threading these would be the English values.
+      assert episode.title == "日本語タイトル"
+      assert episode.metadata.overview == "概要"
+    end
+  end
+
+  defp tv_match(id, provider_type, title) do
+    %{
+      provider_id: to_string(id),
+      provider_type: provider_type,
+      title: title,
+      metadata: %{media_type: :tv_show}
+    }
+  end
+
+  defp backdate(%MediaItem{} = item) do
+    old =
+      DateTime.utc_now()
+      |> DateTime.add(-7200, :second)
+      |> DateTime.truncate(:second)
+
+    {1, _} =
+      from(m in MediaItem, where: m.id == ^item.id)
+      |> Repo.update_all(set: [updated_at: old])
+
+    %{item | updated_at: old}
+  end
+
+  defp respond_json(conn, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.resp(200, Jason.encode!(body))
+  end
+
+  defp movie_body(id, title) do
+    %{
+      "id" => id,
+      "title" => title,
+      "release_date" => "2019-01-01",
+      "overview" => "x",
+      "genres" => [],
+      "credits" => %{"cast" => [], "crew" => []}
+    }
+  end
+
+  defp tv_body(id, name) do
+    %{
+      "id" => id,
+      "name" => name,
+      "overview" => "test overview",
+      "first_air_date" => "2010-01-01",
+      "number_of_seasons" => 1,
+      "number_of_episodes" => 1,
+      "genres" => [],
+      "seasons" => [],
+      "credits" => %{"cast" => [], "crew" => []}
+    }
+  end
+
+  defp tvdb_body(id, name) do
+    %{
+      "data" => %{
+        "id" => id,
+        "tvdb_id" => id,
+        "name" => name,
+        "overview" => "test overview",
+        "first_air_date" => "2010-01-01",
+        "genres" => [],
+        "seasons" => []
+      }
+    }
+  end
 end

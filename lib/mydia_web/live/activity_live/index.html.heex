@@ -7,8 +7,8 @@
         <p class="text-base-content/70 mt-1">Recent events and system activity</p>
       </div>
     </div>
-    
-<!-- Filters -->
+
+    <!-- Filters -->
     <div class="card bg-base-100 shadow-sm mb-6">
       <div class="card-body p-4">
         <div class="flex flex-col lg:flex-row lg:items-center gap-4">
@@ -86,11 +86,11 @@
               </button>
             </div>
           </div>
-          
-<!-- Divider -->
+
+          <!-- Divider -->
           <div class="divider divider-horizontal hidden lg:flex mx-0"></div>
-          
-<!-- Date filter -->
+
+          <!-- Date filter -->
           <div class="flex-shrink-0">
             <div class="flex items-center gap-2 mb-2 lg:mb-0 lg:hidden">
               <.icon name="hero-calendar" class="w-4 h-4 text-base-content/50" />
@@ -154,8 +154,8 @@
         </div>
       </div>
     </div>
-    
-<!-- Events list -->
+
+    <!-- Events list -->
     <div id="events" phx-update="stream" class="space-y-2">
       <!-- Empty state -->
       <div id="events-empty-state" class="hidden only:block">
@@ -176,8 +176,8 @@
           </div>
         </div>
       </div>
-      
-<!-- Event items -->
+
+      <!-- Event items -->
       <div
         :for={{id, event} <- @streams.events}
         id={id}
@@ -199,8 +199,8 @@
             ]}>
               <.icon name={event_icon(event)} class="w-4 h-4" />
             </div>
-            
-<!-- Content -->
+
+            <!-- Content -->
             <div class="flex-1 min-w-0">
               <div class="flex items-start justify-between gap-2">
                 <p class="font-medium">{format_event_description(event)}</p>
@@ -213,8 +213,8 @@
                   </span>
                 <% end %>
               </div>
-              
-<!-- Metadata -->
+
+              <!-- Metadata -->
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm text-base-content/60">
                 <span class="flex items-center gap-1">
                   <.icon name={actor_icon(event)} class="w-3.5 h-3.5" />
@@ -228,8 +228,8 @@
               </div>
             </div>
           </div>
-          
-<!-- Expandable details for media update events -->
+
+          <!-- Expandable details for media update events -->
           <%= if has_update_details?(event) do %>
             <details class="mt-3 group">
               <summary class="text-sm text-base-content/60 cursor-pointer hover:text-base-content flex items-center gap-1.5">
@@ -266,8 +266,8 @@
               </div>
             </details>
           <% end %>
-          
-<!-- Expandable details for job failure events -->
+
+          <!-- Expandable details for job failure events -->
           <%= if has_job_failure_details?(event) do %>
             <details class="mt-3 group">
               <summary class="text-sm text-base-content/60 cursor-pointer hover:text-base-content flex items-center gap-1.5">
@@ -296,8 +296,8 @@
                     </div>
                   <% end %>
                 </div>
-                
-<!-- Error message -->
+
+                <!-- Error message -->
                 <%= if event.metadata["error_message"] do %>
                   <div class="p-3 bg-error/10 rounded-lg border border-error/20">
                     <div class="text-sm font-medium text-error mb-1">Error</div>
@@ -306,16 +306,16 @@
                     </code>
                   </div>
                 <% end %>
-                
-<!-- Stacktrace -->
+
+                <!-- Stacktrace -->
                 <%= if event.metadata["stacktrace"] do %>
                   <div class="p-3 bg-base-200 rounded-lg">
                     <div class="text-sm font-medium text-base-content/70 mb-2">Stacktrace</div>
                     <pre class="text-xs font-mono overflow-x-auto whitespace-pre-wrap text-base-content/60">{event.metadata["stacktrace"]}</pre>
                   </div>
                 <% end %>
-                
-<!-- Job args -->
+
+                <!-- Job args -->
                 <%= if event.metadata["args"] && event.metadata["args"] != %{} do %>
                   <details class="group/args">
                     <summary class="text-sm text-base-content/50 cursor-pointer hover:text-base-content flex items-center gap-1.5">
@@ -332,8 +332,8 @@
               </div>
             </details>
           <% end %>
-          
-<!-- Expandable details for search events -->
+
+          <!-- Expandable details for search events -->
           <%= if has_search_details?(event) do %>
             <details class="mt-3 group">
               <summary class="text-sm text-base-content/60 cursor-pointer hover:text-base-content flex items-center gap-1.5">
@@ -352,8 +352,8 @@
                     </code>
                   </div>
                 <% end %>
-                
-<!-- Stats -->
+
+                <!-- Stats -->
                 <%= if event.metadata["results_count"] || event.metadata["indexers_searched"] do %>
                   <div class="flex flex-wrap gap-3 text-sm">
                     <%= if event.metadata["indexers_searched"] do %>
@@ -372,8 +372,8 @@
                     <% end %>
                   </div>
                 <% end %>
-                
-<!-- Filter stats -->
+
+                <!-- Filter stats -->
                 <%= if event.metadata["filter_stats"] do %>
                   <%= if event.metadata["filter_stats"]["rejection_counts"] do %>
                     <div class="flex flex-wrap gap-1.5">
@@ -436,8 +436,8 @@
                     </div>
                   <% end %>
                 <% end %>
-                
-<!-- Score breakdown -->
+
+                <!-- Score breakdown -->
                 <%= if event.metadata["breakdown"] do %>
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="text-sm text-base-content/60">Score:</span>
@@ -455,8 +455,8 @@
                     <% end %>
                   </div>
                 <% end %>
-                
-<!-- Selected release -->
+
+                <!-- Selected release -->
                 <%= if event.metadata["selected_release"] do %>
                   <div class="flex items-start gap-2 p-3 bg-success/10 rounded-lg border border-success/20">
                     <.icon name="hero-check-circle" class="w-5 h-5 text-success flex-shrink-0" />
@@ -468,8 +468,8 @@
                     </div>
                   </div>
                 <% end %>
-                
-<!-- All results -->
+
+                <!-- All results -->
                 <%= if event.metadata["all_results"] && event.metadata["all_results"]["results"] do %>
                   <div class="max-h-48 overflow-y-auto rounded-lg border border-base-200">
                     <table class="table table-sm table-zebra">
@@ -525,8 +525,8 @@
         </div>
       </div>
     </div>
-    
-<!-- Load More button -->
+
+    <!-- Load More button -->
     <%= if @has_more? do %>
       <div class="flex justify-center mt-6">
         <button class="btn btn-outline btn-sm gap-2" phx-click="load_more">

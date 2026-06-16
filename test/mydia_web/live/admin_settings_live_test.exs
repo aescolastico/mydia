@@ -120,5 +120,44 @@ defmodule MydiaWeb.AdminSettingsLiveTest do
              ),
              "toggle should render checked when DB holds the legacy 'on' value"
     end
+
+    test "no longer renders a FlareSolverr settings section", %{view: view} do
+      html = render(view)
+      refute html =~ "FlareSolverr"
+      refute has_element?(view, "input[phx-value-key='flaresolverr.url']")
+    end
+  end
+
+  describe "Crash report widget" do
+    setup %{conn: conn, token: token, user: user} do
+      start_supervised!(Mydia.Indexers.Health)
+
+      # The stats widget only renders when crash reporting is enabled.
+      {:ok, _setting} =
+        Settings.upsert_config_setting(%{
+          key: "crash_reporting.enabled",
+          value: "true",
+          category: :crash_reporting,
+          updated_by_id: user.id
+        })
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:guardian_default_token, token)
+        |> put_req_header("authorization", "Bearer #{token}")
+
+      {:ok, view, _html} = live(conn, ~p"/admin/config/settings")
+      %{view: view}
+    end
+
+    test "renders the tracked-errors count as a link to the error dashboard", %{view: view} do
+      assert has_element?(view, "a#tracked-errors-link[href='/admin/errors']")
+    end
+
+    test "no longer renders the 'Sent' tile", %{view: view} do
+      refute has_element?(view, ".stat-title", "Sent")
+      refute has_element?(view, ".stat-desc", "Successfully reported")
+    end
   end
 end

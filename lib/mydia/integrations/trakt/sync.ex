@@ -128,14 +128,15 @@ defmodule Mydia.Integrations.Trakt.Sync do
         :already_watched
 
       nil ->
-        Playback.save_progress(user_id, content_id, %{
-          position_seconds: 0,
-          duration_seconds: 1,
-          watched: true
-        })
+        Playback.save_progress(
+          user_id,
+          content_id,
+          %{position_seconds: 0, duration_seconds: 1, watched: true},
+          origin: "sync:trakt"
+        )
 
       _existing ->
-        Playback.mark_watched(user_id, content_id)
+        Playback.mark_watched(user_id, content_id, origin: "sync:trakt")
     end
   end
 

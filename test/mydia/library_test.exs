@@ -4,8 +4,81 @@ defmodule Mydia.LibraryTest do
   import Ecto.Query, only: [from: 2]
 
   alias Mydia.Library
+  alias Mydia.Library.MediaFile
 
   import Mydia.SettingsFixtures
+
+  describe "delete_media_file/2" do
+    setup do
+      tmp = Path.join(System.tmp_dir!(), "mydia_del_test_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf(tmp) end)
+      %{library_path: library_path_fixture(%{path: tmp, type: "movies"})}
+    end
+
+    defp scanned_file(library_path, rel, contents) do
+      File.write!(Path.join(library_path.path, rel), contents)
+
+      {:ok, file} =
+        Library.create_scanned_media_file(%{
+          relative_path: rel,
+          library_path_id: library_path.id,
+          size: byte_size(contents)
+        })
+
+      Mydia.Repo.preload(file, :library_path)
+    end
+
+    test "with delete_files: true removes the file from disk and the record", %{
+      library_path: lp
+    } do
+      file = scanned_file(lp, "movie.mkv", "data")
+      abs = MediaFile.absolute_path(file)
+      assert File.exists?(abs)
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file, delete_files: true)
+      refute File.exists?(abs)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "with delete_files: false (default) keeps the file on disk", %{library_path: lp} do
+      file = scanned_file(lp, "keep.mkv", "data")
+      abs = MediaFile.absolute_path(file)
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file)
+      assert File.exists?(abs)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "reports file-removal failure but still deletes the record", %{library_path: lp} do
+      # A directory at the media path makes File.rm fail reliably regardless of
+      # which user the test runs as (a read-only dir would not stop root).
+      rel = "as_dir.mkv"
+      File.mkdir_p!(Path.join(lp.path, rel))
+
+      {:ok, file} =
+        Library.create_scanned_media_file(%{
+          relative_path: rel,
+          library_path_id: lp.id,
+          size: 1
+        })
+
+      file = Mydia.Repo.preload(file, :library_path)
+
+      assert {:ok, %MediaFile{}, :file_delete_failed} =
+               Library.delete_media_file(file, delete_files: true)
+
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+
+    test "treats an already-missing file as success", %{library_path: lp} do
+      file = scanned_file(lp, "gone.mkv", "data")
+      File.rm!(MediaFile.absolute_path(file))
+
+      assert {:ok, %MediaFile{}} = Library.delete_media_file(file, delete_files: true)
+      refute Mydia.Repo.get(MediaFile, file.id)
+    end
+  end
 
   describe "list_media_files/1 with library_path_type filter" do
     test "filters media files by library path type" do
@@ -846,5 +919,118 @@ defmodule Mydia.LibraryTest do
     File.write!(path, "#!/bin/sh\nprintf '%s' '#{escaped}'\n")
     File.chmod!(path, 0o755)
     path
+  end
+
+  describe "list_media_files_for_download/1" do
+    test "locates files by imported_from_download_id, excluding recycled client ids" do
+      lib = library_path_fixture(%{type: "movies"})
+      movie = Mydia.MediaFixtures.media_item_fixture(%{type: "movie"})
+
+      download_id = Ecto.UUID.generate()
+      other_download_id = Ecto.UUID.generate()
+
+      {:ok, ours} =
+        Library.create_media_file(%{
+          relative_path: "ours.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          metadata: %{
+            "imported_from_download_id" => download_id,
+            "download_client" => "qbit",
+            "download_client_id" => "7"
+          }
+        })
+
+      # Same recycled client id, different download — must NOT be returned.
+      {:ok, _recycled} =
+        Library.create_media_file(%{
+          relative_path: "recycled.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          metadata: %{
+            "imported_from_download_id" => other_download_id,
+            "download_client" => "qbit",
+            "download_client_id" => "7"
+          }
+        })
+
+      download = %Mydia.Downloads.Download{id: download_id}
+      result = Library.list_media_files_for_download(download)
+
+      assert Enum.map(result, & &1.id) == [ours.id]
+    end
+
+    test "excludes trashed files" do
+      lib = library_path_fixture(%{type: "movies"})
+      movie = Mydia.MediaFixtures.media_item_fixture(%{type: "movie"})
+      download_id = Ecto.UUID.generate()
+
+      {:ok, _trashed} =
+        Library.create_media_file(%{
+          relative_path: "trashed.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          trashed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          metadata: %{"imported_from_download_id" => download_id}
+        })
+
+      download = %Mydia.Downloads.Download{id: download_id}
+      assert Library.list_media_files_for_download(download) == []
+    end
+  end
+
+  describe "count_imported_files_by_download/1" do
+    test "counts non-trashed files per download, omitting downloads with none" do
+      lib = library_path_fixture(%{type: "movies"})
+      movie = Mydia.MediaFixtures.media_item_fixture(%{type: "movie"})
+
+      single = Ecto.UUID.generate()
+      pack = Ecto.UUID.generate()
+      none = Ecto.UUID.generate()
+
+      {:ok, _} =
+        Library.create_media_file(%{
+          relative_path: "single.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          metadata: %{"imported_from_download_id" => single}
+        })
+
+      for n <- 1..2 do
+        {:ok, _} =
+          Library.create_media_file(%{
+            relative_path: "pack#{n}.mkv",
+            library_path_id: lib.id,
+            media_item_id: movie.id,
+            size: 100,
+            metadata: %{"imported_from_download_id" => pack}
+          })
+      end
+
+      # A trashed file must not be counted.
+      {:ok, _} =
+        Library.create_media_file(%{
+          relative_path: "pack-trashed.mkv",
+          library_path_id: lib.id,
+          media_item_id: movie.id,
+          size: 100,
+          trashed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+          metadata: %{"imported_from_download_id" => pack}
+        })
+
+      counts = Library.count_imported_files_by_download([single, pack, none])
+
+      assert counts[single] == 1
+      assert counts[pack] == 2
+      refute Map.has_key?(counts, none)
+    end
+
+    test "returns an empty map for an empty id list" do
+      assert Library.count_imported_files_by_download([]) == %{}
+    end
   end
 end

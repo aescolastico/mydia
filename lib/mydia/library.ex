@@ -7,7 +7,7 @@ defmodule Mydia.Library do
   import Mydia.DB
   import Mydia.QueryHelpers
   alias Mydia.Repo
-  alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator}
+  alias Mydia.Library.{MediaFile, FileAnalyzer, PhashGenerator, Text}
   alias Mydia.Library.ReleaseParser, as: FileParser
 
   require Logger
@@ -522,11 +522,46 @@ defmodule Mydia.Library do
   end
 
   @doc """
-  Deletes a media file.
+  Deletes a media file record, optionally removing the file from disk.
+
+  When `delete_files: true`, the database record is deleted first and only then
+  is the physical file (and its NFO sidecar) removed from disk. This ordering is
+  deliberate: if the record delete fails the disk is never touched, so nothing is
+  lost; and a disk-removal failure after a successful record delete is reported
+  via `{:ok, media_file, :file_delete_failed}` (an orphaned file is recoverable,
+  an orphaned record pointing at a missing file is not). The file path is
+  resolved from the in-memory struct, which is preloaded before the delete so it
+  stays available afterwards.
+
+  When `delete_files: false` (the default), only the database record is removed
+  and the file is left on disk. This preserves the original arity-1 behavior for
+  existing callers.
   """
-  @spec delete_media_file(MediaFile.t()) :: {:ok, MediaFile.t()} | {:error, Ecto.Changeset.t()}
-  def delete_media_file(%MediaFile{} = media_file) do
-    Repo.delete(media_file)
+  @spec delete_media_file(MediaFile.t(), keyword()) ::
+          {:ok, MediaFile.t()}
+          | {:ok, MediaFile.t(), :file_delete_failed}
+          | {:error, Ecto.Changeset.t()}
+  def delete_media_file(%MediaFile{} = media_file, opts \\ []) do
+    delete_files = Keyword.get(opts, :delete_files, false)
+
+    # Preload the path source before deleting the row so the file is still
+    # resolvable from the in-memory struct after the record is gone.
+    media_file =
+      if delete_files, do: Repo.preload(media_file, :library_path), else: media_file
+
+    case Repo.delete(media_file) do
+      {:ok, deleted} when delete_files ->
+        case delete_media_file_from_disk(media_file) do
+          :ok -> {:ok, deleted}
+          {:error, _reason} -> {:ok, deleted, :file_delete_failed}
+        end
+
+      {:ok, deleted} ->
+        {:ok, deleted}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 
   @doc """
@@ -698,10 +733,15 @@ defmodule Mydia.Library do
       "Found #{length(unmatched_files)} unmatched files for media item #{media_item_id}"
     )
 
+    # Title of the show these files are being matched against, used to reject a
+    # stray file whose filename clearly belongs to a different show (see
+    # title_belongs_to_other_show?/2).
+    show_title = media_item_title(media_item_id)
+
     # Match each file to an episode
     matched_count =
       Enum.reduce(unmatched_files, 0, fn media_file, count ->
-        case match_file_to_episode(media_file, media_item_id) do
+        case match_file_to_episode(media_file, media_item_id, show_title) do
           {:ok, _} -> count + 1
           {:error, _} -> count
         end
@@ -712,7 +752,7 @@ defmodule Mydia.Library do
     {:ok, matched_count}
   end
 
-  defp match_file_to_episode(media_file, media_item_id) do
+  defp match_file_to_episode(media_file, media_item_id, show_title) do
     # Use relative_path for filename parsing
     filename =
       case media_file.relative_path do
@@ -736,50 +776,88 @@ defmodule Mydia.Library do
       season = parsed_info.season
       episode_numbers = parsed_info.episodes
 
-      if is_integer(season) and is_list(episode_numbers) and length(episode_numbers) > 0 do
-        # For multi-episode files, we'll just match to the first episode
-        episode_number = List.first(episode_numbers)
+      cond do
+        not (is_integer(season) and is_list(episode_numbers) and length(episode_numbers) > 0) ->
+          Logger.debug("File did not contain valid episode information", filename: filename)
+          {:error, :no_episode_info}
 
-        # Find the matching episode
-        case Mydia.Media.get_episode_by_number(media_item_id, season, episode_number) do
-          nil ->
-            Logger.debug("No episode found for file",
+        title_belongs_to_other_show?(parsed_info.title, show_title) ->
+          # A file carrying an SxxEyy pattern must not be bound to this show
+          # purely because the numbers line up — e.g. a stray "Shark Tank India
+          # S04E07" must not match "FROM" S04E07. Guard on the parsed title.
+          Logger.debug("Skipping file: parsed title belongs to a different show",
+            filename: filename,
+            parsed_title: parsed_info.title,
+            show_title: show_title
+          )
+
+          {:error, :title_mismatch}
+
+        true ->
+          match_parsed_episode(media_file, media_item_id, filename, season, episode_numbers)
+      end
+    end
+  end
+
+  # Rejects a file whose parsed title clearly belongs to a different show. Only
+  # guards when both a parsed title and a show title are present; an
+  # unparseable/blank title falls through so ambiguous filenames keep matching
+  # on season/episode numbers as before.
+  @title_match_threshold 0.5
+  defp title_belongs_to_other_show?(parsed_title, show_title)
+       when is_binary(parsed_title) and is_binary(show_title) and
+              parsed_title != "" and show_title != "" do
+    Text.title_similarity(parsed_title, show_title) < @title_match_threshold
+  end
+
+  defp title_belongs_to_other_show?(_parsed_title, _show_title), do: false
+
+  defp media_item_title(media_item_id) do
+    case Repo.get(Mydia.Media.MediaItem, media_item_id) do
+      %{title: title} -> title
+      _ -> nil
+    end
+  end
+
+  defp match_parsed_episode(media_file, media_item_id, filename, season, episode_numbers) do
+    # For multi-episode files, we'll just match to the first episode
+    episode_number = List.first(episode_numbers)
+
+    # Find the matching episode
+    case Mydia.Media.get_episode_by_number(media_item_id, season, episode_number) do
+      nil ->
+        Logger.debug("No episode found for file",
+          filename: filename,
+          season: season,
+          episode: episode_number
+        )
+
+        {:error, :episode_not_found}
+
+      episode ->
+        # Update the media file with the episode_id
+        case update_media_file(media_file, %{
+               media_item_id: nil,
+               episode_id: episode.id
+             }) do
+          {:ok, updated_file} ->
+            Logger.debug("Matched file to episode",
               filename: filename,
               season: season,
-              episode: episode_number
+              episode: episode_number,
+              episode_id: episode.id
             )
 
-            {:error, :episode_not_found}
+            {:ok, updated_file}
 
-          episode ->
-            # Update the media file with the episode_id
-            case update_media_file(media_file, %{
-                   media_item_id: nil,
-                   episode_id: episode.id
-                 }) do
-              {:ok, updated_file} ->
-                Logger.debug("Matched file to episode",
-                  filename: filename,
-                  season: season,
-                  episode: episode_number,
-                  episode_id: episode.id
-                )
+          {:error, reason} ->
+            Logger.warning("Failed to update media file",
+              filename: filename,
+              reason: inspect(reason)
+            )
 
-                {:ok, updated_file}
-
-              {:error, reason} ->
-                Logger.warning("Failed to update media file",
-                  filename: filename,
-                  reason: inspect(reason)
-                )
-
-                {:error, reason}
-            end
+            {:error, reason}
         end
-      else
-        Logger.debug("File did not contain valid episode information", filename: filename)
-        {:error, :no_episode_info}
-      end
     end
   end
 
@@ -1999,6 +2077,54 @@ defmodule Mydia.Library do
         where: ^Mydia.DB.json_equals(:metadata, "$.download_client_id", client_id)
 
     Repo.exists?(query)
+  end
+
+  @doc """
+  Lists the media files imported from a given download.
+
+  Located by the collision-free `imported_from_download_id` provenance key — the
+  download's primary key, written into `metadata` at import time. The
+  `(download_client, download_client_id)` pair is deliberately NOT used as the
+  key: download clients recycle torrent/nzb IDs, so that pair is unique only at a
+  single instant, not over the file's lifetime, and would surface the wrong file.
+
+  Excludes trashed files. Pass `preload:` to preload associations.
+  """
+  @spec list_media_files_for_download(Mydia.Downloads.Download.t(), keyword()) :: [MediaFile.t()]
+  def list_media_files_for_download(download, opts \\ []) do
+    query =
+      from f in MediaFile,
+        where: ^Mydia.DB.json_equals(:metadata, "$.imported_from_download_id", download.id),
+        where: is_nil(f.trashed_at)
+
+    query
+    |> maybe_preload(opts[:preload])
+    |> Repo.all()
+  end
+
+  @doc """
+  Counts non-trashed imported files per download, keyed by `imported_from_download_id`.
+
+  Batched companion to `list_media_files_for_download/1` for callers that need to
+  know how many files a set of downloads imported without an N+1 query — e.g. the
+  Downloads LiveView deciding whether a completed row is single-file (re-match
+  eligible) or a pack. Returns `%{download_id => count}`; downloads with no
+  imported files are simply absent from the map.
+  """
+  @spec count_imported_files_by_download([binary()]) :: %{binary() => non_neg_integer()}
+  def count_imported_files_by_download([]), do: %{}
+
+  def count_imported_files_by_download(download_ids) when is_list(download_ids) do
+    ids = Enum.map(download_ids, &to_string/1)
+
+    from(f in MediaFile,
+      where: is_nil(f.trashed_at),
+      where: json_extract(f.metadata, "$.imported_from_download_id") in ^ids,
+      group_by: json_extract(f.metadata, "$.imported_from_download_id"),
+      select: {json_extract(f.metadata, "$.imported_from_download_id"), count(f.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
   end
 
   @doc """

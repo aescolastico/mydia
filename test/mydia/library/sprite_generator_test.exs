@@ -44,10 +44,7 @@ defmodule Mydia.Library.SpriteGeneratorTest do
     @tag :requires_ffmpeg
     test "generates sprite sheet and VTT from valid video file", %{test_dir: _test_dir} do
       # Skip if FFmpeg is not available
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create a test video (10 seconds)
         video_path = create_test_video(10)
 
@@ -89,15 +86,15 @@ defmodule Mydia.Library.SpriteGeneratorTest do
 
         # Cleanup
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "respects skip_start and skip_end options", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video(10)
 
         # 10 seconds - 2 skip_start - 2 skip_end = 6 seconds effective
@@ -117,15 +114,15 @@ defmodule Mydia.Library.SpriteGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     @tag :requires_ffmpeg
     test "respects custom thumbnail dimensions", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video(5)
 
         case SpriteGenerator.generate_from_path(video_path,
@@ -146,14 +143,14 @@ defmodule Mydia.Library.SpriteGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
 
     test "returns error for video too short to extract frames" do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create a 0.5 second video with 5 second interval and 1 second skip
         video_path = create_test_video(0.5)
 
@@ -163,6 +160,9 @@ defmodule Mydia.Library.SpriteGeneratorTest do
         assert {:error, _reason} = result
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
   end
@@ -170,10 +170,7 @@ defmodule Mydia.Library.SpriteGeneratorTest do
   describe "VTT format" do
     @tag :requires_ffmpeg
     test "generates valid WebVTT timestamps", %{test_dir: _test_dir} do
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         video_path = create_test_video(15)
 
         case SpriteGenerator.generate_from_path(video_path, frame_count: 5, columns: 5) do
@@ -196,6 +193,9 @@ defmodule Mydia.Library.SpriteGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
   end

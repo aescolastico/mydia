@@ -15,6 +15,11 @@ concurrency:
 
 env:
   MIX_ENV: test
+  # ⚠️ KEEP IN SYNC across all three toolchain sources — bump together:
+  #   - these vars                      (ELIXIR_VERSION / OTP_VERSION)
+  #   - nix/devShells/flake-module.nix  (elixir_1_19 + erlang_28)
+  #   - Dockerfile.dev                  (FROM elixir:1.19-otp-28)
+  # If they drift, local nix, Docker dev, and CI compile under different toolchains.
   ELIXIR_VERSION: "1.19"
   OTP_VERSION: "28"
   FLUTTER_VERSION: "3.38.6"
@@ -36,6 +41,22 @@ jobs:
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
+
+      # The :plugins mix compiler builds the bundled WASM guests for wasm32
+      # during `mix compile`. Provision the target explicitly rather than
+      # assuming the runner's ambient toolchain is rustup-managed.
+      #
+      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
+      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
+      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
+      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
+      # instantiate ("incompatible plugin contract"). Bump this together with
+      # the nix toolchain.
+      - name: Setup Rust (wasm32 for plugin guests)
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-wasip2
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -60,13 +81,34 @@ jobs:
         run: mix deps.unlock --check-unused
 
       - name: Compile
-        run: mix compile
+        run: mix compile --warnings-as-errors
 
       - name: Check formatting
         run: mix format --check-formatted
 
+      # Guard against re-grandfathering: a Credo check must be enabled-and-
+      # gating or `false`, never `exit_status: 0`. See CONTRIBUTING.md.
+      - name: Forbid Credo grandfathering
+        run: |
+          if grep -n "exit_status: 0" .credo.exs; then
+            echo "::error::exit_status: 0 found in .credo.exs - fix the finding or disable the check with false (see CONTRIBUTING.md)"
+            exit 1
+          fi
+
       - name: Run Credo
-        run: mix credo --mute-exit-status
+        run: mix credo --strict
+
+      # Advisory by design, not grandfathering. mix_unused's export analysis
+      # cannot trace framework dispatch (controller actions, HEEx components,
+      # behaviour callbacks, runtime dispatch); rule-shaped ignores in mix.exs
+      # cover the structural blind spots, and provably-dead code is deleted at
+      # the source. The irreducible residual is intentional public API plus
+      # default-argument arity artifacts, which cannot be driven to a principled
+      # zero on a Phoenix app without deleting live code. So this step reports
+      # for awareness but does not block. See CONTRIBUTING.md ("Quality gates").
+      - name: Dead code report (advisory)
+        run: UNUSED_CHECK=true mix compile --force
+        continue-on-error: true
 
       - name: Setup database
         run: mix ecto.create && mix ecto.migrate
@@ -113,6 +155,22 @@ jobs:
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
+
+      # The :plugins mix compiler builds the bundled WASM guests for wasm32
+      # during `mix compile`. Provision the target explicitly rather than
+      # assuming the runner's ambient toolchain is rustup-managed.
+      #
+      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
+      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
+      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
+      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
+      # instantiate ("incompatible plugin contract"). Bump this together with
+      # the nix toolchain.
+      - name: Setup Rust (wasm32 for plugin guests)
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-wasip2
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -189,6 +247,22 @@ jobs:
         with:
           elixir-version: ${{ env.ELIXIR_VERSION }}
           otp-version: ${{ env.OTP_VERSION }}
+
+      # The :plugins mix compiler builds the bundled WASM guests for wasm32
+      # during `mix compile`. Provision the target explicitly rather than
+      # assuming the runner's ambient toolchain is rustup-managed.
+      #
+      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
+      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
+      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
+      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
+      # instantiate ("incompatible plugin contract"). Bump this together with
+      # the nix toolchain.
+      - name: Setup Rust (wasm32 for plugin guests)
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-wasip2
 
       - name: Install Chrome
         uses: browser-actions/setup-chrome@v1

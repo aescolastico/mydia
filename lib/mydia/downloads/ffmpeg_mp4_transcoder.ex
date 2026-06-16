@@ -165,10 +165,7 @@ defmodule Mydia.Downloads.FfmpegMp4Transcoder do
     resolution = Keyword.get(opts, :resolution, :p720)
 
     # Validate resolution preset
-    if not Map.has_key?(@resolution_presets, resolution) do
-      Logger.error("Invalid resolution preset: #{resolution}")
-      {:stop, {:invalid_resolution, resolution}}
-    else
+    if Map.has_key?(@resolution_presets, resolution) do
       # Ensure output directory exists
       output_dir = Path.dirname(output_path)
       File.mkdir_p!(output_dir)
@@ -207,6 +204,9 @@ defmodule Mydia.Downloads.FfmpegMp4Transcoder do
           Logger.error("Failed to start FFmpeg process: #{inspect(reason)}")
           {:stop, {:ffmpeg_start_failed, reason}}
       end
+    else
+      Logger.error("Invalid resolution preset: #{resolution}")
+      {:stop, {:invalid_resolution, resolution}}
     end
   end
 

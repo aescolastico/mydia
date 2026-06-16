@@ -83,15 +83,25 @@ defmodule Mydia.Media.EpisodeStatus do
   def get_episode_status_with_downloads(%Episode{air_date: nil}), do: :tba
 
   defp check_downloads(%Episode{downloads: downloads}) when is_list(downloads) do
-    has_active_downloads? =
-      Enum.any?(downloads, fn download ->
-        is_nil(download.completed_at) && is_nil(download.error_message)
-      end)
-
-    if has_active_downloads?, do: :downloading, else: :missing
+    if Enum.any?(downloads, &occupying_download?/1), do: :downloading, else: :missing
   end
 
   defp check_downloads(_episode), do: :missing
+
+  # In-memory mirror of Mydia.Downloads.Download.occupying/1: a download counts as
+  # still in flight toward import — and so keeps the episode out of :missing —
+  # unless it has imported, the client download failed, or the import failed
+  # terminally (no retry scheduled). This covers downloaded-but-awaiting-import
+  # and import-retrying, which would otherwise read as :missing.
+  #
+  # Uses Map.get/2 because `downloads` may hold either plain Download structs or
+  # enriched download maps (from list_downloads_with_status) that omit some
+  # import_* keys; a missing key reads as nil (i.e. not yet imported/failed).
+  defp occupying_download?(download) do
+    is_nil(Map.get(download, :imported_at)) and is_nil(Map.get(download, :error_message)) and
+      (is_nil(Map.get(download, :import_failed_at)) or
+         not is_nil(Map.get(download, :import_next_retry_at)))
+  end
 
   @doc """
   Returns DaisyUI badge color classes for a given status.
@@ -175,10 +185,7 @@ defmodule Mydia.Media.EpisodeStatus do
   end
 
   def status_details(%Episode{downloads: downloads} = episode) when is_list(downloads) do
-    active_downloads =
-      Enum.filter(downloads, fn download ->
-        is_nil(download.completed_at) && is_nil(download.error_message)
-      end)
+    active_downloads = Enum.filter(downloads, &occupying_download?/1)
 
     case length(active_downloads) do
       0 ->

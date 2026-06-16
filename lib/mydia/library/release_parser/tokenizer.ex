@@ -82,9 +82,10 @@ defmodule Mydia.Library.ReleaseParser.Tokenizer do
     primary_year = first_capture_pos(stripped, @year_re_primary)
 
     year =
-      cond do
-        primary_year != nil -> primary_year
-        true -> first_match_pos(stripped, [@year_re_secondary])
+      if primary_year != nil do
+        primary_year
+      else
+        first_match_pos(stripped, [@year_re_secondary])
       end
 
     resolution = first_match_pos(stripped, [@resolution_re])

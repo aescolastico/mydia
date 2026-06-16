@@ -1,0 +1,23 @@
+[package]
+name = "webhook_notifier"
+version = "1.0.0"
+edition = "2021"
+description = "Mydia bundled webhook/Discord notifier plugin (WASM guest)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# The SDK provides the #[mydia::plugin] macro and the typed WIT host bindings.
+# tinyjson stays as the plugin's internal JSON tool: the templated "custom"
+# target renders over the arbitrary event metadata bag, which is carried across
+# the typed boundary as a JSON string.
+[dependencies]
+mydia-plugin-sdk = { path = "../../native/mydia_plugin_sdk" }
+tinyjson = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"

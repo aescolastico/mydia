@@ -100,12 +100,10 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
   end
 
   defp normalize_resolution_case(value) do
-    cond do
-      Regex.match?(~r/^\d+[pPiI]$/, value) ->
-        String.replace(value, ~r/[PI]$/, fn s -> String.downcase(s) end)
-
-      true ->
-        value
+    if Regex.match?(~r/^\d+[pPiI]$/, value) do
+      String.replace(value, ~r/[PI]$/, fn s -> String.downcase(s) end)
+    else
+      value
     end
   end
 
@@ -193,38 +191,36 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
     # Some codec tokens (XviD, HEVC) survive as a single token — nothing to rejoin.
     upper = String.upcase(raw)
 
-    cond do
-      upper in [
-        "X264",
-        "X265",
-        "H264",
-        "H265",
-        "HEVC",
-        "AVC",
-        "XVID",
-        "DIVX",
-        "VP9",
-        "AV1",
-        "NVENC"
-      ] ->
-        raw
+    if upper in [
+         "X264",
+         "X265",
+         "H264",
+         "H265",
+         "HEVC",
+         "AVC",
+         "XVID",
+         "DIVX",
+         "VP9",
+         "AV1",
+         "NVENC"
+       ] do
+      raw
+    else
+      # If the token is just "H" or "X" (rare; usually the vocab handles
+      # `x264`/`h264` directly), check the next token for `264`/`265`.
+      case next_token(entry.token, next_by_token) do
+        %Token{value: digits, byte_offset: to} when digits in ["264", "265"] ->
+          head_end = entry.token.byte_offset + entry.token.byte_length
 
-      true ->
-        # If the token is just "H" or "X" (rare; usually the vocab handles
-        # `x264`/`h264` directly), check the next token for `264`/`265`.
-        case next_token(entry.token, next_by_token) do
-          %Token{value: digits, byte_offset: to} when digits in ["264", "265"] ->
-            head_end = entry.token.byte_offset + entry.token.byte_length
-
-            if to == head_end + 1 do
-              "#{raw}.#{digits}"
-            else
-              raw
-            end
-
-          _ ->
+          if to == head_end + 1 do
+            "#{raw}.#{digits}"
+          else
             raw
-        end
+          end
+
+        _ ->
+          raw
+      end
     end
   end
 
@@ -371,12 +367,10 @@ defmodule Mydia.Library.ReleaseParser.QualityExtractor do
     n1 = next_token(token, next_by_token)
     n2 = if n1, do: next_token(n1, next_by_token), else: nil
 
-    cond do
-      is_digit_token?(n1) and is_digit_token?(n2) ->
-        "#{n1.value}.#{n2.value}"
-
-      true ->
-        nil
+    if is_digit_token?(n1) and is_digit_token?(n2) do
+      "#{n1.value}.#{n2.value}"
+    else
+      nil
     end
   end
 

@@ -115,10 +115,14 @@ if [ "$FULL_SETUP" = true ]; then
     mix mydia.backup_before_migrate
     mix ecto.migrate
 
-    # Install and build assets if needed
+    # Install and build assets if needed.
+    # assets.setup only fetches the standalone tailwind/esbuild binaries; the
+    # npm packages (daisyui, alpinejs, ...) that @plugin/@import resolve against
+    # must be installed separately or every CSS rebuild silently fails.
     if [ ! -d "assets/node_modules" ] || [ -z "$(ls -A assets/node_modules 2>/dev/null)" ]; then
         echo "==> Installing Node.js dependencies..."
         mix assets.setup
+        (cd assets && npm install)
     fi
 
     if [ ! -d "priv/static/assets" ] || [ -z "$(ls -A priv/static/assets 2>/dev/null)" ]; then

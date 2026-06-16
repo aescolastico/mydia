@@ -204,7 +204,7 @@ defmodule Mydia.Downloads.Client.Sabnzbd do
     multipart_filename = nzb_filename(title)
 
     multipart_body = [
-      {"nzbfile",
+      {:nzbfile,
        {stream,
         [filename: multipart_filename, content_type: MIME.from_path(tmp_file), size: stat.size]}}
     ]

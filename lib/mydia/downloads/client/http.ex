@@ -213,10 +213,9 @@ defmodule Mydia.Downloads.Client.HTTP do
   @spec form_body(map()) :: String.t()
   def form_body(params) when is_map(params) do
     params
-    |> Enum.map(fn {key, value} ->
+    |> Enum.map_join("&", fn {key, value} ->
       "#{URI.encode_www_form(to_string(key))}=#{URI.encode_www_form(to_string(value))}"
     end)
-    |> Enum.join("&")
   end
 
   ## Private Functions

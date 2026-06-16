@@ -41,11 +41,10 @@ defmodule Mydia.Downloads.TorrentMatcher do
   - Within 1 year: +0.15 boost (accounts for different release dates)
   - >1 year difference: -0.5 penalty (prevents sequels/prequels)
 
-  ### 4. Edition Detection
-  The parser extracts edition information from release names:
-  - Director's Cut, Extended Edition, Theatrical, Ultimate Edition
-  - Collector's Edition, Special Edition, Unrated, Remastered, IMAX
-  - Edition info is informational and doesn't affect matching logic
+  ### 4. TargetContext Binding
+  Shortlisted candidates are re-parsed bound to their `TargetContext` (see
+  `Mydia.Library.ReleaseParser`). A release whose own name does not bind to a
+  candidate is demoted to suggestion-only, never a confident match.
 
   ## Confidence Scoring
 
@@ -58,15 +57,6 @@ defmodule Mydia.Downloads.TorrentMatcher do
 
   TV Shows: Primarily title-based (no year weighting)
 
-  ## Testing
-
-  The matcher has comprehensive test coverage:
-  - 53 torrent matcher tests (general)
-  - 10 alternative title tests
-  - 18 enhanced normalization tests
-  - 24 edition detection tests
-  - Total: 100+ tests ensuring accuracy and preventing regressions
-
   ID-based matching prevents issues like:
   - "The Matrix" (1999) matching "The Matrix Reloaded" (2003)
   - "Alien" (1979) matching "Aliens" (1986)
@@ -74,10 +64,33 @@ defmodule Mydia.Downloads.TorrentMatcher do
   """
 
   alias Mydia.Downloads.Structs.TorrentMatchResult
+  alias Mydia.Library.ReleaseParser
+  alias Mydia.Library.ReleaseParser.TargetContext
+  alias Mydia.Library.Structs.ParsedFileInfo
   alias Mydia.Media
   alias Mydia.Metadata.Structs.MediaMetadata
+  alias Mydia.Repo
 
   require Logger
+
+  # --- TargetContext binding tuning ---
+  # Max candidates re-parsed bound when the unbound title is confident enough
+  # to trust a shortlist.
+  @binding_shortlist_k 5
+  # When the best unbound title score is below this, the shortlist is widened — a
+  # weak unbound title (tracker prefix, CJK marker) may have buried the correct
+  # candidate below the top-K cut.
+  @binding_low_confidence 0.5
+  # Hard cap on the widened shortlist. Bounds the worst case (a garbled title
+  # against a large library) so binding never re-parses the whole library with
+  # the heavy V3 parser, once per torrent, during an untracked scan.
+  @binding_widened_max 25
+  # Demoted (wrong-show) candidates are capped here: at/below the suggestion floor
+  # and below the match threshold, so they surface as suggestions, never matches.
+  @suggestion_floor 0.3
+  # binding_confidence contributes only a small tiebreak nudge among survivors
+  # that already clear the match threshold (never lifts a sub-threshold score).
+  @binding_tiebreak_weight 0.05
 
   @type match_result :: TorrentMatchResult.t()
 
@@ -104,7 +117,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
     monitored_only = Keyword.get(opts, :monitored_only, true)
     require_id_match = Keyword.get(opts, :require_id_match, false)
 
-    case torrent_info.type do
+    case info_kind(torrent_info) do
       :movie ->
         find_movie_match(torrent_info, monitored_only, confidence_threshold, require_id_match)
 
@@ -118,6 +131,11 @@ defmodule Mydia.Downloads.TorrentMatcher do
           confidence_threshold,
           require_id_match
         )
+
+      # An unclassifiable release (ReleaseParser :unknown that still carried a
+      # usable title) is never auto-matched — that would risk a wrong grab.
+      :unknown ->
+        {:error, :no_match_found}
     end
   end
 
@@ -128,6 +146,10 @@ defmodule Mydia.Downloads.TorrentMatcher do
   all candidates with confidence > 0, up to `max_results`. Used for generating
   match suggestions for unmatched downloads.
 
+  Suggestions intentionally use unbound title similarity only and do NOT apply the
+  TargetContext binding veto: these are advisory candidates a human picks from, so
+  surfacing a near-miss the auto-matcher would demote is acceptable (and cheaper).
+
   ## Options
     - `:max_results` - Maximum number of candidates to return (default: 3)
     - `:monitored_only` - Only match against monitored items (default: false)
@@ -136,16 +158,19 @@ defmodule Mydia.Downloads.TorrentMatcher do
     max_results = Keyword.get(opts, :max_results, 3)
     monitored_only = Keyword.get(opts, :monitored_only, false)
 
-    items =
-      case torrent_info.type do
-        :movie -> list_movies(monitored_only)
-        type when type in [:tv, :tv_season] -> list_tv_shows(monitored_only)
-      end
+    {items, calculate_fn} =
+      case info_kind(torrent_info) do
+        :movie ->
+          {list_movies(monitored_only), &calculate_movie_confidence(&1, torrent_info)}
 
-    calculate_fn =
-      case torrent_info.type do
-        :movie -> &calculate_movie_confidence(&1, torrent_info)
-        type when type in [:tv, :tv_season] -> &calculate_tv_show_confidence(&1, torrent_info)
+        kind when kind in [:tv, :tv_season] ->
+          {list_tv_shows(monitored_only), &calculate_tv_show_confidence(&1, torrent_info)}
+
+        # Unclassifiable: suggest from both pools using title similarity only, so a
+        # usable-title :unknown release still surfaces candidates.
+        :unknown ->
+          {list_movies(monitored_only) ++ list_tv_shows(monitored_only),
+           &calculate_tv_show_confidence(&1, torrent_info)}
       end
 
     items
@@ -204,6 +229,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_movie_confidence(movie, torrent_info)
         {movie, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info, threshold)
       |> Enum.filter(fn {_movie, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_movie, confidence} -> confidence end, :desc)
 
@@ -333,7 +359,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
 
       {:error, :no_id_match} when require_id_match ->
         Logger.debug(
-          "ID-based match required but not available for: #{torrent_info.title} S#{torrent_info.season}E#{torrent_info.episode}"
+          "ID-based match required but not available for: #{torrent_info.title} S#{torrent_info.season}E#{info_episode(torrent_info)}"
         )
 
         {:error, :no_match_found}
@@ -352,6 +378,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_tv_show_confidence(show, torrent_info)
         {show, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info, threshold)
       |> Enum.filter(fn {_show, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_show, confidence} -> confidence end, :desc)
 
@@ -388,14 +415,14 @@ defmodule Mydia.Downloads.TorrentMatcher do
   end
 
   defp find_episode(show, torrent_info) do
-    case Media.get_episode_by_number(show.id, torrent_info.season, torrent_info.episode) do
+    case Media.get_episode_by_number(show.id, torrent_info.season, info_episode(torrent_info)) do
       nil -> {:error, :episode_not_found}
       episode -> {:ok, episode}
     end
   end
 
   defp build_tv_match_reason(show, episode, torrent_info, confidence) do
-    "Matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence"
+    "Matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence"
   end
 
   ## Private Functions - TV Season Pack Matching
@@ -438,6 +465,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         confidence = calculate_tv_show_confidence(show, torrent_info)
         {show, confidence}
       end)
+      |> refine_scores_with_binding(torrent_info, threshold)
       |> Enum.filter(fn {_show, confidence} -> confidence >= threshold end)
       |> Enum.sort_by(fn {_show, confidence} -> confidence end, :desc)
 
@@ -462,17 +490,18 @@ defmodule Mydia.Downloads.TorrentMatcher do
   end
 
   defp build_tv_match_reason_with_id(show, episode, torrent_info, confidence) do
-    "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence (TMDB/IMDB ID match)"
+    "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{show.title}' S#{episode.season_number}E#{episode.episode_number} with #{Float.round(confidence * 100, 1)}% confidence (TMDB/IMDB ID match)"
   end
 
   ## Private Functions - ID-Based Matching
 
   @doc false
   def try_id_based_match(torrent_info, library_items, media_type) do
-    # Check if torrent_info has TVDB, TMDB, or IMDB ID
-    tvdb_id = Map.get(torrent_info, :tvdb_id)
-    tmdb_id = Map.get(torrent_info, :tmdb_id)
-    imdb_id = Map.get(torrent_info, :imdb_id)
+    # Derive TVDB/TMDB/IMDB IDs from the parsed info. ParsedFileInfo carries a
+    # single `external_id` (string) + `external_provider`; legacy maps may carry
+    # explicit `:tvdb_id`/`:tmdb_id`/`:imdb_id` keys. info_ids/1 normalizes both
+    # and casts numeric provider IDs to integers (the find_by_* guards require it).
+    {tvdb_id, tmdb_id, imdb_id} = info_ids(torrent_info)
 
     cond do
       # Try TVDB ID first for TV shows (most native for indexers)
@@ -578,7 +607,7 @@ defmodule Mydia.Downloads.TorrentMatcher do
         "ID-matched '#{torrent_info.title}' (#{torrent_info.year}) to '#{item.title}' (#{item.year}) via #{id_info} with 98.0% confidence"
 
       :tv ->
-        "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{torrent_info.episode} to '#{item.title}' via #{id_info} with 98.0% confidence"
+        "ID-matched '#{torrent_info.title}' S#{torrent_info.season}E#{info_episode(torrent_info)} to '#{item.title}' via #{id_info} with 98.0% confidence"
 
       :tv_season ->
         "ID-matched season pack '#{torrent_info.title}' S#{torrent_info.season} to '#{item.title}' via #{id_info} with 98.0% confidence"
@@ -682,6 +711,8 @@ defmodule Mydia.Downloads.TorrentMatcher do
         false
     end
   end
+
+  defp normalize_string(nil), do: ""
 
   defp normalize_string(str) do
     str
@@ -825,27 +856,162 @@ defmodule Mydia.Downloads.TorrentMatcher do
     |> length()
   end
 
-  ## Private Functions - Library Queries
+  ## Private Functions - TargetContext binding
 
-  defp list_movies(monitored_only) do
-    opts =
-      if monitored_only do
-        [type: "movie", monitored: true]
-      else
-        [type: "movie"]
+  # Refine base title-similarity scores by re-parsing each shortlisted candidate
+  # bound to its TargetContext. Binding signals act as gates: a wrong-show parse
+  # is demoted to suggestion-only (never a confident match), an implausible season
+  # is penalized, and binding_confidence breaks ties among clean survivors.
+  #
+  # Only runs for ParsedFileInfo inputs carrying the original release name (the
+  # re-parse needs it). Legacy plain-map inputs return their scores unchanged, so
+  # the matcher's existing behavior — and its characterization suite — is preserved.
+  defp refine_scores_with_binding(scored, %ParsedFileInfo{original_filename: name}, threshold)
+       when is_binary(name) and name != "" do
+    shortlist = binding_shortlist(scored)
+
+    # Preload :episodes only for the shortlisted candidates — TargetContext needs
+    # it, but loading it for every candidate (including those that never bind, or
+    # when an ID match already won) is wasteful.
+    preloaded_by_id =
+      shortlist
+      |> Enum.map(fn {item, _base} -> item end)
+      |> Repo.preload(:episodes)
+      |> Map.new(&{&1.id, &1})
+
+    refined_by_id =
+      Map.new(shortlist, fn {item, base} ->
+        preloaded = Map.fetch!(preloaded_by_id, item.id)
+        {item.id, refine_with_binding(preloaded, name, base, threshold)}
+      end)
+
+    Enum.map(scored, fn {item, base} ->
+      case Map.fetch(refined_by_id, item.id) do
+        {:ok, score} -> {item, score}
+        :error -> {item, base}
+      end
+    end)
+  end
+
+  defp refine_scores_with_binding(scored, _torrent_info, _threshold), do: scored
+
+  defp binding_shortlist(scored) do
+    sorted = Enum.sort_by(scored, fn {_item, base} -> base end, :desc)
+
+    best =
+      case sorted do
+        [{_item, base} | _] -> base
+        [] -> 0.0
       end
 
+    # Weak unbound title — widen the shortlist (a tracker/CJK prefix may have
+    # buried the right candidate), but bound it so a garbled title can never
+    # trigger a whole-library re-parse.
+    limit =
+      if best < @binding_low_confidence, do: @binding_widened_max, else: @binding_shortlist_k
+
+    Enum.take(sorted, limit)
+  end
+
+  defp refine_with_binding(item, release_name, base, threshold) do
+    target = TargetContext.from_media_item(item)
+    bound = ReleaseParser.parse(release_name, target: target)
+    flags = bound.engine_flags || %{}
+
+    # Note on :season_out_of_range — deliberately NOT used here. That flag fires
+    # when the release's season is absent from the candidate's known seasons,
+    # which is the right suspicion for *library import* but inverted for
+    # *downloads*: we fetch seasons we don't have yet (next season or a missing
+    # middle season), so an out-of-range season is the normal case, not a
+    # mismatch. Episode existence is already enforced by find_episode/2.
+    cond do
+      Map.get(flags, :binding_suspect) || Map.get(flags, :parsed_title_unbound) ->
+        # Wrong-show guard: the release's own title doesn't bind to this candidate.
+        # Demote to suggestion-only so it never clears the match threshold.
+        min(base, @suggestion_floor)
+
+      base >= threshold ->
+        # Tiebreak nudge — only among candidates that already clear the threshold,
+        # so binding can reorder real matches but never manufacture one from a
+        # sub-threshold base.
+        binding = (bound.field_confidence || %{})[:binding] || 0.0
+        min(1.0, base + binding * @binding_tiebreak_weight)
+
+      true ->
+        base
+    end
+  rescue
+    e ->
+      # One bad candidate (e.g. an item whose episodes failed to preload) must not
+      # fail the whole match — fall back to the unbound base score.
+      Logger.warning("Binding re-parse failed for media item #{item.id}: #{inspect(e)}")
+      base
+  end
+
+  ## Private Functions - ParsedFileInfo accessors
+
+  # Classify a parsed release into the matcher's internal branch. Accepts both
+  # the native ParsedFileInfo struct and legacy plain maps (used by the existing
+  # characterization test suite, which already speaks :movie/:tv/:tv_season).
+  defp info_kind(%ParsedFileInfo{type: :movie}), do: :movie
+
+  defp info_kind(%ParsedFileInfo{type: :tv_show, episodes: episodes}) do
+    if has_episodes?(episodes), do: :tv, else: :tv_season
+  end
+
+  defp info_kind(%ParsedFileInfo{type: :unknown}), do: :unknown
+  defp info_kind(%{type: type}), do: type
+
+  # Single episode number for season+episode lookup. ParsedFileInfo carries an
+  # `episodes` list; legacy maps carry a singular `episode`.
+  defp info_episode(%ParsedFileInfo{} = info), do: ParsedFileInfo.primary_episode(info)
+  defp info_episode(%{episode: episode}), do: episode
+  defp info_episode(_), do: nil
+
+  defp has_episodes?(episodes) when is_list(episodes), do: episodes != []
+  defp has_episodes?(_), do: false
+
+  # Normalize external IDs to the {tvdb, tmdb, imdb} tuple the matcher's ID path
+  # expects. ParsedFileInfo's `external_id` is always a string, so numeric
+  # provider IDs are cast to integers (find_by_tvdb_id/find_by_tmdb_id compare
+  # against integer columns). Legacy maps with explicit ID keys pass through.
+  defp info_ids(%ParsedFileInfo{external_provider: provider, external_id: id}) do
+    ids_from_provider(provider, id)
+  end
+
+  defp info_ids(map) when is_map(map) do
+    {Map.get(map, :tvdb_id), Map.get(map, :tmdb_id), Map.get(map, :imdb_id)}
+  end
+
+  defp ids_from_provider(:tvdb, id), do: {parse_id(id), nil, nil}
+  defp ids_from_provider(:tmdb, id), do: {nil, parse_id(id), nil}
+  defp ids_from_provider(:imdb, id) when is_binary(id) and id != "", do: {nil, nil, id}
+  defp ids_from_provider(_, _), do: {nil, nil, nil}
+
+  defp parse_id(id) when is_integer(id), do: id
+
+  defp parse_id(id) when is_binary(id) do
+    # Require a clean integer — reject "603abc" rather than silently casting to 603.
+    case Integer.parse(id) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp parse_id(_), do: nil
+
+  ## Private Functions - Library Queries
+
+  # :episodes is NOT preloaded here — the binding step preloads it only for the
+  # shortlisted candidates it actually re-parses (see refine_scores_with_binding/3),
+  # which avoids loading every episode row for candidates that never bind.
+  defp list_movies(monitored_only) do
+    opts = if monitored_only, do: [type: "movie", monitored: true], else: [type: "movie"]
     Media.list_media_items(opts)
   end
 
   defp list_tv_shows(monitored_only) do
-    opts =
-      if monitored_only do
-        [type: "tv_show", monitored: true]
-      else
-        [type: "tv_show"]
-      end
-
+    opts = if monitored_only, do: [type: "tv_show", monitored: true], else: [type: "tv_show"]
     Media.list_media_items(opts)
   end
 end

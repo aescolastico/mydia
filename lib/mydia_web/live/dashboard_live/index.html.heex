@@ -5,8 +5,8 @@
       <p class="text-base-content/70 mt-1">Your personal media management system</p>
     </div>
   </div>
-  
-<!-- Player CTA Banner -->
+
+  <!-- Player CTA Banner -->
   <a
     href="/player"
     class="card bg-base-100 shadow-sm hover:shadow-md transition-shadow mb-6 md:mb-8"
@@ -26,8 +26,8 @@
       </span>
     </div>
   </a>
-  
-<!-- Stats Cards -->
+
+  <!-- Stats Cards -->
   <div class="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
     <!-- Movies Card -->
     <div class="card bg-base-100 shadow-sm">
@@ -39,8 +39,8 @@
         <p class="text-sm text-base-content/60">Total movies</p>
       </div>
     </div>
-    
-<!-- TV Shows Card -->
+
+    <!-- TV Shows Card -->
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body">
         <h2 class="card-title">
@@ -50,8 +50,8 @@
         <p class="text-sm text-base-content/60">Total series</p>
       </div>
     </div>
-    
-<!-- Downloads Card -->
+
+    <!-- Downloads Card -->
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body">
         <h2 class="card-title">
@@ -61,8 +61,8 @@
         <p class="text-sm text-base-content/60">Active downloads</p>
       </div>
     </div>
-    
-<!-- Storage Card -->
+
+    <!-- Storage Card -->
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body">
         <h2 class="card-title">
@@ -73,8 +73,8 @@
       </div>
     </div>
   </div>
-  
-<!-- Quick Actions -->
+
+  <!-- Quick Actions -->
   <div class="mb-6 md:mb-8">
     <h2 class="text-2xl font-bold mb-3 md:mb-4">Quick Actions</h2>
     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
@@ -195,8 +195,8 @@
       <% end %>
     </div>
   </div>
-  
-<!-- Trending Movies -->
+
+  <!-- Trending Movies -->
   <div class="mb-6 md:mb-8">
     <div class="flex items-center justify-between mb-3 md:mb-4">
       <h2 class="text-2xl font-bold">Trending Movies</h2>
@@ -228,8 +228,8 @@
         </div>
     <% end %>
   </div>
-  
-<!-- Trending TV Shows -->
+
+  <!-- Trending TV Shows -->
   <div class="mb-6 md:mb-8">
     <div class="flex items-center justify-between mb-3 md:mb-4">
       <h2 class="text-2xl font-bold">Trending TV Shows</h2>
@@ -261,8 +261,8 @@
         </div>
     <% end %>
   </div>
-  
-<!-- User Activity Section (for users with monitored content) -->
+
+  <!-- User Activity Section (for users with monitored content) -->
   <%= if @recent_episodes != [] || @upcoming_episodes != [] do %>
     <div class="mb-6 md:mb-8">
       <h2 class="text-2xl font-bold mb-3 md:mb-4">Your Activity</h2>
@@ -305,8 +305,8 @@
             </div>
           </div>
         <% end %>
-        
-<!-- Upcoming Episodes -->
+
+        <!-- Upcoming Episodes -->
         <%= if @upcoming_episodes != [] do %>
           <div class="card bg-base-100 shadow-sm">
             <div class="card-body">
@@ -338,8 +338,8 @@
       </div>
     </div>
   <% end %>
-  
-<!-- Getting Started (shown when library is empty) -->
+
+  <!-- Getting Started (shown when library is empty) -->
   <%= if @movie_count == 0 && @tv_show_count == 0 do %>
     <div class="alert alert-info">
       <.icon name="hero-information-circle" class="w-5 h-5" />

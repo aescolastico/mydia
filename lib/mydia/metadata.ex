@@ -36,6 +36,10 @@ defmodule Mydia.Metadata do
 
   require Logger
 
+  # Fallback language when neither opts nor the provider config specify one.
+  # Must agree with the relay provider's default so cache keys and fetches align.
+  @default_language "en-US"
+
   alias Mydia.Metadata.Provider
 
   @doc """
@@ -142,11 +146,17 @@ defmodule Mydia.Metadata do
     # Build cache key including all relevant search parameters
     media_type = Keyword.get(opts, :media_type)
     year = Keyword.get(opts, :year)
-    language = Keyword.get(opts, :language, "en-US")
+    # Default to the configured language so searches don't read English-cached
+    # results (mirrors fetch_by_id_cached/3 and fetch_season_cached/4).
+    language = Keyword.get(opts, :language, config_language(config))
     page = Keyword.get(opts, :page, 1)
+    # Include the provider so a TV title searched under TVDB and under TMDB
+    # never share a cache entry (per-library provider routing). Mirrors the
+    # provider-aware key in fetch_by_id_cached/3.
+    provider = Keyword.get(opts, :provider, type)
 
     # Create a stable cache key from query and options
-    cache_key = "search:#{query}:#{media_type}:#{year}:#{language}:#{page}"
+    cache_key = "search:#{provider}:#{query}:#{media_type}:#{year}:#{language}:#{page}"
 
     # Cache for 1 hour
     Cache.fetch(
@@ -207,9 +217,14 @@ defmodule Mydia.Metadata do
 
     media_type = Keyword.get(opts, :media_type, :movie)
     append = Keyword.get(opts, :append_to_response, []) |> Enum.sort() |> Enum.join(",")
-    language = Keyword.get(opts, :language, "en-US")
+    # Default to the configured language (not a literal "en-US") so cache keys
+    # vary by language and non-English libraries don't read English-cached entries.
+    language = Keyword.get(opts, :language, config_language(config))
+    # Include the provider so numerically-overlapping TVDB/TMDB ids never share a
+    # cache entry (e.g. TVDB series 603 vs TMDB movie 603).
+    provider = Keyword.get(opts, :provider, type)
 
-    cache_key = "fetch_by_id:#{provider_id}:#{media_type}:#{language}:#{append}"
+    cache_key = "fetch_by_id:#{provider}:#{provider_id}:#{media_type}:#{language}:#{append}"
 
     Cache.fetch(
       cache_key,
@@ -297,7 +312,9 @@ defmodule Mydia.Metadata do
       when is_atom(type) do
     alias Mydia.Metadata.Cache
 
-    language = Keyword.get(opts, :language, "en-US")
+    # Default to the configured language so a non-English library does not read
+    # the English library's cached season (see fetch_by_id_cached/3).
+    language = Keyword.get(opts, :language, config_language(config))
     tvdb_season_id = Keyword.get(opts, :tvdb_season_id)
     cache_key = build_season_cache_key(provider_id, season_number, language, tvdb_season_id)
 
@@ -361,7 +378,18 @@ defmodule Mydia.Metadata do
   def metadata_language do
     case Mydia.Settings.get_metadata_config() do
       %{language: lang} when is_binary(lang) and lang != "" -> lang
-      _ -> "en-US"
+      _ -> @default_language
+    end
+  end
+
+  # Reads the language carried on a provider config (populated from
+  # metadata_language/0 via default_relay_config/0), falling back to "en-US"
+  # for bare configs. Used to default cache-key language so entries vary by the
+  # configured language. Mirrors Relay's private config_language/1.
+  defp config_language(config) do
+    case config do
+      %{options: %{language: lang}} when is_binary(lang) and lang != "" -> lang
+      _ -> @default_language
     end
   end
 

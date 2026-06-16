@@ -73,9 +73,10 @@ defmodule Mydia.Indexers.CardigannCompat do
         missing = Enum.reject(filter_names, &(&1 in impl))
 
         status =
-          cond do
-            missing == [] -> :fully_compatible
-            true -> :partially_compatible
+          if missing == [] do
+            :fully_compatible
+          else
+            :partially_compatible
           end
 
         %{

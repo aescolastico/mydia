@@ -220,14 +220,6 @@ defmodule Mydia.Music do
     |> Repo.update()
   end
 
-  @doc """
-  Deletes a track.
-  """
-  @spec delete_track(Track.t()) :: {:ok, Track.t()} | {:error, Ecto.Changeset.t()}
-  def delete_track(%Track{} = track) do
-    Repo.delete(track)
-  end
-
   ## Music Files
 
   @doc """
@@ -529,38 +521,6 @@ defmodule Mydia.Music do
       where: pt.playlist_id == ^playlist_id and pt.position > ^removed_position
     )
     |> Repo.update_all(inc: [position: -1])
-  end
-
-  @doc """
-  Reorders tracks in a playlist. Takes a list of playlist_track IDs in the new order.
-  """
-  @spec reorder_playlist_tracks(Playlist.t(), [binary()]) :: {:ok, Playlist.t()}
-  def reorder_playlist_tracks(%Playlist{} = playlist, playlist_track_ids)
-      when is_list(playlist_track_ids) do
-    Repo.transaction(fn ->
-      playlist_track_ids
-      |> Enum.with_index()
-      |> Enum.each(fn {playlist_track_id, new_position} ->
-        from(pt in PlaylistTrack,
-          where: pt.id == ^playlist_track_id and pt.playlist_id == ^playlist.id
-        )
-        |> Repo.update_all(set: [position: new_position, updated_at: DateTime.utc_now()])
-      end)
-    end)
-
-    {:ok, get_playlist_with_tracks!(playlist.id)}
-  end
-
-  @doc """
-  Clears all tracks from a playlist.
-  """
-  @spec clear_playlist(Playlist.t()) :: {:ok, Playlist.t()}
-  def clear_playlist(%Playlist{} = playlist) do
-    from(pt in PlaylistTrack, where: pt.playlist_id == ^playlist.id)
-    |> Repo.delete_all()
-
-    update_playlist_stats(playlist)
-    {:ok, playlist}
   end
 
   @doc """

@@ -4,8 +4,14 @@ defmodule Mydia.Playback do
   """
 
   import Ecto.Query, warn: false
+  alias Mydia.Events
   alias Mydia.Repo
   alias Mydia.Playback.Progress
+
+  # Throttle for `playback.progressed` emission (R19): a `progressed` event is
+  # only emitted when the completion percentage crosses a bucket boundary, so a
+  # burst of position writes within the same 5% band yields at most one event.
+  @progress_bucket_size 5.0
 
   @doc """
   Gets playback progress for a specific user and content (movie or episode).
@@ -49,14 +55,18 @@ defmodule Mydia.Playback do
       {:error, %Ecto.Changeset{}}
 
   """
-  def save_progress(user_id, content_id, attrs) when is_list(content_id) do
+  def save_progress(user_id, content_id, attrs, opts \\ []) when is_list(content_id) do
+    origin = Keyword.get(opts, :origin, "player")
+
     attrs =
       attrs
       |> Map.put(:user_id, user_id)
       |> Map.merge(Map.new(content_id))
 
+    previous = get_progress(user_id, content_id)
+
     result =
-      case get_progress(user_id, content_id) do
+      case previous do
         nil ->
           %Progress{}
           |> Progress.changeset(attrs)
@@ -71,6 +81,7 @@ defmodule Mydia.Playback do
     case result do
       {:ok, progress} ->
         maybe_scrobble(user_id, content_id, progress)
+        emit_progress_event(user_id, content_id, previous, progress, origin)
         {:ok, progress}
 
       error ->
@@ -128,6 +139,44 @@ defmodule Mydia.Playback do
   end
 
   @doc """
+  Returns one keyset page of progress rows for the given users, enriched with the
+  associations a sync plugin needs (the `playback_progress` data-list namespace,
+  U5): the movie's external ids, or the episode's coordinates plus its show's
+  external ids. Ordered by `(updated_at, id)`.
+
+  ## Options
+    * `:limit` - page size (default 200)
+    * `:updated_since` - only rows updated at/after this `DateTime`
+    * `:after` - `{updated_at, id}` of the last row of the previous page
+  """
+  @spec list_user_progress_page([binary()], keyword()) :: [Progress.t()]
+  def list_user_progress_page(user_ids, opts \\ []) when is_list(user_ids) do
+    limit = Keyword.get(opts, :limit, 200)
+    since = Keyword.get(opts, :updated_since)
+    after_cursor = Keyword.get(opts, :after)
+
+    query =
+      from p in Progress,
+        where: p.user_id in ^user_ids,
+        order_by: [asc: p.updated_at, asc: p.id],
+        limit: ^limit,
+        preload: [:media_item, episode: :media_item]
+
+    query = if since, do: from(p in query, where: p.updated_at >= ^since), else: query
+
+    query =
+      case after_cursor do
+        {ts, id} ->
+          from p in query, where: p.updated_at > ^ts or (p.updated_at == ^ts and p.id > ^id)
+
+        _ ->
+          query
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Marks content as watched for a user.
 
   ## Examples
@@ -139,9 +188,12 @@ defmodule Mydia.Playback do
       {:ok, %Progress{}}
 
   """
-  def mark_watched(user_id, content_id) do
+  def mark_watched(user_id, content_id, opts \\ []) do
+    origin = Keyword.get(opts, :origin, "player")
+    previous = get_progress(user_id, content_id)
+
     result =
-      case get_progress(user_id, content_id) do
+      case previous do
         nil ->
           {:error, :not_found}
 
@@ -152,13 +204,54 @@ defmodule Mydia.Playback do
       end
 
     case result do
-      {:ok, _progress} ->
+      {:ok, progress} ->
         # Push to Trakt history (fire-and-forget)
         maybe_push_trakt_history(user_id, content_id)
+        # `finished` is idempotent: only emit on the unwatched -> watched edge,
+        # so re-marking an already-watched row is a silent no-op (R14 echo guard).
+        unless previous_watched?(previous) do
+          Events.playback_event("finished", user_id, content_id, playback_meta(progress, origin))
+        end
+
         result
 
       _ ->
         result
+    end
+  end
+
+  @doc """
+  Idempotently marks content watched for a user, the origin-tagged write-back
+  entry used by the plugin `ensure-watched` host function (U6) and the same
+  synthetic-progress idiom the media-server and Trakt sync use.
+
+  Returns `:already_watched` when the row is already watched (no write, no
+  event), or `:changed` when a row was created (synthetic `position 0 /
+  duration 1 / watched: true`) or an existing row flipped to watched.
+
+  ## Options
+    * `:origin` - the write origin (default `"player"`); plugins pass
+      `"plugin:<slug>"` so the dispatcher suppresses the echo (R14)
+    * `:watched_at` - the `DateTime` the watch happened (defaults to now)
+  """
+  @spec ensure_watched(binary(), keyword(), keyword()) :: :already_watched | :changed
+  def ensure_watched(user_id, content_id, opts \\ []) when is_list(content_id) do
+    origin = Keyword.get(opts, :origin, "player")
+    watched_at = Keyword.get(opts, :watched_at)
+
+    case get_progress(user_id, content_id) do
+      %{watched: true} ->
+        :already_watched
+
+      nil ->
+        attrs = %{position_seconds: 0, duration_seconds: 1, watched: true}
+        attrs = if watched_at, do: Map.put(attrs, :last_watched_at, watched_at), else: attrs
+        {:ok, _} = save_progress(user_id, content_id, attrs, origin: origin)
+        :changed
+
+      _existing ->
+        {:ok, _} = mark_watched(user_id, content_id, origin: origin)
+        :changed
     end
   end
 
@@ -333,5 +426,51 @@ defmodule Mydia.Playback do
     if Mydia.Integrations.trakt_enabled?(user_id) do
       Mydia.Integrations.Trakt.Scrobbler.scrobble_stop(user_id, content_id, 100.0)
     end
+  end
+
+  # ── Playback Events (U1) ─────────────────────────────────────────────
+
+  # Emit at most one playback event per `save_progress`: `finished` when the
+  # write crosses the unwatched -> watched edge (the 90% auto-mark or an
+  # explicit `watched: true`), otherwise `progressed` when the completion
+  # percentage crosses a bucket boundary (R19 throttle), otherwise nothing.
+  defp emit_progress_event(user_id, content_id, previous, progress, origin) do
+    cond do
+      watched_transition?(previous, progress) ->
+        Events.playback_event("finished", user_id, content_id, playback_meta(progress, origin))
+
+      bucket_crossed?(previous, progress) ->
+        Events.playback_event("progressed", user_id, content_id, playback_meta(progress, origin))
+
+      true ->
+        :ok
+    end
+  end
+
+  defp watched_transition?(previous, progress) do
+    progress.watched == true and previous_watched?(previous) == false
+  end
+
+  defp previous_watched?(nil), do: false
+  defp previous_watched?(%Progress{watched: watched}), do: watched == true
+
+  defp bucket_crossed?(previous, progress) do
+    progress_bucket(previous) != progress_bucket(progress)
+  end
+
+  defp progress_bucket(nil), do: -1
+  defp progress_bucket(%Progress{completion_percentage: nil}), do: -1
+
+  defp progress_bucket(%Progress{completion_percentage: pct}),
+    do: trunc(pct / @progress_bucket_size)
+
+  defp playback_meta(%Progress{} = progress, origin) do
+    %{
+      "position_seconds" => progress.position_seconds,
+      "duration_seconds" => progress.duration_seconds,
+      "completion_percentage" => progress.completion_percentage,
+      "watched" => progress.watched,
+      "origin" => origin
+    }
   end
 end

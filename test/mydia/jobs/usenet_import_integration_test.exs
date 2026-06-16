@@ -215,7 +215,7 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
                perform_job(MediaImport, %{"download_id" => download.id})
     end
 
-    test "returns error when save_path points to non-existent directory", %{
+    test "classifies a save_path with no visible parent as a mapping mismatch", %{
       bypass: bypass,
       client_config: client_config
     } do
@@ -242,7 +242,11 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
           download_client_id: "777"
         })
 
-      assert {:error, {:path_not_found, "/nonexistent/path/that/does/not/exist"}} =
+      # Neither the leaf nor its immediate parent is visible inside Mydia's
+      # filesystem view — the container volume mount-mismatch signature. This is
+      # classified as a path-mapping mismatch and goes terminal on the first
+      # attempt (returns :cancel, not :error).
+      assert {:cancel, {:path_mapping_mismatch, "/nonexistent/path/that/does/not/exist"}} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
                  "save_path" => "/nonexistent/path/that/does/not/exist"
@@ -326,7 +330,10 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
           download_client: client_config.name,
           download_client_id: nzo_id,
           last_progress_at: first_seen,
-          last_known_bytes: same_bytes
+          last_known_bytes: same_bytes,
+          # Observed continuously (within the observation-gap window) so the
+          # stall is detected rather than reset away.
+          last_observed_at: ~U[2026-05-14 10:14:00.000000Z]
         })
 
       # 16 minutes after `first_seen` — past the 15-minute grace window.
@@ -335,9 +342,11 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
       assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
 
       updated = Downloads.get_download!(download.id)
-      assert updated.import_failed_at != nil
-      assert DateTime.diff(updated.import_failed_at, now, :second) == 0
-      assert updated.import_last_error == "stalled after 15m without progress"
+      # A newly-detected stall is now a recoverable soft-stall, not a terminal
+      # failure: stalled_since is set but import_failed_at stays nil.
+      assert updated.stalled_since != nil
+      assert DateTime.diff(updated.stalled_since, now, :second) == 0
+      assert is_nil(updated.import_failed_at)
     end
 
     test "DownloadMonitor clears no progress when bytes finally move past the grace window",
@@ -397,7 +406,8 @@ defmodule Mydia.Jobs.UsenetImportIntegrationTest do
           download_client: client_config.name,
           download_client_id: nzo_id,
           last_progress_at: first_seen,
-          last_known_bytes: previous_bytes
+          last_known_bytes: previous_bytes,
+          last_observed_at: ~U[2026-05-14 10:18:00.000000Z]
         })
 
       # 20 minutes later — past the 15-min grace, but bytes increased.

@@ -150,6 +150,23 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
               </div>
             </div>
 
+            <%!-- TV Metadata Source (only for series/mixed) --%>
+            <%= if to_string(@library_path_form[:type].value) in ["series", "mixed"] do %>
+              <div class="grid grid-cols-6 gap-3">
+                <div class="col-span-6 md:col-span-3">
+                  <.input
+                    field={@library_path_form[:tv_metadata_source]}
+                    type="select"
+                    label="TV Metadata Source"
+                    options={[{"TheTVDB", "tvdb"}, {"TMDB", "tmdb"}]}
+                  />
+                  <p class="text-xs text-base-content/50 mt-1">
+                    Provider for TV show metadata. Existing shows keep their data until refreshed.
+                  </p>
+                </div>
+              </div>
+            <% end %>
+
             <div class="divider my-1"></div>
 
             <%!-- Options Section --%>
@@ -290,8 +307,18 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   attr :is_reclassifying, :boolean, default: false
 
   defp library_path_row(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :metadata_source,
+        library_metadata_source(
+          assigns.library_path.type,
+          assigns.library_path.tv_metadata_source
+        )
+      )
+
     ~H"""
-    <div class="p-3 sm:p-4">
+    <div id={"library-path-#{@library_path.id}"} class="p-3 sm:p-4">
       <div class="flex flex-col sm:flex-row sm:items-center gap-3">
         <%!-- Path Info --%>
         <div class="flex-1 min-w-0">
@@ -316,6 +343,15 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
 
         <%!-- Badges + Actions --%>
         <div class="flex flex-wrap items-center gap-2">
+          <%= if @metadata_source do %>
+            <span
+              class={["badge badge-sm tooltip", metadata_source_badge_class(@metadata_source)]}
+              data-tip="Metadata source"
+            >
+              <.icon name="hero-circle-stack" class="w-3 h-3 mr-1" />
+              {metadata_source_display(@metadata_source)}
+            </span>
+          <% end %>
           <span class={["badge badge-sm", library_type_badge_class(@library_path.type)]}>
             <.icon name={library_type_icon(@library_path.type)} class="w-3 h-3 mr-1" />
             {library_type_display(@library_path.type)}
@@ -448,6 +484,27 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
   defp library_type_display(:adult), do: "Adult"
   defp library_type_display(type), do: to_string(type)
 
+  # Where a library's metadata comes from. Movies are always sourced from TMDB;
+  # series/mixed use their configured TV provider (defaulting to TVDB for
+  # runtime/env-only paths). Returns nil for types without a relay source so no
+  # badge is rendered.
+  defp library_metadata_source(:movies, _tv_source), do: :tmdb
+
+  defp library_metadata_source(type, tv_source) when type in [:series, :mixed],
+    do: tv_source || :tvdb
+
+  defp library_metadata_source(_type, _tv_source), do: nil
+
+  defp metadata_source_display(:tmdb), do: "TMDB"
+  defp metadata_source_display(:tvdb), do: "TVDB"
+
+  # Provider-distinct colors. `primary` and `neutral` are the only semantic
+  # badge colors not used by the type badges (info/accent/secondary/success/
+  # warning/error) or the green "Monitored" badge, so the source badge can never
+  # match the type badge it sits next to.
+  defp metadata_source_badge_class(:tmdb), do: "badge-primary"
+  defp metadata_source_badge_class(:tvdb), do: "badge-neutral"
+
   # Renders only the category paths section (when auto-organize is enabled).
   # Used by the compact library path modal.
   attr :form, :any, required: true
@@ -476,74 +533,6 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
         <.category_path_preview form={@form} categories={@categories} />
       </div>
     <% end %>
-    """
-  end
-
-  # Renders the auto-organize section for library paths (legacy, kept for compatibility).
-  # This section allows users to enable automatic file organization by media category
-  # and configure category-specific subfolder paths.
-  attr :form, :any, required: true
-
-  defp auto_organize_section(assigns) do
-    library_type = get_library_type_from_form(assigns.form)
-    categories = Mydia.Media.MediaCategory.for_library_type(library_type)
-
-    assigns =
-      assigns
-      |> assign(:library_type, library_type)
-      |> assign(:categories, categories)
-      |> assign(:show_section, categories != [])
-
-    ~H"""
-    <div :if={@show_section} class="space-y-4">
-      <%!-- Auto-Organize Toggle --%>
-      <div class="form-control bg-base-200 rounded-lg p-4">
-        <label class="label cursor-pointer justify-start gap-4">
-          <input
-            type="checkbox"
-            name={@form[:auto_organize].name}
-            value="true"
-            checked={
-              Phoenix.HTML.Form.normalize_value(
-                "checkbox",
-                @form[:auto_organize].value
-              )
-            }
-            class="toggle toggle-secondary"
-          />
-          <div>
-            <span class="label-text font-medium">Auto-organize by Category</span>
-            <p class="text-xs text-base-content/50 mt-0.5">
-              Automatically organize imported files into category-specific subfolders
-            </p>
-          </div>
-        </label>
-      </div>
-
-      <%!-- Category Path Inputs (shown when auto-organize is enabled) --%>
-      <%= if auto_organize_enabled?(@form) do %>
-        <div class="bg-base-200 rounded-lg p-4 space-y-4">
-          <div class="flex items-center gap-2 mb-2">
-            <.icon name="hero-folder-open" class="w-5 h-5 text-secondary" />
-            <h4 class="font-medium">Category Paths</h4>
-          </div>
-          <p class="text-xs text-base-content/60 mb-4">
-            Define subfolder paths for each category. Leave empty to use the library root.
-          </p>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
-            <.category_path_input
-              :for={category <- @categories}
-              form={@form}
-              category={category}
-            />
-          </div>
-
-          <%!-- Path Preview --%>
-          <.category_path_preview form={@form} categories={@categories} />
-        </div>
-      <% end %>
-    </div>
     """
   end
 
@@ -622,8 +611,7 @@ defmodule MydiaWeb.AdminLibraryPathsLive.Components do
         <span class={[
           "w-1.5 h-1.5 rounded-full shrink-0",
           if(rp.is_root, do: "bg-base-content/30", else: "bg-secondary")
-        ]}>
-        </span>
+        ]}></span>
         <span class="text-base-content/70">{rp.label}</span>
         <span class="text-base-content/40">→</span>
         <span class={if(rp.is_root, do: "text-base-content/50", else: "text-secondary")}>

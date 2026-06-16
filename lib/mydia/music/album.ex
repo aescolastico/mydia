@@ -73,9 +73,4 @@ defmodule Mydia.Music.Album do
     |> unique_constraint(:musicbrainz_id)
     |> foreign_key_constraint(:artist_id)
   end
-
-  @doc """
-  Returns the list of valid album types.
-  """
-  def valid_album_types, do: @album_types
 end

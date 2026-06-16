@@ -171,19 +171,17 @@ defmodule Mydia.Library.ReleaseParser do
         # `AAC-LC`, `DTS-HD`) — if so, leave the dash intact.
         compound? = forms_known_compound?(stripped_for_match, full_start, group_name)
 
-        cond do
-          compound? ->
-            {filename, nil}
+        if compound? do
+          {filename, nil}
+        else
+          case sanitize_release_group(group_name) do
+            nil ->
+              {filename, nil}
 
-          true ->
-            case sanitize_release_group(group_name) do
-              nil ->
-                {filename, nil}
-
-              group ->
-                rewritten = rewrite_trailing_separator(filename, normalized)
-                {rewritten, group}
-            end
+            group ->
+              rewritten = rewrite_trailing_separator(filename, normalized)
+              {rewritten, group}
+          end
         end
 
       _ ->

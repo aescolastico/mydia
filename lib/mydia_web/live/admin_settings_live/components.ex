@@ -72,27 +72,25 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
         </div>
         <div class="stat-title">Crash Reports</div>
         <div class="stat-value text-warning">{@stats.queued_reports}</div>
-        <div class="stat-desc">
-          Queued →
-          <span
-            class="font-mono truncate max-w-xs inline-block align-bottom"
-            title={@stats.metadata_relay_url}
-            aria-label={"Relay URL: #{@stats.metadata_relay_url}"}
-          >
-            {@stats.metadata_relay_url}
+        <div class="stat-desc">Queued</div>
+      </div>
+      <.link
+        navigate={~p"/admin/errors"}
+        id="tracked-errors-link"
+        class="stat hover:bg-base-300 transition-colors cursor-pointer"
+      >
+        <div class="stat-figure text-info">
+          <.icon name="hero-magnifying-glass" class="w-8 h-8" />
+        </div>
+        <div class="stat-title">Tracked</div>
+        <div class="stat-value text-info">
+          {@stats.tracked_errors}
+          <span class="text-base font-normal">
+            {if @stats.tracked_errors == 1, do: "error", else: "errors"}
           </span>
         </div>
-      </div>
-      <div class="stat">
-        <div class="stat-figure text-success">
-          <.icon name="hero-check-circle" class="w-8 h-8" />
-        </div>
-        <div class="stat-title">Sent</div>
-        <div class="stat-value text-success">
-          {Map.get(@stats, :sent_reports, 0)}
-        </div>
-        <div class="stat-desc">Successfully reported</div>
-      </div>
+        <div class="stat-desc link link-info">View all →</div>
+      </.link>
       <%= if @stats.queued_reports > 0 do %>
         <div class="stat">
           <div class="stat-figure">
@@ -217,7 +215,6 @@ defmodule MydiaWeb.AdminSettingsLive.Components do
   defp category_icon("Downloads"), do: "hero-arrow-down-tray"
   defp category_icon("Crash Reporting"), do: "hero-bug-ant"
   defp category_icon("Notifications"), do: "hero-bell"
-  defp category_icon("FlareSolverr"), do: "hero-shield-check"
   defp category_icon("Library"), do: "hero-folder-open"
   defp category_icon(_), do: "hero-cog-6-tooth"
 end

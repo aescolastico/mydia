@@ -320,6 +320,10 @@ defmodule Mydia.Indexers.Adapter.NzbHydra2Test do
 
   describe "adapter structure" do
     test "implements required callbacks" do
+      # Ensure the module is loaded first — function_exported?/3 returns false
+      # for a module that has not yet been loaded, which flakes under test
+      # orderings where no prior test has referenced NzbHydra2.
+      assert Code.ensure_loaded?(NzbHydra2)
       assert function_exported?(NzbHydra2, :search, 3)
       assert function_exported?(NzbHydra2, :test_connection, 1)
       assert function_exported?(NzbHydra2, :get_capabilities, 1)

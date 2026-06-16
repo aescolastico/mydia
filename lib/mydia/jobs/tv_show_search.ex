@@ -484,14 +484,15 @@ defmodule Mydia.Jobs.TVShowSearch do
     |> filter_episodes_in_backoff()
   end
 
-  # Episodes with an active episode-level download (still in client, not failed).
+  # Episodes with a download still occupying them — actively downloading,
+  # downloaded-but-awaiting-import, or import-retrying. Excludes imported,
+  # client-failed, and terminally-failed imports so those can be re-grabbed.
+  # See Mydia.Downloads.Download.occupying/1.
   defp active_episode_download_ids do
-    from(d in Download,
-      where: is_nil(d.completed_at) and is_nil(d.error_message),
-      where: not is_nil(d.episode_id),
-      select: d.episode_id,
-      distinct: true
-    )
+    Download.occupying()
+    |> where([d], not is_nil(d.episode_id))
+    |> select([d], d.episode_id)
+    |> distinct(true)
   end
 
   # Drop episodes covered by an active season-pack download. Mirrors the
@@ -507,12 +508,10 @@ defmodule Mydia.Jobs.TVShowSearch do
       |> Enum.uniq()
 
     covered =
-      from(d in Download,
-        where: is_nil(d.completed_at) and is_nil(d.error_message),
-        where: d.media_item_id in ^media_item_ids,
-        where: ^Mydia.DB.json_is_true(:metadata, "$.season_pack"),
-        select: %{media_item_id: d.media_item_id, metadata: d.metadata}
-      )
+      Download.occupying()
+      |> where([d], d.media_item_id in ^media_item_ids)
+      |> where(^Mydia.DB.json_is_true(:metadata, "$.season_pack"))
+      |> select([d], %{media_item_id: d.media_item_id, metadata: d.metadata})
       |> Repo.all()
       |> Enum.reduce(MapSet.new(), fn
         %{media_item_id: mid, metadata: %{"season_number" => sn}}, acc when is_integer(sn) ->

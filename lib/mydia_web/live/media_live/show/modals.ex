@@ -7,6 +7,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
 
   # Import the formatting and search helper functions
   import MydiaWeb.MediaLive.Show.Formatters
+  import MydiaWeb.Formatters, only: [format_progress: 1]
   import MydiaWeb.MediaLive.Show.SearchHelpers
 
   @doc """
@@ -85,20 +86,79 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   end
 
   @doc """
-  File delete confirmation modal for removing a media file record.
+  Provider re-identification picker.
+
+  Shown when a provider switch could not auto-match the show confidently. Lets
+  the operator pick the correct show on the target provider, with copy warning
+  that confirming re-matches episodes and resets episode watch history.
+  """
+  attr :provider, :atom, required: true
+  attr :candidates, :list, required: true
+
+  def reidentify_modal(assigns) do
+    ~H"""
+    <div id="reidentify-modal" class="modal modal-open">
+      <div class="modal-box max-w-xl">
+        <h3 class="font-bold text-lg mb-1">Re-identify on {provider_label(@provider)}</h3>
+        <p class="text-sm opacity-75 mb-4">
+          Pick the correct show. Confirming re-matches episodes from {provider_label(@provider)} and
+          resets episode-level watch history for this show.
+        </p>
+
+        <%= if @candidates == [] do %>
+          <div class="alert alert-warning mb-4">
+            <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
+            <span>No results found on {provider_label(@provider)}.</span>
+          </div>
+        <% else %>
+          <div class="space-y-2 max-h-80 overflow-y-auto mb-2">
+            <button
+              :for={candidate <- @candidates}
+              type="button"
+              phx-click="select_reidentify_candidate"
+              phx-value-provider_id={to_string(candidate.provider_id)}
+              class="btn btn-ghost h-auto w-full justify-start normal-case text-left p-3 rounded-lg border-2 border-base-300 hover:border-primary hover:bg-primary/5"
+            >
+              <div class="font-medium">
+                {candidate.title}
+                <span :if={candidate.year} class="opacity-60 font-normal">({candidate.year})</span>
+              </div>
+              <div class="text-xs opacity-50 font-mono mt-0.5">
+                {provider_label(@provider)} ID {to_string(candidate.provider_id)}
+              </div>
+            </button>
+          </div>
+        <% end %>
+
+        <div class="modal-action">
+          <button type="button" phx-click="cancel_reidentify" class="btn btn-ghost">
+            Cancel
+          </button>
+        </div>
+      </div>
+      <div class="modal-backdrop" phx-click="cancel_reidentify"></div>
+    </div>
+    """
+  end
+
+  defp provider_label(provider), do: MydiaWeb.MediaLive.Show.Helpers.provider_label(provider)
+
+  @doc """
+  File delete confirmation modal for removing a media file.
+
+  Lets the user choose whether to also delete the file from disk. Defaults to
+  deleting the file; "Remove from library only" keeps the file on disk.
   """
   attr :file_to_delete, :map, required: true
+  attr :delete_file_from_disk, :boolean, required: true
 
   def file_delete_confirm_modal(assigns) do
     ~H"""
     <div class="modal modal-open">
       <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">Delete Media File?</h3>
-        <p class="py-4">
-          Are you sure you want to delete this file?
-        </p>
         <div class="bg-base-200 p-3 rounded-box mb-4">
-          <p class="text-sm font-mono text-base-content/70">
+          <p class="text-sm font-mono text-base-content/70 break-all">
             {Mydia.Library.MediaFile.absolute_path(@file_to_delete)}
           </p>
           <p class="text-sm mt-2">
@@ -106,16 +166,61 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             {format_file_size(@file_to_delete.size)}
           </p>
         </div>
-        <p class="text-warning text-sm mb-4">
-          <.icon name="hero-exclamation-triangle" class="w-4 h-4 inline" />
-          This will only remove the database record. The actual file will remain on disk.
-        </p>
+
+        <form phx-change="toggle_file_delete_from_disk">
+          <div class="space-y-2.5 mb-5">
+            <label class={[
+              "flex items-start gap-3 p-3.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+              !@delete_file_from_disk && "border-primary bg-primary/10",
+              @delete_file_from_disk && "border-base-300 hover:border-primary/50"
+            ]}>
+              <input
+                type="radio"
+                name="delete_file_from_disk"
+                value="false"
+                class="radio radio-primary mt-0.5 flex-shrink-0"
+                checked={!@delete_file_from_disk}
+              />
+              <div>
+                <div class="font-medium mb-1">Remove from library only</div>
+                <div class="text-sm opacity-75">File stays on disk, can be re-imported later</div>
+              </div>
+            </label>
+
+            <label class={[
+              "flex items-start gap-3 p-3.5 rounded-lg border-2 cursor-pointer transition-all hover:shadow-sm",
+              @delete_file_from_disk && "border-error bg-error/10",
+              !@delete_file_from_disk && "border-base-300 hover:border-error/50"
+            ]}>
+              <input
+                type="radio"
+                name="delete_file_from_disk"
+                value="true"
+                class="radio radio-error mt-0.5 flex-shrink-0"
+                checked={@delete_file_from_disk}
+              />
+              <div>
+                <div class="font-medium mb-1">Delete file from disk</div>
+                <div class="text-sm opacity-75 flex items-center gap-1">
+                  <.icon name="hero-exclamation-triangle" class="w-4 h-4" />
+                  <span>Permanently deletes the file - cannot be undone</span>
+                </div>
+              </div>
+            </label>
+          </div>
+        </form>
+
         <div class="modal-action">
           <button type="button" phx-click="hide_file_delete_confirm" class="btn btn-ghost">
             Cancel
           </button>
-          <button type="button" phx-click="delete_media_file" class="btn btn-error">
-            Delete Record
+          <button
+            type="button"
+            phx-click="delete_media_file"
+            class={["btn", (@delete_file_from_disk && "btn-error") || "btn-warning"]}
+          >
+            <.icon name="hero-trash" class="w-4 h-4" />
+            {if @delete_file_from_disk, do: "Delete File", else: "Remove from Library"}
           </button>
         </div>
       </div>
@@ -255,7 +360,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
           <% end %>
           <%= if @download_to_cancel.progress do %>
             <p class="text-sm text-base-content/70 mt-1">
-              Progress: {@download_to_cancel.progress}%
+              Progress: {format_progress(@download_to_cancel.progress)}%
             </p>
           <% end %>
         </div>
@@ -376,9 +481,8 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                   class="progress progress-primary flex-1"
                   value={@download_details.progress}
                   max="100"
-                >
-                </progress>
-                <span class="text-sm font-mono">{@download_details.progress}%</span>
+                ></progress>
+                <span class="text-sm font-mono">{format_progress(@download_details.progress)}%</span>
               </div>
             </div>
           <% end %>
@@ -805,8 +909,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                         phx-value-quality={get_search_quality_badge(result) || "Unknown"}
                         title="Download this release"
                       >
-                        <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline">
-                        </span>
+                        <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline"></span>
                         <.icon
                           name="hero-arrow-down-tray"
                           class="w-4 h-4 group-[.phx-click-loading]/dl:hidden"
@@ -1238,8 +1341,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             class="w-full h-full"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowfullscreen
-          >
-          </iframe>
+          ></iframe>
         </div>
       </div>
       <div class="modal-backdrop bg-black/80" phx-click="hide_trailer_modal"></div>

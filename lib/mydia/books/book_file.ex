@@ -50,11 +50,6 @@ defmodule Mydia.Books.BookFile do
   end
 
   @doc """
-  Returns the list of supported book formats.
-  """
-  def valid_formats, do: @book_formats
-
-  @doc """
   Detects the format from a file path extension.
   """
   def detect_format(path) when is_binary(path) do

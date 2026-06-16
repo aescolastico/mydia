@@ -7,6 +7,7 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
 
   alias Mydia.Media
   alias Mydia.Metadata
+  alias Mydia.Settings
 
   @doc """
   Enriches a list of search result items with library status information.
@@ -42,8 +43,10 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
   ## Options
     * `:tmdb_id` - Explicit TMDB ID to use
     * `:tvdb_id` - Explicit TVDB ID to use
+    * `:metadata_source` - Provenance to stamp (`:tvdb` | `:tmdb` | `nil`).
+      Recorded for TV shows only; movies always leave it nil.
 
-  If neither is given, falls back to parsing `metadata.provider_id` as tmdb_id.
+  If neither id is given, falls back to parsing `metadata.provider_id` as tmdb_id.
   """
   def build_media_item_attrs(metadata, media_type, opts \\ []) do
     type_string = if media_type == :movie, do: "movie", else: "tv_show"
@@ -59,7 +62,7 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
           other
       end
 
-    %{
+    attrs = %{
       type: type_string,
       title: metadata.title,
       original_title: metadata.original_title,
@@ -70,6 +73,13 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
       metadata: metadata,
       monitored: true
     }
+
+    # Record provenance for TV shows only; movies leave metadata_source nil.
+    if media_type == :movie do
+      attrs
+    else
+      Map.put(attrs, :metadata_source, opts[:metadata_source])
+    end
   end
 
   @doc """
@@ -98,16 +108,22 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
   @doc """
   Handles the full add-media-to-library flow.
 
-  For TV shows, uses TVDB as the primary metadata source (searching by title+year
-  from TMDB data). Falls back to TMDB metadata if TVDB lookup fails.
+  For TV shows, the metadata provider is derived from the configured
+  `:series`/`:mixed` libraries (see `Settings.derive_tv_metadata_source/0`) and
+  stamped as `metadata_source` so content, episodes, and provenance agree. When
+  the libraries conflict, the item is added with `metadata_source: nil` and the
+  scan path establishes provenance later.
 
-  For movies, uses TMDB as the primary source.
+  For movies, uses TMDB as the primary source and leaves `metadata_source` nil.
 
   Returns `{:ok, media_item, updated_library_status_map}` or `{:error, reason}`.
+
+  An optional `config` (relay config map) can be injected for testing; it
+  defaults to `Metadata.default_relay_config()`.
   """
-  def handle_add_media_to_library(provider_id, media_type, library_status_map) do
+  def handle_add_media_to_library(provider_id, media_type, library_status_map, config \\ nil) do
     provider_id_int = parse_provider_id(provider_id)
-    config = Metadata.default_relay_config()
+    config = config || Metadata.default_relay_config()
 
     result =
       if media_type == :tv_show do
@@ -129,20 +145,29 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
   @doc """
   Fetches detailed metadata for the detail modal.
 
-  For TV shows, fetches TMDB metadata first then tries to resolve richer TVDB
-  metadata by title+year search. Falls back to TMDB if TVDB lookup fails.
+  For TV shows, the preview reflects the provider the add flow will use: when
+  the derived source is `:tmdb` the TMDB metadata is returned directly;
+  otherwise it tries to resolve richer TVDB metadata, falling back to TMDB if
+  that lookup fails.
 
   For movies, fetches TMDB metadata directly.
+
+  An optional `config` can be injected for testing; defaults to
+  `Metadata.default_relay_config()`.
   """
-  def fetch_detail_metadata(tmdb_id, media_type) do
-    config = Metadata.default_relay_config()
+  def fetch_detail_metadata(tmdb_id, media_type, config \\ nil) do
+    config = config || Metadata.default_relay_config()
 
     if media_type == :tv_show do
       case Metadata.fetch_by_id(config, tmdb_id, media_type: :tv_show, provider: :tmdb) do
         {:ok, tmdb_metadata} ->
-          case resolve_tvdb_metadata(tmdb_metadata, config) do
-            {:ok, tvdb_metadata, _tvdb_id} -> {:ok, tvdb_metadata}
-            {:error, _} -> {:ok, tmdb_metadata}
+          if Settings.derive_tv_metadata_source() == :tmdb do
+            {:ok, tmdb_metadata}
+          else
+            case resolve_tvdb_metadata(tmdb_metadata, config) do
+              {:ok, tvdb_metadata, _tvdb_id} -> {:ok, tvdb_metadata}
+              {:error, _} -> {:ok, tmdb_metadata}
+            end
           end
 
         error ->
@@ -162,8 +187,7 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
         String.replace(acc_msg, "%{#{key}}", to_string(value))
       end)
     end)
-    |> Enum.map(fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
-    |> Enum.join("; ")
+    |> Enum.map_join("; ", fn {field, errors} -> "#{field}: #{Enum.join(errors, ", ")}" end)
   end
 
   # Private helpers
@@ -184,30 +208,52 @@ defmodule MydiaWeb.Live.Helpers.MediaAddHelpers do
   end
 
   defp add_tv_show_to_library(provider_id, provider_id_int, config) do
+    # Derive the provider from the configured libraries. `derived` may be nil
+    # (libraries disagree); the fetch still needs a provider, so fall back to
+    # TVDB for content while leaving provenance unstamped.
+    derived = Settings.derive_tv_metadata_source()
+    fetch_provider = derived || :tvdb
+
     # Fetch TMDB metadata first (we have the TMDB ID from curated lists)
     case Metadata.fetch_by_id(config, provider_id, media_type: :tv_show, provider: :tmdb) do
       {:ok, tmdb_metadata} ->
-        # Try to resolve TVDB metadata for richer TV data
-        case resolve_tvdb_metadata(tmdb_metadata, config) do
-          {:ok, tvdb_metadata, tvdb_id} ->
-            # Use TVDB metadata as primary, keep TMDB ID as secondary
-            attrs =
-              build_media_item_attrs(tvdb_metadata, :tv_show,
-                tmdb_id: provider_id_int,
-                tvdb_id: tvdb_id
-              )
-
-            create_media_item_result(attrs)
-
-          {:error, _} ->
-            # TVDB lookup failed, fall back to TMDB metadata with TVDB ID from search
-            attrs = build_media_item_attrs(tmdb_metadata, :tv_show, tmdb_id: provider_id_int)
-            attrs = lookup_and_add_tvdb_id(attrs, config)
-            create_media_item_result(attrs)
-        end
+        tmdb_metadata
+        |> build_tv_show_attrs(provider_id_int, derived, fetch_provider, config)
+        |> create_media_item_result()
 
       {:error, reason} ->
         {:error, {:metadata, reason}}
+    end
+  end
+
+  # Derived source is TMDB: keep the TMDB metadata as primary, resolve a
+  # secondary tvdb_id for dedup/future matching, and stamp :tmdb.
+  defp build_tv_show_attrs(tmdb_metadata, provider_id_int, derived, :tmdb, config) do
+    build_media_item_attrs(tmdb_metadata, :tv_show,
+      tmdb_id: provider_id_int,
+      metadata_source: derived
+    )
+    |> lookup_and_add_tvdb_id(config)
+  end
+
+  # Derived source is TVDB (or nil/conflict): use richer TVDB metadata as
+  # primary when resolvable, else TMDB content with a tvdb_id from search.
+  # Provenance is stamped as `derived` (:tvdb, or nil on conflict).
+  defp build_tv_show_attrs(tmdb_metadata, provider_id_int, derived, :tvdb, config) do
+    case resolve_tvdb_metadata(tmdb_metadata, config) do
+      {:ok, tvdb_metadata, tvdb_id} ->
+        build_media_item_attrs(tvdb_metadata, :tv_show,
+          tmdb_id: provider_id_int,
+          tvdb_id: tvdb_id,
+          metadata_source: derived
+        )
+
+      {:error, _} ->
+        build_media_item_attrs(tmdb_metadata, :tv_show,
+          tmdb_id: provider_id_int,
+          metadata_source: derived
+        )
+        |> lookup_and_add_tvdb_id(config)
     end
   end
 

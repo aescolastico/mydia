@@ -53,6 +53,15 @@ defmodule Mydia.Config.LoaderTest do
     File.rm(@test_yaml_path)
 
     on_exit(fn ->
+      # Delete any DOWNLOAD_CLIENT_* vars the test itself set — they are not in
+      # `original_env` (captured at setup), so a plain restore would leak them
+      # into the rest of the suite, where any config reload (e.g. the plugin
+      # lifecycle) would bake phantom download clients into the global
+      # runtime config.
+      System.get_env()
+      |> Enum.filter(fn {key, _} -> String.starts_with?(key, "DOWNLOAD_CLIENT_") end)
+      |> Enum.each(fn {key, _} -> System.delete_env(key) end)
+
       # Restore original environment
       Enum.each(original_env, fn {var, value} ->
         if value do
@@ -705,6 +714,47 @@ defmodule Mydia.Config.LoaderTest do
 
       assert config.auth.local_enabled == false
       assert config.auth.oidc_enabled == true
+    end
+  end
+
+  describe "reload/0" do
+    setup do
+      original = Application.get_env(:mydia, :runtime_config)
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :runtime_config, original)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
+      end)
+
+      :ok
+    end
+
+    test "stores the merged config in the application environment on success" do
+      Application.delete_env(:mydia, :runtime_config)
+
+      assert {:ok, config} = Loader.reload(config_file: "nonexistent.yml")
+      assert Application.get_env(:mydia, :runtime_config) == config
+    end
+
+    test "leaves the cached config untouched when the merged config is invalid" do
+      {:ok, good} = Loader.load(config_file: "nonexistent.yml")
+      Application.put_env(:mydia, :runtime_config, good)
+
+      # Persist a value that fails schema validation (url_scheme must be http/https)
+      # so the merge validates to an error on reload.
+      {:ok, _} =
+        Mydia.Settings.upsert_config_setting(%{
+          key: "server.url_scheme",
+          value: "ftp",
+          category: :server
+        })
+
+      assert {:error, _reason} = Loader.reload(config_file: "nonexistent.yml")
+      # Contract: on error the previously cached config is left untouched.
+      assert Application.get_env(:mydia, :runtime_config) == good
     end
   end
 end

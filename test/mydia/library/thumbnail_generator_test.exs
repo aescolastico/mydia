@@ -57,10 +57,7 @@ defmodule Mydia.Library.ThumbnailGeneratorTest do
     @tag :requires_ffmpeg
     test "generates thumbnail from valid video file", %{test_dir: _test_dir} do
       # Skip if FFmpeg is not available
-      unless ThumbnailGenerator.ffmpeg_available?() do
-        IO.puts("Skipping test: FFmpeg not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffmpeg_available?() do
         # Create a minimal test video using FFmpeg
         video_path = create_test_video()
 
@@ -83,6 +80,9 @@ defmodule Mydia.Library.ThumbnailGeneratorTest do
 
         # Cleanup
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFmpeg not available")
+        assert true
       end
     end
   end
@@ -96,10 +96,7 @@ defmodule Mydia.Library.ThumbnailGeneratorTest do
 
     @tag :requires_ffmpeg
     test "returns duration for valid video file" do
-      unless ThumbnailGenerator.ffprobe_available?() do
-        IO.puts("Skipping test: FFprobe not available")
-        assert true
-      else
+      if ThumbnailGenerator.ffprobe_available?() do
         video_path = create_test_video()
 
         case ThumbnailGenerator.get_duration(video_path) do
@@ -113,6 +110,9 @@ defmodule Mydia.Library.ThumbnailGeneratorTest do
         end
 
         File.rm(video_path)
+      else
+        IO.puts("Skipping test: FFprobe not available")
+        assert true
       end
     end
   end

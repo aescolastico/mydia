@@ -63,7 +63,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, result} =
                CardigannTemplate.render(
-                 "{{ re_replace .Keywords \" \" \"-\" }}",
+                 ~S[{{ re_replace .Keywords " " "-" }}],
                  context
                )
 
@@ -201,7 +201,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
       context = %{value: "test"}
 
       assert {:ok, result} =
-               CardigannTemplate.render("{{ re_replace .value \"t\" \"\\n\" }}", context)
+               CardigannTemplate.render(~s[{{ re_replace .value "t" "\\n" }}], context)
 
       assert result == "\nes\n"
     end
@@ -441,7 +441,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
       context = %{keywords: "hello world"}
 
       assert {:ok, "hello-world"} =
-               CardigannTemplate.render("{{ .Keywords | re_replace \" \" \"-\" }}", context)
+               CardigannTemplate.render(~S[{{ .Keywords | re_replace " " "-" }}], context)
     end
 
     test "multiple pipe stages" do
@@ -732,7 +732,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "yes"} =
                CardigannTemplate.render(
-                 "{{ if and (eq .a \"1\") (ne .b \"1\") }}yes{{ else }}no{{ end }}",
+                 ~S[{{ if and (eq .a "1") (ne .b "1") }}yes{{ else }}no{{ end }}],
                  context
                )
     end
@@ -742,7 +742,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "no"} =
                CardigannTemplate.render(
-                 "{{ if and (eq .a \"1\") (ne .b \"1\") }}yes{{ else }}no{{ end }}",
+                 ~S[{{ if and (eq .a "1") (ne .b "1") }}yes{{ else }}no{{ end }}],
                  context
                )
     end
@@ -752,7 +752,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "yes"} =
                CardigannTemplate.render(
-                 "{{ if and .Keywords (eq .Config.x \"1\") }}yes{{ else }}no{{ end }}",
+                 ~S[{{ if and .Keywords (eq .Config.x "1") }}yes{{ else }}no{{ end }}],
                  context
                )
     end
@@ -764,7 +764,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "match"} =
                CardigannTemplate.render(
-                 "{{ if and (and (eq .Result.x \"1\") (ne .Result.y \"YES\")) (and (eq .Result.a \"NULL\") (eq .Result.b \"NULL\")) }}match{{ else }}no{{ end }}",
+                 ~S[{{ if and (and (eq .Result.x "1") (ne .Result.y "YES")) (and (eq .Result.a "NULL") (eq .Result.b "NULL")) }}match{{ else }}no{{ end }}],
                  context
                )
     end
@@ -776,7 +776,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "no"} =
                CardigannTemplate.render(
-                 "{{ if and (and (eq .Result.x \"1\") (ne .Result.y \"YES\")) (and (eq .Result.a \"NULL\") (eq .Result.b \"NULL\")) }}match{{ else }}no{{ end }}",
+                 ~S[{{ if and (and (eq .Result.x "1") (ne .Result.y "YES")) (and (eq .Result.a "NULL") (eq .Result.b "NULL")) }}match{{ else }}no{{ end }}],
                  context
                )
     end
@@ -808,7 +808,7 @@ defmodule Mydia.Indexers.CardigannTemplateTest do
 
       assert {:ok, "hello-world"} =
                CardigannTemplate.render(
-                 "{{ (.Result.title) | re_replace \" \" \"-\" }}",
+                 ~S[{{ (.Result.title) | re_replace " " "-" }}],
                  context
                )
     end

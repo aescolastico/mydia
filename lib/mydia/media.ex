@@ -52,6 +52,37 @@ defmodule Mydia.Media do
   end
 
   @doc """
+  Returns one keyset page of media items for the plugin `data-list` host
+  function (U5), ordered by `(updated_at, id)`.
+
+  ## Options
+    * `:limit` - page size (default 200)
+    * `:updated_since` - only items updated at/after this `DateTime`
+    * `:after` - `{updated_at, id}` of the last row of the previous page
+  """
+  @spec list_items_page(keyword()) :: [MediaItem.t()]
+  def list_items_page(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 200)
+    since = Keyword.get(opts, :updated_since)
+    after_cursor = Keyword.get(opts, :after)
+
+    query = from(m in MediaItem, order_by: [asc: m.updated_at, asc: m.id], limit: ^limit)
+
+    query = if since, do: from(m in query, where: m.updated_at >= ^since), else: query
+
+    query =
+      case after_cursor do
+        {ts, id} ->
+          from m in query, where: m.updated_at > ^ts or (m.updated_at == ^ts and m.id > ^id)
+
+        _ ->
+          query
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Gets a single media item by TMDB ID.
   """
   @spec get_media_item_by_tmdb(integer(), keyword()) :: MediaItem.t() | nil
@@ -137,12 +168,10 @@ defmodule Mydia.Media do
       actor_type = Keyword.get(opts, :actor_type, :system)
       actor_id = Keyword.get(opts, :actor_id, "media_context")
 
+      # The media_item.added event flows through the plugin dispatcher
+      # (Mydia.Plugins.Dispatcher), which replaced the Luerl after_media_added
+      # hook (U11). No explicit hook call is needed here.
       Events.media_item_added(media_item, actor_type, actor_id)
-
-      # Execute after_media_added hooks asynchronously
-      Mydia.Hooks.execute_async("after_media_added", %{
-        media_item: serialize_media_item(media_item)
-      })
 
       # For TV shows, automatically fetch episodes unless explicitly skipped
       if media_item.type == "tv_show" and not Keyword.get(opts, :skip_episode_refresh, false) do
@@ -321,7 +350,7 @@ defmodule Mydia.Media do
   records and preserves files on disk.
   """
   @spec delete_media_item(MediaItem.t(), keyword()) ::
-          {:ok, MediaItem.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, MediaItem.t(), non_neg_integer()} | {:error, Ecto.Changeset.t()}
   def delete_media_item(%MediaItem{} = media_item, opts \\ []) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
@@ -331,41 +360,23 @@ defmodule Mydia.Media do
       delete_files: delete_files
     )
 
-    # If we need to delete files, load all media files first
-    # (including files from episodes for TV shows)
-    if delete_files do
-      # Load media item with all media files (both direct and through episodes)
-      media_item_with_files =
-        MediaItem
-        |> where([m], m.id == ^media_item.id)
-        |> preload([:media_files, episodes: :media_files])
-        |> Repo.one!()
+    # Load all media files (movie files + episode files) into memory *before*
+    # deleting the record, so their paths stay resolvable after the cascade
+    # delete. We remove them from disk only after the record delete succeeds:
+    # a failed DB delete then leaves the disk untouched (nothing lost).
+    all_media_files =
+      if delete_files do
+        media_item_with_files =
+          MediaItem
+          |> where([m], m.id == ^media_item.id)
+          |> preload(media_files: :library_path, episodes: [media_files: :library_path])
+          |> Repo.one!()
 
-      # Collect all media files (movie files + episode files)
-      all_media_files =
         media_item_with_files.media_files ++
           Enum.flat_map(media_item_with_files.episodes, & &1.media_files)
-
-      Logger.info("Attempting to delete physical files",
-        media_item_id: media_item.id,
-        file_count: length(all_media_files),
-        file_paths: Enum.map(all_media_files, & &1.path)
-      )
-
-      # Delete physical files from disk
-      {:ok, success_count, error_count} =
-        Mydia.Library.delete_media_files_from_disk(all_media_files)
-
-      Logger.info("Deleted #{success_count} files from disk (#{error_count} errors)",
-        media_item_id: media_item.id,
-        title: media_item.title
-      )
-    else
-      Logger.info("Skipping file deletion (delete_files=false)",
-        media_item_id: media_item.id,
-        title: media_item.title
-      )
-    end
+      else
+        []
+      end
 
     # Track event before deletion (we need the media_item data)
     actor_type = Keyword.get(opts, :actor_type, :system)
@@ -374,7 +385,36 @@ defmodule Mydia.Media do
     Events.media_item_removed(media_item, actor_type, actor_id)
 
     # Delete the media item (and cascade delete all related DB records)
-    Repo.delete(media_item)
+    case Repo.delete(media_item) do
+      {:ok, deleted} ->
+        {:ok, deleted, delete_files_from_disk(delete_files, all_media_files, media_item)}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  # Removes the given media files from disk after the record delete succeeded.
+  # Returns the number of files that could not be removed (0 when not deleting
+  # files), which callers surface to the user.
+  defp delete_files_from_disk(false, _media_files, _media_item), do: 0
+
+  defp delete_files_from_disk(true, media_files, media_item) do
+    Logger.info("Attempting to delete physical files",
+      media_item_id: media_item.id,
+      file_count: length(media_files),
+      file_paths: Enum.map(media_files, & &1.path)
+    )
+
+    {:ok, success_count, error_count} =
+      Mydia.Library.delete_media_files_from_disk(media_files)
+
+    Logger.info("Deleted #{success_count} files from disk (#{error_count} errors)",
+      media_item_id: media_item.id,
+      title: media_item.title
+    )
+
+    error_count
   end
 
   @doc """
@@ -478,46 +518,64 @@ defmodule Mydia.Media do
   Returns `{:ok, count}` where count is the number of deleted items,
   or `{:error, reason}` if the transaction fails.
 
-  When `:delete_files` is true, will delete all associated media files from disk
-  before removing the database records. When false (default), only removes database
-  records and preserves files on disk.
+  When `:delete_files` is true, the database records are deleted first and the
+  associated files are removed from disk afterwards (so a failed delete leaves
+  the disk untouched). When false (default), only removes database records and
+  preserves files on disk.
   """
-  @spec delete_media_items([binary()], keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @spec delete_media_items([binary()], keyword()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, term()}
   def delete_media_items(ids, opts \\ []) when is_list(ids) do
     delete_files = Keyword.get(opts, :delete_files, false)
 
-    Repo.transaction(fn ->
-      # If we need to delete files, load all media files first
-      if delete_files do
-        # Load all media items with their files
-        media_items =
+    result =
+      Repo.transaction(fn ->
+        # Load all media files into memory before deleting the records so their
+        # paths stay resolvable after the cascade delete.
+        all_media_files =
+          if delete_files do
+            MediaItem
+            |> where([m], m.id in ^ids)
+            |> preload(media_files: :library_path, episodes: [media_files: :library_path])
+            |> Repo.all()
+            |> Enum.flat_map(fn item ->
+              item.media_files ++ Enum.flat_map(item.episodes, & &1.media_files)
+            end)
+          else
+            []
+          end
+
+        # Delete the media items (and cascade delete all related DB records).
+        count =
           MediaItem
           |> where([m], m.id in ^ids)
-          |> preload([:media_files, episodes: :media_files])
-          |> Repo.all()
+          |> Repo.delete_all()
+          |> elem(0)
 
-        # Collect all media files from all items
-        all_media_files =
-          Enum.flat_map(media_items, fn item ->
-            item.media_files ++ Enum.flat_map(item.episodes, & &1.media_files)
-          end)
+        # Only after the records are gone do we remove the files from disk.
+        # error_count is the number of files that could not be removed.
+        error_count =
+          if delete_files do
+            {:ok, success_count, error_count} =
+              Mydia.Library.delete_media_files_from_disk(all_media_files)
 
-        # Delete physical files from disk
-        {:ok, success_count, error_count} =
-          Mydia.Library.delete_media_files_from_disk(all_media_files)
+            Logger.info(
+              "Batch deleted #{success_count} files from disk (#{error_count} errors)",
+              media_item_count: count
+            )
 
-        Logger.info(
-          "Batch deleted #{success_count} files from disk (#{error_count} errors)",
-          media_item_count: length(media_items)
-        )
-      end
+            error_count
+          else
+            0
+          end
 
-      # Delete the media items (and cascade delete all related DB records)
-      MediaItem
-      |> where([m], m.id in ^ids)
-      |> Repo.delete_all()
-      |> elem(0)
-    end)
+        {count, error_count}
+      end)
+
+    case result do
+      {:ok, {count, error_count}} -> {:ok, count, error_count}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -1006,19 +1064,15 @@ defmodule Mydia.Media do
     - `{:ok, media_item}` - Updated media item
     - `{:error, reason}` - Error reason
   """
-  @spec refresh_metadata(MediaItem.t()) :: {:ok, MediaItem.t()} | {:error, term()}
-  def refresh_metadata(%MediaItem{} = media_item) do
+  @spec refresh_metadata(MediaItem.t(), map() | nil) ::
+          {:ok, MediaItem.t()} | {:error, term()}
+  def refresh_metadata(%MediaItem{} = media_item, config \\ nil) do
     alias Mydia.Metadata
 
-    config = Metadata.default_relay_config()
+    config = config || Metadata.default_relay_config()
     media_type = if media_item.type == "tv_show", do: :tv_show, else: :movie
 
-    {provider_id, provider_source} =
-      cond do
-        media_item.tvdb_id -> {to_string(media_item.tvdb_id), :tvdb}
-        media_item.tmdb_id -> {to_string(media_item.tmdb_id), :tmdb}
-        true -> {nil, nil}
-      end
+    {provider_id, provider_source} = refresh_provider_preference(media_item)
 
     if is_nil(provider_id) do
       {:error, :missing_provider_id}
@@ -1049,6 +1103,29 @@ defmodule Mydia.Media do
       end
     end
   end
+
+  # Resolve the `{provider_id, provider_source}` a refresh should fetch from.
+  #
+  # `metadata_source` is the authoritative provenance recorded when an item was
+  # matched under per-library provider selection, so it wins even when a
+  # back-filled id for the other provider is also present (e.g. a TMDB-sourced
+  # show that carries a discovered `tvdb_id`). Only when it is absent do we fall
+  # back to the legacy TVDB-precedence rule (prefer `tvdb_id`, then `tmdb_id`).
+  defp refresh_provider_preference(%MediaItem{metadata_source: :tmdb, tmdb_id: tmdb_id})
+       when not is_nil(tmdb_id),
+       do: {to_string(tmdb_id), :tmdb}
+
+  defp refresh_provider_preference(%MediaItem{metadata_source: :tvdb, tvdb_id: tvdb_id})
+       when not is_nil(tvdb_id),
+       do: {to_string(tvdb_id), :tvdb}
+
+  defp refresh_provider_preference(%MediaItem{tvdb_id: tvdb_id}) when not is_nil(tvdb_id),
+    do: {to_string(tvdb_id), :tvdb}
+
+  defp refresh_provider_preference(%MediaItem{tmdb_id: tmdb_id}) when not is_nil(tmdb_id),
+    do: {to_string(tmdb_id), :tmdb}
+
+  defp refresh_provider_preference(%MediaItem{}), do: {nil, nil}
 
   @doc """
   Refreshes episodes for a TV show by fetching metadata and creating missing episodes.
@@ -1085,27 +1162,28 @@ defmodule Mydia.Media do
     season_monitoring = Keyword.get(opts, :season_monitoring, "all")
     config = Metadata.default_relay_config()
 
-    # Get provider ID - prefer tvdb_id for TV shows, fall back to tmdb_id
-    # Track the provider source so we route to the correct API
+    # Resolve the provider to fetch from. `metadata_source` (when set) is the
+    # authoritative provenance; only fall back to the legacy TVDB-precedence
+    # rule and the stored metadata provider_id when it is absent.
     {provider_id, provider_source} =
-      cond do
-        media_item.tvdb_id ->
-          {to_string(media_item.tvdb_id), :tvdb}
-
-        media_item.tmdb_id ->
-          {to_string(media_item.tmdb_id), :tmdb}
-
-        true ->
+      case refresh_provider_preference(media_item) do
+        {nil, nil} ->
           case media_item.metadata do
             %{"provider_id" => id} when is_binary(id) -> {id, :tmdb}
             _ -> {nil, nil}
           end
+
+        pair ->
+          pair
       end
 
-    # If we have a TMDB ID but no TVDB ID, try to discover the TVDB ID
-    # so we can use the preferred TVDB provider for TV shows
+    # If we have a TMDB ID but no TVDB ID, try to discover the TVDB ID so we can
+    # use the preferred TVDB provider for TV shows. Skip this when the show has
+    # an explicit `metadata_source` — a TMDB-sourced show must not be silently
+    # switched to TVDB on refresh.
     {provider_id, provider_source, media_item} =
-      if provider_source == :tmdb and is_nil(media_item.tvdb_id) do
+      if provider_source == :tmdb and is_nil(media_item.tvdb_id) and
+           is_nil(media_item.metadata_source) do
         maybe_discover_tvdb_id(media_item, provider_id, config)
       else
         {provider_id, provider_source, media_item}
@@ -1176,11 +1254,14 @@ defmodule Mydia.Media do
               tvdb_season_id =
                 if has_tvdb, do: Map.get(season, :tvdb_season_id), else: nil
 
+              # Use the configured language so the deleted key matches the one
+              # fetch_season_cached writes under (it now keys by configured
+              # language, not a hardcoded "en-US").
               cache_key =
                 Metadata.build_season_cache_key(
                   provider_id,
                   season.season_number,
-                  "en-US",
+                  Metadata.metadata_language(),
                   tvdb_season_id
                 )
 
@@ -1442,13 +1523,18 @@ defmodule Mydia.Media do
           end
       end
 
-    # Pass tvdb_season_id only if we have a tvdb_id (otherwise season IDs are TMDB)
+    # Pass tvdb_season_id only if we have a tvdb_id (otherwise season IDs are TMDB).
+    # Thread the show's original language so episode selection can fall back to it
+    # before English, matching the enricher path.
+    original_language = Metadata.LanguageCode.original_language_from(media_item.metadata)
+
     fetch_opts =
       if has_tvdb do
-        case Map.get(season, :tvdb_season_id) do
-          nil -> []
-          tvdb_season_id -> [tvdb_season_id: tvdb_season_id]
-        end
+        [
+          tvdb_season_id: Map.get(season, :tvdb_season_id),
+          original_language: original_language
+        ]
+        |> Enum.reject(fn {_key, value} -> is_nil(value) end)
       else
         []
       end
@@ -1485,7 +1571,7 @@ defmodule Mydia.Media do
 
   # Determines if a new episode should be monitored based on the media_item's monitoring preset.
   # This is used when creating new episodes during metadata refresh.
-  defp should_monitor_new_episode?(media_item, season_number, air_date) do
+  def should_monitor_new_episode?(media_item, season_number, air_date) do
     # If the media_item itself isn't monitored, don't monitor episodes
     if media_item.monitored do
       preset = media_item.monitoring_preset || :all
@@ -1647,19 +1733,6 @@ defmodule Mydia.Media do
   # Downloads are active if they haven't completed and haven't failed
   defp download_active?(download) do
     is_nil(download.completed_at) && is_nil(download.error_message)
-  end
-
-  # Serialize media item for hooks
-  defp serialize_media_item(%MediaItem{} = media_item) do
-    %{
-      id: media_item.id,
-      type: media_item.type,
-      title: media_item.title,
-      tmdb_id: media_item.tmdb_id,
-      year: media_item.year,
-      monitored: media_item.monitored,
-      metadata: media_item.metadata
-    }
   end
 
   ## Category Classification
@@ -1991,7 +2064,7 @@ defmodule Mydia.Media do
     end
   end
 
-  defp calculate_title_match_score(result, media_item) do
+  def calculate_title_match_score(result, media_item) do
     base_score = 0.5
     title_sim = title_similarity(result.title, media_item.title)
 
@@ -2026,12 +2099,12 @@ defmodule Mydia.Media do
     |> String.trim()
   end
 
-  defp exact_title_match?(result_title, search_title)
-       when is_binary(result_title) and is_binary(search_title) do
+  def exact_title_match?(result_title, search_title)
+      when is_binary(result_title) and is_binary(search_title) do
     normalize_title(result_title) == normalize_title(search_title)
   end
 
-  defp exact_title_match?(_result_title, _search_title), do: false
+  def exact_title_match?(_result_title, _search_title), do: false
 
   defp title_derivative_penalty(result_title, search_title)
        when is_binary(result_title) and is_binary(search_title) do
@@ -2050,14 +2123,14 @@ defmodule Mydia.Media do
 
   defp title_derivative_penalty(_result_title, _search_title), do: 0.0
 
-  defp year_matches?(result_year, nil), do: result_year != nil
-  defp year_matches?(nil, _media_year), do: false
+  def year_matches?(result_year, nil), do: result_year != nil
+  def year_matches?(nil, _media_year), do: false
 
-  defp year_matches?(result_year, media_year) when is_integer(result_year) do
+  def year_matches?(result_year, media_year) when is_integer(result_year) do
     abs(result_year - media_year) <= 1
   end
 
-  defp year_matches?(_result_year, _media_year), do: false
+  def year_matches?(_result_year, _media_year), do: false
 
   # Determines if we should skip refreshing season data based on the last refresh time
   defp should_skip_season_refresh?(%MediaItem{seasons_refreshed_at: nil}), do: false

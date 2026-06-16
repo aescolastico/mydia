@@ -46,16 +46,28 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     # Import retry tracking (displayed in Issues tab)
     :import_retry_count,
     :import_last_error,
+    :import_failure_reason,
+    :import_reported_path,
     :import_next_retry_at,
     :import_failed_at,
+    # Issues-tab path-mapping enrichment (computed in the LiveView; nil otherwise)
+    :path_mapping_suggestion,
+    :path_mapping_affected_count,
     # Stall-detection / progress tracking (mirrored from Download DB row)
     :last_progress_at,
     :last_known_bytes,
+    :last_observed_at,
+    :stalled_since,
     # Whether the torrent is currently present in its download client.
     # true  = client confirmed the torrent is there
     # false = client confirmed the torrent is gone
     # nil   = client unreachable; presence unknown
-    :in_client?
+    :in_client?,
+    # Whether a completed download is eligible for post-import re-match: exactly
+    # one non-trashed imported file (packs resolve to several and can't be
+    # re-matched as a unit). Computed per-tab in the LiveView; nil when not
+    # evaluated (e.g. queue/issues rows, where the action isn't offered).
+    :rematch_eligible?
   ]
 
   @type t :: %__MODULE__{
@@ -92,11 +104,18 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           imported_at: DateTime.t() | nil,
           import_retry_count: integer() | nil,
           import_last_error: String.t() | nil,
+          import_failure_reason: String.t() | nil,
+          import_reported_path: String.t() | nil,
           import_next_retry_at: DateTime.t() | nil,
           import_failed_at: DateTime.t() | nil,
+          path_mapping_suggestion: map() | nil,
+          path_mapping_affected_count: integer() | nil,
           last_progress_at: DateTime.t() | nil,
           last_known_bytes: integer() | nil,
-          in_client?: boolean() | nil
+          last_observed_at: DateTime.t() | nil,
+          stalled_since: DateTime.t() | nil,
+          in_client?: boolean() | nil,
+          rematch_eligible?: boolean() | nil
         }
 
   @doc """

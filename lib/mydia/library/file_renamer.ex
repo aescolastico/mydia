@@ -220,9 +220,10 @@ defmodule Mydia.Library.FileRenamer do
   """
   def build_quality_info(%MediaFile{} = file) do
     source =
-      cond do
-        file.metadata && file.metadata.source -> file.metadata.source
-        true -> nil
+      if file.metadata && file.metadata.source do
+        file.metadata.source
+      else
+        nil
       end
 
     QualityInfo.new(%{

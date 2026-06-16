@@ -1,6 +1,8 @@
 defmodule Mydia.SettingsTest do
   use Mydia.DataCase, async: false
 
+  import Mydia.SettingsFixtures
+
   alias Mydia.Settings
   alias Mydia.Settings.{QualityProfile, DefaultMetadataPreferences}
 
@@ -206,10 +208,17 @@ defmodule Mydia.SettingsTest do
         }
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok
@@ -350,10 +359,17 @@ defmodule Mydia.SettingsTest do
         ]
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok
@@ -404,10 +420,17 @@ defmodule Mydia.SettingsTest do
         ]
       }
 
+      # Restore the boot config on exit — deleting it would leave the rest of
+      # the suite running on get_env's default fallback instead.
+      original_runtime = Application.get_env(:mydia, :runtime_config)
       Application.put_env(:mydia, :runtime_config, runtime_config)
 
       on_exit(fn ->
-        Application.delete_env(:mydia, :runtime_config)
+        if original_runtime do
+          Application.put_env(:mydia, :runtime_config, original_runtime)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
       end)
 
       :ok
@@ -2662,6 +2685,113 @@ defmodule Mydia.SettingsTest do
         |> Enum.filter(&(&1.key == "media.default_quality_profile_id"))
 
       assert length(settings) == 1
+    end
+  end
+
+  describe "derive_tv_metadata_source/0" do
+    test "returns :tvdb when no series/mixed libraries exist" do
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "returns the source of a single series library" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
+    end
+
+    test "returns the source of a single mixed library" do
+      library_path_fixture(%{type: "mixed", tv_metadata_source: :tvdb})
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "returns the unanimous source across agreeing libraries" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      library_path_fixture(%{type: "mixed", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
+    end
+
+    test "returns nil when libraries disagree" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == nil
+    end
+
+    test "excludes disabled libraries from derivation" do
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb, disabled: true})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      assert Settings.derive_tv_metadata_source() == :tvdb
+    end
+
+    test "ignores movies libraries" do
+      library_path_fixture(%{type: "movies"})
+      library_path_fixture(%{type: "series", tv_metadata_source: :tmdb})
+      assert Settings.derive_tv_metadata_source() == :tmdb
+    end
+  end
+
+  describe "config_source/3" do
+    @env_var "MYDIA_TEST_CONFIG_SOURCE"
+
+    setup do
+      System.delete_env(@env_var)
+      on_exit(fn -> System.delete_env(@env_var) end)
+      :ok
+    end
+
+    test "returns :env when the environment variable is set" do
+      System.put_env(@env_var, "http://example:8191")
+      assert Settings.config_source(@env_var, "flaresolverr.url", %{}) == :env
+    end
+
+    test "returns :database when no env var but the key is in the prefetched map" do
+      all_db_settings = %{"flaresolverr.url" => %{value: "http://db:8191"}}
+      assert Settings.config_source(@env_var, "flaresolverr.url", all_db_settings) == :database
+    end
+
+    test "returns :default when neither env nor the map provides the key" do
+      assert Settings.config_source(@env_var, "flaresolverr.url", %{}) == :default
+    end
+
+    test "env takes precedence over a database row" do
+      System.put_env(@env_var, "http://example:8191")
+      all_db_settings = %{"flaresolverr.url" => %{value: "http://db:8191"}}
+      assert Settings.config_source(@env_var, "flaresolverr.url", all_db_settings) == :env
+    end
+  end
+
+  describe "upsert_config_setting/1" do
+    test "creates a row when the key is absent, persisting the supplied category" do
+      assert {:ok, setting} =
+               Settings.upsert_config_setting(%{
+                 key: "flaresolverr.url",
+                 value: "http://flaresolverr:8191",
+                 category: :flaresolverr
+               })
+
+      assert setting.key == "flaresolverr.url"
+      assert setting.value == "http://flaresolverr:8191"
+      assert setting.category == :flaresolverr
+    end
+
+    test "updates the existing row without creating a duplicate" do
+      {:ok, _} =
+        Settings.upsert_config_setting(%{
+          key: "flaresolverr.timeout",
+          value: "60000",
+          category: :flaresolverr
+        })
+
+      assert {:ok, updated} =
+               Settings.upsert_config_setting(%{
+                 key: "flaresolverr.timeout",
+                 value: "90000",
+                 category: :flaresolverr
+               })
+
+      assert updated.value == "90000"
+
+      assert [_only] =
+               Settings.list_config_settings()
+               |> Enum.filter(&(&1.key == "flaresolverr.timeout"))
     end
   end
 end

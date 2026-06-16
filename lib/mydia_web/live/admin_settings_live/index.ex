@@ -47,7 +47,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           validated_data_with_user =
             Map.put(validated_data, :updated_by_id, socket.assigns.current_user.id)
 
-          upsert_config_setting(validated_data_with_user)
+          Settings.upsert_config_setting(validated_data_with_user)
         else
           {:error, changeset}
         end
@@ -101,7 +101,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         {nil, nil} ->
           case Settings.get_config_setting_by_key(key) do
             nil -> "true"
-            setting -> to_string(!parse_boolean_value(setting.value))
+            setting -> to_string(!Settings.parse_setting_boolean(setting.value))
           end
 
         {nil, value} ->
@@ -121,7 +121,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       validated_data_with_user =
         Map.put(validated_data, :updated_by_id, socket.assigns.current_user.id)
 
-      case upsert_config_setting(validated_data_with_user) do
+      case Settings.upsert_config_setting(validated_data_with_user) do
         {:ok, _setting} ->
           {:noreply,
            socket
@@ -173,7 +173,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       validated_data_with_user =
         Map.put(validated_data, :updated_by_id, socket.assigns.current_user.id)
 
-      case upsert_config_setting(validated_data_with_user) do
+      case Settings.upsert_config_setting(validated_data_with_user) do
         {:ok, _setting} ->
           {:noreply,
            socket
@@ -220,7 +220,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
         Mydia.Config.Schema.defaults()
       end
 
-    flaresolverr = config.flaresolverr || %Mydia.Config.Schema.FlareSolverr{}
     metadata = config.metadata || %Mydia.Config.Schema.Metadata{}
 
     # Fetch all DB settings in one query to avoid N+1 per-key lookups
@@ -233,28 +232,28 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Port",
           type: :integer,
           value: config.server.port,
-          source: get_source("PORT", "server.port", all_db_settings)
+          source: Settings.config_source("PORT", "server.port", all_db_settings)
         },
         %{
           key: "server.host",
           label: "Host",
           type: :string,
           value: config.server.host,
-          source: get_source("HOST", "server.host", all_db_settings)
+          source: Settings.config_source("HOST", "server.host", all_db_settings)
         },
         %{
           key: "server.url_scheme",
           label: "URL Scheme",
           type: :string,
           value: config.server.url_scheme,
-          source: get_source("URL_SCHEME", "server.url_scheme", all_db_settings)
+          source: Settings.config_source("URL_SCHEME", "server.url_scheme", all_db_settings)
         },
         %{
           key: "server.url_host",
           label: "URL Host",
           type: :string,
           value: config.server.url_host,
-          source: get_source("URL_HOST", "server.url_host", all_db_settings)
+          source: Settings.config_source("URL_HOST", "server.url_host", all_db_settings)
         }
       ],
       "Database" => [
@@ -263,14 +262,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Database Path",
           type: :string,
           value: config.database.path,
-          source: get_source("DATABASE_PATH", "database.path", all_db_settings)
+          source: Settings.config_source("DATABASE_PATH", "database.path", all_db_settings)
         },
         %{
           key: "database.pool_size",
           label: "Pool Size",
           type: :integer,
           value: config.database.pool_size,
-          source: get_source("POOL_SIZE", "database.pool_size", all_db_settings)
+          source: Settings.config_source("POOL_SIZE", "database.pool_size", all_db_settings)
         }
       ],
       "Authentication" => [
@@ -279,14 +278,15 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Local Auth Enabled",
           type: :boolean,
           value: config.auth.local_enabled,
-          source: get_source("LOCAL_AUTH_ENABLED", "auth.local_enabled", all_db_settings)
+          source:
+            Settings.config_source("LOCAL_AUTH_ENABLED", "auth.local_enabled", all_db_settings)
         },
         %{
           key: "auth.oidc_enabled",
           label: "OIDC Enabled",
           type: :boolean,
           value: config.auth.oidc_enabled,
-          source: get_source("OIDC_ENABLED", "auth.oidc_enabled", all_db_settings)
+          source: Settings.config_source("OIDC_ENABLED", "auth.oidc_enabled", all_db_settings)
         }
       ],
       "Media" => [
@@ -295,14 +295,14 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           label: "Movies Path",
           type: :string,
           value: config.media.movies_path,
-          source: get_source("MOVIES_PATH", "media.movies_path", all_db_settings)
+          source: Settings.config_source("MOVIES_PATH", "media.movies_path", all_db_settings)
         },
         %{
           key: "media.tv_path",
           label: "TV Path",
           type: :string,
           value: config.media.tv_path,
-          source: get_source("TV_PATH", "media.tv_path", all_db_settings)
+          source: Settings.config_source("TV_PATH", "media.tv_path", all_db_settings)
         },
         %{
           key: "media.scan_interval_hours",
@@ -310,7 +310,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :integer,
           value: config.media.scan_interval_hours,
           source:
-            get_source("MEDIA_SCAN_INTERVAL_HOURS", "media.scan_interval_hours", all_db_settings)
+            Settings.config_source(
+              "MEDIA_SCAN_INTERVAL_HOURS",
+              "media.scan_interval_hours",
+              all_db_settings
+            )
         }
       ],
       "Metadata" => [
@@ -322,7 +326,8 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :string,
           value: metadata.language,
           placeholder: "en-US",
-          source: get_source("METADATA_LANGUAGE", "metadata.language", all_db_settings)
+          source:
+            Settings.config_source("METADATA_LANGUAGE", "metadata.language", all_db_settings)
         }
       ],
       "Downloads" => [
@@ -332,7 +337,7 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :integer,
           value: config.downloads.monitor_interval_minutes,
           source:
-            get_source(
+            Settings.config_source(
               "DOWNLOAD_MONITOR_INTERVAL_MINUTES",
               "downloads.monitor_interval_minutes",
               all_db_settings
@@ -371,7 +376,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :boolean,
           value: get_library_auto_repair_enabled(all_db_settings),
           source:
-            get_source("DATABASE_AUTO_REPAIR", "library.auto_repair_enabled", all_db_settings)
+            Settings.config_source(
+              "DATABASE_AUTO_REPAIR",
+              "library.auto_repair_enabled",
+              all_db_settings
+            )
         },
         %{
           key: "library.auto_repair_threshold",
@@ -380,48 +389,21 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           type: :integer,
           value: get_library_auto_repair_threshold(all_db_settings),
           source:
-            get_source(
+            Settings.config_source(
               "DATABASE_AUTO_REPAIR_THRESHOLD",
               "library.auto_repair_threshold",
               all_db_settings
             )
         }
-      ],
-      "FlareSolverr" => [
-        %{
-          key: "flaresolverr.enabled",
-          label: "Enabled",
-          type: :boolean,
-          value: flaresolverr.enabled,
-          source: get_source("FLARESOLVERR_ENABLED", "flaresolverr.enabled", all_db_settings)
-        },
-        %{
-          key: "flaresolverr.url",
-          label: "FlareSolverr URL",
-          type: :string,
-          value: flaresolverr.url || "",
-          source: get_source("FLARESOLVERR_URL", "flaresolverr.url", all_db_settings),
-          placeholder: "http://flaresolverr:8191"
-        },
-        %{
-          key: "flaresolverr.timeout",
-          label: "Timeout (ms)",
-          type: :integer,
-          value: flaresolverr.timeout,
-          source: get_source("FLARESOLVERR_TIMEOUT", "flaresolverr.timeout", all_db_settings)
-        },
-        %{
-          key: "flaresolverr.max_timeout",
-          label: "Max Timeout (ms)",
-          type: :integer,
-          value: flaresolverr.max_timeout,
-          source:
-            get_source("FLARESOLVERR_MAX_TIMEOUT", "flaresolverr.max_timeout", all_db_settings)
-        }
       ]
     }
   end
 
+  # Deliberately NOT Settings.config_source/3: crash reporting is a privacy
+  # toggle that inverts the global env > DB precedence. Mydia.CrashReporter.enabled?/0
+  # gives the UI/DB setting priority over CRASH_REPORTING_ENABLED so the operator's
+  # explicit opt-out always wins, so the source badge must report :database (not
+  # :env) whenever a DB row exists. Keep this in sync with CrashReporter.enabled?/0.
   defp crash_reporting_source(all_db_settings) do
     cond do
       Map.has_key?(all_db_settings, "crash_reporting.enabled") -> :database
@@ -435,11 +417,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       nil ->
         case System.get_env("CRASH_REPORTING_ENABLED") do
           nil -> false
-          value -> parse_boolean_value(value)
+          value -> Settings.parse_setting_boolean(value)
         end
 
       setting ->
-        parse_boolean_value(setting.value)
+        Settings.parse_setting_boolean(setting.value)
     end
   end
 
@@ -459,11 +441,11 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
             Application.get_env(:mydia, :database_auto_repair, true)
 
           setting ->
-            parse_boolean_value(setting.value)
+            Settings.parse_setting_boolean(setting.value)
         end
 
       value ->
-        parse_boolean_value(value)
+        Settings.parse_setting_boolean(value)
     end
   end
 
@@ -486,29 +468,6 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
           {int, ""} -> int
           _ -> 10
         end
-    end
-  end
-
-  # `"on"` is accepted because LiveView used to clobber phx-value-value with the
-  # checkbox's default `value="on"` for this toggle, and existing rows may
-  # still hold that string.
-  defp parse_boolean_value(value) when is_boolean(value), do: value
-  defp parse_boolean_value("true"), do: true
-  defp parse_boolean_value("1"), do: true
-  defp parse_boolean_value("yes"), do: true
-  defp parse_boolean_value("on"), do: true
-  defp parse_boolean_value(_), do: false
-
-  defp get_source(env_var_name, key, all_db_settings) do
-    cond do
-      env_var_name != nil and System.get_env(env_var_name) != nil ->
-        :env
-
-      Map.has_key?(all_db_settings, key) ->
-        :database
-
-      true ->
-        :default
     end
   end
 
@@ -542,26 +501,8 @@ defmodule MydiaWeb.AdminSettingsLive.Index do
       "Crash Reporting" -> :crash_reporting
       "Feedback" -> :feedback
       "Notifications" -> :notifications
-      "FlareSolverr" -> :flaresolverr
       "Library" -> :library
       _ -> :general
-    end
-  end
-
-  defp upsert_config_setting(attrs) do
-    attrs_map = if is_struct(attrs), do: Map.from_struct(attrs), else: attrs
-    key = Map.get(attrs_map, :key) || Map.get(attrs_map, "key")
-
-    string_attrs = %{
-      "key" => Map.get(attrs_map, :key),
-      "value" => Map.get(attrs_map, :value),
-      "category" => Map.get(attrs_map, :category),
-      "updated_by_id" => Map.get(attrs_map, :updated_by_id)
-    }
-
-    case Settings.get_config_setting_by_key(key) do
-      nil -> Settings.create_config_setting(string_attrs)
-      existing -> Settings.update_config_setting(existing, string_attrs)
     end
   end
 end

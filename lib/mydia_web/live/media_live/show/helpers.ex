@@ -239,6 +239,11 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
     EpisodeStatus.status_icon(status)
   end
 
+  @doc "Human-readable label for a TV metadata provider."
+  def provider_label(:tvdb), do: "TheTVDB"
+  def provider_label(:tmdb), do: "TMDB"
+  def provider_label(other), do: to_string(other)
+
   def episode_status_details(episode) do
     EpisodeStatus.status_details(episode)
   end
@@ -252,14 +257,12 @@ defmodule MydiaWeb.MediaLive.Show.Helpers do
     case episode.media_files do
       [_ | _] = files ->
         filenames =
-          files
-          |> Enum.map(fn file ->
+          Enum.map_join(files, "\n", fn file ->
             absolute_path = Mydia.Library.MediaFile.absolute_path(file)
             basename = Path.basename(absolute_path)
             resolution = file.resolution || "?"
             "• #{basename} (#{resolution})"
           end)
-          |> Enum.join("\n")
 
         "#{base_status}\n\nFiles:\n#{filenames}"
 
