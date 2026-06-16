@@ -964,7 +964,15 @@ jobs:
             cat appcast.xml
             exit 1
           fi
-          echo "appcast.xml passed publish-gate validation."
+
+          # Mirror the macOS-job check: sparkle:version must be the integer build
+          # number, or Sparkle never offers the update even though the release ships.
+          sparkle_version=$(sed -n 's#.*<sparkle:version>\(.*\)</sparkle:version>.*#\1#p' appcast.xml)
+          if ! printf '%s' "$sparkle_version" | grep -Eq '^[0-9]+$'; then
+            echo "::error::Refusing to publish: sparkle:version must be an integer build number, got '$sparkle_version'"
+            exit 1
+          fi
+          echo "appcast.xml passed publish-gate validation (sparkle:version=$sparkle_version)."
 
       - name: Upload release assets
         env:
