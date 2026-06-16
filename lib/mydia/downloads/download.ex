@@ -29,6 +29,8 @@ defmodule Mydia.Downloads.Download do
           import_failed_at: DateTime.t() | nil,
           last_progress_at: DateTime.t() | nil,
           last_known_bytes: integer(),
+          last_observed_at: DateTime.t() | nil,
+          stalled_since: DateTime.t() | nil,
           bytes_pulled: integer() | nil,
           media_item: Mydia.Media.MediaItem.t() | Ecto.Association.NotLoaded.t(),
           episode: Mydia.Media.Episode.t() | nil | Ecto.Association.NotLoaded.t(),
@@ -67,6 +69,15 @@ defmodule Mydia.Downloads.Download do
     # breaker to avoid polling stuck downloads forever.
     field :last_progress_at, :utc_datetime_usec
     field :last_known_bytes, :integer, default: 0
+
+    # Observation + soft-stall tracking. `last_observed_at` is the timestamp of
+    # the last poll in which this download was observed actively downloading; a
+    # gap since this value resets the stall clock (so an outage/restart can't
+    # false-stall a live torrent). `stalled_since` marks a recoverable soft
+    # stall, kept distinct from the terminal `import_failed_at` so the episode
+    # stays occupied until escalation. See `Mydia.Downloads.StallDetector`.
+    field :last_observed_at, :utc_datetime_usec
+    field :stalled_since, :utc_datetime_usec
 
     # Bytes streamed locally into staging by the debrid Fetcher (or any future
     # adapter that performs a separate post-completion local pull). Updated
@@ -140,6 +151,8 @@ defmodule Mydia.Downloads.Download do
       :import_failed_at,
       :last_progress_at,
       :last_known_bytes,
+      :last_observed_at,
+      :stalled_since,
       :bytes_pulled
     ])
     |> validate_required([:title])

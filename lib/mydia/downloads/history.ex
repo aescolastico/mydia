@@ -347,6 +347,8 @@ defmodule Mydia.Downloads.History do
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
       last_known_bytes: download.last_known_bytes,
+      last_observed_at: download.last_observed_at,
+      stalled_since: download.stalled_since,
       in_client?: true
     })
   end
@@ -393,6 +395,10 @@ defmodule Mydia.Downloads.History do
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
       last_known_bytes: download.last_known_bytes,
+      # Carry the persisted stall state through an outage so the LiveView can
+      # still render a soft-stall warning while the client is unreachable.
+      last_observed_at: download.last_observed_at,
+      stalled_since: download.stalled_since,
       # Client unreachable — presence indeterminate.
       in_client?: nil
     })
@@ -451,6 +457,8 @@ defmodule Mydia.Downloads.History do
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
       last_known_bytes: download.last_known_bytes,
+      last_observed_at: download.last_observed_at,
+      stalled_since: download.stalled_since,
       in_client?: in_client?
     })
   end
