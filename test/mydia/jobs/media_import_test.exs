@@ -3,8 +3,13 @@ defmodule Mydia.Jobs.MediaImportTest do
   use Oban.Testing, repo: Mydia.Repo
 
   alias Mydia.Jobs.MediaImport
+  alias Mydia.Library
   alias Mydia.Repo
   alias Mydia.Settings
+
+  # Scene-style source filename used by the auto_rename describe block; the
+  # standardized form differs from this, which is what those tests assert on.
+  @rename_scene_name "The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv"
   import Mydia.MediaFixtures
   import Mydia.DownloadsFixtures
 
@@ -875,18 +880,107 @@ defmodule Mydia.Jobs.MediaImportTest do
     end
   end
 
+  describe "auto_rename from library path" do
+    # MediaImport reads auto_rename from the resolved library path at execution
+    # time (process_import/3) and overrides rename_files accordingly, so the
+    # destination filename follows the library's policy rather than whatever the
+    # job was enqueued with.
+    @tag :tmp_dir
+    test "renames to the standardized format when the library path enables auto_rename",
+         %{tmp_dir: tmp_dir} do
+      {_lp, download, download_dir} =
+        seed_rename_import(tmp_dir, "RenameOnClient", "rename-on-1", true)
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      name = imported_basename()
+      assert is_binary(name), "expected an imported .mkv file, found none"
+      refute name == @rename_scene_name
+      assert name =~ "The Matrix (1999)"
+      assert String.ends_with?(name, ".mkv")
+    end
+
+    @tag :tmp_dir
+    test "keeps the original filename when the library path disables auto_rename, even if the job requested renaming",
+         %{tmp_dir: tmp_dir} do
+      {_lp, download, download_dir} =
+        seed_rename_import(tmp_dir, "RenameOffClient", "rename-off-1", false)
+
+      # Enqueue with rename_files: true to prove the library path's
+      # auto_rename: false overrides it at execution time.
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir,
+                 "rename_files" => true
+               })
+
+      assert imported_basename() == @rename_scene_name
+    end
+  end
+
   # Helper functions
 
-  defp create_test_library_path(base_path, type) do
+  defp seed_rename_import(tmp_dir, client_name, download_id, auto_rename) do
+    library_path = create_test_library_path(tmp_dir, :movies, auto_rename: auto_rename)
+
+    download_dir = Path.join(tmp_dir, "downloads")
+    File.mkdir_p!(download_dir)
+    File.write!(Path.join(download_dir, @rename_scene_name), "fake video content for rename test")
+
+    media_item = media_item_fixture(%{type: "movie", title: "The Matrix", year: 1999})
+
+    {:ok, _} =
+      Settings.create_download_client_config(%{
+        name: client_name,
+        type: :qbittorrent,
+        host: "nonexistent.invalid",
+        port: 9999,
+        username: "test",
+        password: "test",
+        enabled: true,
+        priority: 1
+      })
+
+    download =
+      download_fixture(%{
+        media_item_id: media_item.id,
+        title: "The.Matrix.1999.1080p.BluRay.x264-GROUP",
+        status: "completed",
+        completed_at: DateTime.utc_now(),
+        download_client: client_name,
+        download_client_id: download_id
+      })
+
+    {library_path, download, download_dir}
+  end
+
+  defp imported_basename do
+    Library.list_media_files()
+    |> Enum.find(&String.ends_with?(&1.relative_path, ".mkv"))
+    |> case do
+      nil -> nil
+      media_file -> Path.basename(media_file.relative_path)
+    end
+  end
+
+  defp create_test_library_path(base_path, type, opts \\ []) do
     library_path = Path.join(base_path, "library")
     File.mkdir_p!(library_path)
 
-    {:ok, path_record} =
-      Settings.create_library_path(%{
-        path: library_path,
-        type: type,
-        monitored: true
-      })
+    attrs = %{path: library_path, type: type, monitored: true}
+
+    attrs =
+      case Keyword.fetch(opts, :auto_rename) do
+        {:ok, value} -> Map.put(attrs, :auto_rename, value)
+        :error -> attrs
+      end
+
+    {:ok, path_record} = Settings.create_library_path(attrs)
 
     path_record
   end
