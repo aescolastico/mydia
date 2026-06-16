@@ -1146,7 +1146,15 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   defp sort_name(download), do: String.downcase(get_display_title(download) || "")
 
-  defp status_rank(download), do: Map.get(@status_rank, download.status, 99)
+  defp status_rank(download) do
+    # Stall state overrides the client status for sorting: a soft-stall groups
+    # with warnings, a terminal stall failure groups with errors.
+    cond do
+      stalled?(download) -> Map.fetch!(@status_rank, "failed")
+      soft_stalled?(download) -> Map.fetch!(@status_rank, "stalled")
+      true -> Map.get(@status_rank, download.status, 99)
+    end
+  end
 
   # ETA may be nil, an integer (seconds remaining), or a DateTime. Normalize to
   # an integer so a single comparator works; nil sorts last (soonest first).
@@ -1262,6 +1270,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "queued" -> "badge-info"
       "paused" -> "badge-warning"
       "stalled" -> "badge-warning"
+      "stall_failed" -> "badge-error"
       _ -> "badge-ghost"
     end
   end
@@ -1299,24 +1308,49 @@ defmodule MydiaWeb.DownloadsLive.Index do
   # green) client status.
   defp row_status_dot_class(_download, :failed), do: "status-error"
   defp row_status_dot_class(_download, :retrying), do: "status-warning"
-  defp row_status_dot_class(download, nil), do: status_dot_class(download.status)
+
+  defp row_status_dot_class(download, nil) do
+    # A soft-stall keeps import_failed_at nil (so import_issue is nil), but the
+    # row should still read as a warning rather than a healthy green.
+    if soft_stalled?(download) do
+      "status-warning"
+    else
+      status_dot_class(download.status)
+    end
+  end
 
   defp import_issue_label(:failed), do: "Import failed"
   defp import_issue_label(:retrying), do: "Import retrying"
 
   @doc false
-  # Returns `{class, label}` for the download's status badge.
-  # When the download has been flagged stalled by `DownloadMonitor` (see #126),
-  # we override the underlying client status with a yellow "Stalled" badge so
-  # the user can tell at a glance that progress has stopped.
-  defp status_badge(download) do
-    if stalled?(download) do
-      {status_badge_class("stalled"), "Stalled"}
-    else
-      {status_badge_class(download.status), String.capitalize(download.status)}
+  # Returns `{class, label}` for the download's status badge. A stall has two
+  # distinct states (see DownloadMonitor stall-resilience rework):
+  #
+  #   * soft-stall — recoverable warning; progress has stopped but the download
+  #     still occupies its episode and may auto-clear. Yellow "Stalled" badge.
+  #   * terminal stall failure — escalated past the longer threshold; the
+  #     episode has been released for re-search. Red "Stall failed" badge.
+  def status_badge(download) do
+    cond do
+      soft_stalled?(download) ->
+        {status_badge_class("stalled"), "Stalled"}
+
+      stalled?(download) ->
+        {status_badge_class("stall_failed"), "Stall failed"}
+
+      true ->
+        {status_badge_class(download.status), String.capitalize(download.status)}
     end
   end
 
+  # A recoverable soft-stall: `stalled_since` set but not yet escalated to a
+  # terminal `import_failed_at` failure.
+  defp soft_stalled?(download) do
+    not is_nil(download.stalled_since) and is_nil(download.import_failed_at)
+  end
+
+  # A terminal stall failure: escalated to `import_failed_at` with a stalled
+  # message.
   defp stalled?(download) do
     not is_nil(download.import_failed_at) and
       Mydia.Downloads.StallDetector.stalled?(download.import_last_error)
