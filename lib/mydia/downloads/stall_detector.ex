@@ -1,7 +1,7 @@
 defmodule Mydia.Downloads.StallDetector do
   @moduledoc """
   Pure progress-tracking logic for the `DownloadMonitor` stall-detection circuit
-  breaker (see issue #126 and the 2026-06-16 stall-resilience rework).
+  breaker (see issue #126).
 
   The stall clock only accrues over *observed, actively-downloading* time. On
   each poll cycle the monitor passes in the download's persisted progress state
@@ -118,14 +118,14 @@ defmodule Mydia.Downloads.StallDetector do
 
       # Observation gap — the download was not observed for a stretch (outage,
       # restart, paused/queued). Reset the baseline rather than attribute the
-      # gap to a stall, and clear any in-flight soft-stall (R2/R3).
+      # gap to a stall, and clear any in-flight soft-stall.
       is_nil(last_observed_at) or
           DateTime.diff(now, last_observed_at, :second) > gap_threshold_seconds ->
         {:reset, now}
 
       # Bytes changed — progress (or a regression from a client restart). Either
       # way reset the clock so we never false-trip the stall window, and
-      # auto-clear an in-flight soft-stall (R7).
+      # auto-clear an in-flight soft-stall.
       observed_bytes != known ->
         {:progress, observed_bytes, now}
 

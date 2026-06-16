@@ -1150,8 +1150,8 @@ defmodule MydiaWeb.DownloadsLive.Index do
     # Stall state overrides the client status for sorting: a soft-stall groups
     # with warnings, a terminal stall failure groups with errors.
     cond do
-      stalled?(download) -> Map.fetch!(@status_rank, "failed")
       soft_stalled?(download) -> Map.fetch!(@status_rank, "stalled")
+      stalled?(download) -> Map.fetch!(@status_rank, "failed")
       true -> Map.get(@status_rank, download.status, 99)
     end
   end

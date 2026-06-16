@@ -41,14 +41,14 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
   # A soft-stall escalates to a terminal failure only after it has persisted for
   # `grace_minutes × @stall_escalation_multiplier` (default 60 × 3 = 180 min).
-  # A dedicated per-client knob is deferred (see plan KTD5).
+  # A dedicated per-client knob is deferred.
   @stall_escalation_multiplier 3
 
   # An observation gap larger than this resets the stall clock instead of
   # accruing stall time — covers client outages, Mydia restarts, and torrents
   # that sat paused/queued. 360s is ~3 cron cycles at the 120s DownloadMonitor
   # interval; the 15s adaptive fast-followup chain keeps live polling well
-  # inside this window (see plan KTD6).
+  # inside this window.
   @observation_gap_seconds 360
 
   # Adaptive polling: when downloads are actively running, the cron plugin's
@@ -112,7 +112,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
     # Active downloads we should track for stall detection. Only genuinely
     # *downloading* torrents accrue stall time — paused/queued/checking/seeding
     # are not observed, so their stale clock is neutralised by the gap reset on
-    # resume (plan KTD4, R4). Terminal rows (import_failed_at set) stay excluded
+    # resume. Terminal rows (import_failed_at set) stay excluded
     # so an escalated stall isn't re-evaluated; soft-stalled rows keep
     # import_failed_at nil and so remain in the set for auto-clear/escalation.
     active_for_stall_check =
@@ -480,7 +480,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
   # Iterate active downloads and apply the StallDetector decision. Returns the
   # number of downloads newly entering a stalled state (soft-stall or escalation)
   # this poll. Every observed download has `last_observed_at` stamped to `now`
-  # regardless of decision (plan KTD7).
+  # regardless of decision.
   defp check_progress(active_downloads, grace_map, now) do
     Enum.reduce(active_downloads, 0, fn download, stalled_acc ->
       grace = grace_minutes_for(download.download_client, grace_map)
@@ -504,7 +504,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
   end
 
   # No stall transition, but still record that we observed this download now so
-  # the gap reset doesn't fire on the next poll (plan KTD7). This also lets a
+  # the gap reset doesn't fire on the next poll. This also lets a
   # held soft-stall mature toward escalation without self-resetting.
   defp apply_progress_decision(download, :no_change, now) do
     update_progress(download, %{last_observed_at: now})
@@ -546,7 +546,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
   end
 
   # A recoverable soft-stall: keep `import_failed_at` nil so the episode stays
-  # occupied (plan KTD2), record `stalled_since`, and emit a warning event.
+  # occupied, record `stalled_since`, and emit a warning event.
   defp apply_progress_decision(download, {:soft_stall, message, now}, _now) do
     Logger.warning("Download soft-stalled — no progress within grace window",
       download_id: download.id,
@@ -614,7 +614,7 @@ defmodule Mydia.Jobs.DownloadMonitor do
   end
 
   # Persist a progress/reset decision that clears any in-flight soft-stall,
-  # emitting a recovery event only when a soft-stall was actually cleared (R10).
+  # emitting a recovery event only when a soft-stall was actually cleared.
   defp apply_recovery(download, attrs) do
     if is_nil(download.stalled_since) do
       update_progress(download, attrs)
