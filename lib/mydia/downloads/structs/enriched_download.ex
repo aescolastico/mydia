@@ -56,6 +56,8 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
     # Stall-detection / progress tracking (mirrored from Download DB row)
     :last_progress_at,
     :last_known_bytes,
+    :last_observed_at,
+    :stalled_since,
     # Whether the torrent is currently present in its download client.
     # true  = client confirmed the torrent is there
     # false = client confirmed the torrent is gone
@@ -110,6 +112,8 @@ defmodule Mydia.Downloads.Structs.EnrichedDownload do
           path_mapping_affected_count: integer() | nil,
           last_progress_at: DateTime.t() | nil,
           last_known_bytes: integer() | nil,
+          last_observed_at: DateTime.t() | nil,
+          stalled_since: DateTime.t() | nil,
           in_client?: boolean() | nil,
           rematch_eligible?: boolean() | nil
         }
