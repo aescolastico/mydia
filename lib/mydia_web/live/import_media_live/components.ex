@@ -253,8 +253,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
             class="progress progress-secondary w-full"
             value={@match_progress.matched}
             max={@match_progress.total}
-          >
-          </progress>
+          ></progress>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md">
@@ -325,8 +324,7 @@ defmodule MydiaWeb.ImportMediaLive.Components do
             class="progress progress-primary w-full"
             value={@import_progress.current}
             max={@import_progress.total}
-          >
-          </progress>
+          ></progress>
           <p class="text-sm text-base-content/60 mt-2">
             {@import_progress.current} / {@import_progress.total} files
           </p>

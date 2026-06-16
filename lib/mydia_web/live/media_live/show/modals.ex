@@ -481,8 +481,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                   class="progress progress-primary flex-1"
                   value={@download_details.progress}
                   max="100"
-                >
-                </progress>
+                ></progress>
                 <span class="text-sm font-mono">{format_progress(@download_details.progress)}%</span>
               </div>
             </div>
@@ -910,8 +909,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                         phx-value-quality={get_search_quality_badge(result) || "Unknown"}
                         title="Download this release"
                       >
-                        <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline">
-                        </span>
+                        <span class="loading loading-spinner loading-xs hidden group-[.phx-click-loading]/dl:inline"></span>
                         <.icon
                           name="hero-arrow-down-tray"
                           class="w-4 h-4 group-[.phx-click-loading]/dl:hidden"
@@ -1343,8 +1341,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             class="w-full h-full"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowfullscreen
-          >
-          </iframe>
+          ></iframe>
         </div>
       </div>
       <div class="modal-backdrop bg-black/80" phx-click="hide_trailer_modal"></div>

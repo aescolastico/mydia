@@ -294,8 +294,7 @@ defmodule MydiaWeb.AdminRemoteAccessLive.Components do
                             <span class="badge badge-error badge-xs">Revoked</span>
                           <% else %>
                             <%= if recent_activity?(device.last_seen_at) do %>
-                              <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0">
-                              </span>
+                              <span class="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0"></span>
                             <% end %>
                           <% end %>
                         </div>

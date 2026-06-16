@@ -84,15 +84,15 @@ defmodule MydiaWeb.Layouts do
             <.theme_toggle />
           </div>
         </header>
-        
-    <!-- Main content area -->
+
+        <!-- Main content area -->
         <main class="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 lg:p-8 pb-20 lg:pb-8">
           {render_slot(@inner_block)}
         </main>
         <.mobile_dock current_user={@current_user} current_path={@current_path} />
       </div>
-      
-    <!-- Sidebar -->
+
+      <!-- Sidebar -->
       <div class="drawer-side z-40 min-h-screen">
         <label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
 
@@ -114,8 +114,8 @@ defmodule MydiaWeb.Layouts do
               </a>
             </div>
           </div>
-          
-    <!-- Navigation menu -->
+
+          <!-- Navigation menu -->
           <nav class="flex-1 overflow-y-auto">
             <ul class="menu w-full space-y-1 px-2 py-4">
               <li>
@@ -325,8 +325,8 @@ defmodule MydiaWeb.Layouts do
               <% end %>
             </ul>
           </nav>
-          
-    <!-- Running jobs status -->
+
+          <!-- Running jobs status -->
           <%= if @executing_jobs != [] do %>
             <div class="px-4 py-2 border-t border-base-content/10">
               <div class="bg-base-200 rounded-lg p-2">
@@ -346,8 +346,8 @@ defmodule MydiaWeb.Layouts do
               </div>
             </div>
           <% end %>
-          
-    <!-- User menu at bottom -->
+
+          <!-- User menu at bottom -->
           <div class="space-y-3 p-4 border-t border-base-300">
             <button
               :if={@feedback_enabled?}
@@ -408,8 +408,8 @@ defmodule MydiaWeb.Layouts do
                 </li>
               </ul>
             </div>
-            
-    <!-- Theme toggle (desktop only) -->
+
+            <!-- Theme toggle (desktop only) -->
             <div class="hidden lg:flex justify-center">
               <.theme_toggle id="theme-toggle-sidebar" />
             </div>
