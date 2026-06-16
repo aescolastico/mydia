@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../../graphql/mutations/update_movie_progress.graphql.dart';
 import '../../graphql/mutations/update_episode_progress.graphql.dart';
+import 'duration_override.dart';
 
 /// Service for syncing playback progress to the server.
 ///
@@ -69,26 +70,43 @@ class ProgressService {
     await _syncEpisodeProgress(player, episodeId);
   }
 
+  /// Resolves the position/duration to sync, preferring the authoritative
+  /// [DurationOverride] over the player's live duration.
+  ///
+  /// During HLS transcode the player reports a partial, still-growing
+  /// duration (the playlist is built incrementally and the transcoder runs
+  /// faster than realtime). Computing progress against it inflates the
+  /// completion percentage — a few seconds of playback can read as ~30%.
+  /// The override carries the true full media duration.
+  ///
+  /// Returns null when the data isn't valid to sync yet: duration unknown
+  /// (still loading, failed load, error state — the server requires
+  /// duration > 0), or position out of range.
+  static ({int positionSeconds, int durationSeconds})? resolveSync(
+    Duration position,
+    Duration playerDuration,
+  ) {
+    final duration = DurationOverride.getDuration(playerDuration).inSeconds;
+    final pos = position.inSeconds;
+
+    if (duration <= 0) return null;
+    if (pos < 0 || pos > duration) return null;
+
+    return (positionSeconds: pos, durationSeconds: duration);
+  }
+
   Future<void> _syncMovieProgress(
     Player player,
     String movieId,
   ) async {
-    final position = player.state.position.inSeconds;
-    final duration = player.state.duration.inSeconds;
-
-    // Skip if duration not yet available or invalid (server requires duration > 0)
-    // This can happen when:
-    // - Media is still loading
-    // - Media failed to load (e.g., invalid URL scheme like p2p://)
-    // - Player is in an error state
-    if (duration <= 0) {
-      debugPrint('[ProgressService] Skipping movie sync: duration=$duration (invalid)');
-      return;
-    }
-
-    // Additional sanity check: position should be within valid range
-    if (position < 0 || position > duration) {
-      debugPrint('[ProgressService] Skipping movie sync: position=$position out of range (0-$duration)');
+    final progress = resolveSync(player.state.position, player.state.duration);
+    if (progress == null) {
+      debugPrint(
+        '[ProgressService] Skipping movie sync: invalid position/duration '
+        '(position=${player.state.position.inSeconds}s, '
+        'playerDuration=${player.state.duration.inSeconds}s, '
+        'resolvedDuration=${DurationOverride.getDuration(player.state.duration).inSeconds}s)',
+      );
       return;
     }
 
@@ -101,20 +119,14 @@ class ProgressService {
     try {
       _lastSyncTime = DateTime.now();
 
-      debugPrint('[ProgressService] Syncing movie progress: movieId=$movieId, position=$position, duration=$duration');
-
-      // Final safety check - never send invalid duration
-      if (duration <= 0) {
-        debugPrint('[ProgressService] UNEXPECTED: duration=$duration after checks, aborting');
-        return;
-      }
+      debugPrint('[ProgressService] Syncing movie progress: movieId=$movieId, position=${progress.positionSeconds}, duration=${progress.durationSeconds}');
 
       final options = MutationOptions(
         document: documentNodeMutationUpdateMovieProgress,
         variables: Variables$Mutation$UpdateMovieProgress(
           movieId: movieId,
-          positionSeconds: position,
-          durationSeconds: duration,
+          positionSeconds: progress.positionSeconds,
+          durationSeconds: progress.durationSeconds,
         ).toJson(),
       );
 
@@ -134,22 +146,14 @@ class ProgressService {
     Player player,
     String episodeId,
   ) async {
-    final position = player.state.position.inSeconds;
-    final duration = player.state.duration.inSeconds;
-
-    // Skip if duration not yet available or invalid (server requires duration > 0)
-    // This can happen when:
-    // - Media is still loading
-    // - Media failed to load (e.g., invalid URL scheme like p2p://)
-    // - Player is in an error state
-    if (duration <= 0) {
-      debugPrint('[ProgressService] Skipping episode sync: duration=$duration (invalid)');
-      return;
-    }
-
-    // Additional sanity check: position should be within valid range
-    if (position < 0 || position > duration) {
-      debugPrint('[ProgressService] Skipping episode sync: position=$position out of range (0-$duration)');
+    final progress = resolveSync(player.state.position, player.state.duration);
+    if (progress == null) {
+      debugPrint(
+        '[ProgressService] Skipping episode sync: invalid position/duration '
+        '(position=${player.state.position.inSeconds}s, '
+        'playerDuration=${player.state.duration.inSeconds}s, '
+        'resolvedDuration=${DurationOverride.getDuration(player.state.duration).inSeconds}s)',
+      );
       return;
     }
 
@@ -162,20 +166,14 @@ class ProgressService {
     try {
       _lastSyncTime = DateTime.now();
 
-      debugPrint('[ProgressService] Syncing episode progress: episodeId=$episodeId, position=$position, duration=$duration');
-
-      // Final safety check - never send invalid duration
-      if (duration <= 0) {
-        debugPrint('[ProgressService] UNEXPECTED: duration=$duration after checks, aborting');
-        return;
-      }
+      debugPrint('[ProgressService] Syncing episode progress: episodeId=$episodeId, position=${progress.positionSeconds}, duration=${progress.durationSeconds}');
 
       final options = MutationOptions(
         document: documentNodeMutationUpdateEpisodeProgress,
         variables: Variables$Mutation$UpdateEpisodeProgress(
           episodeId: episodeId,
-          positionSeconds: position,
-          durationSeconds: duration,
+          positionSeconds: progress.positionSeconds,
+          durationSeconds: progress.durationSeconds,
         ).toJson(),
       );
 
@@ -196,9 +194,10 @@ class ProgressService {
   /// Returns true if position is >= 90% of duration.
   bool isWatched(Player player) {
     final position = player.state.position.inSeconds;
-    final duration = player.state.duration.inSeconds;
+    final duration =
+        DurationOverride.getDuration(player.state.duration).inSeconds;
 
-    if (duration == 0) return false;
+    if (duration <= 0) return false;
 
     return (position / duration) >= _watchedThreshold;
   }

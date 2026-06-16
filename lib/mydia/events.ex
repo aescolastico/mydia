@@ -608,6 +608,86 @@ defmodule Mydia.Events do
   end
 
   @doc """
+  Records a download.stalled event — a recoverable *soft* stall detected by the
+  `DownloadMonitor`. Unlike `download_failed/3` this is a warning: the download
+  keeps occupying its episode and may auto-clear on resumed progress.
+
+  ## Parameters
+    - `download` - The Download struct
+    - `message` - The stall message describing the soft-stall
+    - `opts` - Additional options (e.g., media_item for context)
+  """
+  def download_stalled(download, message, opts \\ []) do
+    media_item = opts[:media_item]
+
+    {resource_type, resource_id} =
+      if media_item do
+        {"media_item", media_item.id}
+      else
+        {"download", download.id}
+      end
+
+    metadata =
+      %{
+        "title" => download.title,
+        "download_client" => download.download_client,
+        "message" => message,
+        "download_id" => download.id
+      }
+      |> maybe_add_media_context(media_item)
+
+    create_event_async(%{
+      category: "downloads",
+      type: "download.stalled",
+      actor_type: :system,
+      actor_id: "download_monitor",
+      resource_type: resource_type,
+      resource_id: resource_id,
+      severity: :warning,
+      metadata: metadata
+    })
+  end
+
+  @doc """
+  Records a download.unstalled event — a soft-stall that recovered (the client
+  reported progress, or an observation-gap reset cleared the stall). Ensures a
+  recovered stall does not leave a `download.stalled` event as the last word.
+
+  ## Parameters
+    - `download` - The Download struct
+    - `opts` - Additional options (e.g., media_item for context)
+  """
+  def download_unstalled(download, opts \\ []) do
+    media_item = opts[:media_item]
+
+    {resource_type, resource_id} =
+      if media_item do
+        {"media_item", media_item.id}
+      else
+        {"download", download.id}
+      end
+
+    metadata =
+      %{
+        "title" => download.title,
+        "download_client" => download.download_client,
+        "download_id" => download.id
+      }
+      |> maybe_add_media_context(media_item)
+
+    create_event_async(%{
+      category: "downloads",
+      type: "download.unstalled",
+      actor_type: :system,
+      actor_id: "download_monitor",
+      resource_type: resource_type,
+      resource_id: resource_id,
+      severity: :info,
+      metadata: metadata
+    })
+  end
+
+  @doc """
   Records a download.cancelled event.
 
   ## Parameters

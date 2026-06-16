@@ -7,6 +7,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
   alias Mydia.Media
   alias Phoenix.PubSub
   alias MydiaWeb.Live.Authorization
+  import MydiaWeb.Formatters
 
   @items_per_page 50
 
@@ -275,6 +276,43 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
         {:error, _changeset} ->
           {:noreply, put_flash(socket, :error, "Failed to update download")}
+      end
+    else
+      {:unauthorized, socket} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event(
+        "apply_mapping_and_retry",
+        %{"remote_prefix" => remote_prefix, "local_prefix" => local_prefix},
+        socket
+      ) do
+    # Persisting a global mapping affects all future imports, so this requires
+    # admin rights — matching the Path Mappings admin page — even though
+    # single-download retries only need manage-downloads.
+    with :ok <-
+           Authorization.authorize(
+             socket,
+             &Mydia.Accounts.Authorization.is_admin?/1,
+             "Admin access required to add a path mapping"
+           ) do
+      case Mydia.Settings.create_path_mapping_config(%{
+             remote_prefix: remote_prefix,
+             local_prefix: local_prefix
+           }) do
+        {:ok, mapping} ->
+          count = retry_mismatches_under_prefix(mapping.remote_prefix)
+
+          {:noreply,
+           socket
+           |> put_flash(
+             :info,
+             "Mapping added. Retrying #{count} affected download#{if count == 1, do: "", else: "s"}."
+           )
+           |> load_downloads()}
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          {:noreply, put_flash(socket, :error, mapping_error_message(changeset))}
       end
     else
       {:unauthorized, socket} -> {:noreply, socket}
@@ -862,10 +900,12 @@ defmodule MydiaWeb.DownloadsLive.Index do
     unresolved = Enum.filter(all_downloads, fn d -> d.match_status == "unresolved_files" end)
 
     other =
-      Enum.filter(all_downloads, fn d ->
+      all_downloads
+      |> Enum.filter(fn d ->
         (d.status in ["failed", "missing"] || not is_nil(d.import_failed_at)) and
           d.match_status not in ["unmatched", "unresolved_files"]
       end)
+      |> enrich_path_mapping_suggestions()
 
     counts = %{
       unmatched: length(unmatched),
@@ -893,6 +933,106 @@ defmodule MydiaWeb.DownloadsLive.Index do
     |> stream(:unmatched_downloads, unmatched, reset: true)
     |> stream(:unresolved_downloads, unresolved, reset: true)
     |> stream(:other_issues, other, reset: true)
+  end
+
+  # Re-enqueue every failed mismatch download whose reported path is under the
+  # applied prefix, clearing its import-failure fields. Oban uniqueness keyed on
+  # download_id skips any import already in flight. Returns the count.
+  defp retry_mismatches_under_prefix(remote_prefix) do
+    downloads = Downloads.list_path_mapping_mismatches_under_prefix(remote_prefix)
+
+    Enum.each(downloads, fn download ->
+      case Downloads.update_download(download, %{
+             import_retry_count: 0,
+             import_last_error: nil,
+             import_failure_reason: nil,
+             import_reported_path: nil,
+             import_next_retry_at: nil,
+             import_failed_at: nil
+           }) do
+        {:ok, updated} ->
+          %{
+            "download_id" => updated.id,
+            "save_path" => nil,
+            "cleanup_client" => true,
+            "use_hardlinks" => true,
+            "move_files" => false
+          }
+          # MediaImport declares worker-level uniqueness keyed on download_id,
+          # so an import already queued/running for this download is not
+          # double-enqueued.
+          |> Mydia.Jobs.MediaImport.new()
+          |> Oban.insert()
+
+        {:error, _changeset} ->
+          :ok
+      end
+    end)
+
+    length(downloads)
+  end
+
+  defp mapping_error_message(changeset) do
+    case changeset.errors[:remote_prefix] do
+      {_msg, [{:constraint, :unique} | _]} ->
+        "A mapping for this path already exists. Edit it on the Path Mappings page."
+
+      _ ->
+        "Couldn't add the mapping: " <>
+          (Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
+           |> Enum.map_join("; ", fn {field, msgs} -> "#{field} #{Enum.join(msgs, ", ")}" end))
+    end
+  end
+
+  # For downloads classified as a path-mapping mismatch, compute a suggested
+  # remote→local mapping (from the persisted reported path) and the number of
+  # downloads a one-click apply would re-run. Mount roots are detected once for
+  # the whole batch.
+  defp enrich_path_mapping_suggestions(downloads) do
+    if Enum.any?(downloads, &(&1.import_failure_reason == "path_mapping_mismatch")) do
+      roots = Mydia.Library.MountRoots.detect()
+
+      {enriched, _affected_cache} =
+        Enum.map_reduce(downloads, %{}, fn d, affected_cache ->
+          if d.import_failure_reason == "path_mapping_mismatch" and
+               is_binary(d.import_reported_path) do
+            suggestion =
+              case Mydia.Library.PathMapping.suggest(d.import_reported_path, roots) do
+                {:ok, mapping} -> mapping
+                :none -> nil
+              end
+
+            {affected, affected_cache} =
+              if suggestion do
+                Map.get_and_update(affected_cache, suggestion.remote_prefix, fn
+                  nil ->
+                    count =
+                      length(
+                        Downloads.list_path_mapping_mismatches_under_prefix(
+                          suggestion.remote_prefix
+                        )
+                      )
+
+                    {count, count}
+
+                  count ->
+                    {count, count}
+                end)
+              else
+                {nil, affected_cache}
+              end
+
+            {%{d | path_mapping_suggestion: suggestion, path_mapping_affected_count: affected},
+             affected_cache}
+          else
+            {d, affected_cache}
+          end
+        end)
+
+      enriched
+    else
+      downloads
+    end
   end
 
   defp submit_match(socket, media_item_id, episode_id) do
@@ -1006,7 +1146,15 @@ defmodule MydiaWeb.DownloadsLive.Index do
 
   defp sort_name(download), do: String.downcase(get_display_title(download) || "")
 
-  defp status_rank(download), do: Map.get(@status_rank, download.status, 99)
+  defp status_rank(download) do
+    # Stall state overrides the client status for sorting: a soft-stall groups
+    # with warnings, a terminal stall failure groups with errors.
+    cond do
+      soft_stalled?(download) -> Map.fetch!(@status_rank, "stalled")
+      stalled?(download) -> Map.fetch!(@status_rank, "failed")
+      true -> Map.get(@status_rank, download.status, 99)
+    end
+  end
 
   # ETA may be nil, an integer (seconds remaining), or a DateTime. Normalize to
   # an integer so a single comparator works; nil sorts last (soonest first).
@@ -1086,9 +1234,6 @@ defmodule MydiaWeb.DownloadsLive.Index do
     end
   end
 
-  defp format_progress(nil), do: 0.0
-  defp format_progress(progress), do: Float.round(progress * 1.0, 1)
-
   # A percentage is only meaningful when the client is reporting a real
   # byte-for-byte transfer. Provider-side waits — debrid magnet conversion,
   # queueing for a download slot ("queued"), or remote packaging
@@ -1125,6 +1270,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
       "queued" -> "badge-info"
       "paused" -> "badge-warning"
       "stalled" -> "badge-warning"
+      "stall_failed" -> "badge-error"
       _ -> "badge-ghost"
     end
   end
@@ -1162,24 +1308,54 @@ defmodule MydiaWeb.DownloadsLive.Index do
   # green) client status.
   defp row_status_dot_class(_download, :failed), do: "status-error"
   defp row_status_dot_class(_download, :retrying), do: "status-warning"
-  defp row_status_dot_class(download, nil), do: status_dot_class(download.status)
+
+  defp row_status_dot_class(download, nil) do
+    # A soft-stall keeps import_failed_at nil (so import_issue is nil), but the
+    # row should still read as a warning rather than a healthy green.
+    if soft_stalled?(download) do
+      "status-warning"
+    else
+      status_dot_class(download.status)
+    end
+  end
 
   defp import_issue_label(:failed), do: "Import failed"
   defp import_issue_label(:retrying), do: "Import retrying"
 
   @doc false
-  # Returns `{class, label}` for the download's status badge.
-  # When the download has been flagged stalled by `DownloadMonitor` (see #126),
-  # we override the underlying client status with a yellow "Stalled" badge so
-  # the user can tell at a glance that progress has stopped.
-  defp status_badge(download) do
-    if stalled?(download) do
-      {status_badge_class("stalled"), "Stalled"}
-    else
-      {status_badge_class(download.status), String.capitalize(download.status)}
+  # Returns `{class, label}` for the download's status badge. A stall has two
+  # distinct states (see DownloadMonitor stall-resilience rework):
+  #
+  #   * soft-stall — recoverable warning; progress has stopped but the download
+  #     still occupies its episode and may auto-clear. Yellow "Stalled" badge.
+  #   * terminal stall failure — escalated past the longer threshold; the
+  #     episode has been released for re-search. Red "Stall failed" badge.
+  def status_badge(download) do
+    cond do
+      soft_stalled?(download) ->
+        {status_badge_class("stalled"), "Stalled"}
+
+      stalled?(download) ->
+        {status_badge_class("stall_failed"), "Stall failed"}
+
+      true ->
+        {status_badge_class(download.status), String.capitalize(download.status)}
     end
   end
 
+  # A recoverable soft-stall: `stalled_since` set but not yet escalated to a
+  # terminal `import_failed_at` failure. Gated on the live "downloading" status
+  # so a download that pauses, completes, or goes client-unreachable after a
+  # soft-stall does not keep rendering a stale warning — `stalled_since` is only
+  # cleared while the download is observed downloading, so it can linger on a row
+  # that has since moved on.
+  defp soft_stalled?(download) do
+    download.status == "downloading" and
+      not is_nil(download.stalled_since) and is_nil(download.import_failed_at)
+  end
+
+  # A terminal stall failure: escalated to `import_failed_at` with a stalled
+  # message.
   defp stalled?(download) do
     not is_nil(download.import_failed_at) and
       Mydia.Downloads.StallDetector.stalled?(download.import_last_error)

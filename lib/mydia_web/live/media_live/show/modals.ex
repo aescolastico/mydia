@@ -7,6 +7,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
 
   # Import the formatting and search helper functions
   import MydiaWeb.MediaLive.Show.Formatters
+  import MydiaWeb.Formatters, only: [format_progress: 1]
   import MydiaWeb.MediaLive.Show.SearchHelpers
 
   @doc """
@@ -359,7 +360,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
           <% end %>
           <%= if @download_to_cancel.progress do %>
             <p class="text-sm text-base-content/70 mt-1">
-              Progress: {@download_to_cancel.progress}%
+              Progress: {format_progress(@download_to_cancel.progress)}%
             </p>
           <% end %>
         </div>
@@ -481,7 +482,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                   value={@download_details.progress}
                   max="100"
                 ></progress>
-                <span class="text-sm font-mono">{@download_details.progress}%</span>
+                <span class="text-sm font-mono">{format_progress(@download_details.progress)}%</span>
               </div>
             </div>
           <% end %>
