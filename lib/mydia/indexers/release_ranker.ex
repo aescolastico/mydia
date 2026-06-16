@@ -174,45 +174,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
   """
   @spec filter_acceptable([SearchResult.t()], ranking_options()) :: [SearchResult.t()]
   def filter_acceptable(results, opts \\ []) do
-    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
-    min_ratio = Keyword.get(opts, :min_ratio)
-    size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
     min_post_age_minutes = Keyword.get(opts, :min_post_age_minutes)
     now = Keyword.get(opts, :now) || DateTime.utc_now()
 
+    # Only two hard removals survive here: user-blocked tags (R8) and the NZB
+    # post-age timing safeguard. Size, seeders, and ratio are no longer hard
+    # filters — they become soft penalties applied during scoring (R4/R5), so a
+    # weak release sinks to the bottom of the ranking instead of vanishing.
     Enum.filter(results, fn result ->
       cond do
-        not meets_seeder_minimum?(result, min_seeders) ->
-          Logger.info(
-            "[ReleaseRanker] Filtered out (seeders #{inspect(result.seeders)} < #{min_seeders}): #{result.title}"
-          )
-
-          false
-
-        min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-          seeders = result.seeders || 0
-          leechers = result.leechers || 0
-          total = seeders + leechers
-          ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
-
-          Logger.info(
-            "[ReleaseRanker] Filtered out (ratio #{ratio}% < #{Float.round(min_ratio * 100, 1)}%): #{result.title}"
-          )
-
-          false
-
-        size_range != nil and not within_size_range?(result, size_range) ->
-          {min_mb, max_mb} = size_range
-          size_mb = Float.round(bytes_to_mb(result.size), 1)
-          range_str = format_size_range(min_mb, max_mb)
-
-          Logger.info(
-            "[ReleaseRanker] Filtered out (size #{size_mb} MB not in #{range_str}): #{result.title}"
-          )
-
-          false
-
         not not_blocked?(result, blocked_tags) ->
           Logger.info("[ReleaseRanker] Filtered out (blocked tag): #{result.title}")
           false
@@ -290,11 +261,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
     above_min and below_max
   end
-
-  defp format_size_range(nil, nil), do: "any"
-  defp format_size_range(min, nil), do: "#{min}+ MB"
-  defp format_size_range(nil, max), do: "0-#{max} MB"
-  defp format_size_range(min, max), do: "#{min}-#{max} MB"
 
   defp not_blocked?(%SearchResult{title: title}, blocked_tags) do
     title_lower = String.downcase(title)
@@ -740,11 +706,67 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   ## Private Functions - Soft Penalties
 
-  # Size penalty placeholder (implemented in U2). Returns a value <= 0.0.
+  # Maximum size penalty. Deliberately modest so an out-of-range *correct*
+  # release can still outrank an in-range junk release (e.g. a CAM) on quality.
+  @max_size_penalty 15.0
+  # Penalty for a torrent below the configured minimum seeders. Small — the
+  # SearchScorer log10 seeder score and the zero-seeder 0.7 multiplier already
+  # push low/dead torrents down; this just nudges sub-minimum ones a bit lower.
+  @low_seeder_penalty 5.0
+  # Penalty for a torrent below the configured minimum seeder ratio.
+  @low_ratio_penalty 5.0
+
+  # Size penalty: proportional to how far the release size falls outside the
+  # configured range, capped at @max_size_penalty. In-range (or unconstrained)
+  # releases get 0.0. Returns a value <= 0.0.
+  defp size_penalty(_result, nil), do: 0.0
+
+  defp size_penalty(%SearchResult{size: size_bytes}, {min_mb, max_mb})
+       when is_integer(size_bytes) do
+    size_mb = bytes_to_mb(size_bytes)
+
+    cond do
+      min_mb != nil and size_mb < min_mb ->
+        scaled_size_penalty((min_mb - size_mb) / max(min_mb, 1))
+
+      max_mb != nil and size_mb > max_mb ->
+        scaled_size_penalty((size_mb - max_mb) / max(max_mb, 1))
+
+      true ->
+        0.0
+    end
+  end
+
   defp size_penalty(_result, _size_range), do: 0.0
 
-  # Seeder/ratio penalty placeholder (implemented in U2). Returns a value <= 0.0.
-  defp seeder_penalty(_result, _opts), do: 0.0
+  # Map a fractional distance outside the range (0.0..∞) to a penalty in
+  # (-@max_size_penalty .. 0.0]. A release at the boundary is 0; one at twice
+  # (or half) the bound is fully penalized.
+  defp scaled_size_penalty(fraction) when fraction <= 0.0, do: 0.0
+
+  defp scaled_size_penalty(fraction) do
+    -min(@max_size_penalty, fraction * @max_size_penalty)
+  end
+
+  # Seeder/ratio penalty: layered on top of the existing low-seeder score and
+  # zero-seeder multiplier. NZB results (nil seeders) are never penalized here.
+  # Returns a value <= 0.0.
+  defp seeder_penalty(%SearchResult{seeders: nil}, _opts), do: 0.0
+
+  defp seeder_penalty(%SearchResult{} = result, opts) do
+    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
+    min_ratio = Keyword.get(opts, :min_ratio)
+
+    seeder_part =
+      if meets_seeder_minimum?(result, min_seeders), do: 0.0, else: -@low_seeder_penalty
+
+    ratio_part =
+      if min_ratio != nil and not meets_ratio_minimum?(result, min_ratio),
+        do: -@low_ratio_penalty,
+        else: 0.0
+
+    seeder_part + ratio_part
+  end
 
   # Identity penalty placeholder (implemented in U3). Returns a value <= 0.0.
   defp identity_penalty(_result, _opts), do: 0.0

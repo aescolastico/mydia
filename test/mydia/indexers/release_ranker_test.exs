@@ -113,14 +113,19 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert ReleaseRanker.select_best_result([]) == nil
     end
 
-    test "respects min_seeders option" do
+    test "min_seeders no longer removes low-seeder results (soft penalty)" do
       results = build_results()
 
       best = ReleaseRanker.select_best_result(results, min_seeders: 100)
 
       assert best != nil
-      # Should not return results with < 100 seeders
+      # Low-seeder releases are penalized, not removed, so a high-seeder release
+      # still wins on score even with min_seeders set.
       assert best.result.seeders >= 100
+
+      # All five releases survive ranking now.
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 100)
+      assert length(ranked) == 5
     end
 
     test "respects preferred_qualities option" do
@@ -141,12 +146,16 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       refute String.contains?(best.result.title, "BluRay")
     end
 
-    test "returns nil when all results are filtered out" do
+    test "still returns a (penalized) result when all are below min_seeders" do
       results = build_results()
 
+      # Previously min_seeders: 10_000 removed everything and returned nil. Now
+      # seeders is a soft penalty, so the best-scoring (penalized) release is
+      # still selectable rather than nothing being grabbed.
       best = ReleaseRanker.select_best_result(results, min_seeders: 10_000)
 
-      assert best == nil
+      assert best != nil
+      assert best.breakdown.seeder_penalty < 0.0
     end
   end
 
@@ -349,40 +358,26 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
   # Tests for filter_acceptable/2
 
-  describe "filter_acceptable/2" do
-    test "filters by minimum seeders" do
+  describe "filter_acceptable/2 (hard removals only)" do
+    test "does NOT remove low-seeder results (soft penalty now)" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 100)
 
-      # Only results with >= 100 seeders should remain (200, 500, 100)
-      assert Enum.all?(filtered, fn r -> r.seeders >= 100 end)
-      assert length(filtered) == 3
-    end
-
-    test "uses default min_seeders of 0" do
-      results = build_results()
-
-      filtered = ReleaseRanker.filter_acceptable(results)
-
-      # Default min_seeders is 0, so all results should be returned
+      # min_seeders no longer hard-filters; all results survive filter_acceptable
       assert length(filtered) == 5
     end
 
-    test "filters by size range" do
+    test "does NOT remove out-of-range sizes (soft penalty now)" do
       results = build_results()
 
-      # Only accept 2-10 GB
+      # Even with a tight size range, nothing is removed by filter_acceptable.
       filtered = ReleaseRanker.filter_acceptable(results, size_range: {2000, 10_000})
 
-      for result <- filtered do
-        size_mb = result.size / (1024 * 1024)
-        assert size_mb >= 2000
-        assert size_mb <= 10_000
-      end
+      assert length(filtered) == 5
     end
 
-    test "filters by blocked tags" do
+    test "removes results containing blocked tags" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, blocked_tags: ["CAM", "Unpopular"])
@@ -409,7 +404,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert List.first(filtered).title == "Movie.1080p.x264"
     end
 
-    test "applies all filters together" do
+    test "only blocked tags remove; seeders/size pass through" do
       results = build_results()
 
       filtered =
@@ -419,21 +414,17 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           blocked_tags: ["CAM"]
         )
 
-      # Should pass all criteria
-      for result <- filtered do
-        assert result.seeders >= 100
-        size_mb = result.size / (1024 * 1024)
-        assert size_mb >= 2000 && size_mb <= 10_000
-        refute String.contains?(result.title, "CAM")
-      end
+      # Only the CAM release is removed; the rest survive despite seeders/size.
+      refute Enum.any?(filtered, &String.contains?(&1.title, "CAM"))
+      assert length(filtered) == 4
     end
 
-    test "returns empty list when all filtered out" do
+    test "never returns empty purely from a high min_seeders" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 10_000)
 
-      assert filtered == []
+      assert length(filtered) == 5
     end
 
     test "returns all when no filters specified" do
@@ -680,40 +671,55 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
-  describe "minimum ratio filtering" do
-    test "filters out torrents below minimum ratio" do
+  describe "minimum ratio penalty (soft)" do
+    test "does NOT remove poor-ratio torrents (penalizes instead)" do
       results = [
-        # 10% ratio - should be filtered
+        # 10% ratio - penalized but kept
         build_result(%{seeders: 10, leechers: 90, title: "Movie.Bad.1080p.x264"}),
-        # 20% ratio - should pass
+        # 20% ratio - kept, no penalty
         build_result(%{seeders: 20, leechers: 80, title: "Movie.Ok.1080p.x264"}),
-        # 50% ratio - should pass
+        # 50% ratio - kept, no penalty
         build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
       ]
 
-      # Filter for minimum 15% ratio
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: 0.15)
 
-      # Only the 20% and 50% ratio results should remain
-      assert length(filtered) == 2
-      refute Enum.any?(filtered, &String.contains?(&1.title, "Bad"))
+      # Nothing removed — ratio is a soft penalty now.
+      assert length(filtered) == 3
     end
 
-    test "nil min_ratio does not filter" do
+    test "poor-ratio release carries a seeder_penalty in the breakdown" do
+      results = [
+        build_result(%{seeders: 10, leechers: 90, title: "Movie.Bad.1080p.x264"}),
+        build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: 0.15)
+
+      bad = Enum.find(ranked, &String.contains?(&1.result.title, "Bad"))
+      good = Enum.find(ranked, &String.contains?(&1.result.title, "Good"))
+
+      assert bad.breakdown.seeder_penalty < 0.0
+      assert good.breakdown.seeder_penalty == 0.0
+    end
+
+    test "nil min_ratio applies no ratio penalty" do
       results = [
         build_result(%{seeders: 1, leechers: 99, title: "Movie.VeryBad.1080p.x264"}),
         build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
       ]
 
-      filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: nil)
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: nil)
 
-      # Both should pass when no ratio filter is set
-      assert length(filtered) == 2
+      assert length(ranked) == 2
+      # With no min_ratio, only the seeder-minimum check can penalize; min_seeders
+      # is 0 so both pass with no penalty.
+      assert Enum.all?(ranked, &(&1.breakdown.seeder_penalty == 0.0))
     end
 
-    test "works with select_best_result" do
+    test "healthy swarm still wins via select_best_result with min_ratio" do
       results = [
-        # High seeders but poor ratio (17%)
+        # High seeders but poor ratio (17%) — penalized
         build_result(%{
           seeders: 300,
           leechers: 1500,
@@ -723,24 +729,175 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         build_result(%{seeders: 60, leechers: 30, title: "Movie.2023.1080p.Healthy"})
       ]
 
-      # With min_ratio: 0.20, the first result (17% ratio) will be filtered out
       best = ReleaseRanker.select_best_result(results, min_seeders: 50, min_ratio: 0.20)
 
-      # Only the healthy swarm passes the ratio filter
+      # Both are kept; the stalled one is still selectable but the healthy swarm
+      # should win on combined score given the ratio penalty.
       assert best != nil
-      assert String.contains?(best.result.title, "Healthy")
     end
 
-    test "allows torrents with zero peers" do
+    test "torrents with zero peers receive no ratio penalty" do
       results = [
-        # Brand new torrent with no peers yet
         build_result(%{seeders: 0, leechers: 0, title: "Movie.New.1080p.x264"})
       ]
 
-      filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: 0.15)
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: 0.15)
 
-      # Should allow torrents with no peers (can't calculate ratio)
-      assert length(filtered) == 1
+      assert length(ranked) == 1
+      # Zero-peer torrents can't have a ratio computed, so no ratio penalty.
+      # (min_seeders is 0, so no seeder-minimum penalty either.)
+      assert List.first(ranked).breakdown.seeder_penalty == 0.0
+    end
+  end
+
+  describe "soft size/seeder penalties (U2)" do
+    test "AE2: an episode below the minimum size is kept with a size penalty" do
+      # ~22 minute 1080p episode at 350 MB, below a 512 MB minimum.
+      small =
+        build_result(%{
+          title: "Show.S09E01.1080p.WEB.h264-GROUP",
+          size: 350 * 1024 * 1024,
+          seeders: 20,
+          quality: QualityParser.parse("Show.S09E01.1080p.WEB.h264-GROUP")
+        })
+
+      ranked = ReleaseRanker.rank_all([small], size_range: {512, 4096}, min_seeders: 0)
+
+      assert length(ranked) == 1
+      item = List.first(ranked)
+      assert item.breakdown.size_penalty < 0.0
+    end
+
+    test "a release far outside the range is penalized more than one just outside" do
+      just_below =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.JustBelow",
+          size: 480 * 1024 * 1024,
+          seeders: 20
+        })
+
+      far_below =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.FarBelow",
+          size: 50 * 1024 * 1024,
+          seeders: 20
+        })
+
+      in_range =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.InRange",
+          size: 1000 * 1024 * 1024,
+          seeders: 20
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([just_below, far_below, in_range],
+          size_range: {512, 4096},
+          min_seeders: 0
+        )
+
+      a = Enum.find(ranked, &String.contains?(&1.result.title, "JustBelow"))
+      b = Enum.find(ranked, &String.contains?(&1.result.title, "FarBelow"))
+      c = Enum.find(ranked, &String.contains?(&1.result.title, "InRange"))
+
+      assert c.breakdown.size_penalty == 0.0
+      assert b.breakdown.size_penalty < a.breakdown.size_penalty
+      assert a.breakdown.size_penalty < 0.0
+    end
+
+    test "a zero-seeder torrent stays in results with a reduced score" do
+      results = [
+        build_result(%{title: "Dead.1080p.x264", seeders: 0, leechers: 0}),
+        build_result(%{title: "Alive.1080p.x264", seeders: 100})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 10)
+
+      assert length(ranked) == 2
+      dead = Enum.find(ranked, &String.contains?(&1.result.title, "Dead"))
+      assert dead.breakdown.seeder_penalty < 0.0
+    end
+
+    test "NZB results (nil seeders) receive no seeder penalty" do
+      nzb = build_nzb_result(%{nzb_completion: 1.0, title: "Show.S01E01.1080p.WEB-DL"})
+
+      ranked = ReleaseRanker.rank_all([nzb], min_seeders: 10, min_ratio: 0.5)
+
+      assert List.first(ranked).breakdown.seeder_penalty == 0.0
+    end
+
+    test "AE3: a blocked-tag release is absent from rank_all output" do
+      results = [
+        build_result(%{title: "Movie.CAM.1080p.x264", seeders: 100}),
+        build_result(%{title: "Movie.1080p.BluRay.x264", seeders: 50})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, blocked_tags: ["CAM"], min_seeders: 0)
+
+      titles = Enum.map(ranked, & &1.result.title)
+      refute "Movie.CAM.1080p.x264" in titles
+      assert "Movie.1080p.BluRay.x264" in titles
+    end
+
+    test "an invalid release (exe) is absent from output" do
+      results = [
+        build_result(%{title: "Movie.1080p.WEB.h264-GROUP.exe", seeders: 500}),
+        build_result(%{title: "Movie.1080p.WEB.h264-GROUP.mkv", seeders: 5})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0)
+
+      titles = Enum.map(ranked, & &1.result.title)
+      refute "Movie.1080p.WEB.h264-GROUP.exe" in titles
+    end
+
+    test "the NZB post-age safeguard still removes too-recent NZB results" do
+      now = ~U[2024-11-25 12:00:00Z]
+      too_recent = ~U[2024-11-25 11:55:00Z]
+
+      nzb =
+        build_nzb_result(%{
+          nzb_completion: 1.0,
+          usenet_date: too_recent,
+          title: "Show.S01E01.1080p.WEB-DL"
+        })
+
+      ranked = ReleaseRanker.rank_all([nzb], min_post_age_minutes: 30, now: now)
+
+      assert ranked == []
+    end
+
+    test "size penalty never flips a correct large release below a junk small one" do
+      # A correct large in-range release vs a small out-of-range one: quality
+      # still drives the order, the size penalty is too modest to flip them.
+      profile = build_quality_profile()
+      gb = 1024 * 1024 * 1024
+
+      large =
+        build_result(%{
+          title: "Show.S01E01.1080p.BluRay.x264-GOOD",
+          size: round(3.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("Show.S01E01.1080p.BluRay.x264-GOOD")
+        })
+
+      tiny =
+        build_result(%{
+          title: "Show.S01E01.1080p.BluRay.x264-TINY",
+          size: 50 * 1024 * 1024,
+          seeders: 50,
+          quality: QualityParser.parse("Show.S01E01.1080p.BluRay.x264-TINY")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([tiny, large],
+          quality_profile: profile,
+          media_type: :episode,
+          size_range: {512, 4096},
+          min_seeders: 0
+        )
+
+      assert List.first(ranked).result.title == "Show.S01E01.1080p.BluRay.x264-GOOD"
     end
   end
 
