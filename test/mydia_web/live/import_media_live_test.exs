@@ -1429,4 +1429,89 @@ defmodule MydiaWeb.ImportMediaLiveTest do
       Mydia.Repo.delete(session)
     end
   end
+
+  describe "friendly DB-error formatting" do
+    alias MydiaWeb.ImportMediaLive.Index, as: ImportIndex
+
+    test "friendly_db_error/1 maps a value-too-long Postgrex.Error to a clear message" do
+      error = %Postgrex.Error{
+        postgres: %{
+          code: :string_data_right_truncation,
+          table: "media_items",
+          column: "title"
+        }
+      }
+
+      message = ImportIndex.friendly_db_error(error)
+
+      assert message =~ "too long to store"
+      assert message =~ "media_items.title"
+      refute message =~ "Unexpected error"
+    end
+
+    test "friendly_db_error/1 still names the value-too-long case without table/column metadata" do
+      error = %Postgrex.Error{postgres: %{code: :string_data_right_truncation}}
+
+      message = ImportIndex.friendly_db_error(error)
+
+      assert message =~ "too long to store"
+      refute message =~ "Unexpected error"
+    end
+
+    test "friendly_db_error/1 maps a non-truncation exception to the Unexpected error catch-all" do
+      message = ImportIndex.friendly_db_error(%RuntimeError{message: "boom"})
+
+      assert message =~ "Unexpected error: boom"
+      refute message =~ "too long to store"
+    end
+
+    test "format_changeset_errors_friendly/1 maps a too-long changeset error to the value-too-long message" do
+      changeset =
+        %Mydia.Media.MediaItem{}
+        |> Ecto.Changeset.change(%{})
+        |> Ecto.Changeset.add_error(:title, "should be at most %{count} character(s)",
+          count: 255,
+          validation: :length
+        )
+
+      message = ImportIndex.format_changeset_errors_friendly(changeset)
+
+      assert message =~ "too long to store"
+      refute message =~ "Database error"
+    end
+
+    test "format_changeset_errors_friendly/1 preserves the size-error message" do
+      changeset =
+        %Mydia.Library.MediaFile{}
+        |> Ecto.Changeset.change(%{})
+        |> Ecto.Changeset.add_error(:size, "must be greater than 0")
+
+      message = ImportIndex.format_changeset_errors_friendly(changeset)
+
+      assert message =~ "empty or incomplete"
+    end
+
+    test "format_changeset_errors_friendly/1 preserves the library-type-mismatch message" do
+      changeset =
+        %Mydia.Library.MediaFile{}
+        |> Ecto.Changeset.change(%{})
+        |> Ecto.Changeset.add_error(:media_item_id, "does not match the library type")
+
+      message = ImportIndex.format_changeset_errors_friendly(changeset)
+
+      assert message =~ "doesn't match the library type"
+    end
+
+    test "format_changeset_errors_friendly/1 falls through to Database error for unrelated validation errors" do
+      changeset =
+        %Mydia.Media.MediaItem{}
+        |> Ecto.Changeset.change(%{})
+        |> Ecto.Changeset.add_error(:title, "is invalid")
+
+      message = ImportIndex.format_changeset_errors_friendly(changeset)
+
+      assert message =~ "Database error"
+      refute message =~ "too long to store"
+    end
+  end
 end

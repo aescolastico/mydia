@@ -413,10 +413,10 @@ Components follow a three-tier system:
 
 ### Database
 
-- This project uses **SQLite exclusively** for all environments (development, test, and production)
-- **Never** use PostgreSQL-specific features, syntax, or extensions
-- **Never** suggest or implement PostgreSQL migrations or configurations
-- Use SQLite-compatible syntax for all queries and migrations
+- This project supports **both SQLite and PostgreSQL**. SQLite is the default adapter (development, test, and the typical self-hosted deployment); PostgreSQL is selected via the `DATABASE_TYPE` env var (`postgres`/`postgresql`). See `config/config.exs`.
+- **Prefer portable, adapter-agnostic SQL** for everyday queries and migrations so the same code runs on both adapters.
+- **Migrations that change column types, nullability, or constraints must handle both adapters.** PostgreSQL supports `ALTER COLUMN` directly; SQLite generally requires a table rebuild (rename → create → copy → drop) or is a no-op when the change is meaningless on SQLite (e.g. `varchar(255)` vs `text`, which SQLite stores identically). Use `Mydia.Repo.Migrations.Helpers` (`postgres?/0`, `sqlite?/0`, `recreate_table/1`, etc.) and branch on the adapter — see `priv/repo/migrations/20260223100000_fix_array_columns_for_postgres.exs` for the Postgres-only / SQLite no-op pattern.
+- **Avoid PostgreSQL-only features** (e.g. extensions, advanced types) unless they degrade gracefully or are guarded behind an adapter check, since SQLite remains the default.
 
 ### General Guidelines
 
