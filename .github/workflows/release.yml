@@ -947,9 +947,17 @@ jobs:
           # malformed appcast never becomes an artifact and never reaches here. This
           # re-runs the same well-formedness/shape checks against the downloaded
           # artifact to catch corruption-in-transit (or a well-formed-but-wrong
-          # appcast) before upload — failing publish rather than shipping it. Because
-          # this job runs under `always()`, a macOS build that fails validation simply
-          # omits the macOS assets from the release; it does not block other platforms.
+          # appcast) before upload — failing publish rather than shipping it.
+          #
+          # `always()` only governs whether this job runs when an upstream build
+          # failed; it does NOT make this check non-blocking. Two outcomes:
+          #   - No appcast present (fork run, missing secret, or a failed macOS
+          #     job that produced no artifact): the guard below exits 0, so the
+          #     other platforms still publish.
+          #   - An appcast IS present but fails these checks: this step fails the
+          #     entire `publish` job. That is intentional — we refuse to ship a
+          #     release with a broken auto-update feed rather than silently
+          #     dropping just the macOS assets.
           if [ ! -f appcast.xml ]; then
             echo "No appcast.xml in artifacts — nothing to validate (non-macOS or fork run)."
             exit 0
