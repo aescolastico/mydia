@@ -898,21 +898,25 @@ defmodule Mydia.Jobs.MediaImportTest do
                })
 
       name = imported_basename()
+      assert is_binary(name), "expected an imported .mkv file, found none"
       refute name == @rename_scene_name
       assert name =~ "The Matrix (1999)"
       assert String.ends_with?(name, ".mkv")
     end
 
     @tag :tmp_dir
-    test "keeps the original filename when the library path disables auto_rename",
+    test "keeps the original filename when the library path disables auto_rename, even if the job requested renaming",
          %{tmp_dir: tmp_dir} do
       {_lp, download, download_dir} =
         seed_rename_import(tmp_dir, "RenameOffClient", "rename-off-1", false)
 
+      # Enqueue with rename_files: true to prove the library path's
+      # auto_rename: false overrides it at execution time.
       assert {:ok, :imported} =
                perform_job(MediaImport, %{
                  "download_id" => download.id,
-                 "save_path" => download_dir
+                 "save_path" => download_dir,
+                 "rename_files" => true
                })
 
       assert imported_basename() == @rename_scene_name
