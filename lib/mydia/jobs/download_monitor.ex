@@ -499,15 +499,37 @@ defmodule Mydia.Jobs.DownloadMonitor do
           now
         )
 
-      apply_progress_decision(download, decision, now) + stalled_acc
+      increment =
+        try do
+          apply_progress_decision(download, decision, now)
+        rescue
+          # The row was deleted between the poll's status snapshot and this
+          # write (e.g. a concurrent import that deletes the download, or a
+          # manual delete). Skip it — the rest of the poll must still run.
+          Ecto.NoResultsError ->
+            Logger.debug("Download disappeared mid-poll; skipping stall update",
+              download_id: download.id
+            )
+
+            0
+        end
+
+      increment + stalled_acc
     end)
   end
 
-  # No stall transition, but still record that we observed this download now so
-  # the gap reset doesn't fire on the next poll. This also lets a
-  # held soft-stall mature toward escalation without self-resetting.
+  # No stall transition, but record that we observed this download so the gap
+  # reset doesn't fire on the next poll, and a held soft-stall keeps maturing
+  # toward escalation without self-resetting. Throttled: refreshing on every
+  # poll would issue a write + PubSub broadcast (which re-polls the client for
+  # every open Downloads view) for an otherwise-idle download. A refresh only
+  # has to keep `now - last_observed_at` under @observation_gap_seconds, so
+  # writing once it is half-stale is sufficient and far cheaper.
   defp apply_progress_decision(download, :no_change, now) do
-    update_progress(download, %{last_observed_at: now})
+    if observation_stale?(download.last_observed_at, now) do
+      update_progress(download, %{last_observed_at: now})
+    end
+
     0
   end
 
@@ -635,6 +657,16 @@ defmodule Mydia.Jobs.DownloadMonitor do
           :ok
       end
     end
+  end
+
+  # Whether `last_observed_at` is stale enough to be worth refreshing on an
+  # otherwise-idle poll. Half the gap threshold leaves ample margin: even with
+  # the slowest (cron) poll spacing, the next observation stays well under
+  # @observation_gap_seconds, so the gap reset never false-fires.
+  defp observation_stale?(nil, _now), do: true
+
+  defp observation_stale?(last_observed_at, now) do
+    DateTime.diff(now, last_observed_at, :second) > div(@observation_gap_seconds, 2)
   end
 
   defp update_progress(download, attrs) do

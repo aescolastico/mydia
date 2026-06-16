@@ -744,7 +744,9 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
           download_client_id: "nzo-stuck-1",
           last_progress_at: first_seen,
           last_known_bytes: same_bytes,
-          last_observed_at: ~U[2026-05-14 11:58:00.000000Z]
+          # Half-stale (5 min > the 180s refresh threshold) so the no-change
+          # path refreshes last_observed_at this poll.
+          last_observed_at: ~U[2026-05-14 11:55:00.000000Z]
         })
 
       # 30 minutes after first_seen — still within the 60-minute grace window.
@@ -754,8 +756,42 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       updated = Downloads.get_download!(download.id)
       assert updated.last_progress_at == first_seen
       assert updated.last_known_bytes == same_bytes
-      # last_observed_at is stamped every poll even when nothing else changes.
+      # last_observed_at refreshed because it was half-stale.
       assert updated.last_observed_at == now
+      assert is_nil(updated.import_failed_at)
+      assert is_nil(updated.stalled_since)
+    end
+
+    test "does not rewrite last_observed_at on a no-change poll when it is still fresh" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
+
+      same_bytes = round(50.0 * 1024 * 1024)
+
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-fresh-1", "test.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      # Observed 1 minute ago — well inside the 180s refresh threshold, so the
+      # idle poll must not issue a redundant write/broadcast.
+      fresh_observed = ~U[2026-05-14 11:59:00.000000Z]
+
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-fresh-1",
+          last_progress_at: ~U[2026-05-14 11:30:00.000000Z],
+          last_known_bytes: same_bytes,
+          last_observed_at: fresh_observed
+        })
+
+      now = ~U[2026-05-14 12:00:00.000000Z]
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert updated.last_observed_at == fresh_observed
       assert is_nil(updated.import_failed_at)
       assert is_nil(updated.stalled_since)
     end
@@ -829,6 +865,11 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       assert updated.last_observed_at == now
       assert is_nil(updated.import_failed_at)
       assert is_nil(updated.import_last_error)
+
+      # A soft-stall emits a warning event, not a terminal failure.
+      Process.sleep(100)
+      assert Events.list_events(type: "download.stalled") != []
+      assert Events.list_events(type: "download.failed") == []
     end
 
     test "respects per-client incomplete_grace_minutes for soft-stall" do
@@ -1208,6 +1249,44 @@ defmodule Mydia.Jobs.DownloadMonitorTest do
       assert is_nil(updated.stalled_since)
       assert is_nil(updated.import_failed_at)
       assert updated.last_known_bytes == round(70.0 * 1024 * 1024)
+      assert download.id in occupying_ids()
+
+      Process.sleep(100)
+      assert Events.list_events(type: "download.unstalled") != []
+      assert Events.list_events(type: "download.failed") == []
+    end
+
+    test "a soft-stall cleared by an observation-gap reset emits a recovery event" do
+      {bypass, client_config} = start_sabnzbd_bypass(incomplete_grace_minutes: 60)
+
+      # Same byte count as the baseline — recovery here comes from the gap reset,
+      # not from progress.
+      mock_sabnzbd_queue(bypass, [
+        sabnzbd_queue_item("nzo-reset-recover", "show.nzb", size_mb: 100.0, mb_left: 50.0)
+      ])
+
+      media_item = media_item_fixture()
+
+      # Soft-stalled, but last_observed_at is ~10h stale (outage/restart), so the
+      # next poll takes the gap-reset branch and clears the soft-stall.
+      download =
+        download_fixture(%{
+          media_item_id: media_item.id,
+          download_client: client_config.name,
+          download_client_id: "nzo-reset-recover",
+          last_progress_at: ~U[2026-06-16 00:00:00.000000Z],
+          last_known_bytes: round(50.0 * 1024 * 1024),
+          last_observed_at: ~U[2026-06-16 00:00:00.000000Z],
+          stalled_since: ~U[2026-06-16 01:00:00.000000Z]
+        })
+
+      now = ~U[2026-06-16 10:00:00.000000Z]
+      assert :ok = perform_job(DownloadMonitor, %{"now" => DateTime.to_iso8601(now)})
+
+      updated = Downloads.get_download!(download.id)
+      assert is_nil(updated.stalled_since)
+      assert is_nil(updated.import_failed_at)
+      assert updated.last_progress_at == now
       assert download.id in occupying_ids()
 
       Process.sleep(100)

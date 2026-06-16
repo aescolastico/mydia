@@ -1344,9 +1344,14 @@ defmodule MydiaWeb.DownloadsLive.Index do
   end
 
   # A recoverable soft-stall: `stalled_since` set but not yet escalated to a
-  # terminal `import_failed_at` failure.
+  # terminal `import_failed_at` failure. Gated on the live "downloading" status
+  # so a download that pauses, completes, or goes client-unreachable after a
+  # soft-stall does not keep rendering a stale warning — `stalled_since` is only
+  # cleared while the download is observed downloading, so it can linger on a row
+  # that has since moved on.
   defp soft_stalled?(download) do
-    not is_nil(download.stalled_since) and is_nil(download.import_failed_at)
+    download.status == "downloading" and
+      not is_nil(download.stalled_since) and is_nil(download.import_failed_at)
   end
 
   # A terminal stall failure: escalated to `import_failed_at` with a stalled

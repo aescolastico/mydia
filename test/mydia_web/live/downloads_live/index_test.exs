@@ -501,5 +501,20 @@ defmodule MydiaWeb.DownloadsLive.IndexTest do
                  import_last_error: nil
                })
     end
+
+    test "a stale stalled_since on a no-longer-downloading row does not render the warning badge" do
+      # A soft-stall that paused/completed keeps a lingering stalled_since (it is
+      # only cleared while observed downloading). The badge must reflect the
+      # current client status, not a stale warning.
+      now = DateTime.utc_now()
+
+      assert {_class, "Completed"} =
+               Index.status_badge(%{
+                 status: "completed",
+                 stalled_since: now,
+                 import_failed_at: nil,
+                 import_last_error: nil
+               })
+    end
   end
 end
