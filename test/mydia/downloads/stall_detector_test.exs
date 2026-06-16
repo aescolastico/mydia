@@ -2,6 +2,7 @@ defmodule Mydia.Downloads.StallDetectorTest do
   use ExUnit.Case, async: true
 
   alias Mydia.Downloads.StallDetector
+  alias Mydia.Downloads.StallDetector.Thresholds
 
   @grace_minutes 60
   @escalation_minutes 180
@@ -16,14 +17,16 @@ defmodule Mydia.Downloads.StallDetectorTest do
       Keyword.get(opts, :last_observed_at, @base_time),
       Keyword.get(opts, :stalled_since, nil),
       Keyword.get(opts, :observed_bytes, 200_000_000),
-      Keyword.get(opts, :grace_minutes, @grace_minutes),
-      Keyword.get(opts, :escalation_minutes, @escalation_minutes),
-      Keyword.get(opts, :gap_threshold_seconds, @gap_seconds),
+      %Thresholds{
+        grace_minutes: Keyword.get(opts, :grace_minutes, @grace_minutes),
+        escalation_minutes: Keyword.get(opts, :escalation_minutes, @escalation_minutes),
+        gap_threshold_seconds: Keyword.get(opts, :gap_threshold_seconds, @gap_seconds)
+      },
       Keyword.fetch!(opts, :now)
     )
   end
 
-  describe "evaluate/9 — first observation" do
+  describe "evaluate/7 — first observation" do
     test "initializes when last_progress_at is nil" do
       assert {:initialize, @base_time} =
                evaluate(last_progress_at: nil, last_observed_at: nil, now: @base_time)
@@ -40,7 +43,7 @@ defmodule Mydia.Downloads.StallDetectorTest do
     end
   end
 
-  describe "evaluate/9 — observation gap reset (AE1, AE2)" do
+  describe "evaluate/7 — observation gap reset (AE1, AE2)" do
     test "nil last_observed_at (post-migration row) resets, not stalls" do
       # Even far past the grace window, a row never observed yet just resets.
       way_past = DateTime.add(@base_time, (@grace_minutes + 30) * 60, :second)
@@ -84,7 +87,7 @@ defmodule Mydia.Downloads.StallDetectorTest do
     end
   end
 
-  describe "evaluate/9 — progress" do
+  describe "evaluate/7 — progress" do
     test "returns :progress when bytes increased (gap within threshold)" do
       now = DateTime.add(@base_time, 120, :second)
 
@@ -135,7 +138,7 @@ defmodule Mydia.Downloads.StallDetectorTest do
     end
   end
 
-  describe "evaluate/9 — soft-stall window (AE3)" do
+  describe "evaluate/7 — soft-stall window (AE3)" do
     test "no change when bytes unchanged within grace window" do
       five_minutes_later = DateTime.add(@base_time, 5 * 60, :second)
       observed = DateTime.add(@base_time, 4 * 60, :second)
@@ -178,7 +181,7 @@ defmodule Mydia.Downloads.StallDetectorTest do
     end
   end
 
-  describe "evaluate/9 — escalation (AE6)" do
+  describe "evaluate/7 — escalation (AE6)" do
     test "holds the soft-stall within the escalation window" do
       # Stalled 2h, escalation threshold is 3h; observed recently (no gap).
       now = DateTime.add(@base_time, 2 * 60 * 60, :second)

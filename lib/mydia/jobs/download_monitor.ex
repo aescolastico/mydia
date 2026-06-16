@@ -479,8 +479,9 @@ defmodule Mydia.Jobs.DownloadMonitor do
 
   # Iterate active downloads and apply the StallDetector decision. Returns the
   # number of downloads newly entering a stalled state (soft-stall or escalation)
-  # this poll. Every observed download has `last_observed_at` stamped to `now`
-  # regardless of decision.
+  # this poll. Every observed download has `last_observed_at` refreshed to `now`
+  # (throttled — see `apply_progress_decision/3` for `:no_change`) so the gap
+  # reset doesn't fire on the next poll.
   defp check_progress(active_downloads, grace_map, now) do
     Enum.reduce(active_downloads, 0, fn download, stalled_acc ->
       grace = grace_minutes_for(download.download_client, grace_map)
@@ -493,9 +494,11 @@ defmodule Mydia.Jobs.DownloadMonitor do
           download.last_observed_at,
           download.stalled_since,
           download.downloaded || 0,
-          grace,
-          escalation,
-          @observation_gap_seconds,
+          %StallDetector.Thresholds{
+            grace_minutes: grace,
+            escalation_minutes: escalation,
+            gap_threshold_seconds: @observation_gap_seconds
+          },
           now
         )
 

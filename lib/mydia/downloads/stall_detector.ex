@@ -34,6 +34,8 @@ defmodule Mydia.Downloads.StallDetector do
   in `Mydia.Jobs.DownloadMonitor`.
   """
 
+  alias Mydia.Downloads.StallDetector.Thresholds
+
   @type decision ::
           :no_change
           | {:initialize, now :: DateTime.t()}
@@ -57,17 +59,16 @@ defmodule Mydia.Downloads.StallDetector do
     * `stalled_since` — timestamp the current soft-stall began, or `nil` if not
       soft-stalled.
     * `observed_bytes` — bytes-downloaded reported by the client right now.
-    * `grace_minutes` — per-client incomplete grace window (positive integer).
-    * `escalation_minutes` — how long a soft-stall may persist before escalating
-      to a terminal failure (positive integer, larger than `grace_minutes`).
-    * `gap_threshold_seconds` — an observation gap larger than this resets the
-      stall clock (positive integer).
+    * `thresholds` — a `Thresholds` struct carrying the `grace_minutes`,
+      `escalation_minutes`, and `gap_threshold_seconds` tuning knobs.
     * `now` — the current `DateTime` (injected for test determinism).
 
   ## Returned decisions
 
-    * `:no_change` — nothing to persist beyond the monitor's unconditional
-      `last_observed_at = now` stamp (includes holding an immature soft-stall).
+    * `:no_change` — no stall-state transition to persist. The monitor still
+      records that it observed the download (a throttled `last_observed_at = now`
+      refresh — see `DownloadMonitor`), which keeps the gap reset from firing on
+      the next poll. Includes holding an immature soft-stall.
     * `{:initialize, now}` — first observation. Set `last_progress_at = now` and
       `last_known_bytes = observed_bytes`.
     * `{:reset, now}` — observation gap. Set `last_progress_at = now`, clear
@@ -90,9 +91,7 @@ defmodule Mydia.Downloads.StallDetector do
           DateTime.t() | nil,
           DateTime.t() | nil,
           non_neg_integer(),
-          pos_integer(),
-          pos_integer(),
-          pos_integer(),
+          Thresholds.t(),
           DateTime.t()
         ) :: decision()
   def evaluate(
@@ -101,9 +100,11 @@ defmodule Mydia.Downloads.StallDetector do
         last_observed_at,
         stalled_since,
         observed_bytes,
-        grace_minutes,
-        escalation_minutes,
-        gap_threshold_seconds,
+        %Thresholds{
+          grace_minutes: grace_minutes,
+          escalation_minutes: escalation_minutes,
+          gap_threshold_seconds: gap_threshold_seconds
+        },
         now
       )
       when is_integer(observed_bytes) and observed_bytes >= 0 and

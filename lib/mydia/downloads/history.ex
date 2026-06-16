@@ -395,8 +395,10 @@ defmodule Mydia.Downloads.History do
       import_failed_at: download.import_failed_at,
       last_progress_at: download.last_progress_at,
       last_known_bytes: download.last_known_bytes,
-      # Carry the persisted stall state through an outage so the LiveView can
-      # still render a soft-stall warning while the client is unreachable.
+      # Carry the persisted stall state through an outage. The soft-stall badge
+      # itself is gated on status == "downloading", so it isn't shown while the
+      # client is unreachable (status "unknown"); preserving these fields keeps
+      # the state intact for clearing/recovery once the client is reachable again.
       last_observed_at: download.last_observed_at,
       stalled_since: download.stalled_since,
       # Client unreachable — presence indeterminate.
