@@ -188,8 +188,8 @@ defmodule Mydia.Downloads.QueueTest do
       # for any priority-based dispatch.
       #
       # We only enforce the contract on modules that implement the
-      # Mydia.Downloads.Client behaviour (the registry also holds a
-      # non-adapter `:http` placeholder).
+      # Mydia.Downloads.Client behaviour, guarding against any future
+      # non-adapter module being registered.
       for {type, adapter} <- Mydia.Downloads.Client.Registry.list_adapters(),
           implements_client_behaviour?(adapter) do
         assert function_exported?(adapter, :supported_protocols, 0),

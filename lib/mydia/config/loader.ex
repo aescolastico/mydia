@@ -117,9 +117,22 @@ defmodule Mydia.Config.Loader do
 
       normalized_value =
         cond do
-          is_map(value) -> normalize_yaml_keys(value)
-          is_list(value) -> Enum.map(value, &normalize_yaml_value/1)
-          true -> value
+          # `connection_settings` is a free-form, string-keyed map consumed
+          # directly by download client adapters (e.g.
+          # connection_settings["provider"], ["watch_folder"]). Keep its keys
+          # as strings instead of atomizing them, or validation and adapters
+          # that look up string keys would never find them.
+          normalized_key == :connection_settings and is_map(value) ->
+            stringify_keys(value)
+
+          is_map(value) ->
+            normalize_yaml_keys(value)
+
+          is_list(value) ->
+            Enum.map(value, &normalize_yaml_value/1)
+
+          true ->
+            value
         end
 
       {normalized_key, normalized_value}
@@ -129,6 +142,14 @@ defmodule Mydia.Config.Loader do
 
   defp normalize_yaml_value(value) when is_map(value), do: normalize_yaml_keys(value)
   defp normalize_yaml_value(value), do: value
+
+  # Keys are downcased to match `normalize_yaml_keys/1` (which lowercases every
+  # other YAML key) and the lowercase string keys the download client adapters
+  # look up, e.g. connection_settings["provider"], ["watch_folder"]. Without this
+  # a YAML key like `Provider:` would survive as "Provider" and never match.
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {key |> to_string() |> String.downcase(), value} end)
+  end
 
   defp load_database_config do
     # Load database configuration settings
@@ -301,12 +322,20 @@ defmodule Mydia.Config.Loader do
   end
 
   # Assemble the `connection_settings` map from env vars. Some adapters store
-  # config here rather than in top-level columns — notably debrid clients,
-  # whose provider lives at `connection_settings["provider"]`
-  # (DOWNLOAD_CLIENT_<N>_PROVIDER). Add further keys here as adapters need them.
-  # Keys are strings to match how adapters and validations read the map.
+  # config here rather than in top-level columns:
+  #   * debrid clients keep their provider at `connection_settings["provider"]`
+  #     (DOWNLOAD_CLIENT_<N>_PROVIDER)
+  #   * blackhole clients keep their folder paths at
+  #     `connection_settings["watch_folder"]` / `["completed_folder"]`
+  #     (DOWNLOAD_CLIENT_<N>_WATCH_FOLDER / _COMPLETED_FOLDER)
+  # Add further keys here as adapters need them. Keys are strings to match how
+  # adapters and validations read the map.
   defp put_download_client_connection_settings(map, prefix) do
-    settings = put_if_present(%{}, "provider", System.get_env("#{prefix}PROVIDER"))
+    settings =
+      %{}
+      |> put_if_present("provider", System.get_env("#{prefix}PROVIDER"))
+      |> put_if_present("watch_folder", System.get_env("#{prefix}WATCH_FOLDER"))
+      |> put_if_present("completed_folder", System.get_env("#{prefix}COMPLETED_FOLDER"))
 
     if settings == %{}, do: map, else: Map.put(map, :connection_settings, settings)
   end

@@ -138,7 +138,6 @@ defmodule Mydia.Downloads.Client.RegistryTest do
       rqbit: Mydia.Downloads.Client.Rqbit,
       rtorrent: Mydia.Downloads.Client.Rtorrent,
       blackhole: Mydia.Downloads.Client.Blackhole,
-      http: Mydia.Downloads.Client.HTTP,
       sabnzbd: Mydia.Downloads.Client.Sabnzbd,
       nzbget: Mydia.Downloads.Client.Nzbget,
       debrid: Mydia.Downloads.Client.Debrid
@@ -158,6 +157,10 @@ defmodule Mydia.Downloads.Client.RegistryTest do
 
     test "unknown type resolves to nil (matches former dispatch-table fallback)" do
       assert Registry.lookup(:no_such_client) == nil
+    end
+
+    test ":http is not a registered client type (removed non-functional placeholder)" do
+      assert Registry.lookup(:http) == nil
     end
   end
 

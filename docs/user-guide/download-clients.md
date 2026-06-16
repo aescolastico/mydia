@@ -4,22 +4,30 @@ Download clients handle the actual downloading of media files. Mydia supports bo
 
 ## Supported Clients
 
-This table highlights the most common client types. The Admin UI also supports rTorrent, Blackhole, and Debrid clients.
+Mydia supports the following client types. All are configurable via the Admin UI, environment variables, or a YAML config file.
 
 ### Torrent Clients
 
-| Client | Protocol | Features |
-|--------|----------|----------|
-| qBittorrent | HTTP API | Categories, labels, seeding |
-| Transmission | RPC | Categories, seeding |
-| rqbit | HTTP API | Lightweight torrent client, seeding |
+| Client | Type value | Protocol | Features |
+|--------|------------|----------|----------|
+| qBittorrent | `qbittorrent` | HTTP API | Categories, labels, seeding |
+| Transmission | `transmission` | RPC | Categories, seeding |
+| rqbit | `rqbit` | HTTP API | Lightweight torrent client, seeding |
+| rTorrent | `rtorrent` | XML-RPC | Categories, seeding |
+| Blackhole | `blackhole` | Watch directory | Drops `.torrent` files for an external client to pick up |
 
 ### Usenet Clients
 
-| Client | Protocol | Features |
-|--------|----------|----------|
-| SABnzbd | HTTP API | Categories, priorities |
-| NZBGet | JSON-RPC | Categories, priorities |
+| Client | Type value | Protocol | Features |
+|--------|------------|----------|----------|
+| SABnzbd | `sabnzbd` | HTTP API | Categories, priorities |
+| NZBGet | `nzbget` | JSON-RPC | Categories, priorities |
+
+### Debrid Services
+
+| Client | Type value | Providers |
+|--------|------------|-----------|
+| Debrid | `debrid` | `real_debrid`, `all_debrid`, `premiumize`, `tor_box` |
 
 ## Adding Download Clients
 
@@ -76,7 +84,30 @@ DOWNLOAD_CLIENT_5_HOST=nzbget
 DOWNLOAD_CLIENT_5_PORT=6789
 DOWNLOAD_CLIENT_5_USERNAME=nzbget
 DOWNLOAD_CLIENT_5_PASSWORD=tegbzn6789
+
+# rTorrent (uses the XML-RPC path /RPC2 by default)
+DOWNLOAD_CLIENT_6_NAME=rTorrent
+DOWNLOAD_CLIENT_6_TYPE=rtorrent
+DOWNLOAD_CLIENT_6_HOST=rtorrent
+DOWNLOAD_CLIENT_6_PORT=8080
+DOWNLOAD_CLIENT_6_USERNAME=admin
+DOWNLOAD_CLIENT_6_PASSWORD=adminpass
+
+# Debrid (Real-Debrid, AllDebrid, Premiumize, TorBox)
+DOWNLOAD_CLIENT_7_NAME=Real-Debrid
+DOWNLOAD_CLIENT_7_TYPE=debrid
+DOWNLOAD_CLIENT_7_API_KEY=your-debrid-api-key
+DOWNLOAD_CLIENT_7_PROVIDER=real_debrid
+
+# Blackhole (drops .torrent files in a watched directory)
+DOWNLOAD_CLIENT_8_NAME=Blackhole
+DOWNLOAD_CLIENT_8_TYPE=blackhole
+DOWNLOAD_CLIENT_8_WATCH_FOLDER=/downloads/watch
+DOWNLOAD_CLIENT_8_COMPLETED_FOLDER=/downloads/complete
 ```
+
+Every client needs a `_NAME` — Mydia discovers clients by their `_NAME`
+variable, so a block without one is silently ignored.
 
 ## Configuration Options
 
@@ -88,7 +119,8 @@ DOWNLOAD_CLIENT_5_PASSWORD=tegbzn6789
 | Port | Client port | `8080` |
 | Username | Auth username | `admin` |
 | Password | Auth password | `secret` |
-| API Key | API key (SABnzbd) | `abc123` |
+| API Key | API key (SABnzbd, debrid) | `abc123` |
+| Provider | Debrid provider (debrid only) | `real_debrid` |
 | Use SSL | Enable HTTPS | `true` |
 | Category | Default category | `mydia` |
 | Priority | Client priority | `1` |
@@ -105,6 +137,30 @@ Use these connection values when adding rqbit:
 - Username/password: optional, only when rqbit HTTP basic auth is enabled
 
 rqbit supports torrents only. It does not support categories, labels, tags, or Usenet downloads, so Mydia ignores category settings for rqbit clients. Final organization still happens during import when Mydia moves or links completed files into the configured library.
+
+## Debrid
+
+Debrid clients connect to a hosted debrid service instead of a self-hosted daemon, so they need no host or port — only an API key and a provider.
+
+Use these values when adding a debrid client:
+
+- Type: `debrid`
+- API Key: your account API key from the provider
+- Provider: one of `real_debrid`, `all_debrid`, `premiumize`, `tor_box`
+
+Debrid clients use a 24-hour stall-detection grace period by default (other clients use 60 minutes), because remote caching can take longer to resolve a download before it begins transferring. The provider's API endpoint is built in, so `Host`/`Port` are ignored.
+
+## Blackhole
+
+A blackhole client writes `.torrent` files into a watched folder for a separate torrent client to pick up, then detects finished downloads in a completed folder. It uses no host or port — only the two folder paths.
+
+Use these values when adding a blackhole client:
+
+- Type: `blackhole`
+- Watch Folder: where Mydia drops `.torrent` files (`WATCH_FOLDER`)
+- Completed Folder: where the external client places finished downloads (`COMPLETED_FOLDER`)
+
+Both folders must be readable and writable by Mydia. Final organization still happens during import when Mydia moves or links completed files into the configured library.
 
 ## Client Priority
 

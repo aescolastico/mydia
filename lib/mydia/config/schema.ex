@@ -141,7 +141,6 @@ defmodule Mydia.Config.Schema do
           :transmission,
           :rqbit,
           :rtorrent,
-          :http,
           :sabnzbd,
           :nzbget,
           :blackhole,

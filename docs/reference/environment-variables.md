@@ -103,11 +103,16 @@ Configure multiple clients using numbered variables (`<N>` = 1, 2, 3, etc.):
 | `DOWNLOAD_CLIENT_<N>_USE_SSL` | Use SSL/TLS | `false` |
 | `DOWNLOAD_CLIENT_<N>_USERNAME` | Auth username | - |
 | `DOWNLOAD_CLIENT_<N>_PASSWORD` | Auth password | - |
-| `DOWNLOAD_CLIENT_<N>_API_KEY` | API key (SABnzbd) | - |
+| `DOWNLOAD_CLIENT_<N>_API_KEY` | API key (SABnzbd, debrid) | - |
 | `DOWNLOAD_CLIENT_<N>_CATEGORY` | Default category | - |
 | `DOWNLOAD_CLIENT_<N>_DOWNLOAD_DIRECTORY` | Download directory | - |
+| `DOWNLOAD_CLIENT_<N>_PROVIDER` | Debrid provider (debrid only) | `real_debrid` |
+| `DOWNLOAD_CLIENT_<N>_WATCH_FOLDER` | Watch folder (blackhole only) | `/downloads/watch` |
+| `DOWNLOAD_CLIENT_<N>_COMPLETED_FOLDER` | Completed folder (blackhole only) | `/downloads/complete` |
 
-**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `sabnzbd`, `nzbget`
+> `DOWNLOAD_CLIENT_<N>_NAME` is required — clients are discovered by their `_NAME` variable, so a block without it is ignored.
+
+**Client Types:** `qbittorrent`, `transmission`, `rqbit`, `rtorrent`, `blackhole`, `sabnzbd`, `nzbget`, `debrid`
 
 Example rqbit client:
 
@@ -120,6 +125,44 @@ DOWNLOAD_CLIENT_1_PORT=3030
 DOWNLOAD_CLIENT_1_USERNAME=admin
 DOWNLOAD_CLIENT_1_PASSWORD=adminpass
 ```
+
+### Debrid Clients
+
+Debrid clients connect to a hosted debrid service rather than a self-hosted
+torrent/usenet daemon. They require `TYPE=debrid`, an `API_KEY`, and a
+`PROVIDER` selecting which service to use. `HOST`/`PORT` are ignored — each
+provider's API endpoint is built in.
+
+**Providers:** `real_debrid`, `all_debrid`, `premiumize`, `tor_box`
+
+```bash
+DOWNLOAD_CLIENT_2_NAME=Real-Debrid
+DOWNLOAD_CLIENT_2_TYPE=debrid
+DOWNLOAD_CLIENT_2_API_KEY=your-debrid-api-key
+DOWNLOAD_CLIENT_2_PROVIDER=real_debrid
+```
+
+Swap `PROVIDER` for any of the values above (e.g. `all_debrid`, `premiumize`,
+`tor_box`) to use a different service. Debrid clients default to a 24-hour
+stall-detection grace period (vs. 60 minutes for other clients), since remote
+caching can take longer to resolve a download.
+
+### Blackhole Clients
+
+Blackhole clients drop `.torrent` files into a watched folder for an external
+client to pick up, and detect finished downloads in a completed folder. They
+require `TYPE=blackhole`, a `WATCH_FOLDER`, and a `COMPLETED_FOLDER` instead of
+host/port.
+
+```bash
+DOWNLOAD_CLIENT_3_NAME=Blackhole
+DOWNLOAD_CLIENT_3_TYPE=blackhole
+DOWNLOAD_CLIENT_3_WATCH_FOLDER=/downloads/watch
+DOWNLOAD_CLIENT_3_COMPLETED_FOLDER=/downloads/complete
+```
+
+See the [Download Clients user guide](../user-guide/download-clients.md#via-environment-variables)
+for per-type examples of the remaining client types.
 
 ## Indexers
 
