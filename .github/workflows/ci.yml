@@ -22,7 +22,7 @@ env:
   # If they drift, local devenv and CI compile under different toolchains.
   ELIXIR_VERSION: "1.19"
   OTP_VERSION: "28"
-  FLUTTER_VERSION: "3.38.6"
+  FLUTTER_VERSION: "3.44.2"
 
 jobs:
   test:

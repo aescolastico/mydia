@@ -7,11 +7,14 @@
 # each git worktree derives its own non-colliding ports and isolated state.
 #
 # ⚠️ KEEP IN SYNC across all toolchain sources — bump together:
-#   - this file                       (beam.packages.erlang_28 + rust 1.96.0)
+#   - this file                       (beam.packages.erlang_28 + rust 1.96.0 + flutter344 = 3.44.2)
 #   - .github/workflows/ci.yml        (ELIXIR_VERSION / OTP_VERSION / FLUTTER_VERSION + rust-toolchain)
+#   - .github/workflows/ci-player.yml (FLUTTER_VERSION)
 #   - Dockerfile                      (production image base — FROM elixir:1.19-otp-28)
 # If they drift, local devenv and CI compile under different toolchains and
-# "green locally" stops predicting "green in CI".
+# "green locally" stops predicting "green in CI". Flutter is pinned to an
+# explicit flutterNNN attribute (not the floating `flutter` alias) so the
+# version here always matches the FLUTTER_VERSION strings in the CI workflows.
 
 let
   # Elixir 1.19 / OTP 28 built as a matched pair from one beam set. devenv's
@@ -80,8 +83,15 @@ in
   # already builds against pkgs.flutter, so the NixOS dynamic-linker/patchelf
   # handling is proven for this codebase. wasm-tools is carried from the flake's
   # shells (used by scripts/check-plugins.sh).
+  #
+  # Flutter is pinned to an EXPLICIT versioned attribute (flutter344 = 3.44.2),
+  # not the floating `flutter` alias — this is the dev side of the FLUTTER_VERSION
+  # KEEP IN SYNC contract (see header). A `devenv update` that bumps nixpkgs past
+  # this attribute fails loudly (attribute gone) instead of silently shipping a
+  # different Flutter than CI's subosito pin. To bump: change flutterNNN here AND
+  # FLUTTER_VERSION in ci.yml + ci-player.yml together.
   packages = with pkgs; [
-    flutter
+    flutter344
 
     # Node.js for assets
     nodejs
