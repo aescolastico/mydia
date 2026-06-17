@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/depth_tokens.dart';
+import '../../core/ui/reduced_motion.dart';
 import 'progress_overlay.dart';
 
 class MediaPoster extends StatefulWidget {
@@ -37,103 +39,108 @@ class _MediaPosterState extends State<MediaPoster> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: MouseRegion(
-              onEnter: (_) => setState(() => _isHovered = true),
-              onExit: (_) => setState(() => _isHovered = false),
-              child: AnimatedScale(
-                scale: _isHovered ? 1.02 : 1.0,
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeInOut,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: _isHovered
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.3),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
+            child: Builder(
+              builder: (context) {
+                final reduceMotion = context.reduceMotion;
+                final lifted = _isHovered && !reduceMotion;
+                // Solid, always-elevated poster (R7): a resting token shadow at
+                // rest that deepens to the hover token, plus a small lift — no
+                // scale jump (R11). Motion collapses under reduced motion while
+                // the resting shadow remains.
+                return MouseRegion(
+                  onEnter: (_) => setState(() => _isHovered = true),
+                  onExit: (_) => setState(() => _isHovered = false),
+                  child: AnimatedContainer(
+                    duration:
+                        reduceMotion ? Duration.zero : DepthTokens.motionMedium,
+                    curve: DepthTokens.curveStandard,
+                    transform: Matrix4.translationValues(
+                      0,
+                      lifted ? -DepthTokens.posterHoverLift : 0,
+                      0,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      // Resting shadow at rest; deepens on hover. Under reduced
+                      // motion the hover accent collapses and the resting shadow
+                      // stays (AE1) — gated on [lifted], not raw hover.
+                      boxShadow: lifted
+                          ? DepthTokens.posterHover
+                          : DepthTokens.posterResting,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Stack(
+                        children: [
+                          SizedBox.expand(
+                            child: widget.posterUrl != null
+                                ? CachedNetworkImage(
+                                    imageUrl: widget.posterUrl!,
+                                    fit: BoxFit.cover,
+                                    cacheManager: PosterCacheManager(),
+                                    placeholder: (context, url) => Container(
+                                      color: AppColors.surfaceVariant,
+                                      child: const Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        Container(
+                                      color: AppColors.surfaceVariant,
+                                      child: const Icon(
+                                        Icons.movie,
+                                        size: 48,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  )
+                                : Container(
+                                    color: AppColors.surfaceVariant,
+                                    child: const Icon(
+                                      Icons.movie,
+                                      size: 48,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                          ),
+                          if (widget.progressPercentage != null &&
+                              widget.progressPercentage! > 0)
+                            ProgressOverlay(
+                                percentage: widget.progressPercentage!),
+                          if (widget.isFavorite)
+                            const Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Icon(
+                                Icons.favorite,
+                                color: Colors.red,
+                                size: 20,
+                              ),
                             ),
-                          ]
-                        : [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Stack(
-                children: [
-                  SizedBox.expand(
-                    child: widget.posterUrl != null
-                        ? CachedNetworkImage(
-                            imageUrl: widget.posterUrl!,
-                            fit: BoxFit.cover,
-                            cacheManager: PosterCacheManager(),
-                            placeholder: (context, url) => Container(
-                              color: AppColors.surfaceVariant,
+                          // Hover overlay with play button
+                          AnimatedOpacity(
+                            opacity: _isHovered ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeInOut,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: AppColors.overlayDark,
+                              ),
                               child: const Center(
-                                child: CircularProgressIndicator(),
+                                child: Icon(
+                                  Icons.play_circle_filled,
+                                  size: 48,
+                                  color: AppColors.textPrimary,
+                                ),
                               ),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              color: AppColors.surfaceVariant,
-                              child: const Icon(
-                                Icons.movie,
-                                size: 48,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          )
-                        : Container(
-                            color: AppColors.surfaceVariant,
-                            child: const Icon(
-                              Icons.movie,
-                              size: 48,
-                              color: AppColors.textSecondary,
                             ),
                           ),
-                  ),
-                  if (widget.progressPercentage != null && widget.progressPercentage! > 0)
-                    ProgressOverlay(percentage: widget.progressPercentage!),
-                  if (widget.isFavorite)
-                    const Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Icon(
-                        Icons.favorite,
-                        color: Colors.red,
-                        size: 20,
-                      ),
-                    ),
-                  // Hover overlay with play button
-                  AnimatedOpacity(
-                    opacity: _isHovered ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: AppColors.overlayDark,
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.play_circle_filled,
-                          size: 48,
-                          color: AppColors.textPrimary,
-                        ),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-                ),
-              ),
+                );
+              },
             ),
           ),
           if (widget.showTitle) ...[
