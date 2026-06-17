@@ -186,7 +186,10 @@ in
     };
 
     "mydia:ecto" = {
-      exec = "mix ecto.create --quiet && mix ecto.migrate";
+      # backup_before_migrate self-skips when no migrations are pending, so it
+      # is a cheap no-op except right before a migration actually runs — keeping
+      # the dev-DB safety net the retired docker-entrypoint.sh provided.
+      exec = "mix ecto.create --quiet && mix mydia.backup_before_migrate && mix ecto.migrate";
       # Re-run when a migration is added/changed (idempotent otherwise).
       execIfModified = [ "priv/repo/migrations" ];
       before = [ "devenv:enterShell" ];

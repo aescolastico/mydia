@@ -73,7 +73,8 @@ ${YELLOW}Process Lifecycle (devenv processes):${NC}
   stop                 Stop processes
   start                Start processes in the background
   restart              Restart the background stack
-  logs [process]       Show process logs (e.g. 'logs phoenix')
+  logs <process>       Show recent logs for a process (e.g. 'logs phoenix';
+                       no live-follow — use foreground 'up' to stream live)
   ps                   List managed processes and their status
 
 ${YELLOW}Shells & Mix:${NC}
@@ -105,7 +106,7 @@ ${YELLOW}Player (Flutter):${NC}
   player setup         Install deps and run code generation
   player build         Build + deploy web assets to priv/static/player
   player shell         Open a shell in the player directory
-  player logs          Follow the build_runner (codegen) process logs
+  player logs          Show recent build_runner (codegen) process logs
   player restart       Restart the flutter-codegen process
   player e2e [opts]    Run player E2E integration tests (Docker)
   player e2e-build     Pre-build E2E images (Docker)
@@ -127,7 +128,7 @@ ${YELLOW}Examples:${NC}
   ./dev mix test                 # Run tests
   ./dev mix ecto.migrate         # Run migrations
   ./dev user list                # List all users
-  ./dev player logs              # Follow build_runner (codegen) logs
+  ./dev player logs              # Show recent build_runner (codegen) logs
 
 EOF
     exit 0
@@ -228,7 +229,29 @@ case "$COMMAND" in
         devenv up -d "$@"
         ;;
     logs)
-        devenv processes logs "$@"
+        # `devenv processes logs` shows recent lines for ONE named process and
+        # does not follow (no -f). For a live stream of everything, run `./dev up`
+        # in the foreground. Translate a historical -f/--follow into a hint
+        # rather than forwarding an unsupported flag.
+        follow=false
+        log_args=()
+        for a in "$@"; do
+            case "$a" in
+                -f|--follow) follow=true ;;
+                *) log_args+=("$a") ;;
+            esac
+        done
+        if [ "$follow" = true ]; then
+            echo -e "${YELLOW}Note: 'logs' shows recent lines only — devenv has no live-follow.${NC}"
+            echo -e "${YELLOW}      Run './dev up' (foreground) to stream all processes live.${NC}"
+        fi
+        if [ ${#log_args[@]} -eq 0 ]; then
+            echo -e "${YELLOW}Specify a process, e.g.:${NC} ./dev logs phoenix"
+            echo "Managed processes: phoenix, flutter-codegen (plus postgres when DATABASE_TYPE=postgres)."
+            echo "Use './dev ps' to list them, or './dev up' (foreground) to stream all live."
+            exit 0
+        fi
+        devenv processes logs "${log_args[@]}"
         ;;
     ps)
         devenv processes list
@@ -316,7 +339,7 @@ case "$COMMAND" in
     player)
         case "$1" in
             logs)
-                echo -e "${GREEN}Following build_runner (codegen) process logs...${NC}"
+                echo -e "${GREEN}Showing recent build_runner (codegen) process logs...${NC}"
                 devenv processes logs flutter-codegen
                 ;;
             build)

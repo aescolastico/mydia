@@ -47,7 +47,7 @@ RUN apk add --no-cache \
 # Keep the default CARGO_HOME (/root/.cargo) so the existing registry/git cache
 # mounts on the compile steps below still apply.
 #
-# PINNED to 1.96 to match nix (nix/devShells/flake-module.nix) and CI. The guest
+# PINNED to 1.96 to match devenv.nix (languages.rust) and CI. The guest
 # is a wasip2 component whose WASI world tracks the Rust version (1.96 -> wasi
 # 0.2.6); the runtime host is wasmex 0.14 / wasmtime 39, which only validates up
 # to wasi 0.2.6. A bleeding-edge `stable` emits wasi 0.2.9 and the bundled plugin

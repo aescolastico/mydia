@@ -46,8 +46,8 @@ jobs:
       # during `mix compile`. Provision the target explicitly rather than
       # assuming the runner's ambient toolchain is rustup-managed.
       #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # PINNED to 1.96 to match devenv.nix (languages.rust, version 1.96.0).
+      # The guest is a wasip2 component whose WASI
       # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
       # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
       # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
@@ -160,8 +160,8 @@ jobs:
       # during `mix compile`. Provision the target explicitly rather than
       # assuming the runner's ambient toolchain is rustup-managed.
       #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # PINNED to 1.96 to match devenv.nix (languages.rust, version 1.96.0).
+      # The guest is a wasip2 component whose WASI
       # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
       # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
       # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
@@ -252,8 +252,8 @@ jobs:
       # during `mix compile`. Provision the target explicitly rather than
       # assuming the runner's ambient toolchain is rustup-managed.
       #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
+      # PINNED to 1.96 to match devenv.nix (languages.rust, version 1.96.0).
+      # The guest is a wasip2 component whose WASI
       # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
       # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
       # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
