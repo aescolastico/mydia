@@ -3,7 +3,9 @@
 # ============================================
 # Flutter Build Stage
 # ============================================
-FROM ghcr.io/cirruslabs/flutter:3.38.6 AS flutter-builder
+# KEEP IN SYNC: Flutter version must match devenv.nix (flutter344 = 3.44.2) and
+# the FLUTTER_VERSION strings in ci.yml + ci-player.yml.
+FROM ghcr.io/cirruslabs/flutter:3.44.2 AS flutter-builder
 
 WORKDIR /app/player
 

@@ -17,8 +17,9 @@ env:
   MIX_ENV: test
   # ⚠️ KEEP IN SYNC across all toolchain sources — bump together:
   #   - these vars                      (ELIXIR_VERSION / OTP_VERSION / FLUTTER_VERSION)
-  #   - devenv.nix                      (beam.packages.erlang_28 + rust 1.96.0)
-  #   - Dockerfile                      (production image base — FROM elixir:1.19-otp-28)
+  #   - devenv.nix                      (beam.packages.erlang_28 + rust 1.96.0 + flutter344)
+  #   - .github/workflows/ci-player.yml (FLUTTER_VERSION)
+  #   - Dockerfile                      (FROM elixir:1.19-otp-28 base + cirruslabs/flutter builder stage)
   # If they drift, local devenv and CI compile under different toolchains.
   ELIXIR_VERSION: "1.19"
   OTP_VERSION: "28"

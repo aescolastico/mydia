@@ -10,7 +10,8 @@
 #   - this file                       (beam.packages.erlang_28 + rust 1.96.0 + flutter344 = 3.44.2)
 #   - .github/workflows/ci.yml        (ELIXIR_VERSION / OTP_VERSION / FLUTTER_VERSION + rust-toolchain)
 #   - .github/workflows/ci-player.yml (FLUTTER_VERSION)
-#   - Dockerfile                      (production image base — FROM elixir:1.19-otp-28)
+#   - Dockerfile                      (FROM elixir:1.19-otp-28 base AND the
+#                                      cirruslabs/flutter builder stage — bump BOTH)
 # If they drift, local devenv and CI compile under different toolchains and
 # "green locally" stops predicting "green in CI". Flutter is pinned to an
 # explicit flutterNNN attribute (not the floating `flutter` alias) so the
@@ -48,8 +49,10 @@ let
 
   # ── Shared caches outside any worktree (KTD4 / R11) ─────────────────────────
   # Immutable/derived downloads are shared so a second worktree's first run
-  # reuses the first's; mutable state (pg data, _build, mydia_dev.db) stays
-  # per-worktree under .devenv/ automatically.
+  # reuses the first's; mutable state stays per-worktree: pg data and _build
+  # live under .devenv/ automatically, and the SQLite mydia_dev.db lives at the
+  # worktree root (config/dev.exs: Path.expand "../mydia_dev.db") — isolated
+  # because each worktree is a separate checkout, not because it is under .devenv/.
   sharedCache = "${builtins.getEnv "HOME"}/.cache/mydia-devenv";
 
   # ── Postgres gating (R4) ────────────────────────────────────────────────────
