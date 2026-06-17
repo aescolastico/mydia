@@ -148,8 +148,8 @@ class _ArtworkLayer extends StatelessWidget {
           ),
         ),
         // Dark scrim guaranteeing text contrast over bright artwork. Alpha is
-        // tuned in U8 against real images.
-        const _BackdropScrim(),
+        // tuned in U8 (see AmbientBackdropScrim.baseDim).
+        const AmbientBackdropScrim(),
       ],
     );
   }
@@ -158,12 +158,20 @@ class _ArtworkLayer extends StatelessWidget {
 /// Dark scrim painted over the blurred artwork to guarantee foreground text
 /// contrast (plan R3 / U8). A flat dim plus a slightly stronger bottom gradient
 /// keeps content legible without crushing the artwork to pure black.
-class _BackdropScrim extends StatelessWidget {
-  const _BackdropScrim();
+///
+/// [baseDim] is the single source of truth for the top-of-scrim alpha and is
+/// asserted against worst-case bright artwork in `ambient_backdrop_contrast_test`.
+class AmbientBackdropScrim extends StatelessWidget {
+  const AmbientBackdropScrim({super.key});
 
-  /// Flat dim applied across the whole backdrop. Tuned in U8 so primary text
-  /// (~15:1) and secondary text (~7:1) hold over worst-case bright artwork.
-  static const double baseDim = 0.78;
+  /// Top-of-scrim dim alpha applied over the blurred artwork. Tuned in U8 so
+  /// primary text clears WCAG AAA (7:1) and secondary text clears AA (4.5:1)
+  /// over worst-case (white) artwork; on the flat theme background they remain
+  /// at their ~15:1 / ~7:1 design targets.
+  static const double baseDim = 0.88;
+
+  /// Bottom-of-scrim dim alpha (slightly stronger to anchor bottom content).
+  static const double bottomDim = 0.94;
 
   @override
   Widget build(BuildContext context) {
@@ -174,7 +182,7 @@ class _BackdropScrim extends StatelessWidget {
           end: Alignment.bottomCenter,
           colors: [
             Color.fromRGBO(10, 17, 32, baseDim),
-            Color.fromRGBO(10, 17, 32, 0.88),
+            Color.fromRGBO(10, 17, 32, bottomDim),
           ],
           stops: [0.0, 1.0],
         ),
