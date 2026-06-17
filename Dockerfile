@@ -3,9 +3,11 @@
 # ============================================
 # Flutter Build Stage
 # ============================================
-# KEEP IN SYNC: Flutter version must match devenv.nix (flutter344 = 3.44.2) and
-# the FLUTTER_VERSION strings in ci.yml + ci-player.yml.
-FROM ghcr.io/cirruslabs/flutter:3.44.2 AS flutter-builder
+# KEEP IN SYNC: Flutter must match devenv.nix (flutter344 = 3.44.2) and the
+# FLUTTER_VERSION strings in ci.yml + ci-player.yml. cirruslabs publishes no
+# 3.44.2 image (the 3.44 line stops at 3.44.0), so this builder pins the nearest
+# published tag — 3.44.0, one bugfix patch behind the 3.44.2 SDK pin above.
+FROM ghcr.io/cirruslabs/flutter:3.44.0 AS flutter-builder
 
 WORKDIR /app/player
 
