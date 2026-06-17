@@ -14,11 +14,12 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Colors for output. ANSI-C quoting ($'...') stores real ESC bytes so the codes
+# render correctly both in `echo -e` and in the `cat <<EOF` help block.
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+NC=$'\033[0m' # No Color
 
 # Resolve project root (directory containing this script) so the wrapper works
 # from any cwd within the worktree.
