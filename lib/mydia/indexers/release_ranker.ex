@@ -218,6 +218,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # torrents. nil seeders pass through.
   defp meets_seeder_minimum?(%SearchResult{seeders: nil}, _min_seeders), do: true
 
+  # A nil/absent minimum means no seeder floor.
+  defp meets_seeder_minimum?(_result, nil), do: true
+
   defp meets_seeder_minimum?(%SearchResult{seeders: seeders}, min_seeders) do
     seeders >= min_seeders
   end

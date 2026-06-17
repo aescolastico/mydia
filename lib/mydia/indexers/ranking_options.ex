@@ -47,12 +47,14 @@ defmodule Mydia.Indexers.RankingOptions do
 
     base_opts =
       [
-        min_seeders: Map.get(input, :min_seeders),
         size_range: Map.get(input, :size_range),
         search_query: Map.get(input, :search_query),
         media_type: media_type,
         expected_title: Map.get(input, :expected_title)
       ]
+      # Omit :min_seeders when nil so the ranker's default (0) applies; passing
+      # an explicit nil would break the seeder-minimum comparison.
+      |> maybe_put(:min_seeders, Map.get(input, :min_seeders))
       |> maybe_put(:expected_season, Map.get(input, :expected_season))
       |> maybe_put(:expected_episode, Map.get(input, :expected_episode))
 

@@ -2,7 +2,7 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpersTest do
   use ExUnit.Case, async: true
 
   alias MydiaWeb.MediaLive.Show.SearchHelpers
-  alias Mydia.Indexers.{QualityParser, SearchResult}
+  alias Mydia.Indexers.{QualityParser, RankingOptions, ReleaseRanker, SearchResult}
   alias Mydia.Settings.QualityProfile
 
   # Test Fixtures
@@ -156,6 +156,192 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpersTest do
       # The clean match should rank first due to penalty on extra words
       first = List.first(sorted)
       assert String.contains?(first.title, "The.Girlfriend.S01E01")
+    end
+  end
+
+  describe "sort_search_results_with_opts/3 unified ranker (U5)" do
+    test "the first quality-sorted item equals ReleaseRanker.select_best_result" do
+      profile = build_quality_profile()
+
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.720p.WEB.h264-OTHER",
+          seeders: 20,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.720p.WEB.h264-OTHER")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP",
+          seeders: 5,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p",
+          seeders: 500,
+          quality: QualityParser.parse("Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p")
+        })
+      ]
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        })
+
+      sorted = SearchHelpers.sort_search_results_with_opts(results, :quality, opts)
+      best = ReleaseRanker.select_best_result(results, opts)
+
+      assert List.first(sorted).download_url == best.result.download_url
+      # The parody must NOT be the manual top result.
+      refute String.contains?(List.first(sorted).title, "Parody")
+    end
+
+    test "a penalized identity-mismatch release stays visible near the bottom (AE4)" do
+      profile = build_quality_profile()
+
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-OTHER",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-OTHER")
+        })
+      ]
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        })
+
+      sorted = SearchHelpers.sort_search_results_with_opts(results, :quality, opts)
+
+      assert length(sorted) == 2
+      # The wrong episode is still present but ranked last.
+      assert String.contains?(List.last(sorted).title, "S09E02")
+    end
+
+    test "a blocked-tag release does not appear in the quality-sorted output (AE3)" do
+      profile = build_quality_profile()
+
+      results = [
+        build_result(%{title: "Movie.CAM.1080p.x264", seeders: 100}),
+        build_result(%{title: "Movie.1080p.BluRay.x264", seeders: 50})
+      ]
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :movie,
+          min_seeders: 0,
+          blocked_tags: ["CAM"]
+        })
+
+      sorted = SearchHelpers.sort_search_results_with_opts(results, :quality, opts)
+
+      refute Enum.any?(sorted, &String.contains?(&1.title, "CAM"))
+    end
+
+    test "non-quality sort modes are unchanged by the unified path" do
+      results = [
+        build_result(%{title: "A.1080p", seeders: 10, size: 1_000}),
+        build_result(%{title: "B.1080p", seeders: 100, size: 5_000})
+      ]
+
+      opts = RankingOptions.build(%{media_type: :movie})
+
+      by_seeders = SearchHelpers.sort_search_results_with_opts(results, :seeders, opts)
+      assert List.first(by_seeders).seeders == 100
+
+      by_size = SearchHelpers.sort_search_results_with_opts(results, :size, opts)
+      assert List.first(by_size).size == 5_000
+    end
+  end
+
+  describe "profile_score_breakdown/2 unified breakdown (U6)" do
+    test "returns a ScoreBreakdown struct with a real 0-10 title_match" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "The.Studio.2025.S01E01.1080p.WEB-DL.x264",
+          seeders: 30,
+          quality: QualityParser.parse("The.Studio.2025.S01E01.1080p.WEB-DL.x264")
+        })
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :episode,
+          search_query: "The Studio S01E01"
+        })
+
+      data = SearchHelpers.profile_score_breakdown(result, opts)
+
+      assert %Mydia.Indexers.Structs.ScoreBreakdown{} = data.breakdown
+      assert data.breakdown.title_match > 0.0
+      assert data.breakdown.title_match <= 10.0
+      assert is_map(data.detected)
+    end
+
+    test "a penalized identity mismatch carries a non-zero identity penalty" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-OTHER",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-OTHER")
+        })
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1
+        })
+
+      data = SearchHelpers.profile_score_breakdown(result, opts)
+
+      assert data.breakdown.identity_penalty < 0.0
+      # The penalized total can be deeply negative (identity penalty is a tier
+      # separator), which the dialog clamps to a 0 ring value.
+      assert data.score < 0.0
+    end
+
+    test "a clean in-range identity match has all penalties zeroed" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP")
+        })
+
+      opts =
+        RankingOptions.build(%{
+          quality_profile: profile,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1
+        })
+
+      data = SearchHelpers.profile_score_breakdown(result, opts)
+
+      assert data.breakdown.size_penalty == 0.0
+      assert data.breakdown.seeder_penalty == 0.0
+      assert data.breakdown.identity_penalty == 0.0
     end
   end
 
