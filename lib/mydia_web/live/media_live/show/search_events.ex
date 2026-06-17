@@ -109,7 +109,15 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
      socket
      |> assign(:show_manual_search_modal, true)
      |> assign(:manual_search_query, search_query)
-     |> assign(:manual_search_context, %{type: :episode, episode_id: episode_id})
+     |> assign(
+       :manual_search_context,
+       %{
+         type: :episode,
+         episode_id: episode_id,
+         season_number: episode.season_number,
+         episode_number: episode.episode_number
+       }
+     )
      |> assign(:searching, true)
      |> assign(:results_empty?, false)
      |> assign(:download_error, nil)
@@ -305,17 +313,11 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
   defp find_prepared_result(socket, download_url) do
     raw_results = Map.get(socket.assigns, :raw_search_results, [])
     assigns = socket.assigns
-    media_item = assigns.media_item
-    media_type = if media_item.type == "movie", do: :movie, else: :episode
+    ranking_opts = build_manual_ranking_opts(assigns)
 
     raw_results
     |> filter_search_results(assigns)
-    |> sort_search_results(
-      assigns.sort_by,
-      media_item.quality_profile,
-      media_type,
-      Map.get(assigns, :manual_search_query)
-    )
+    |> sort_search_results_with_opts(assigns.sort_by, ranking_opts)
     |> prepare_for_stream()
     |> Enum.find(&(&1.download_url == download_url))
   end
@@ -325,21 +327,13 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
   def handle_search_async({:ok, {:ok, results, indexer_errors}}, socket) do
     start_time = System.monotonic_time(:millisecond)
 
-    media_item = socket.assigns.media_item
-    quality_profile = media_item.quality_profile
-    media_type = get_media_type(media_item)
     search_query = socket.assigns.manual_search_query
 
     filtered_results = filter_search_results(results, socket.assigns)
+    ranking_opts = build_manual_ranking_opts(socket.assigns)
 
     sorted_results =
-      sort_search_results(
-        filtered_results,
-        socket.assigns.sort_by,
-        quality_profile,
-        media_type,
-        search_query
-      )
+      sort_search_results_with_opts(filtered_results, socket.assigns.sort_by, ranking_opts)
 
     prepared_results = prepare_for_stream(sorted_results)
 

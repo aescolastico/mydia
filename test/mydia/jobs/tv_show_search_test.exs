@@ -752,8 +752,11 @@ defmodule Mydia.Jobs.TVShowSearchTest do
   end
 
   describe "season pack filtering in episode search" do
-    test "filters out season pack results when searching for individual episodes" do
-      # Use a dedicated Bypass to avoid async test interference
+    test "selects a penalized season pack when only season packs are available (AE4)" do
+      # Season packs are no longer hard-rejected from episode searches. When
+      # every result is a season pack, the ranker penalizes them on identity
+      # (season matches, episode absent) but keeps them selectable, so the
+      # episode search now grabs the best penalized pack instead of nothing.
       bypass = Bypass.open()
 
       IndexerMock.mock_prowlarr_all(bypass,
@@ -787,30 +790,31 @@ defmodule Mydia.Jobs.TVShowSearchTest do
           air_date: ~D[2020-01-15]
         })
 
-      # Should return :ok but no download initiated (all results were season packs)
       assert :ok =
                perform_job(TVShowSearch, %{
                  "mode" => "specific",
                  "episode_id" => episode.id
                })
 
-      # Verify no downloads were created for this episode
+      # A penalized-but-selectable season pack is now grabbed rather than the
+      # search recording a backoff and downloading nothing.
       import Ecto.Query
 
       downloads =
         Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.episode_id == ^episode.id))
 
-      assert downloads == []
+      assert length(downloads) == 1
     end
 
-    test "selects episode results over season packs in mixed results",
+    test "prefers the matching episode over a season pack in mixed results",
          %{bypass: bypass} do
       # Override shared mock with mixed results (episode + season pack)
       IndexerMock.mock_prowlarr_search(bypass,
         results: [
-          # Season pack with high seeders (would normally score higher)
+          # Season pack with high seeders (would normally score higher) — now
+          # penalized on identity (no episode marker).
           IndexerMock.season_pack_result(%{title: "Breaking Bad", season: 1, seeders: 500}),
-          # Individual episode with lower seeders (should be selected after filtering)
+          # The matching individual episode — outranks the penalized pack.
           IndexerMock.tv_episode_result(%{
             title: "Breaking Bad",
             season: 1,
@@ -836,18 +840,16 @@ defmodule Mydia.Jobs.TVShowSearchTest do
                  "episode_id" => episode.id
                })
 
-      # Verify that if a download was created, it's an episode (not a season pack)
+      # The matching episode (E01) outranks the identity-penalized season pack.
       import Ecto.Query
 
       downloads =
         Mydia.Repo.all(from(d in Mydia.Downloads.Download, where: d.episode_id == ^episode.id))
 
-      if length(downloads) > 0 do
-        download = hd(downloads)
-        # Title should contain episode marker (E01), not be a season pack
-        assert String.contains?(download.title, "E01")
-        refute String.contains?(download.title, "COMPLETE")
-      end
+      assert length(downloads) == 1
+      download = hd(downloads)
+      assert String.contains?(download.title, "E01")
+      refute String.contains?(download.title, "COMPLETE")
     end
 
     test "does not filter multi-episode packs (they contain episode markers)",

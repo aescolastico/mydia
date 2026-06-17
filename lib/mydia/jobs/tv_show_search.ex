@@ -55,6 +55,7 @@ defmodule Mydia.Jobs.TVShowSearch do
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
   alias Mydia.Downloads.{Blacklists, Download}
+  alias Mydia.Indexers.RankingOptions
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Indexers.Structs.SearchResultMetadata
   alias Mydia.Media.{MediaItem, Episode}
@@ -854,23 +855,6 @@ defmodule Mydia.Jobs.TVShowSearch do
     Enum.filter(results, &season_pack?(&1.title, season_number))
   end
 
-  # Reject results that look like season packs from individual episode searches
-  defp reject_season_packs(results, season_number) do
-    episode_results = Enum.reject(results, &season_pack?(&1.title, season_number))
-
-    filtered_count = length(results) - length(episode_results)
-
-    if filtered_count > 0 do
-      Logger.info("Filtered #{filtered_count} season pack results from episode search",
-        season_number: season_number,
-        season_packs_filtered: filtered_count,
-        episode_results_remaining: length(episode_results)
-      )
-    end
-
-    episode_results
-  end
-
   # Build filter stats for season pack filtering (results rejected because they're individual episodes)
   defp build_season_pack_filter_stats(results, season_number) do
     season_marker = "S#{String.pad_leading("#{season_number}", 2, "0")}"
@@ -1152,31 +1136,21 @@ defmodule Mydia.Jobs.TVShowSearch do
   end
 
   defp process_episode_results(episode, results, args, query) do
-    # Filter out season packs — individual episode searches should not grab full season downloads
-    episode_results = reject_season_packs(results, episode.season_number)
-
+    # Season packs are no longer hard-rejected here. Episode/season identity is
+    # judged inside ReleaseRanker via the identity penalty (R6): for an episode
+    # search a season pack matches the season but lacks the episode, so it is
+    # penalized and kept as a low-tier fallback rather than removed. This makes
+    # the formerly-unreachable "all season packs" backoff branch obsolete — an
+    # episode search whose results are all season packs now ranks and can select
+    # the penalized pack instead of recording a backoff and grabbing nothing.
+    #
     # Filter blacklisted releases out before ranking (#123). The "filter,
     # don't rank" convention keeps this distinct from `ReleaseRanker`.
     # Too-fresh NZB filtering (#121) already happened upstream in
     # `Indexers.search_all/2`.
-    episode_results = reject_blacklisted(episode_results, episode: episode)
+    episode_results = reject_blacklisted(results, episode: episode)
 
-    if episode_results == [] do
-      Logger.warning("All results were season packs, no episode-specific results",
-        episode_id: episode.id,
-        show: episode.media_item.title,
-        season: episode.season_number,
-        episode: episode.episode_number,
-        total_results: length(results)
-      )
-
-      # Record backoff — no suitable results for this episode
-      record_episode_backoff(episode, "all_season_packs")
-
-      :ok
-    else
-      process_ranked_episode_results(episode, episode_results, args, query)
-    end
+    process_ranked_episode_results(episode, episode_results, args, query)
   end
 
   # Drops results matching an active `(indexer, guid)` row in the
@@ -1270,145 +1244,53 @@ defmodule Mydia.Jobs.TVShowSearch do
   ## Private Functions - Quality & Ranking
 
   defp build_ranking_options(episode, %Args{} = args) do
-    # Start with base options - TV shows typically have smaller file sizes than movies
-    # Include search_query for title relevance scoring and media_type for unified scoring
-    # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
-    base_opts = [
+    # Delegate to the shared RankingOptions builder. An episode search supplies
+    # the expected season AND episode so the ranker's identity penalty can rank
+    # the requested episode above wrong episodes and season packs (which match
+    # the season but lack the episode).
+    RankingOptions.build(%{
+      quality_profile: load_quality_profile(episode),
+      media_type: :episode,
       min_seeders: args.min_seeders || get_min_seeders(),
       size_range: args.size_range,
       search_query: build_episode_query(episode),
-      media_type: :episode,
-      expected_title: episode.media_item.title
-    ]
-
-    # Add quality profile for unified scoring via SearchScorer
-    opts_with_quality =
-      case load_quality_profile(episode) do
-        nil ->
-          base_opts
-
-        quality_profile ->
-          base_opts
-          |> Keyword.put(:quality_profile, quality_profile)
-          |> Keyword.merge(build_quality_options(quality_profile, :episode))
-      end
-
-    # Add any custom blocked/preferred tags from args (merged with config tokens)
-    opts_with_quality
-    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
-    |> maybe_add_option(:preferred_tags, args.preferred_tags)
+      expected_title: episode.media_item.title,
+      expected_season: episode.season_number,
+      expected_episode: episode.episode_number,
+      blocked_tags: merged_blocked_tags(args.blocked_tags),
+      preferred_tags: args.preferred_tags
+    })
   end
 
   defp build_ranking_options_for_season(media_item, season_number, _episodes, %Args{} = args) do
-    # Season packs are typically much larger than individual episodes
-    # A full season in HD can be 10-50GB depending on episode count and quality
-    # Include search_query for title relevance scoring and media_type for unified scoring
-    # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
-    base_opts = [
+    # Delegate to the shared RankingOptions builder. A season-pack search
+    # supplies only the expected season (no episode), so the identity penalty
+    # matches on season alone — a season pack for the requested season matches,
+    # a wrong-season pack is penalized.
+    RankingOptions.build(%{
+      quality_profile: load_season_quality_profile(media_item),
+      media_type: :episode,
       min_seeders: args.min_seeders || get_min_seeders(),
       size_range: args.size_range,
       search_query: build_season_query(media_item, season_number),
-      media_type: :episode,
-      expected_title: media_item.title
-    ]
-
-    # Load quality profile from media_item for unified scoring via SearchScorer
-    opts_with_quality =
-      case media_item.quality_profile_id do
-        nil ->
-          base_opts
-
-        _id ->
-          quality_profile =
-            media_item
-            |> Repo.preload(:quality_profile)
-            |> then(& &1.quality_profile)
-
-          case quality_profile do
-            nil ->
-              base_opts
-
-            qp ->
-              base_opts
-              |> Keyword.put(:quality_profile, qp)
-              |> Keyword.merge(build_quality_options(qp, :episode))
-          end
-      end
-
-    # Add any custom blocked/preferred tags from args (merged with config tokens)
-    opts_with_quality
-    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
-    |> maybe_add_option(:preferred_tags, args.preferred_tags)
+      expected_title: media_item.title,
+      expected_season: season_number,
+      blocked_tags: merged_blocked_tags(args.blocked_tags),
+      preferred_tags: args.preferred_tags
+    })
   end
 
   defp load_quality_profile(%Episode{media_item: media_item}) do
-    case media_item.quality_profile_id do
-      nil ->
-        nil
-
-      _id ->
-        media_item
-        |> Repo.preload(:quality_profile)
-        |> then(& &1.quality_profile)
-    end
+    load_season_quality_profile(media_item)
   end
 
-  defp build_quality_options(quality_profile, media_type) do
-    # Extract preferred qualities from quality profile
-    # The :qualities field contains the list of allowed resolutions in preference order
-    quality_opts =
-      case quality_profile.qualities do
-        nil -> []
-        qualities when is_list(qualities) -> [preferred_qualities: qualities]
-        _ -> []
-      end
+  defp load_season_quality_profile(%MediaItem{quality_profile_id: nil}), do: nil
 
-    # Extract min_ratio from quality_standards if present
-    # Note: The QualityProfile schema uses quality_standards, not rules
-    rules_opts =
-      case quality_profile.quality_standards do
-        %{min_ratio: min_ratio} when is_number(min_ratio) ->
-          [min_ratio: min_ratio]
-
-        %{"min_ratio" => min_ratio} when is_number(min_ratio) ->
-          [min_ratio: min_ratio]
-
-        _ ->
-          []
-      end
-
-    # Extract size constraints from quality_standards based on media type
-    size_opts = extract_size_range(quality_profile, media_type)
-
-    quality_opts
-    |> Keyword.merge(rules_opts)
-    |> Keyword.merge(size_opts)
+  defp load_season_quality_profile(%MediaItem{} = media_item) do
+    media_item
+    |> Repo.preload(:quality_profile)
+    |> then(& &1.quality_profile)
   end
-
-  defp extract_size_range(%{quality_standards: standards}, media_type) when is_map(standards) do
-    {min_key, max_key} =
-      case media_type do
-        :movie -> {:movie_min_size_mb, :movie_max_size_mb}
-        :episode -> {:episode_min_size_mb, :episode_max_size_mb}
-      end
-
-    min_size = Map.get(standards, min_key)
-    max_size = Map.get(standards, max_key)
-
-    case {min_size, max_size} do
-      {nil, nil} -> []
-      {min, nil} when is_number(min) -> [size_range: {min, nil}]
-      {nil, max} when is_number(max) -> [size_range: {nil, max}]
-      {min, max} when is_number(min) and is_number(max) -> [size_range: {min, max}]
-      _ -> []
-    end
-  end
-
-  defp extract_size_range(_, _), do: []
-
-  defp maybe_add_option(opts, _key, nil), do: opts
-  defp maybe_add_option(opts, _key, []), do: opts
-  defp maybe_add_option(opts, key, value), do: Keyword.put(opts, key, value)
 
   ## Private Functions - Download Initiation
 
@@ -2051,51 +1933,11 @@ defmodule Mydia.Jobs.TVShowSearch do
 
   ## Private Functions - Event Helpers
 
-  # Build a map of filter statistics for rejected results, including detailed results with scores
+  # Build a map of filter statistics for the Activity view. Delegates to the
+  # shared ReleaseRanker.build_filter_stats/2 so movie and TV render identically,
+  # including the penalized-but-kept state.
   defp build_filter_stats(results, ranking_opts) do
-    # Get detailed scoring for all results
-    scored_results = ReleaseRanker.score_all_with_reasons(results, ranking_opts)
-
-    # Count by rejection reason
-    rejection_counts =
-      scored_results
-      |> Enum.filter(&(&1.status == :rejected))
-      |> Enum.group_by(fn result ->
-        # Extract the rejection type (before the colon)
-        case result.rejection_reason do
-          nil -> "unknown"
-          reason -> reason |> String.split(":") |> List.first()
-        end
-      end)
-      |> Enum.map(fn {reason, items} -> {reason, length(items)} end)
-      |> Map.new()
-
-    # Build the results list for the event (limit to top 10 to avoid huge events)
-    results_details =
-      scored_results
-      |> Enum.take(10)
-      |> Enum.map(fn r ->
-        base = %{
-          "title" => r.title,
-          "score" => r.score,
-          "seeders" => r.seeders,
-          "size_mb" => r.size_mb,
-          "resolution" => r.resolution,
-          "status" => to_string(r.status)
-        }
-
-        if r.rejection_reason do
-          Map.put(base, "rejection_reason", r.rejection_reason)
-        else
-          base
-        end
-      end)
-
-    %{
-      "total_results" => length(results),
-      "rejection_counts" => rejection_counts,
-      "results" => results_details
-    }
+    ReleaseRanker.build_filter_stats(results, ranking_opts)
   end
 
   # Convert a map with atom keys to string keys for JSON serialization

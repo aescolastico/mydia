@@ -58,9 +58,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
   @type score_breakdown :: ScoreBreakdown.t()
 
   @type ranking_options :: [
-          min_seeders: non_neg_integer(),
+          min_seeders: non_neg_integer() | nil,
           min_ratio: float() | nil,
-          size_range: {non_neg_integer(), non_neg_integer()},
+          size_range: {non_neg_integer() | nil, non_neg_integer() | nil} | nil,
           preferred_qualities: [String.t()],
           preferred_tags: [String.t()],
           blocked_tags: [String.t()],
@@ -68,12 +68,22 @@ defmodule Mydia.Indexers.ReleaseRanker do
           quality_profile: QualityProfile.t() | nil,
           media_type: :movie | :episode | nil,
           expected_title: String.t() | nil,
+          expected_season: non_neg_integer() | nil,
+          expected_episode: non_neg_integer() | nil,
           min_post_age_minutes: non_neg_integer() | nil,
           now: DateTime.t() | nil
         ]
 
   @default_min_seeders 0
   @title_match_threshold 0.7
+
+  # Identity penalty: a large tier separator (not a nudge). It deliberately
+  # exceeds the maximum achievable base score (quality·0.6 ≈ 60 + seeders ≈ 30
+  # + title ≈ 10 + tag_bonus, which is 10 per preferred tag with no documented
+  # cap). At -1000 it dwarfs even a heavily-tagged title, so every
+  # identity-matching release outranks every identity-mismatching one while the
+  # mismatch stays selectable (finite, deeply negative score).
+  @identity_penalty -1000.0
 
   @doc """
   Selects the best result from a list based on ranking criteria.
@@ -121,15 +131,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
     )
 
     search_query = Keyword.get(opts, :search_query)
-
-    media_type = Keyword.get(opts, :media_type)
     expected_title = Keyword.get(opts, :expected_title)
 
+    # Note: TV-pattern-in-movie-search is no longer a hard removal. A movie
+    # search expects no season/episode, so a TV-pattern release is treated as an
+    # identity mismatch and softly penalized inside calculate_score_breakdown
+    # (see identity_penalty/2), per the Open Question default.
     ranked =
       results
       |> reject_invalid_releases()
       |> filter_acceptable(opts)
-      |> reject_tv_releases_for_movies(media_type)
       |> reject_title_mismatches(expected_title)
       |> Enum.map(fn result ->
         breakdown = calculate_score_breakdown(result, opts)
@@ -156,63 +167,34 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   @doc """
-  Filters results to only those meeting minimum criteria.
+  Applies the surviving hard removals to a result list.
 
-  Removes results that:
-  - Have fewer than `:min_seeders` seeders
-  - Have seeder ratio below `:min_ratio` (if specified)
-  - Fall outside the `:size_range` (in MB)
-  - Contain any `:blocked_tags` in their title
+  Only two hard removals remain — everything else (size, seeders, ratio,
+  identity) is now a soft scoring penalty applied during ranking, so weak
+  releases sink to the bottom instead of disappearing. Removes results that:
+  - Contain any `:blocked_tags` in their title (R8)
+  - Are NZB results posted more recently than `:min_post_age_minutes` (timing safeguard)
 
   ## Examples
 
-      iex> ReleaseRanker.filter_acceptable(results, min_seeders: 10, blocked_tags: ["CAM"])
+      iex> ReleaseRanker.filter_acceptable(results, blocked_tags: ["CAM"])
       [%SearchResult{...}, ...]
 
-      iex> ReleaseRanker.filter_acceptable(results, min_ratio: 0.15)
+      iex> ReleaseRanker.filter_acceptable(results, min_post_age_minutes: 30)
       [%SearchResult{...}, ...]
   """
   @spec filter_acceptable([SearchResult.t()], ranking_options()) :: [SearchResult.t()]
   def filter_acceptable(results, opts \\ []) do
-    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
-    min_ratio = Keyword.get(opts, :min_ratio)
-    size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
     min_post_age_minutes = Keyword.get(opts, :min_post_age_minutes)
     now = Keyword.get(opts, :now) || DateTime.utc_now()
 
+    # Only two hard removals survive here: user-blocked tags (R8) and the NZB
+    # post-age timing safeguard. Size, seeders, and ratio are no longer hard
+    # filters — they become soft penalties applied during scoring (R4/R5), so a
+    # weak release sinks to the bottom of the ranking instead of vanishing.
     Enum.filter(results, fn result ->
       cond do
-        not meets_seeder_minimum?(result, min_seeders) ->
-          Logger.info(
-            "[ReleaseRanker] Filtered out (seeders #{inspect(result.seeders)} < #{min_seeders}): #{result.title}"
-          )
-
-          false
-
-        min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-          seeders = result.seeders || 0
-          leechers = result.leechers || 0
-          total = seeders + leechers
-          ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
-
-          Logger.info(
-            "[ReleaseRanker] Filtered out (ratio #{ratio}% < #{Float.round(min_ratio * 100, 1)}%): #{result.title}"
-          )
-
-          false
-
-        size_range != nil and not within_size_range?(result, size_range) ->
-          {min_mb, max_mb} = size_range
-          size_mb = Float.round(bytes_to_mb(result.size), 1)
-          range_str = format_size_range(min_mb, max_mb)
-
-          Logger.info(
-            "[ReleaseRanker] Filtered out (size #{size_mb} MB not in #{range_str}): #{result.title}"
-          )
-
-          false
-
         not not_blocked?(result, blocked_tags) ->
           Logger.info("[ReleaseRanker] Filtered out (blocked tag): #{result.title}")
           false
@@ -235,6 +217,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # NZB results have no seeders concept - the seeder minimum applies only to
   # torrents. nil seeders pass through.
   defp meets_seeder_minimum?(%SearchResult{seeders: nil}, _min_seeders), do: true
+
+  # A nil/absent minimum means no seeder floor.
+  defp meets_seeder_minimum?(_result, nil), do: true
 
   defp meets_seeder_minimum?(%SearchResult{seeders: seeders}, min_seeders) do
     seeders >= min_seeders
@@ -277,24 +262,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   defp meets_post_age_minimum?(_result, _minutes, _now), do: true
-
-  # nil size_range disables size filtering
-  defp within_size_range?(_result, nil), do: true
-
-  # Handle partial ranges where min or max might be nil
-  defp within_size_range?(%SearchResult{size: size_bytes}, {min_mb, max_mb}) do
-    size_mb = bytes_to_mb(size_bytes)
-
-    above_min = min_mb == nil or size_mb >= min_mb
-    below_max = max_mb == nil or size_mb <= max_mb
-
-    above_min and below_max
-  end
-
-  defp format_size_range(nil, nil), do: "any"
-  defp format_size_range(min, nil), do: "#{min}+ MB"
-  defp format_size_range(nil, max), do: "0-#{max} MB"
-  defp format_size_range(min, max), do: "#{min}-#{max} MB"
 
   defp not_blocked?(%SearchResult{title: title}, blocked_tags) do
     title_lower = String.downcase(title)
@@ -343,9 +310,21 @@ defmodule Mydia.Indexers.ReleaseRanker do
     quality_score = Map.get(breakdown, :quality_score, 0.0)
     seeder_score = Map.get(breakdown, :seeder_score, 0.0)
     title_bonus = Map.get(breakdown, :title_bonus, 0.0)
+    # The unified quality score already folds file-size into its sub-score.
+    # Surface that real contribution rather than hardcoding 0.0 so the
+    # breakdown display is honest. There is no separate age component in the
+    # unified model, so :age stays 0.0.
+    size_score = Map.get(breakdown, :file_size, 0.0)
 
     # Calculate tag bonus from preferred_tags
     tag_bonus = calculate_tag_bonus(result.title, preferred_tags)
+
+    # Soft penalties derived per-result from the ranking options. Each helper
+    # returns a value <= 0.0 that is layered onto the base score. They stay at
+    # 0.0 when the relevant option is absent or the result is within bounds.
+    size_penalty = size_penalty(result, Keyword.get(opts, :size_range))
+    seeder_penalty = seeder_penalty(result, opts)
+    identity_penalty = identity_penalty(result, opts)
 
     size_mb = bytes_to_mb(result.size)
     seeders = result.seeders || 0
@@ -353,8 +332,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
     total_peers = seeders + leechers
     seeder_ratio = if total_peers > 0, do: seeders / total_peers, else: 0.0
 
-    # Add tag_bonus to total score
-    total_score = score_result.score + tag_bonus
+    # Add tag_bonus to the base score, then subtract any soft penalties.
+    total_score =
+      score_result.score + tag_bonus + size_penalty + seeder_penalty + identity_penalty
 
     Logger.info("""
     [ReleaseRanker] Score breakdown for: #{result.title}
@@ -376,11 +356,14 @@ defmodule Mydia.Indexers.ReleaseRanker do
     ScoreBreakdown.new(%{
       quality: round_score(quality_score),
       seeders: round_score(seeder_score),
-      size: 0.0,
+      size: round_score(size_score),
       age: 0.0,
-      title_match: round_score(title_bonus * 100),
+      title_match: round_score(title_bonus),
       tag_bonus: round_score(tag_bonus),
-      total: round_score(total_score)
+      total: round_score(total_score),
+      size_penalty: round_score(size_penalty),
+      seeder_penalty: round_score(seeder_penalty),
+      identity_penalty: round_score(identity_penalty)
     })
   end
 
@@ -409,29 +392,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
       end
     end)
   end
-
-  ## Private Functions - Media Type Filtering
-
-  # When searching for a movie, reject releases that contain TV season/episode
-  # patterns (S01, S01E05, etc.) since they're clearly TV content, not movies.
-  # This prevents false matches like "Frozen Planet II S01" matching "Frozen 2013".
-  @tv_season_pattern ~r/\bS\d{1,2}(?:E\d{1,3})?\b/i
-
-  defp reject_tv_releases_for_movies(results, :movie) do
-    Enum.filter(results, fn result ->
-      if Regex.match?(@tv_season_pattern, result.title) do
-        Logger.info(
-          "[ReleaseRanker] Filtered out (TV season/episode pattern in movie search): #{result.title}"
-        )
-
-        false
-      else
-        true
-      end
-    end)
-  end
-
-  defp reject_tv_releases_for_movies(results, _media_type), do: results
 
   ## Private Functions - Title Mismatch Filtering
 
@@ -606,9 +566,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
   """
   @spec score_all_with_reasons([SearchResult.t()], ranking_options()) :: [map()]
   def score_all_with_reasons(results, opts \\ []) do
-    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
-    min_ratio = Keyword.get(opts, :min_ratio)
-    size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
     expected_title = Keyword.get(opts, :expected_title)
 
@@ -624,20 +581,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
         resolution: resolution
       }
 
-      # Check rejection reasons in order
-      rejection =
-        get_rejection_reason(
-          result,
-          min_seeders,
-          min_ratio,
-          size_range,
-          blocked_tags,
-          expected_title
-        )
-
-      case rejection do
+      # Only hard removals are reported as rejections now; size/seeders/ratio
+      # shortcomings are penalties on accepted results (mirrors filter_acceptable
+      # and the identity penalty, which must stay in lockstep — see Risks).
+      case get_rejection_reason(result, blocked_tags, expected_title) do
         nil ->
-          # Not rejected, calculate score
+          # Accepted — record the full breakdown (including penalties) so the
+          # Activity view can render the penalized-but-kept state.
           breakdown = calculate_score_breakdown(result, opts)
 
           Map.merge(base_info, %{
@@ -647,7 +597,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
             breakdown: %{
               quality: breakdown.quality,
               seeders: breakdown.seeders,
-              title_match: breakdown.title_match
+              size: breakdown.size,
+              age: breakdown.age,
+              title_match: breakdown.title_match,
+              tag_bonus: breakdown.tag_bonus,
+              size_penalty: breakdown.size_penalty,
+              seeder_penalty: breakdown.seeder_penalty,
+              identity_penalty: breakdown.identity_penalty
             }
           })
 
@@ -663,30 +619,89 @@ defmodule Mydia.Indexers.ReleaseRanker do
     |> Enum.sort_by(& &1.score, :desc)
   end
 
-  # Returns rejection reason string or nil if acceptable
-  defp get_rejection_reason(
-         result,
-         min_seeders,
-         min_ratio,
-         size_range,
-         blocked_tags,
-         expected_title
-       ) do
+  @doc """
+  Build the filter-statistics map consumed by the Activity view, for both the
+  movie and TV search jobs (so the two paths render identically).
+
+  Returns a map with string keys:
+  - `"total_results"` - count of input results
+  - `"rejection_counts"` - count of hard removals grouped by reason
+  - `"results"` - up to 10 detail rows, each carrying a `"penalized"` flag and a
+    `"penalties"` map so the Activity row can show a penalized-but-kept state.
+  """
+  @spec build_filter_stats([SearchResult.t()], ranking_options()) :: map()
+  def build_filter_stats(results, opts \\ []) do
+    scored = score_all_with_reasons(results, opts)
+
+    rejection_counts =
+      scored
+      |> Enum.filter(&(&1.status == :rejected))
+      |> Enum.group_by(fn r ->
+        case r.rejection_reason do
+          nil -> "unknown"
+          reason -> reason |> String.split(":") |> List.first()
+        end
+      end)
+      |> Map.new(fn {reason, items} -> {reason, length(items)} end)
+
+    results_details =
+      scored
+      |> Enum.take(10)
+      |> Enum.map(&filter_stat_row/1)
+
+    %{
+      "total_results" => length(results),
+      "rejection_counts" => rejection_counts,
+      "results" => results_details
+    }
+  end
+
+  defp filter_stat_row(r) do
+    base = %{
+      "title" => r.title,
+      "score" => r.score,
+      "seeders" => r.seeders,
+      "size_mb" => r.size_mb,
+      "resolution" => r.resolution,
+      "status" => to_string(r.status)
+    }
+
+    base
+    |> maybe_put_rejection(r.rejection_reason)
+    |> maybe_put_penalties(r[:breakdown])
+  end
+
+  defp maybe_put_rejection(row, nil), do: row
+  defp maybe_put_rejection(row, reason), do: Map.put(row, "rejection_reason", reason)
+
+  # Surface the soft-penalty contributions (and a convenience flag) so the
+  # Activity view can distinguish a penalized-but-kept result from a clean OK.
+  defp maybe_put_penalties(row, %{} = breakdown) do
+    size_penalty = Map.get(breakdown, :size_penalty, 0.0)
+    seeder_penalty = Map.get(breakdown, :seeder_penalty, 0.0)
+    identity_penalty = Map.get(breakdown, :identity_penalty, 0.0)
+    penalized = size_penalty < 0.0 or seeder_penalty < 0.0 or identity_penalty < 0.0
+
+    Map.merge(row, %{
+      "penalized" => penalized,
+      "penalties" => %{
+        "size_penalty" => size_penalty,
+        "seeder_penalty" => seeder_penalty,
+        "identity_penalty" => identity_penalty
+      }
+    })
+  end
+
+  defp maybe_put_penalties(row, _), do: row
+
+  # Returns a rejection reason string or nil if acceptable. The only hard
+  # removals are invalid releases (validator), blocked tags, and wrong-show
+  # title mismatches. Size/seeders/ratio are no longer rejection reasons — they
+  # are soft penalties on accepted results.
+  defp get_rejection_reason(result, blocked_tags, expected_title) do
     cond do
-      not meets_seeder_minimum?(result, min_seeders) ->
-        "low_seeders: #{result.seeders} < #{min_seeders}"
-
-      min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-        seeders = result.seeders || 0
-        leechers = result.leechers || 0
-        total = seeders + leechers
-        ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
-        "low_ratio: #{ratio}% < #{Float.round(min_ratio * 100, 1)}%"
-
-      size_range != nil and not within_size_range?(result, size_range) ->
-        {min_mb, max_mb} = size_range
-        size_mb = Float.round(bytes_to_mb(result.size), 1)
-        "size_out_of_range: #{size_mb} MB not in #{min_mb}-#{max_mb} MB"
+      invalid_reason = invalid_release_reason(result) ->
+        "invalid: #{invalid_reason}"
 
       blocked_tag = find_blocked_tag(result, blocked_tags) ->
         "blocked_tag: #{blocked_tag}"
@@ -696,6 +711,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
       true ->
         nil
+    end
+  end
+
+  # Returns the validator's failure reason string, or nil if the release is
+  # valid. Mirrors reject_invalid_releases/1 so the Activity stats and actual
+  # ranking agree on which releases are hard-removed.
+  defp invalid_release_reason(%SearchResult{title: title}) do
+    case ReleaseValidator.validate_release(title) do
+      {:ok, _name} -> nil
+      {:error, reason} -> to_string(reason)
     end
   end
 
@@ -722,6 +747,138 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   ## Private Functions - Helpers
+
+  ## Private Functions - Soft Penalties
+
+  # Maximum size penalty. Deliberately modest so an out-of-range *correct*
+  # release can still outrank an in-range junk release (e.g. a CAM) on quality.
+  @max_size_penalty 15.0
+  # Penalty for a torrent below the configured minimum seeders. Small — the
+  # SearchScorer log10 seeder score and the zero-seeder 0.7 multiplier already
+  # push low/dead torrents down; this just nudges sub-minimum ones a bit lower.
+  @low_seeder_penalty 5.0
+  # Penalty for a torrent below the configured minimum seeder ratio.
+  @low_ratio_penalty 5.0
+
+  # Size penalty: proportional to how far the release size falls outside the
+  # configured range, capped at @max_size_penalty. In-range (or unconstrained)
+  # releases get 0.0. Returns a value <= 0.0.
+  defp size_penalty(_result, nil), do: 0.0
+
+  defp size_penalty(%SearchResult{size: size_bytes}, {min_mb, max_mb})
+       when is_integer(size_bytes) do
+    size_mb = bytes_to_mb(size_bytes)
+
+    cond do
+      min_mb != nil and size_mb < min_mb ->
+        scaled_size_penalty((min_mb - size_mb) / max(min_mb, 1))
+
+      max_mb != nil and size_mb > max_mb ->
+        scaled_size_penalty((size_mb - max_mb) / max(max_mb, 1))
+
+      true ->
+        0.0
+    end
+  end
+
+  defp size_penalty(_result, _size_range), do: 0.0
+
+  # Map a fractional distance outside the range (0.0..∞) to a penalty in
+  # (-@max_size_penalty .. 0.0]. A release at the boundary is 0; one at twice
+  # (or half) the bound is fully penalized.
+  defp scaled_size_penalty(fraction) when fraction <= 0.0, do: 0.0
+
+  defp scaled_size_penalty(fraction) do
+    -min(@max_size_penalty, fraction * @max_size_penalty)
+  end
+
+  # Seeder/ratio penalty: layered on top of the existing low-seeder score and
+  # zero-seeder multiplier. NZB results (nil seeders) are never penalized here.
+  # Returns a value <= 0.0.
+  defp seeder_penalty(%SearchResult{seeders: nil}, _opts), do: 0.0
+
+  defp seeder_penalty(%SearchResult{} = result, opts) do
+    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
+    min_ratio = Keyword.get(opts, :min_ratio)
+
+    seeder_part =
+      if meets_seeder_minimum?(result, min_seeders), do: 0.0, else: -@low_seeder_penalty
+
+    ratio_part =
+      if min_ratio != nil and not meets_ratio_minimum?(result, min_ratio),
+        do: -@low_ratio_penalty,
+        else: 0.0
+
+    seeder_part + ratio_part
+  end
+
+  # Identity penalty: penalize releases whose parsed season/episode does not
+  # match the requested one (or is absent) when an expected identity is
+  # supplied. The penalty is a large tier separator so identity matches always
+  # outrank mismatches while mismatches stay selectable.
+  #
+  # - Episode search (expected_episode set): match season AND episode.
+  # - Season search (expected_season set, no episode): match season only.
+  # - Movie search (media_type == :movie): expect NO season/episode; a parsed
+  #   TV pattern is an identity mismatch (folds in reject_tv_releases_for_movies
+  #   as a soft penalty per the Open Question default).
+  # - Fail open: an unparseable title (no ParsedFileInfo) gets no penalty.
+  defp identity_penalty(%SearchResult{} = result, opts) do
+    media_type = Keyword.get(opts, :media_type)
+    expected_season = Keyword.get(opts, :expected_season)
+    expected_episode = Keyword.get(opts, :expected_episode)
+
+    cond do
+      media_type == :movie ->
+        movie_identity_penalty(result)
+
+      expected_season != nil or expected_episode != nil ->
+        tv_identity_penalty(result, expected_season, expected_episode)
+
+      true ->
+        0.0
+    end
+  end
+
+  # Movie: any parsed season/episode marker is an identity mismatch. Fail open
+  # when the parser couldn't identify the release (no title), mirroring the
+  # title-mismatch convention, to protect formats the parser cannot read.
+  defp movie_identity_penalty(%SearchResult{title: title}) do
+    case ReleaseParser.parse(title) do
+      %ParsedFileInfo{title: parsed_title, season: season, episodes: episodes}
+      when is_binary(parsed_title) and
+             (not is_nil(season) or (is_list(episodes) and episodes != [])) ->
+        @identity_penalty
+
+      _ ->
+        0.0
+    end
+  end
+
+  defp tv_identity_penalty(%SearchResult{title: title}, expected_season, expected_episode) do
+    case ReleaseParser.parse(title) do
+      %ParsedFileInfo{title: parsed_title} = parsed when is_binary(parsed_title) ->
+        if identity_matches?(parsed, expected_season, expected_episode),
+          do: 0.0,
+          else: @identity_penalty
+
+      _ ->
+        # Parser couldn't identify the release (no title) — fail open, no penalty.
+        0.0
+    end
+  end
+
+  # Identity matches when the parsed season equals the expected season and,
+  # for an episode search, the parsed primary episode equals the expected
+  # episode. A nil parsed season/episode never matches a non-nil expectation.
+  defp identity_matches?(%ParsedFileInfo{} = parsed, expected_season, expected_episode) do
+    season_ok = expected_season == nil or parsed.season == expected_season
+
+    episode_ok =
+      expected_episode == nil or ParsedFileInfo.primary_episode(parsed) == expected_episode
+
+    season_ok and episode_ok
+  end
 
   # Calculate bonus points for matching preferred_tags in the title
   # Each matching tag adds 10 points to help preferred releases rank higher

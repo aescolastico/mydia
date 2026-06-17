@@ -35,6 +35,7 @@ defmodule Mydia.Jobs.MovieSearch do
 
   alias Mydia.{Repo, Media, Indexers, Downloads, Events, Search}
   alias Mydia.Downloads.{Blacklists, Download}
+  alias Mydia.Indexers.RankingOptions
   alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
@@ -541,33 +542,20 @@ defmodule Mydia.Jobs.MovieSearch do
   end
 
   defp build_ranking_options(movie, %Args{} = args) do
-    # Start with base options
-    # Include search_query for title relevance scoring and media_type for unified scoring
-    # Note: size_range is nil by default (no filtering) unless specified in args or quality profile
-    base_opts = [
+    # Delegate to the shared RankingOptions builder so movie and TV search use
+    # one option-building path. A movie expects no season/episode identity, so
+    # no expected_season/expected_episode are supplied (a TV-pattern release is
+    # softly penalized as an identity mismatch inside the ranker).
+    RankingOptions.build(%{
+      quality_profile: load_quality_profile(movie),
+      media_type: :movie,
       min_seeders: args.min_seeders || get_min_seeders(),
       size_range: args.size_range,
       search_query: build_search_query(movie),
-      media_type: :movie,
-      expected_title: movie.title
-    ]
-
-    # Add quality profile for unified scoring via SearchScorer
-    opts_with_quality =
-      case load_quality_profile(movie) do
-        nil ->
-          base_opts
-
-        quality_profile ->
-          base_opts
-          |> Keyword.put(:quality_profile, quality_profile)
-          |> Keyword.merge(build_quality_options(quality_profile, :movie))
-      end
-
-    # Add any custom blocked/preferred tags from args (merged with config tokens)
-    opts_with_quality
-    |> maybe_add_option(:blocked_tags, merged_blocked_tags(args.blocked_tags))
-    |> maybe_add_option(:preferred_tags, args.preferred_tags)
+      expected_title: movie.title,
+      blocked_tags: merged_blocked_tags(args.blocked_tags),
+      preferred_tags: args.preferred_tags
+    })
   end
 
   defp load_quality_profile(%MediaItem{quality_profile_id: nil}), do: nil
@@ -577,59 +565,6 @@ defmodule Mydia.Jobs.MovieSearch do
     |> Repo.preload(:quality_profile)
     |> Map.get(:quality_profile)
   end
-
-  defp build_quality_options(quality_profile, media_type) do
-    # Extract preferred qualities from quality profile
-    # The :qualities field contains the list of allowed resolutions in preference order
-    quality_opts =
-      case Map.get(quality_profile, :qualities) do
-        nil -> []
-        qualities when is_list(qualities) -> [preferred_qualities: qualities]
-        _ -> []
-      end
-
-    # Extract min_ratio from rules if present
-    rules_opts =
-      case Map.get(quality_profile, :rules) do
-        %{"min_ratio" => min_ratio} when is_number(min_ratio) ->
-          [min_ratio: min_ratio]
-
-        _ ->
-          []
-      end
-
-    # Extract size constraints from quality_standards based on media type
-    size_opts = extract_size_range(quality_profile, media_type)
-
-    quality_opts
-    |> Keyword.merge(rules_opts)
-    |> Keyword.merge(size_opts)
-  end
-
-  defp extract_size_range(%{quality_standards: standards}, media_type) when is_map(standards) do
-    {min_key, max_key} =
-      case media_type do
-        :movie -> {:movie_min_size_mb, :movie_max_size_mb}
-        :episode -> {:episode_min_size_mb, :episode_max_size_mb}
-      end
-
-    min_size = Map.get(standards, min_key)
-    max_size = Map.get(standards, max_key)
-
-    case {min_size, max_size} do
-      {nil, nil} -> []
-      {min, nil} when is_number(min) -> [size_range: {min, nil}]
-      {nil, max} when is_number(max) -> [size_range: {nil, max}]
-      {min, max} when is_number(min) and is_number(max) -> [size_range: {min, max}]
-      _ -> []
-    end
-  end
-
-  defp extract_size_range(_, _), do: []
-
-  defp maybe_add_option(opts, _key, nil), do: opts
-  defp maybe_add_option(opts, _key, []), do: opts
-  defp maybe_add_option(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp initiate_download(movie, result) do
     case Downloads.initiate_download(result, media_item_id: movie.id) do
@@ -719,18 +654,12 @@ defmodule Mydia.Jobs.MovieSearch do
 
   ## Private Functions - Event Helpers
 
-  # Build a map of filter statistics for rejected results
+  # Build a map of filter statistics for the Activity view. Delegates to the
+  # shared ReleaseRanker.build_filter_stats/2 so the movie path now surfaces the
+  # same per-result scores, hard-removal reasons, and penalty state the TV path
+  # does (previously this used a plain seeder-count heuristic).
   defp build_filter_stats(results, ranking_opts) do
-    min_seeders = Keyword.get(ranking_opts, :min_seeders, get_min_seeders())
-
-    # NZB results have no seeder concept; treat nil as not-low-seeders.
-    low_seeders = Enum.count(results, fn r -> r.seeders != nil and r.seeders < min_seeders end)
-
-    %{
-      "total_results" => length(results),
-      "low_seeders" => low_seeders,
-      "below_quality_threshold" => length(results) - low_seeders
-    }
+    ReleaseRanker.build_filter_stats(results, ranking_opts)
   end
 
   # Convert a map with atom keys to string keys for JSON serialization

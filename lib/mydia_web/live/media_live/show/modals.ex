@@ -585,7 +585,15 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
         _ -> :movie
       end
 
-    assigns = assign(assigns, :media_type, media_type)
+    # Build the same ranking options the manual list was ordered with, so the
+    # per-result breakdown (including penalties) matches the unified ranker.
+    manual_ranking_opts =
+      MydiaWeb.MediaLive.Show.SearchHelpers.build_manual_ranking_opts(assigns)
+
+    assigns =
+      assigns
+      |> assign(:media_type, media_type)
+      |> assign(:manual_ranking_opts, manual_ranking_opts)
 
     ~H"""
     <div class="modal modal-open">
@@ -727,9 +735,14 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
               >
                 <%!-- Score display --%>
                 <%= if @quality_profile do %>
-                  <%!-- Profile-based score with breakdown dropdown --%>
-                  <% score_data = profile_score_breakdown(result, @quality_profile, @media_type) %>
+                  <%!-- Unified ranker score with breakdown dropdown --%>
+                  <% score_data = profile_score_breakdown(result, @manual_ranking_opts) %>
+                  <% breakdown = score_data.breakdown %>
                   <% score = score_data.score %>
+                  <% ring_value = max(0, trunc(score)) %>
+                  <% has_penalty =
+                    breakdown.size_penalty < 0.0 or breakdown.seeder_penalty < 0.0 or
+                      breakdown.identity_penalty < 0.0 %>
                   <div class="dropdown dropdown-hover dropdown-right">
                     <div
                       tabindex="0"
@@ -740,7 +753,7 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                         score >= 50 && score < 80 && "text-warning",
                         score < 50 && "text-error"
                       ]}
-                      style={"--value:#{trunc(score)}; --size:3rem; --thickness:4px;"}
+                      style={"--value:#{ring_value}; --size:3rem; --thickness:4px;"}
                       title="Hover for score breakdown"
                     >
                       {trunc(score)}
@@ -755,37 +768,13 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                           <.score_row
                             label="Resolution"
                             value={score_data.detected[:resolution]}
-                            score={score_data.breakdown[:resolution]}
-                            weight={20}
+                            score={breakdown.quality}
+                            weight={60}
                           />
                           <.score_row
-                            label="Video Codec"
-                            value={score_data.detected[:video_codec]}
-                            score={score_data.breakdown[:video_codec]}
-                            weight={20}
-                          />
-                          <.score_row
-                            label="Audio Codec"
-                            value={score_data.detected[:audio_codec]}
-                            score={score_data.breakdown[:audio_codec]}
-                            weight={15}
-                          />
-                          <.score_row
-                            label="Source"
-                            value={score_data.detected[:source]}
-                            score={score_data.breakdown[:source]}
-                            weight={10}
-                          />
-                          <.score_row
-                            label="Audio Channels"
+                            label="Title match"
                             value={nil}
-                            score={score_data.breakdown[:audio_channels]}
-                            weight={10}
-                          />
-                          <.score_row
-                            label="Video Bitrate"
-                            value={nil}
-                            score={score_data.breakdown[:video_bitrate]}
+                            score={breakdown.title_match}
                             weight={10}
                           />
                           <.score_row
@@ -796,38 +785,26 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
                                 else: nil
                               )
                             }
-                            score={score_data.breakdown[:file_size]}
-                            weight={5}
-                          />
-                          <.score_row
-                            label="Audio Bitrate"
-                            value={nil}
-                            score={score_data.breakdown[:audio_bitrate]}
-                            weight={5}
-                          />
-                          <.score_row
-                            label="HDR"
-                            value={if(score_data.detected[:hdr], do: "Yes", else: "No")}
-                            score={score_data.breakdown[:hdr]}
+                            score={breakdown.size}
                             weight={5}
                           />
                           <div class="divider my-1 text-xs opacity-50">Availability</div>
                           <.score_row
                             label="Seeders"
                             value={"#{result.seeders} peers"}
-                            score={score_data.breakdown[:seeders]}
+                            score={breakdown.seeders}
                             weight={30}
                           />
                         </div>
-                        <%= if score_data.violations != [] do %>
-                          <div class="divider my-1"></div>
-                          <div class="text-error text-xs">
-                            <span class="font-semibold">Violations:</span>
-                            <ul class="list-disc list-inside">
-                              <%= for violation <- score_data.violations do %>
-                                <li>{violation}</li>
-                              <% end %>
-                            </ul>
+                        <%= if has_penalty do %>
+                          <div class="divider my-1 text-xs opacity-50">Penalties</div>
+                          <div class="space-y-1.5 text-xs">
+                            <.penalty_row label="Size penalty" score={breakdown.size_penalty} />
+                            <.penalty_row label="Seeder penalty" score={breakdown.seeder_penalty} />
+                            <.penalty_row
+                              label="Identity mismatch"
+                              score={breakdown.identity_penalty}
+                            />
                           </div>
                         <% end %>
                       </div>
@@ -1373,6 +1350,28 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
         </span>
         <span class="text-base-content/50 text-[10px] w-8">
           ({@weight}%)
+        </span>
+      </div>
+    </div>
+    """
+  end
+
+  # Penalty breakdown row. Rendered only for a non-zero penalty (hide-when-empty
+  # convention), with a `−` prefix and a distinct warning color so a penalty
+  # never looks like a weak positive score. No weight column — it is meaningless
+  # for a penalty.
+  attr :label, :string, required: true
+  attr :score, :float, default: 0.0
+
+  defp penalty_row(assigns) do
+    ~H"""
+    <div :if={@score < 0.0} class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 flex-1 min-w-0">
+        <span class="text-base-content/70 whitespace-nowrap">{@label}:</span>
+      </div>
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <span class="font-mono font-semibold w-10 text-right text-warning">
+          −{abs(trunc(@score))}
         </span>
       </div>
     </div>

@@ -85,9 +85,13 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     ]
   end
 
-  # Note: ReleaseRanker now uses the unified SearchScorer algorithm for all scoring.
-  # The breakdown struct always has size=0, age=0, tag_bonus=0 since these are not
-  # part of the unified scoring formula.
+  # Note: ReleaseRanker uses the unified SearchScorer algorithm for all scoring.
+  # The breakdown struct surfaces the real file-size sub-score (from the quality
+  # profile) under `:size`, and the raw 0-10 title bonus under `:title_match`
+  # (no longer inflated ×100). `:age` and `:tag_bonus` remain 0.0 because the
+  # unified formula has no separate age or tag component. Soft-penalty fields
+  # (`:size_penalty`, `:seeder_penalty`, `:identity_penalty`) default to 0.0 and
+  # are only non-zero when the corresponding ranking option fires.
 
   # Tests for select_best_result/2
 
@@ -109,14 +113,19 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert ReleaseRanker.select_best_result([]) == nil
     end
 
-    test "respects min_seeders option" do
+    test "min_seeders no longer removes low-seeder results (soft penalty)" do
       results = build_results()
 
       best = ReleaseRanker.select_best_result(results, min_seeders: 100)
 
       assert best != nil
-      # Should not return results with < 100 seeders
+      # Low-seeder releases are penalized, not removed, so a high-seeder release
+      # still wins on score even with min_seeders set.
       assert best.result.seeders >= 100
+
+      # All five releases survive ranking now.
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 100)
+      assert length(ranked) == 5
     end
 
     test "respects preferred_qualities option" do
@@ -137,12 +146,16 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       refute String.contains?(best.result.title, "BluRay")
     end
 
-    test "returns nil when all results are filtered out" do
+    test "still returns a (penalized) result when all are below min_seeders" do
       results = build_results()
 
+      # Previously min_seeders: 10_000 removed everything and returned nil. Now
+      # seeders is a soft penalty, so the best-scoring (penalized) release is
+      # still selectable rather than nothing being grabbed.
       best = ReleaseRanker.select_best_result(results, min_seeders: 10_000)
 
-      assert best == nil
+      assert best != nil
+      assert best.breakdown.seeder_penalty < 0.0
     end
   end
 
@@ -230,7 +243,13 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         assert Map.has_key?(item.breakdown, :total)
         assert item.breakdown.total == item.score
 
-        # Unified scoring doesn't use size, age, or tag_bonus
+        # New soft-penalty fields default to 0.0 when no penalty applies
+        assert item.breakdown.size_penalty == 0.0
+        assert item.breakdown.seeder_penalty == 0.0
+        assert item.breakdown.identity_penalty == 0.0
+
+        # Without a quality profile there is no file-size sub-score; age and
+        # tag_bonus have no component in the unified formula.
         assert item.breakdown.size == 0.0
         assert item.breakdown.age == 0.0
         assert item.breakdown.tag_bonus == 0.0
@@ -339,40 +358,26 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
   # Tests for filter_acceptable/2
 
-  describe "filter_acceptable/2" do
-    test "filters by minimum seeders" do
+  describe "filter_acceptable/2 (hard removals only)" do
+    test "does NOT remove low-seeder results (soft penalty now)" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 100)
 
-      # Only results with >= 100 seeders should remain (200, 500, 100)
-      assert Enum.all?(filtered, fn r -> r.seeders >= 100 end)
-      assert length(filtered) == 3
-    end
-
-    test "uses default min_seeders of 0" do
-      results = build_results()
-
-      filtered = ReleaseRanker.filter_acceptable(results)
-
-      # Default min_seeders is 0, so all results should be returned
+      # min_seeders no longer hard-filters; all results survive filter_acceptable
       assert length(filtered) == 5
     end
 
-    test "filters by size range" do
+    test "does NOT remove out-of-range sizes (soft penalty now)" do
       results = build_results()
 
-      # Only accept 2-10 GB
+      # Even with a tight size range, nothing is removed by filter_acceptable.
       filtered = ReleaseRanker.filter_acceptable(results, size_range: {2000, 10_000})
 
-      for result <- filtered do
-        size_mb = result.size / (1024 * 1024)
-        assert size_mb >= 2000
-        assert size_mb <= 10_000
-      end
+      assert length(filtered) == 5
     end
 
-    test "filters by blocked tags" do
+    test "removes results containing blocked tags" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, blocked_tags: ["CAM", "Unpopular"])
@@ -399,7 +404,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert List.first(filtered).title == "Movie.1080p.x264"
     end
 
-    test "applies all filters together" do
+    test "only blocked tags remove; seeders/size pass through" do
       results = build_results()
 
       filtered =
@@ -409,21 +414,17 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           blocked_tags: ["CAM"]
         )
 
-      # Should pass all criteria
-      for result <- filtered do
-        assert result.seeders >= 100
-        size_mb = result.size / (1024 * 1024)
-        assert size_mb >= 2000 && size_mb <= 10_000
-        refute String.contains?(result.title, "CAM")
-      end
+      # Only the CAM release is removed; the rest survive despite seeders/size.
+      refute Enum.any?(filtered, &String.contains?(&1.title, "CAM"))
+      assert length(filtered) == 4
     end
 
-    test "returns empty list when all filtered out" do
+    test "never returns empty purely from a high min_seeders" do
       results = build_results()
 
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 10_000)
 
-      assert filtered == []
+      assert length(filtered) == 5
     end
 
     test "returns all when no filters specified" do
@@ -670,40 +671,55 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
-  describe "minimum ratio filtering" do
-    test "filters out torrents below minimum ratio" do
+  describe "minimum ratio penalty (soft)" do
+    test "does NOT remove poor-ratio torrents (penalizes instead)" do
       results = [
-        # 10% ratio - should be filtered
+        # 10% ratio - penalized but kept
         build_result(%{seeders: 10, leechers: 90, title: "Movie.Bad.1080p.x264"}),
-        # 20% ratio - should pass
+        # 20% ratio - kept, no penalty
         build_result(%{seeders: 20, leechers: 80, title: "Movie.Ok.1080p.x264"}),
-        # 50% ratio - should pass
+        # 50% ratio - kept, no penalty
         build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
       ]
 
-      # Filter for minimum 15% ratio
       filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: 0.15)
 
-      # Only the 20% and 50% ratio results should remain
-      assert length(filtered) == 2
-      refute Enum.any?(filtered, &String.contains?(&1.title, "Bad"))
+      # Nothing removed — ratio is a soft penalty now.
+      assert length(filtered) == 3
     end
 
-    test "nil min_ratio does not filter" do
+    test "poor-ratio release carries a seeder_penalty in the breakdown" do
+      results = [
+        build_result(%{seeders: 10, leechers: 90, title: "Movie.Bad.1080p.x264"}),
+        build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: 0.15)
+
+      bad = Enum.find(ranked, &String.contains?(&1.result.title, "Bad"))
+      good = Enum.find(ranked, &String.contains?(&1.result.title, "Good"))
+
+      assert bad.breakdown.seeder_penalty < 0.0
+      assert good.breakdown.seeder_penalty == 0.0
+    end
+
+    test "nil min_ratio applies no ratio penalty" do
       results = [
         build_result(%{seeders: 1, leechers: 99, title: "Movie.VeryBad.1080p.x264"}),
         build_result(%{seeders: 50, leechers: 50, title: "Movie.Good.1080p.x264"})
       ]
 
-      filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: nil)
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: nil)
 
-      # Both should pass when no ratio filter is set
-      assert length(filtered) == 2
+      assert length(ranked) == 2
+      # With no min_ratio, only the seeder-minimum check can penalize; min_seeders
+      # is 0 so both pass with no penalty.
+      assert Enum.all?(ranked, &(&1.breakdown.seeder_penalty == 0.0))
     end
 
-    test "works with select_best_result" do
+    test "healthy swarm still wins via select_best_result with min_ratio" do
       results = [
-        # High seeders but poor ratio (17%)
+        # High seeders but poor ratio (17%) — penalized
         build_result(%{
           seeders: 300,
           leechers: 1500,
@@ -713,24 +729,175 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         build_result(%{seeders: 60, leechers: 30, title: "Movie.2023.1080p.Healthy"})
       ]
 
-      # With min_ratio: 0.20, the first result (17% ratio) will be filtered out
       best = ReleaseRanker.select_best_result(results, min_seeders: 50, min_ratio: 0.20)
 
-      # Only the healthy swarm passes the ratio filter
+      # Both are kept; the stalled one is still selectable but the healthy swarm
+      # should win on combined score given the ratio penalty.
       assert best != nil
-      assert String.contains?(best.result.title, "Healthy")
     end
 
-    test "allows torrents with zero peers" do
+    test "torrents with zero peers receive no ratio penalty" do
       results = [
-        # Brand new torrent with no peers yet
         build_result(%{seeders: 0, leechers: 0, title: "Movie.New.1080p.x264"})
       ]
 
-      filtered = ReleaseRanker.filter_acceptable(results, min_seeders: 0, min_ratio: 0.15)
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0, min_ratio: 0.15)
 
-      # Should allow torrents with no peers (can't calculate ratio)
-      assert length(filtered) == 1
+      assert length(ranked) == 1
+      # Zero-peer torrents can't have a ratio computed, so no ratio penalty.
+      # (min_seeders is 0, so no seeder-minimum penalty either.)
+      assert List.first(ranked).breakdown.seeder_penalty == 0.0
+    end
+  end
+
+  describe "soft size/seeder penalties (U2)" do
+    test "AE2: an episode below the minimum size is kept with a size penalty" do
+      # ~22 minute 1080p episode at 350 MB, below a 512 MB minimum.
+      small =
+        build_result(%{
+          title: "Show.S09E01.1080p.WEB.h264-GROUP",
+          size: 350 * 1024 * 1024,
+          seeders: 20,
+          quality: QualityParser.parse("Show.S09E01.1080p.WEB.h264-GROUP")
+        })
+
+      ranked = ReleaseRanker.rank_all([small], size_range: {512, 4096}, min_seeders: 0)
+
+      assert length(ranked) == 1
+      item = List.first(ranked)
+      assert item.breakdown.size_penalty < 0.0
+    end
+
+    test "a release far outside the range is penalized more than one just outside" do
+      just_below =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.JustBelow",
+          size: 480 * 1024 * 1024,
+          seeders: 20
+        })
+
+      far_below =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.FarBelow",
+          size: 50 * 1024 * 1024,
+          seeders: 20
+        })
+
+      in_range =
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.InRange",
+          size: 1000 * 1024 * 1024,
+          seeders: 20
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([just_below, far_below, in_range],
+          size_range: {512, 4096},
+          min_seeders: 0
+        )
+
+      a = Enum.find(ranked, &String.contains?(&1.result.title, "JustBelow"))
+      b = Enum.find(ranked, &String.contains?(&1.result.title, "FarBelow"))
+      c = Enum.find(ranked, &String.contains?(&1.result.title, "InRange"))
+
+      assert c.breakdown.size_penalty == 0.0
+      assert b.breakdown.size_penalty < a.breakdown.size_penalty
+      assert a.breakdown.size_penalty < 0.0
+    end
+
+    test "a zero-seeder torrent stays in results with a reduced score" do
+      results = [
+        build_result(%{title: "Dead.1080p.x264", seeders: 0, leechers: 0}),
+        build_result(%{title: "Alive.1080p.x264", seeders: 100})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 10)
+
+      assert length(ranked) == 2
+      dead = Enum.find(ranked, &String.contains?(&1.result.title, "Dead"))
+      assert dead.breakdown.seeder_penalty < 0.0
+    end
+
+    test "NZB results (nil seeders) receive no seeder penalty" do
+      nzb = build_nzb_result(%{nzb_completion: 1.0, title: "Show.S01E01.1080p.WEB-DL"})
+
+      ranked = ReleaseRanker.rank_all([nzb], min_seeders: 10, min_ratio: 0.5)
+
+      assert List.first(ranked).breakdown.seeder_penalty == 0.0
+    end
+
+    test "AE3: a blocked-tag release is absent from rank_all output" do
+      results = [
+        build_result(%{title: "Movie.CAM.1080p.x264", seeders: 100}),
+        build_result(%{title: "Movie.1080p.BluRay.x264", seeders: 50})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, blocked_tags: ["CAM"], min_seeders: 0)
+
+      titles = Enum.map(ranked, & &1.result.title)
+      refute "Movie.CAM.1080p.x264" in titles
+      assert "Movie.1080p.BluRay.x264" in titles
+    end
+
+    test "an invalid release (exe) is absent from output" do
+      results = [
+        build_result(%{title: "Movie.1080p.WEB.h264-GROUP.exe", seeders: 500}),
+        build_result(%{title: "Movie.1080p.WEB.h264-GROUP.mkv", seeders: 5})
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, min_seeders: 0)
+
+      titles = Enum.map(ranked, & &1.result.title)
+      refute "Movie.1080p.WEB.h264-GROUP.exe" in titles
+    end
+
+    test "the NZB post-age safeguard still removes too-recent NZB results" do
+      now = ~U[2024-11-25 12:00:00Z]
+      too_recent = ~U[2024-11-25 11:55:00Z]
+
+      nzb =
+        build_nzb_result(%{
+          nzb_completion: 1.0,
+          usenet_date: too_recent,
+          title: "Show.S01E01.1080p.WEB-DL"
+        })
+
+      ranked = ReleaseRanker.rank_all([nzb], min_post_age_minutes: 30, now: now)
+
+      assert ranked == []
+    end
+
+    test "size penalty never flips a correct large release below a junk small one" do
+      # A correct large in-range release vs a small out-of-range one: quality
+      # still drives the order, the size penalty is too modest to flip them.
+      profile = build_quality_profile()
+      gb = 1024 * 1024 * 1024
+
+      large =
+        build_result(%{
+          title: "Show.S01E01.1080p.BluRay.x264-GOOD",
+          size: round(3.0 * gb),
+          seeders: 50,
+          quality: QualityParser.parse("Show.S01E01.1080p.BluRay.x264-GOOD")
+        })
+
+      tiny =
+        build_result(%{
+          title: "Show.S01E01.1080p.BluRay.x264-TINY",
+          size: 50 * 1024 * 1024,
+          seeders: 50,
+          quality: QualityParser.parse("Show.S01E01.1080p.BluRay.x264-TINY")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([tiny, large],
+          quality_profile: profile,
+          media_type: :episode,
+          size_range: {512, 4096},
+          min_seeders: 0
+        )
+
+      assert List.first(ranked).result.title == "Show.S01E01.1080p.BluRay.x264-GOOD"
     end
   end
 
@@ -798,6 +965,101 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       for item <- ranked do
         assert item.breakdown.tag_bonus == 0.0
       end
+    end
+  end
+
+  describe "score breakdown display (U1)" do
+    test "title_match is the raw 0-10 bonus, not inflated ×100" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "The.Studio.2025.S01E01.1080p.WEB-DL.x264",
+          seeders: 30,
+          quality: QualityParser.parse("The.Studio.2025.S01E01.1080p.WEB-DL.x264")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result],
+          quality_profile: profile,
+          media_type: :episode,
+          search_query: "The Studio S01E01",
+          min_seeders: 0
+        )
+
+      title_match = List.first(ranked).breakdown.title_match
+
+      assert title_match > 0.0
+
+      assert title_match <= 10.0,
+             "title_match should be in the raw 0-10 range, got #{title_match}"
+    end
+
+    test "size carries the real file-size sub-score when a profile is set" do
+      profile = build_quality_profile()
+
+      result =
+        build_result(%{
+          title: "Movie.2023.1080p.BluRay.x264",
+          seeders: 50,
+          quality: QualityParser.parse("Movie.2023.1080p.BluRay.x264")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result],
+          quality_profile: profile,
+          media_type: :movie,
+          min_seeders: 0
+        )
+
+      # Real contribution surfaced, not hardcoded 0.0
+      assert List.first(ranked).breakdown.size > 0.0
+    end
+
+    test "penalty fields default to 0.0 and total still equals the documented sum" do
+      result = build_result(%{seeders: 50})
+
+      ranked = ReleaseRanker.rank_all([result]) |> List.first()
+      breakdown = ranked.breakdown
+
+      assert breakdown.size_penalty == 0.0
+      assert breakdown.seeder_penalty == 0.0
+      assert breakdown.identity_penalty == 0.0
+
+      # total = base components + penalties (all zero here), and the ranked
+      # result's score mirrors the breakdown total.
+      assert breakdown.total == ranked.score
+    end
+
+    test "ScoreBreakdown.new/1 raises when a required base field is omitted" do
+      assert_raise ArgumentError, fn ->
+        Mydia.Indexers.Structs.ScoreBreakdown.new(%{
+          quality: 1.0,
+          seeders: 1.0,
+          size: 1.0,
+          age: 1.0,
+          title_match: 1.0,
+          tag_bonus: 1.0
+          # :total intentionally omitted (enforced key)
+        })
+      end
+    end
+
+    test "removing the ×100 inflation does not cross the zero-title-match threshold" do
+      # A release with a real title match keeps title_match > 0.0 (just not ×100),
+      # so reject_zero_title_match still keeps it.
+      result =
+        build_result(%{
+          title: "The.Matrix.1999.1080p.BluRay.x264-Group",
+          seeders: 50,
+          quality: QualityParser.parse("The.Matrix.1999.1080p.BluRay.x264-Group")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([result], search_query: "The Matrix 1999", min_seeders: 0)
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.title_match > 0.0
     end
   end
 
@@ -1192,12 +1454,12 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     end
   end
 
-  describe "TV release rejection for movie searches" do
-    test "rejects TV season release when searching for a movie with overlapping title words" do
+  describe "TV release penalty for movie searches (soft)" do
+    test "penalizes (does not remove) a TV season release in a movie search" do
       # Real-world bug: searching for movie "Frozen 2013" matched
-      # "Frozen Planet II S01 1080p BluRay x265" because the word "Frozen"
-      # overlapped, giving a non-zero title match score (~4.25).
-      # Releases with season patterns (S01, S01E05) should never match movie searches.
+      # "Frozen Planet II S01" because the word "Frozen" overlapped. The TV
+      # release is now kept but softly penalized as an identity mismatch, so the
+      # real movie still wins.
       gb = 1024 * 1024 * 1024
 
       results = [
@@ -1222,18 +1484,17 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           min_seeders: 0
         )
 
-      # The TV show should be filtered out
       tv_release = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen Planet II"))
+      movie = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.2013"))
 
-      assert tv_release == nil,
-             "TV season release should be filtered out when searching for a movie"
-
-      # The correct movie should remain
-      assert length(ranked) == 1
+      # The TV release is kept but penalized; the movie wins on score.
+      assert tv_release != nil
+      assert tv_release.breakdown.identity_penalty < 0.0
+      assert movie.breakdown.identity_penalty == 0.0
       assert String.contains?(List.first(ranked).result.title, "Frozen.2013")
     end
 
-    test "rejects releases with S01E05 episode pattern in movie search" do
+    test "penalizes a release with an S01E05 episode pattern in a movie search" do
       gb = 1024 * 1024 * 1024
 
       results = [
@@ -1252,8 +1513,9 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
           min_seeders: 0
         )
 
-      assert ranked == [],
-             "TV episode with S01E05 pattern should be filtered out in movie search"
+      # Kept (soft), but penalized as an identity mismatch.
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
     end
 
     test "does not reject TV releases when media_type is :episode" do
@@ -1300,6 +1562,218 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
       assert length(ranked) == 1,
              "Without media_type, TV releases should not be filtered"
+    end
+  end
+
+  describe "episode/season identity penalty (U3)" do
+    test "AE1: legit S09E01 releases rank above an identity-less parody, parody last but present" do
+      # The reported Rick and Morty bug: the parody has no season/episode
+      # identity, so it must sink below every real S09E01 release while staying
+      # selectable at the bottom.
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP",
+          seeders: 5,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.1080p.WEB.h264-GROUP")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.S09E01.720p.WEB.h264-OTHER",
+          seeders: 20,
+          quality: QualityParser.parse("Rick.and.Morty.S09E01.720p.WEB.h264-OTHER")
+        }),
+        build_result(%{
+          title: "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p",
+          seeders: 500,
+          quality: QualityParser.parse("Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      titles = Enum.map(ranked, & &1.result.title)
+
+      # Parody is present...
+      assert "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p" in titles
+      # ...but last, behind both real S09E01 releases.
+      assert List.last(ranked).result.title ==
+               "Rick.and.Morty.A.Way.Back.Home.XXX.Parody.1080p"
+
+      parody = List.last(ranked)
+      assert parody.breakdown.identity_penalty < 0.0
+
+      real_matches =
+        Enum.reject(ranked, &String.contains?(&1.result.title, "Parody"))
+
+      assert Enum.all?(real_matches, &(&1.breakdown.identity_penalty == 0.0))
+      assert Enum.all?(real_matches, &(&1.score > parody.score))
+    end
+
+    test "AE4: a wrong-episode release is kept (penalized) and selectable" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "a parseable title with no episode identity is penalized" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.Complete.Collection.1080p.WEB",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.Complete.Collection.1080p.WEB")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "fail-open: an unparseable title gets no identity penalty even with expected_episode" do
+      # No expected_title supplied, so no prior parse ran; the identity stage
+      # must parse and, finding nothing, fail open.
+      results = [
+        build_result(%{
+          title: "1080p.x264.AAC",
+          seeders: 10,
+          quality: nil
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty == 0.0
+    end
+
+    test "season search: a correct-season pack matches; a wrong-season pack is penalized" do
+      correct =
+        build_result(%{
+          title: "Rick.and.Morty.S09.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09.1080p.WEB.h264-GROUP")
+        })
+
+      wrong =
+        build_result(%{
+          title: "Rick.and.Morty.S08.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S08.1080p.WEB.h264-GROUP")
+        })
+
+      ranked =
+        ReleaseRanker.rank_all([correct, wrong],
+          media_type: :episode,
+          expected_season: 9,
+          min_seeders: 0
+        )
+
+      correct_ranked = Enum.find(ranked, &String.contains?(&1.result.title, "S09"))
+      wrong_ranked = Enum.find(ranked, &String.contains?(&1.result.title, "S08"))
+
+      assert correct_ranked.breakdown.identity_penalty == 0.0
+      assert wrong_ranked.breakdown.identity_penalty < 0.0
+    end
+
+    test "AE4: an episode search with only season packs returns a selectable penalized pack" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          min_seeders: 0
+        )
+
+      # Season pack matches season but lacks the episode → penalized, not removed.
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty < 0.0
+    end
+
+    test "movie search: a TV-pattern release is penalized as an identity mismatch" do
+      results = [
+        build_result(%{
+          title: "Frozen.Planet.II.S01.1080p.BluRay.x265",
+          seeders: 50,
+          quality: QualityParser.parse("Frozen.Planet.II.S01.1080p.BluRay.x265")
+        }),
+        build_result(%{
+          title: "Frozen.2013.1080p.BluRay.x264-Group",
+          seeders: 50,
+          quality: QualityParser.parse("Frozen.2013.1080p.BluRay.x264-Group")
+        })
+      ]
+
+      ranked = ReleaseRanker.rank_all(results, media_type: :movie, min_seeders: 0)
+
+      tv = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.Planet"))
+      movie = Enum.find(ranked, &String.contains?(&1.result.title, "Frozen.2013"))
+
+      # TV-pattern release is kept now (soft), but penalized below the movie.
+      assert tv != nil
+      assert tv.breakdown.identity_penalty < 0.0
+      assert movie.breakdown.identity_penalty == 0.0
+      assert movie.score > tv.score
+    end
+
+    test "no expected identity (generic episode search): no identity penalty applied" do
+      results = [
+        build_result(%{
+          title: "Some.Show.S02E10.1080p.WEB-DL",
+          seeders: 50,
+          quality: QualityParser.parse("Some.Show.S02E10.1080p.WEB-DL")
+        })
+      ]
+
+      ranked =
+        ReleaseRanker.rank_all(results,
+          media_type: :episode,
+          search_query: "Some Show",
+          min_seeders: 0
+        )
+
+      assert length(ranked) == 1
+      assert List.first(ranked).breakdown.identity_penalty == 0.0
     end
   end
 
@@ -1489,8 +1963,10 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert length(ranked_with_profile) == 1
       item = List.first(ranked_with_profile)
 
-      # Size and age are always 0 in unified scoring
-      assert item.breakdown.size == 0.0
+      # With a quality profile, `:size` surfaces the real file-size sub-score.
+      # No size standards are configured here, so the unconstrained file-size
+      # score is 100.0. Age has no component in the unified formula.
+      assert item.breakdown.size == 100.0
       assert item.breakdown.age == 0.0
       assert item.score > 0
 
@@ -1500,7 +1976,7 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert length(ranked_without_profile) == 1
       item_no_profile = List.first(ranked_without_profile)
 
-      # Size and age are still 0 (unified scoring is always used)
+      # Without a profile there is no file-size sub-score, so size stays 0.0.
       assert item_no_profile.breakdown.size == 0.0
       assert item_no_profile.breakdown.age == 0.0
     end
@@ -1860,6 +2336,104 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
 
       ranked = ReleaseRanker.rank_all([low_seeders, high_seeders], min_seeders: 0)
       assert hd(ranked).result.title == "Movie.1080p.HighSeed"
+    end
+  end
+
+  describe "score_all_with_reasons/2 and build_filter_stats/2 (U7)" do
+    test "never returns size/seeders/ratio rejection reasons; a too-small release is accepted with a size penalty" do
+      results = [
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.h264-GROUP",
+          size: 50 * 1024 * 1024,
+          seeders: 0,
+          leechers: 100
+        })
+      ]
+
+      scored =
+        ReleaseRanker.score_all_with_reasons(results,
+          size_range: {512, 4096},
+          min_seeders: 10,
+          min_ratio: 0.5
+        )
+
+      row = List.first(scored)
+      assert row.status == :accepted
+      assert row.breakdown.size_penalty < 0.0
+      assert row.breakdown.seeder_penalty < 0.0
+
+      reasons = Enum.map(scored, & &1.rejection_reason)
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "size_out_of_range")))
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "low_seeders")))
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "low_ratio")))
+    end
+
+    test "a blocked-tag release is rejected with reason blocked_tag" do
+      results = [build_result(%{title: "Movie.CAM.1080p.x264", seeders: 100})]
+
+      scored = ReleaseRanker.score_all_with_reasons(results, blocked_tags: ["CAM"])
+
+      row = List.first(scored)
+      assert row.status == :rejected
+      assert String.starts_with?(row.rejection_reason, "blocked_tag")
+    end
+
+    test "an invalid release is rejected as invalid" do
+      results = [build_result(%{title: "Movie.1080p.WEB.h264-GROUP.exe", seeders: 500})]
+
+      scored = ReleaseRanker.score_all_with_reasons(results)
+
+      row = List.first(scored)
+      assert row.status == :rejected
+      assert String.starts_with?(row.rejection_reason, "invalid")
+    end
+
+    test "an identity-mismatched release is accepted carrying a non-zero identity penalty" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      scored =
+        ReleaseRanker.score_all_with_reasons(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1
+        )
+
+      row = List.first(scored)
+      assert row.status == :accepted
+      assert row.breakdown.identity_penalty < 0.0
+    end
+
+    test "build_filter_stats flags penalized-but-kept results and drops size rejections" do
+      results = [
+        build_result(%{
+          title: "Show.S09E02.1080p.WEB.h264-GROUP",
+          size: 50 * 1024 * 1024,
+          seeders: 50,
+          quality: QualityParser.parse("Show.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      stats =
+        ReleaseRanker.build_filter_stats(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          size_range: {512, 4096}
+        )
+
+      row = List.first(stats["results"])
+      assert row["status"] == "accepted"
+      assert row["penalized"] == true
+      assert row["penalties"]["identity_penalty"] < 0.0
+      assert row["penalties"]["size_penalty"] < 0.0
+
+      refute Map.has_key?(stats["rejection_counts"], "size_out_of_range")
     end
   end
 end

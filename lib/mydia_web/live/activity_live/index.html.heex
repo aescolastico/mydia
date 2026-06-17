@@ -405,19 +405,27 @@
                                 </td>
                                 <td class="text-right font-mono text-sm">{result["seeders"]}</td>
                                 <td>
-                                  <%= if result["status"] == "rejected" do %>
-                                    <span
-                                      class="badge badge-xs badge-error"
-                                      title={result["rejection_reason"]}
-                                    >
-                                      {format_filter_stat_label(
-                                        result["rejection_reason"]
-                                        |> String.split(":")
-                                        |> List.first()
-                                      )}
-                                    </span>
-                                  <% else %>
-                                    <span class="badge badge-xs badge-success">OK</span>
+                                  <%= cond do %>
+                                    <% result["status"] == "rejected" -> %>
+                                      <span
+                                        class="badge badge-xs badge-error"
+                                        title={result["rejection_reason"]}
+                                      >
+                                        {format_filter_stat_label(
+                                          result["rejection_reason"]
+                                          |> String.split(":")
+                                          |> List.first()
+                                        )}
+                                      </span>
+                                    <% result["penalized"] -> %>
+                                      <span
+                                        class="badge badge-xs badge-warning"
+                                        title={format_penalty_summary(result["penalties"])}
+                                      >
+                                        Penalized
+                                      </span>
+                                    <% true -> %>
+                                      <span class="badge badge-xs badge-success">OK</span>
                                   <% end %>
                                 </td>
                               </tr>
@@ -498,19 +506,27 @@
                             </td>
                             <td class="text-right font-mono text-sm">{result["seeders"]}</td>
                             <td>
-                              <%= if result["status"] == "rejected" do %>
-                                <span
-                                  class="badge badge-xs badge-error"
-                                  title={result["rejection_reason"]}
-                                >
-                                  {format_filter_stat_label(
-                                    result["rejection_reason"]
-                                    |> String.split(":")
-                                    |> List.first()
-                                  )}
-                                </span>
-                              <% else %>
-                                <span class="badge badge-xs badge-success">OK</span>
+                              <%= cond do %>
+                                <% result["status"] == "rejected" -> %>
+                                  <span
+                                    class="badge badge-xs badge-error"
+                                    title={result["rejection_reason"]}
+                                  >
+                                    {format_filter_stat_label(
+                                      result["rejection_reason"]
+                                      |> String.split(":")
+                                      |> List.first()
+                                    )}
+                                  </span>
+                                <% result["penalized"] -> %>
+                                  <span
+                                    class="badge badge-xs badge-warning"
+                                    title={format_penalty_summary(result["penalties"])}
+                                  >
+                                    Penalized
+                                  </span>
+                                <% true -> %>
+                                  <span class="badge badge-xs badge-success">OK</span>
                               <% end %>
                             </td>
                           </tr>

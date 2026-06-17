@@ -5,8 +5,11 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
   """
 
   alias Mydia.Indexers
+  alias Mydia.Indexers.RankingOptions
+  alias Mydia.Indexers.ReleaseRanker
   alias Mydia.Indexers.SearchResult
   alias Mydia.Indexers.SearchScorer
+  alias Mydia.Media
 
   def generate_result_id(%SearchResult{} = result) do
     # Generate a unique ID based on the download URL and indexer
@@ -52,19 +55,10 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
     # Re-filter from raw results without re-searching
     results = Map.get(socket.assigns, :raw_search_results, [])
     filtered_results = filter_search_results(results, socket.assigns)
-    media_item = socket.assigns.media_item
-    quality_profile = media_item.quality_profile
-    media_type = get_media_type(media_item)
-    search_query = Map.get(socket.assigns, :manual_search_query)
+    ranking_opts = build_manual_ranking_opts(socket.assigns)
 
     sorted_results =
-      sort_search_results(
-        filtered_results,
-        socket.assigns.sort_by,
-        quality_profile,
-        media_type,
-        search_query
-      )
+      sort_search_results_with_opts(filtered_results, socket.assigns.sort_by, ranking_opts)
 
     prepared_results = prepare_for_stream(sorted_results)
 
@@ -77,19 +71,10 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
     # Re-filter and re-sort from raw results
     results = Map.get(socket.assigns, :raw_search_results, [])
     filtered_results = filter_search_results(results, socket.assigns)
-    media_item = socket.assigns.media_item
-    quality_profile = media_item.quality_profile
-    media_type = get_media_type(media_item)
-    search_query = Map.get(socket.assigns, :manual_search_query)
+    ranking_opts = build_manual_ranking_opts(socket.assigns)
 
     sorted_results =
-      sort_search_results(
-        filtered_results,
-        socket.assigns.sort_by,
-        quality_profile,
-        media_type,
-        search_query
-      )
+      sort_search_results_with_opts(filtered_results, socket.assigns.sort_by, ranking_opts)
 
     prepared_results = prepare_for_stream(sorted_results)
 
@@ -157,23 +142,16 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
   end
 
   def sort_search_results(results, :quality, quality_profile, media_type, search_query) do
-    # Sort by combined score using the unified SearchScorer algorithm
-    # This ensures seeded results rank higher than dead torrents
-    opts = [
-      quality_profile: quality_profile,
-      media_type: media_type,
-      search_query: search_query
-    ]
+    # Back-compat 5-arity entry: build minimal ranking options and route through
+    # the unified ranker so the manual top result matches automatic selection.
+    ranking_opts =
+      RankingOptions.build(%{
+        quality_profile: quality_profile,
+        media_type: media_type,
+        search_query: search_query
+      })
 
-    results
-    |> Enum.sort_by(
-      fn result ->
-        combined_score = SearchScorer.score_result(result, opts)
-        # Use seeders as tie-breaker
-        {combined_score, result.seeders}
-      end,
-      :desc
-    )
+    quality_sort_via_ranker(results, ranking_opts)
   end
 
   def sort_search_results(results, :seeders, _quality_profile, _media_type, _search_query) do
@@ -198,6 +176,80 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
   end
 
   @doc """
+  Sort manual-search results using a pre-built RankingOptions keyword list.
+
+  For the `:quality` sort mode this routes through `ReleaseRanker.rank_all/2`,
+  so the manual top result equals what automatic search would select (R2).
+  Penalized releases (size/seeder/identity) remain visible, sorted to the bottom
+  (R3); only hard removals (blocked tags, invalid, too-recent NZB) drop out.
+  Non-quality sort modes (`:seeders`, `:size`, `:date`) stay as direct sorts.
+  """
+  def sort_search_results_with_opts(results, :quality, ranking_opts) do
+    quality_sort_via_ranker(results, ranking_opts)
+  end
+
+  def sort_search_results_with_opts(results, sort_by, ranking_opts) do
+    quality_profile = Keyword.get(ranking_opts, :quality_profile)
+    media_type = Keyword.get(ranking_opts, :media_type, :movie)
+    search_query = Keyword.get(ranking_opts, :search_query)
+    sort_search_results(results, sort_by, quality_profile, media_type, search_query)
+  end
+
+  # Run the unified ranker and return the surviving SearchResults in ranked
+  # order. When no quality profile is set, fall back to a seeders sort (matching
+  # the legacy no-profile behavior).
+  defp quality_sort_via_ranker(results, ranking_opts) do
+    case Keyword.get(ranking_opts, :quality_profile) do
+      nil ->
+        Enum.sort_by(results, & &1.seeders, :desc)
+
+      _profile ->
+        results
+        |> ReleaseRanker.rank_all(ranking_opts)
+        |> Enum.map(& &1.result)
+    end
+  end
+
+  @doc """
+  Build the shared ranking options for the manual search dialog from the socket
+  assigns, deriving the expected title and (for episode/season searches) the
+  expected season/episode from the `manual_search_context`.
+  """
+  def build_manual_ranking_opts(assigns) do
+    media_item = assigns.media_item
+    context = Map.get(assigns, :manual_search_context) || %{type: :media_item}
+
+    {expected_season, expected_episode} = expected_identity(context)
+
+    RankingOptions.build(%{
+      quality_profile: media_item.quality_profile,
+      media_type: get_media_type(media_item),
+      min_seeders: Map.get(assigns, :min_seeders),
+      search_query: Map.get(assigns, :manual_search_query),
+      expected_title: media_item.title,
+      expected_season: expected_season,
+      expected_episode: expected_episode
+    })
+  end
+
+  # Prefer the season/episode the modal already loaded into the context, so
+  # re-sorts and modal re-renders don't re-query the episode on every call.
+  defp expected_identity(%{type: :episode, season_number: season, episode_number: episode})
+       when not is_nil(season) and not is_nil(episode) do
+    {season, episode}
+  end
+
+  defp expected_identity(%{type: :episode, episode_id: episode_id}) do
+    episode = Media.get_episode!(episode_id)
+    {episode.season_number, episode.episode_number}
+  rescue
+    Ecto.NoResultsError -> {nil, nil}
+  end
+
+  defp expected_identity(%{type: :season, season_number: season}), do: {season, nil}
+  defp expected_identity(_context), do: {nil, nil}
+
+  @doc """
   Calculate profile-based score for a search result.
   Returns the combined score using the unified SearchScorer algorithm.
   """
@@ -207,20 +259,40 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
   end
 
   @doc """
-  Calculate profile-based score with full breakdown for a search result.
-  Returns the full score result including breakdown of individual components.
-
-  Delegates to SearchScorer.score_result_with_breakdown/2 for the unified algorithm.
+  Build the unified score breakdown for a manual-search result, using the same
+  `ReleaseRanker` pipeline (and the same ranking options) that ordered the list.
 
   Returns a map with:
-  - `:score` - Overall combined score
-  - `:breakdown` - Map with individual component scores and weights
-  - `:violations` - List of constraint violations (if any)
-  - `:detected` - Map of detected quality attributes from the result
+  - `:score` - The ranker total (may be deeply negative for identity mismatches)
+  - `:breakdown` - The `ScoreBreakdown` struct (quality, seeders, size, age,
+    title_match, tag_bonus, and the size/seeder/identity penalties)
+  - `:detected` - Map of detected quality attributes (for value display)
+  - `:violations` - List of constraint violations from the scorer
+
+  Accepts the full ranking options keyword list so penalties (which depend on
+  size_range and expected season/episode) match what the ranker computed.
+  """
+  def profile_score_breakdown(%SearchResult{} = result, ranking_opts)
+      when is_list(ranking_opts) do
+    breakdown = ReleaseRanker.calculate_score_breakdown(result, ranking_opts)
+    scorer = SearchScorer.score_result_with_breakdown(result, ranking_opts)
+
+    %{
+      score: breakdown.total,
+      breakdown: breakdown,
+      detected: scorer.detected,
+      violations: scorer.violations
+    }
+  end
+
+  @doc """
+  Back-compat 3-arity breakdown using only the quality profile and media type.
   """
   def profile_score_breakdown(%SearchResult{} = result, quality_profile, media_type) do
-    opts = [quality_profile: quality_profile, media_type: media_type]
-    SearchScorer.score_result_with_breakdown(result, opts)
+    profile_score_breakdown(
+      result,
+      RankingOptions.build(%{quality_profile: quality_profile, media_type: media_type})
+    )
   end
 
   def get_media_type(media_item) do

@@ -7,18 +7,35 @@ defmodule Mydia.Indexers.Structs.ScoreBreakdown do
 
   ## Fields
 
-  All fields are required floats representing the score contribution:
+  All base fields are required floats representing the score contribution:
   - `:quality` - Score from video quality (resolution, source, codec)
   - `:seeders` - Score from seeder count (logarithmic scale)
   - `:size` - Score from file size (bell curve preference)
   - `:age` - Score from release age (slight preference for newer)
   - `:title_match` - Score from title matching relevance to search query
   - `:tag_bonus` - Bonus points from preferred tags
-  - `:total` - Final total score (sum of all components)
+  - `:total` - Final total score (sum of all components minus penalties)
+
+  Penalty fields are optional floats `<= 0.0` (default `0.0`) recording the
+  soft-penalty contributions subtracted from `:total`:
+  - `:size_penalty` - Penalty for being outside the configured size range
+  - `:seeder_penalty` - Penalty for low seeders / poor ratio
+  - `:identity_penalty` - Penalty for episode/season identity mismatch or absence
   """
 
   @enforce_keys [:quality, :seeders, :size, :age, :title_match, :tag_bonus, :total]
-  defstruct [:quality, :seeders, :size, :age, :title_match, :tag_bonus, :total]
+  defstruct [
+    :quality,
+    :seeders,
+    :size,
+    :age,
+    :title_match,
+    :tag_bonus,
+    :total,
+    size_penalty: 0.0,
+    seeder_penalty: 0.0,
+    identity_penalty: 0.0
+  ]
 
   @type t :: %__MODULE__{
           quality: float(),
@@ -27,7 +44,10 @@ defmodule Mydia.Indexers.Structs.ScoreBreakdown do
           age: float(),
           title_match: float(),
           tag_bonus: float(),
-          total: float()
+          total: float(),
+          size_penalty: float(),
+          seeder_penalty: float(),
+          identity_penalty: float()
         }
 
   @doc """
