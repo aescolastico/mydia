@@ -78,9 +78,9 @@ The component lands at `target/wasm32-wasip2/release/my_plugin.wasm`.
 
 !!! tip "Toolchain"
     You need the `wasm32-wasip2` target: `rustup target add wasm32-wasip2`. If
-    you build inside the Mydia repo, `nix develop .#rust` provides it. The SDK's
-    `wit-bindgen` dependency generates the component bindings, so no system
-    binding generator is required.
+    you build inside the Mydia repo, the devenv shell (`./dev shell`) provides
+    it. The SDK's `wit-bindgen` dependency generates the component bindings, so
+    no system binding generator is required.
 
 !!! warning "Always set `panic = \"abort\"`"
     The sandbox denies stdio. A guest that panics and tries to print to stderr

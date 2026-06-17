@@ -166,22 +166,22 @@ Android builds use the player's Nix flake (`player/flake.nix`) which provides Fl
 
 ### Development environment
 
-This project uses Docker Compose for development. **Always** use the `./dev` command wrapper instead of running commands directly:
+This project uses [devenv.sh](https://devenv.sh) for local development, auto-loaded per git worktree via [direnv](https://direnv.net). The daily loop runs natively (no Docker dev container); each worktree derives its own non-colliding ports and isolated state. **Always** use the `./dev` command wrapper (a thin shim over devenv) instead of running commands directly:
 
-- **Service management**: `./dev up -d`, `./dev down`, `./dev restart`, `./dev logs -f`
+- **Process lifecycle**: `./dev up [-d]`, `./dev down`, `./dev restart`, `./dev logs [process]`, `./dev ps`
 - **Interactive shells**: `./dev shell`, `./dev iex`, `./dev bash`
 - **Mix commands**: `./dev mix <args>` (e.g., `./dev mix test`, `./dev mix ecto.migrate`)
 - **Common shortcuts**: `./dev test`, `./dev format`, `./dev deps.get`, `./dev ecto.migrate`
 
-The `./dev` script automatically starts services if they're not running and provides helpful feedback. Run `./dev` without arguments to see all available commands.
+Prerequisites: Nix, devenv, and direnv (see `docs/development/setup.md`). Run `./dev` without arguments to see all available commands.
 
 **Examples**:
 
-- `./dev up -d` - Start services in background
+- `./dev up -d` - Start the worktree stack in the background
 - `./dev test` - Run all tests (automatically sets up test database)
 - `./dev mix ecto.migrate` - Run database migrations
-- `./dev shell` - Open interactive shell in app container
-- `./dev logs -f` - Follow application logs
+- `./dev shell` - Open an interactive devenv shell
+- `./dev logs phoenix` - Show the Phoenix process logs
 
 ### User management
 
@@ -191,15 +191,11 @@ The `./dev` script automatically starts services if they're not running and prov
 
 ### Git Guidelines
 
-**Run git commands inside `nix develop`:**
+**Run git commands inside the devenv shell:**
 
-Always run `git` (especially `git commit`) from inside a `nix develop` shell, or prefix the command with `nix develop -c`, e.g.:
+Always run `git` (especially `git commit`) from inside the devenv shell — i.e. with direnv loaded in the worktree, or via `devenv shell -- git commit -m "message"`.
 
-```bash
-nix develop -c git commit -m "message"
-```
-
-The pre-commit hooks lint Rust via the flake's pinned toolchain (`nix develop .#rust -c cargo ...`). Running git outside the nix environment can fail to find `nix`/the toolchain on `PATH` and is not guaranteed to use the same compiler the hooks expect.
+The pre-commit hooks (defined in `devenv.nix` under `git-hooks.hooks`) lint Rust via the pinned 1.96.0 toolchain. Running git outside the devenv environment can fail to find the toolchain on `PATH` and is not guaranteed to use the same compiler the hooks expect. devenv installs the hooks automatically on shell entry; it owns the generated `.pre-commit-config.yaml` (git-ignored).
 
 **Working with uncommitted changes:**
 

@@ -2,185 +2,163 @@
 
 Set up a local development environment for Mydia.
 
+The local developer environment is built on [devenv.sh](https://devenv.sh) (a
+Nix-based, declarative dev environment) and auto-loaded per git worktree via
+[direnv](https://direnv.net). The daily loop — Phoenix server, `mix test`,
+`mix precommit`, Flutter codegen — runs **natively** (no Docker dev container).
+Each worktree derives its own non-colliding ports and isolated state, so several
+worktrees can run their full stacks at once.
+
+> Docker is still used for the production image (`Dockerfile`), the player E2E
+> stack (`compose.player-e2e.yml`), and the metadata-relay deploy — but **not**
+> for day-to-day development.
+
 ## Prerequisites
 
-- Docker and Docker Compose
-- Git
+- **Nix** — https://nixos.org/download (the Determinate Systems installer works well)
+- **devenv** — `nix profile install nixpkgs#devenv`
+- **direnv** — https://direnv.net (install + hook into your shell)
+- **Git**
 
-## Quick Start with Docker
+Your user must be a Nix **trusted user** (devenv requires it). If `devenv shell`
+fails with `ignoring the client-specified setting 'system' … you are not a
+trusted user`, add yourself:
 
-The recommended development approach uses Docker Compose with the `./dev` helper script.
+```bash
+echo "extra-trusted-users = $USER" | sudo tee -a /etc/nix/nix.custom.conf
+sudo systemctl restart nix-daemon   # or: sudo launchctl kickstart -k system/org.nixos.nix-daemon (macOS)
+```
 
-### Clone the Repository
+## Quick Start
 
 ```bash
 git clone https://github.com/getmydia/mydia.git
 cd mydia
+
+# Authorize direnv for this worktree (one time). This builds the toolchain and
+# runs first-run setup (deps.get, ecto.create/migrate, asset npm install,
+# flutter pub get). The first build downloads the toolchain and can take a while.
+direnv allow
+
+# Start the stack (Phoenix + Flutter codegen watcher)
+./dev up
 ```
 
-### Start Development Environment
+On shell entry devenv prints this worktree's assigned URL and ports, e.g.:
+
+```
+Mydia dev environment (devenv) — /home/you/mydia
+  Phoenix:   http://localhost:4740
+  P2P bind:  4741
+  Flutter:   dev-server port 4743
+```
+
+Open the printed Phoenix URL (the port is derived from the worktree path, so it
+is stable across restarts but differs between worktrees).
+
+If you don't use direnv, run commands through `devenv shell` directly, or just
+use the `./dev` wrapper (it loads the environment for each command).
+
+## Per-worktree ports & overrides
+
+Ports are derived deterministically by hashing the worktree's absolute path, so
+two worktrees never collide and you can run both stacks simultaneously. Ports
+change only if the checkout physically moves (a branch rename does not change
+them).
+
+To pin ports explicitly (escape hatch for a hash collision or a fixed port),
+copy the example override (git-ignored) and edit it:
 
 ```bash
-# Start all services
-./dev up -d
-
-# Run database migrations
-./dev mix ecto.migrate
-
-# View logs for admin password
-./dev logs | grep "DEFAULT ADMIN USER CREATED" -A 10
+cp devenv.local.nix.example devenv.local.nix
 ```
 
-Access the application at [http://localhost:4000](http://localhost:4000).
+## PostgreSQL (optional)
+
+SQLite is the default adapter and needs no service. To develop against
+PostgreSQL, set `DATABASE_TYPE=postgres` before entering the shell; devenv then
+runs a per-worktree Postgres (data under `.devenv/state/postgres`) on a derived
+port and creates `mydia_dev` / `mydia_test`.
+
+> `initialDatabases` only runs on first init. To change it later, delete
+> `.devenv/state/postgres` and re-enter the shell.
 
 ## The `./dev` Script
 
-The `./dev` script provides convenient wrappers for common commands:
+`./dev` is a thin wrapper over devenv that preserves the historical command
+vocabulary. Run `./dev` with no arguments to see everything.
 
-### Service Management
+### Process lifecycle
 
 ```bash
-./dev up -d       # Start services in background
-./dev down        # Stop services
-./dev restart     # Restart services
-./dev logs -f     # Follow application logs
+./dev up -d        # Start the stack in the background
+./dev down         # Stop background processes
+./dev restart      # Restart the stack
+./dev logs phoenix # Show a process's logs
+./dev ps           # List managed processes
 ```
 
-### Interactive Shells
+### Shells & mix
 
 ```bash
-./dev shell       # Open shell in app container
-./dev iex         # Open IEx console
-./dev bash        # Open bash shell
-```
-
-### Mix Commands
-
-```bash
-./dev mix <args>          # Run any mix command
-./dev mix ecto.migrate    # Run migrations
-./dev mix deps.get        # Fetch dependencies
-./dev mix test            # Run tests
-./dev mix format          # Format code
+./dev shell        # Interactive devenv shell
+./dev iex          # IEx console (iex -S mix)
+./dev mix <args>   # Any mix command
+./dev mix test     # Run tests
+./dev mix format   # Format code
 ```
 
 ### Shortcuts
 
 ```bash
-./dev test        # Run tests
-./dev format      # Format code
-./dev deps.get    # Fetch dependencies
+./dev test         # Run tests
+./dev format       # Format code
+./dev deps.get     # Fetch dependencies
 ./dev ecto.migrate # Run migrations
 ```
 
-Run `./dev` without arguments to see all available commands.
-
-## Local Setup (Without Docker)
-
-For development without Docker:
-
-### Prerequisites
-
-- Elixir 1.15+
-- Erlang 26+
-- Node.js 18+
-- SQLite 3
-
-### Setup
-
-```bash
-# Install dependencies
-mix setup
-
-# Start Phoenix server
-mix phx.server
-```
-
-Access at [http://localhost:4000](http://localhost:4000).
-
-## Nix Development Environment
-
-For users with [Nix](https://nixos.org/) installed:
-
-```bash
-# Enter development shell
-nix develop
-
-# First-time setup
-mix deps.get
-mix ecto.setup
-
-# Start server
-mix phx.server
-```
-
-The Nix development shell provides:
-
-- Elixir and Erlang
-- Node.js
-- SQLite
-- FFmpeg
-- All required build tools
-
-See [docs/nix.md](https://github.com/getmydia/mydia/blob/master/docs/nix.md) for full Nix development and NixOS deployment documentation.
-
-## Configuration
-
-### Custom Docker Compose
-
-Create `compose.override.yml` for custom configurations:
-
-```bash
-cp compose.override.yml.example compose.override.yml
-```
-
-Add services like Transmission, Prowlarr, or Jackett as needed.
-
-### Environment Variables
-
-For development, most defaults work fine. See [Environment Variables](../reference/environment-variables.md) for options.
-
 ## Code Quality
 
-### Pre-commit Checks
-
-Run all quality checks before committing:
+### Pre-commit checks
 
 ```bash
 ./dev mix precommit
 ```
 
-This runs:
+Runs Dependencies → Compile (warnings-as-errors) → Unused deps → Format →
+Database → Tests, with a compact per-step summary.
 
-- Code compilation (warnings as errors)
-- Code formatting check
-- Credo static analysis
-- Full test suite
+> Precommit runs against the active adapter. SQLite (the default) serializes
+> async tests; `DATABASE_TYPE=postgres ./dev mix precommit` uses the warm
+> Postgres and keeps async tests parallel.
 
-### Install Git Hooks
+### Git hooks
 
-Automatic pre-commit hooks:
+Pre-commit hooks are managed by devenv (`git-hooks.hooks` in `devenv.nix`) and
+installed automatically when you enter the shell. They lint Rust (cargo
+fmt/clippy against the pinned 1.96.0 toolchain), the WASM plugin guests, and
+Elixir/Dart formatting — no `nix develop` needed. devenv owns the generated
+`.pre-commit-config.yaml` (git-ignored); edit `devenv.nix` to change hooks.
+
+## Player (Flutter)
 
 ```bash
-./scripts/install-git-hooks.sh
+./dev flutter <args>   # Run a flutter command in player/
+./dev player setup     # Install deps + run code generation
+./dev player build     # Build + deploy web assets to priv/static/player
+./dev player logs      # Follow the build_runner (codegen) process logs
 ```
 
-The hook runs `mix format --check-formatted` before each commit.
+Access the player at the Phoenix URL under `/player` (e.g.
+`http://localhost:4740/player`). `MydiaWeb.FlutterWatcher` rebuilds the web app
+on source changes; the `flutter-codegen` process runs `build_runner watch` for
+GraphQL/Riverpod codegen.
 
-### Manual Checks
+Android builds use the player's own Nix flake (not devenv):
 
 ```bash
-# Format code
-./dev mix format
-
-# Run Credo
-./dev mix credo
-
-# Compile with warnings
-./dev mix compile --warnings-as-errors
-
-# Run tests
-./dev mix test
+./dev player android build   # Build release APK
+./dev player android shell   # nix develop shell in player/
 ```
 
 ## Project Structure
@@ -189,6 +167,7 @@ The hook runs `mix format --check-formatted` before each commit.
 mydia/
 ├── assets/           # Frontend assets (JS, CSS)
 ├── config/           # Configuration files
+├── devenv.nix        # Developer environment (toolchain, services, hooks)
 ├── lib/
 │   ├── mydia/        # Business logic
 │   └── mydia_web/    # Web layer (LiveViews, controllers)
@@ -196,32 +175,6 @@ mydia/
 │   ├── repo/         # Database migrations
 │   └── static/       # Static assets
 └── test/             # Test files
-```
-
-## Useful Commands
-
-### Database
-
-```bash
-./dev mix ecto.create      # Create database
-./dev mix ecto.migrate     # Run migrations
-./dev mix ecto.rollback    # Rollback last migration
-./dev mix ecto.reset       # Drop, create, and migrate
-```
-
-### Testing
-
-```bash
-./dev mix test                    # Run all tests
-./dev mix test test/path/to/test.exs  # Run specific test
-./dev mix test --failed           # Re-run failed tests
-```
-
-### Debugging
-
-```bash
-./dev iex                         # Interactive Elixir console
-./dev logs -f                     # Follow logs
 ```
 
 ## Next Steps
