@@ -15,11 +15,11 @@ concurrency:
 
 env:
   MIX_ENV: test
-  # ⚠️ KEEP IN SYNC across all three toolchain sources — bump together:
-  #   - these vars                      (ELIXIR_VERSION / OTP_VERSION)
-  #   - nix/devShells/flake-module.nix  (elixir_1_19 + erlang_28)
-  #   - Dockerfile.dev                  (FROM elixir:1.19-otp-28)
-  # If they drift, local nix, Docker dev, and CI compile under different toolchains.
+  # ⚠️ KEEP IN SYNC across all toolchain sources — bump together:
+  #   - these vars                      (ELIXIR_VERSION / OTP_VERSION / FLUTTER_VERSION)
+  #   - devenv.nix                      (beam.packages.erlang_28 + rust 1.96.0)
+  #   - Dockerfile                      (production image base — FROM elixir:1.19-otp-28)
+  # If they drift, local devenv and CI compile under different toolchains.
   ELIXIR_VERSION: "1.19"
   OTP_VERSION: "28"
   FLUTTER_VERSION: "3.38.6"

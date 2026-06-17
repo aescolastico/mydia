@@ -33,15 +33,12 @@ defmodule MydiaWeb.FeatureCase do
 
   ## Prerequisites
 
-  Feature tests require chromedriver to be installed. The Dockerfile.dev includes
-  chromium and chromium-driver by default. After updating the Dockerfile, rebuild
-  your container:
+  Feature tests require chromedriver to be installed. The devenv environment
+  (devenv.nix) provides chromium and chromedriver in-shell by default and sets
+  CHROME_PATH/CHROMEDRIVER_PATH, so `./dev feature-test` works with no extra
+  setup.
 
-      ./dev down
-      docker compose build --no-cache app
-      ./dev up -d
-
-  For local development outside Docker:
+  For local development outside devenv:
 
       # macOS
       brew install chromedriver
