@@ -2332,4 +2332,102 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       assert hd(ranked).result.title == "Movie.1080p.HighSeed"
     end
   end
+
+  describe "score_all_with_reasons/2 and build_filter_stats/2 (U7)" do
+    test "never returns size/seeders/ratio rejection reasons; a too-small release is accepted with a size penalty" do
+      results = [
+        build_result(%{
+          title: "Show.S01E01.1080p.WEB.h264-GROUP",
+          size: 50 * 1024 * 1024,
+          seeders: 0,
+          leechers: 100
+        })
+      ]
+
+      scored =
+        ReleaseRanker.score_all_with_reasons(results,
+          size_range: {512, 4096},
+          min_seeders: 10,
+          min_ratio: 0.5
+        )
+
+      row = List.first(scored)
+      assert row.status == :accepted
+      assert row.breakdown.size_penalty < 0.0
+      assert row.breakdown.seeder_penalty < 0.0
+
+      reasons = Enum.map(scored, & &1.rejection_reason)
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "size_out_of_range")))
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "low_seeders")))
+      refute Enum.any?(reasons, &(&1 && String.contains?(&1, "low_ratio")))
+    end
+
+    test "a blocked-tag release is rejected with reason blocked_tag" do
+      results = [build_result(%{title: "Movie.CAM.1080p.x264", seeders: 100})]
+
+      scored = ReleaseRanker.score_all_with_reasons(results, blocked_tags: ["CAM"])
+
+      row = List.first(scored)
+      assert row.status == :rejected
+      assert String.starts_with?(row.rejection_reason, "blocked_tag")
+    end
+
+    test "an invalid release is rejected as invalid" do
+      results = [build_result(%{title: "Movie.1080p.WEB.h264-GROUP.exe", seeders: 500})]
+
+      scored = ReleaseRanker.score_all_with_reasons(results)
+
+      row = List.first(scored)
+      assert row.status == :rejected
+      assert String.starts_with?(row.rejection_reason, "invalid")
+    end
+
+    test "an identity-mismatched release is accepted carrying a non-zero identity penalty" do
+      results = [
+        build_result(%{
+          title: "Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP",
+          seeders: 50,
+          quality: QualityParser.parse("Rick.and.Morty.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      scored =
+        ReleaseRanker.score_all_with_reasons(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1
+        )
+
+      row = List.first(scored)
+      assert row.status == :accepted
+      assert row.breakdown.identity_penalty < 0.0
+    end
+
+    test "build_filter_stats flags penalized-but-kept results and drops size rejections" do
+      results = [
+        build_result(%{
+          title: "Show.S09E02.1080p.WEB.h264-GROUP",
+          size: 50 * 1024 * 1024,
+          seeders: 50,
+          quality: QualityParser.parse("Show.S09E02.1080p.WEB.h264-GROUP")
+        })
+      ]
+
+      stats =
+        ReleaseRanker.build_filter_stats(results,
+          media_type: :episode,
+          expected_season: 9,
+          expected_episode: 1,
+          size_range: {512, 4096}
+        )
+
+      row = List.first(stats["results"])
+      assert row["status"] == "accepted"
+      assert row["penalized"] == true
+      assert row["penalties"]["identity_penalty"] < 0.0
+      assert row["penalties"]["size_penalty"] < 0.0
+
+      refute Map.has_key?(stats["rejection_counts"], "size_out_of_range")
+    end
+  end
 end

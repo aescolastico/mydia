@@ -583,15 +583,15 @@ defmodule MydiaWeb.ActivityLive.Index do
   defp format_filter_stat_label(key) do
     case key do
       "total_results" -> "Total"
-      "low_seeders" -> "Low seeders"
       "below_quality_threshold" -> "Below quality"
       "no_valid_season_packs" -> "No season packs"
       # New detailed rejection reasons
       "individual_episode" -> "Episode"
       "missing_season_marker" -> "No season"
-      "low_ratio" -> "Low ratio"
-      "size_out_of_range" -> "Size"
+      # Hard removals only — size/seeders/ratio are penalties now, not rejections
       "blocked_tag" -> "Blocked"
+      "invalid" -> "Invalid"
+      "title_mismatch" -> "Wrong show"
       _ -> String.replace(key, "_", " ") |> String.capitalize()
     end
   end
@@ -601,9 +601,16 @@ defmodule MydiaWeb.ActivityLive.Index do
       "quality" -> "Quality"
       "seeders" -> "Seeders"
       "size" -> "Size"
+      "age" -> "Age"
+      "tag_bonus" -> "Tag bonus"
       "preferred_tags" -> "Preferred"
       "blocked_tags" -> "Blocked"
       "title_relevance" -> "Title match"
+      "title_match" -> "Title match"
+      # Soft-penalty contributions
+      "size_penalty" -> "Size penalty"
+      "seeder_penalty" -> "Seeder penalty"
+      "identity_penalty" -> "Identity mismatch"
       _ -> String.replace(key, "_", " ") |> String.capitalize()
     end
   end
@@ -613,6 +620,18 @@ defmodule MydiaWeb.ActivityLive.Index do
   end
 
   defp format_breakdown_value(value), do: to_string(value)
+
+  # Tooltip summary of the non-zero penalty contributions on an accepted result.
+  defp format_penalty_summary(penalties) when is_map(penalties) do
+    penalties
+    |> Enum.filter(fn {_key, value} -> is_number(value) and value < 0.0 end)
+    |> Enum.map(fn {key, value} ->
+      "#{format_breakdown_label(key)}: #{trunc(value)}"
+    end)
+    |> Enum.join(", ")
+  end
+
+  defp format_penalty_summary(_), do: ""
 
   # Backoff formatting helpers
 

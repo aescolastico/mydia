@@ -263,19 +263,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
   defp meets_post_age_minimum?(_result, _minutes, _now), do: true
 
-  # nil size_range disables size filtering
-  defp within_size_range?(_result, nil), do: true
-
-  # Handle partial ranges where min or max might be nil
-  defp within_size_range?(%SearchResult{size: size_bytes}, {min_mb, max_mb}) do
-    size_mb = bytes_to_mb(size_bytes)
-
-    above_min = min_mb == nil or size_mb >= min_mb
-    below_max = max_mb == nil or size_mb <= max_mb
-
-    above_min and below_max
-  end
-
   defp not_blocked?(%SearchResult{title: title}, blocked_tags) do
     title_lower = String.downcase(title)
 
@@ -578,9 +565,6 @@ defmodule Mydia.Indexers.ReleaseRanker do
   """
   @spec score_all_with_reasons([SearchResult.t()], ranking_options()) :: [map()]
   def score_all_with_reasons(results, opts \\ []) do
-    min_seeders = Keyword.get(opts, :min_seeders, @default_min_seeders)
-    min_ratio = Keyword.get(opts, :min_ratio)
-    size_range = Keyword.get(opts, :size_range)
     blocked_tags = Keyword.get(opts, :blocked_tags, [])
     expected_title = Keyword.get(opts, :expected_title)
 
@@ -596,20 +580,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
         resolution: resolution
       }
 
-      # Check rejection reasons in order
-      rejection =
-        get_rejection_reason(
-          result,
-          min_seeders,
-          min_ratio,
-          size_range,
-          blocked_tags,
-          expected_title
-        )
-
-      case rejection do
+      # Only hard removals are reported as rejections now; size/seeders/ratio
+      # shortcomings are penalties on accepted results (mirrors filter_acceptable
+      # and the identity penalty, which must stay in lockstep — see Risks).
+      case get_rejection_reason(result, blocked_tags, expected_title) do
         nil ->
-          # Not rejected, calculate score
+          # Accepted — record the full breakdown (including penalties) so the
+          # Activity view can render the penalized-but-kept state.
           breakdown = calculate_score_breakdown(result, opts)
 
           Map.merge(base_info, %{
@@ -619,7 +596,13 @@ defmodule Mydia.Indexers.ReleaseRanker do
             breakdown: %{
               quality: breakdown.quality,
               seeders: breakdown.seeders,
-              title_match: breakdown.title_match
+              size: breakdown.size,
+              age: breakdown.age,
+              title_match: breakdown.title_match,
+              tag_bonus: breakdown.tag_bonus,
+              size_penalty: breakdown.size_penalty,
+              seeder_penalty: breakdown.seeder_penalty,
+              identity_penalty: breakdown.identity_penalty
             }
           })
 
@@ -635,30 +618,89 @@ defmodule Mydia.Indexers.ReleaseRanker do
     |> Enum.sort_by(& &1.score, :desc)
   end
 
-  # Returns rejection reason string or nil if acceptable
-  defp get_rejection_reason(
-         result,
-         min_seeders,
-         min_ratio,
-         size_range,
-         blocked_tags,
-         expected_title
-       ) do
+  @doc """
+  Build the filter-statistics map consumed by the Activity view, for both the
+  movie and TV search jobs (so the two paths render identically).
+
+  Returns a map with string keys:
+  - `"total_results"` - count of input results
+  - `"rejection_counts"` - count of hard removals grouped by reason
+  - `"results"` - up to 10 detail rows, each carrying a `"penalized"` flag and a
+    `"penalties"` map so the Activity row can show a penalized-but-kept state.
+  """
+  @spec build_filter_stats([SearchResult.t()], ranking_options()) :: map()
+  def build_filter_stats(results, opts \\ []) do
+    scored = score_all_with_reasons(results, opts)
+
+    rejection_counts =
+      scored
+      |> Enum.filter(&(&1.status == :rejected))
+      |> Enum.group_by(fn r ->
+        case r.rejection_reason do
+          nil -> "unknown"
+          reason -> reason |> String.split(":") |> List.first()
+        end
+      end)
+      |> Map.new(fn {reason, items} -> {reason, length(items)} end)
+
+    results_details =
+      scored
+      |> Enum.take(10)
+      |> Enum.map(&filter_stat_row/1)
+
+    %{
+      "total_results" => length(results),
+      "rejection_counts" => rejection_counts,
+      "results" => results_details
+    }
+  end
+
+  defp filter_stat_row(r) do
+    base = %{
+      "title" => r.title,
+      "score" => r.score,
+      "seeders" => r.seeders,
+      "size_mb" => r.size_mb,
+      "resolution" => r.resolution,
+      "status" => to_string(r.status)
+    }
+
+    base
+    |> maybe_put_rejection(r.rejection_reason)
+    |> maybe_put_penalties(r[:breakdown])
+  end
+
+  defp maybe_put_rejection(row, nil), do: row
+  defp maybe_put_rejection(row, reason), do: Map.put(row, "rejection_reason", reason)
+
+  # Surface the soft-penalty contributions (and a convenience flag) so the
+  # Activity view can distinguish a penalized-but-kept result from a clean OK.
+  defp maybe_put_penalties(row, %{} = breakdown) do
+    size_penalty = Map.get(breakdown, :size_penalty, 0.0)
+    seeder_penalty = Map.get(breakdown, :seeder_penalty, 0.0)
+    identity_penalty = Map.get(breakdown, :identity_penalty, 0.0)
+    penalized = size_penalty < 0.0 or seeder_penalty < 0.0 or identity_penalty < 0.0
+
+    Map.merge(row, %{
+      "penalized" => penalized,
+      "penalties" => %{
+        "size_penalty" => size_penalty,
+        "seeder_penalty" => seeder_penalty,
+        "identity_penalty" => identity_penalty
+      }
+    })
+  end
+
+  defp maybe_put_penalties(row, _), do: row
+
+  # Returns a rejection reason string or nil if acceptable. The only hard
+  # removals are invalid releases (validator), blocked tags, and wrong-show
+  # title mismatches. Size/seeders/ratio are no longer rejection reasons — they
+  # are soft penalties on accepted results.
+  defp get_rejection_reason(result, blocked_tags, expected_title) do
     cond do
-      not meets_seeder_minimum?(result, min_seeders) ->
-        "low_seeders: #{result.seeders} < #{min_seeders}"
-
-      min_ratio != nil and not meets_ratio_minimum?(result, min_ratio) ->
-        seeders = result.seeders || 0
-        leechers = result.leechers || 0
-        total = seeders + leechers
-        ratio = if total > 0, do: Float.round(seeders / total * 100, 1), else: 0.0
-        "low_ratio: #{ratio}% < #{Float.round(min_ratio * 100, 1)}%"
-
-      size_range != nil and not within_size_range?(result, size_range) ->
-        {min_mb, max_mb} = size_range
-        size_mb = Float.round(bytes_to_mb(result.size), 1)
-        "size_out_of_range: #{size_mb} MB not in #{min_mb}-#{max_mb} MB"
+      invalid_release_reason(result) ->
+        "invalid: #{invalid_release_reason(result)}"
 
       blocked_tag = find_blocked_tag(result, blocked_tags) ->
         "blocked_tag: #{blocked_tag}"
@@ -668,6 +710,16 @@ defmodule Mydia.Indexers.ReleaseRanker do
 
       true ->
         nil
+    end
+  end
+
+  # Returns the validator's failure reason string, or nil if the release is
+  # valid. Mirrors reject_invalid_releases/1 so the Activity stats and actual
+  # ranking agree on which releases are hard-removed.
+  defp invalid_release_reason(%SearchResult{title: title}) do
+    case ReleaseValidator.validate_release(title) do
+      {:ok, _name} -> nil
+      {:error, reason} -> to_string(reason)
     end
   end
 

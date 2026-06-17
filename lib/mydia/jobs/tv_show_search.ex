@@ -1933,51 +1933,11 @@ defmodule Mydia.Jobs.TVShowSearch do
 
   ## Private Functions - Event Helpers
 
-  # Build a map of filter statistics for rejected results, including detailed results with scores
+  # Build a map of filter statistics for the Activity view. Delegates to the
+  # shared ReleaseRanker.build_filter_stats/2 so movie and TV render identically,
+  # including the penalized-but-kept state.
   defp build_filter_stats(results, ranking_opts) do
-    # Get detailed scoring for all results
-    scored_results = ReleaseRanker.score_all_with_reasons(results, ranking_opts)
-
-    # Count by rejection reason
-    rejection_counts =
-      scored_results
-      |> Enum.filter(&(&1.status == :rejected))
-      |> Enum.group_by(fn result ->
-        # Extract the rejection type (before the colon)
-        case result.rejection_reason do
-          nil -> "unknown"
-          reason -> reason |> String.split(":") |> List.first()
-        end
-      end)
-      |> Enum.map(fn {reason, items} -> {reason, length(items)} end)
-      |> Map.new()
-
-    # Build the results list for the event (limit to top 10 to avoid huge events)
-    results_details =
-      scored_results
-      |> Enum.take(10)
-      |> Enum.map(fn r ->
-        base = %{
-          "title" => r.title,
-          "score" => r.score,
-          "seeders" => r.seeders,
-          "size_mb" => r.size_mb,
-          "resolution" => r.resolution,
-          "status" => to_string(r.status)
-        }
-
-        if r.rejection_reason do
-          Map.put(base, "rejection_reason", r.rejection_reason)
-        else
-          base
-        end
-      end)
-
-    %{
-      "total_results" => length(results),
-      "rejection_counts" => rejection_counts,
-      "results" => results_details
-    }
+    ReleaseRanker.build_filter_stats(results, ranking_opts)
   end
 
   # Convert a map with atom keys to string keys for JSON serialization

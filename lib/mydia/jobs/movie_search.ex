@@ -654,18 +654,12 @@ defmodule Mydia.Jobs.MovieSearch do
 
   ## Private Functions - Event Helpers
 
-  # Build a map of filter statistics for rejected results
+  # Build a map of filter statistics for the Activity view. Delegates to the
+  # shared ReleaseRanker.build_filter_stats/2 so the movie path now surfaces the
+  # same per-result scores, hard-removal reasons, and penalty state the TV path
+  # does (previously this used a plain seeder-count heuristic).
   defp build_filter_stats(results, ranking_opts) do
-    min_seeders = Keyword.get(ranking_opts, :min_seeders, get_min_seeders())
-
-    # NZB results have no seeder concept; treat nil as not-low-seeders.
-    low_seeders = Enum.count(results, fn r -> r.seeders != nil and r.seeders < min_seeders end)
-
-    %{
-      "total_results" => length(results),
-      "low_seeders" => low_seeders,
-      "below_quality_threshold" => length(results) - low_seeders
-    }
+    ReleaseRanker.build_filter_stats(results, ranking_opts)
   end
 
   # Convert a map with atom keys to string keys for JSON serialization
