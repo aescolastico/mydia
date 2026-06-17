@@ -9,6 +9,7 @@ import '../widgets/glass_surface.dart';
 import '../widgets/shimmer_card.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
+import '../../core/ui/reduced_motion.dart';
 import '../widgets/app_shell.dart';
 import 'home/home_controller.dart';
 
@@ -271,53 +272,68 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     return GlassSurface.appBar(
       child: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          titleSpacing: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.menu_rounded),
-            onPressed: () {
-              AppShell.scaffoldKey.currentState?.openDrawer();
-            },
-            tooltip: 'Menu',
-          ),
-          title: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              MydiaLogo(size: 32),
-              SizedBox(width: 10),
-              Text(
-                'Mydia Player',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
-                ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        titleSpacing: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.menu_rounded),
+          onPressed: () {
+            AppShell.scaffoldKey.currentState?.openDrawer();
+          },
+          tooltip: 'Menu',
+        ),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MydiaLogo(size: 32),
+            SizedBox(width: 10),
+            Text(
+              'Mydia Player',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
               ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceVariant.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.search_rounded, size: 20),
-              ),
-              onPressed: () {
-                context.push('/search');
-              },
-              tooltip: 'Search',
             ),
-            const SizedBox(width: 8),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.search_rounded, size: 20),
+            ),
+            onPressed: () {
+              context.push('/search');
+            },
+            tooltip: 'Search',
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
     );
   }
 }
 
-class _HeroSection extends StatelessWidget {
+/// Max vertical parallax travel (logical px) for the home hero. The hero image
+/// is over-sized by `2 * homeHeroMaxParallax` and clipped so translation never
+/// reveals an edge gap.
+const double homeHeroMaxParallax = 40;
+
+/// Bounded parallax translation for the home hero at a given [scrollOffset].
+///
+/// Moves the image up at ~30% of scroll speed, clamped to
+/// `±homeHeroMaxParallax`. Returns `0` when [reduceMotion] is true so the hero
+/// stays static (plan U7 / AE4). Pure function, exposed for testing.
+double homeHeroParallaxOffset(double scrollOffset, {required bool reduceMotion}) {
+  if (reduceMotion) return 0;
+  return (-scrollOffset * 0.3).clamp(-homeHeroMaxParallax, homeHeroMaxParallax);
+}
+
+class _HeroSection extends StatefulWidget {
   final dynamic item;
   final VoidCallback onTap;
 
@@ -326,9 +342,45 @@ class _HeroSection extends StatelessWidget {
     required this.onTap,
   });
 
+  @override
+  State<_HeroSection> createState() => _HeroSectionState();
+}
+
+class _HeroSectionState extends State<_HeroSection> {
+  static const double _maxParallax = homeHeroMaxParallax;
+
+  ScrollPosition? _position;
+  double _scrollOffset = 0;
+
   String? get _backdropUrl {
+    final item = widget.item;
     if (item.backdropUrl != null) return item.backdropUrl;
     return item.posterUrl;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final newPosition = Scrollable.maybeOf(context)?.position;
+    if (newPosition != _position) {
+      _position?.removeListener(_onScroll);
+      _position = newPosition;
+      _position?.addListener(_onScroll);
+      _onScroll();
+    }
+  }
+
+  void _onScroll() {
+    final offset = _position?.pixels ?? 0;
+    if (offset != _scrollOffset) {
+      setState(() => _scrollOffset = offset);
+    }
+  }
+
+  @override
+  void dispose() {
+    _position?.removeListener(_onScroll);
+    super.dispose();
   }
 
   @override
@@ -340,40 +392,60 @@ class _HeroSection extends StatelessWidget {
         ? (size.height * 0.45).clamp(300.0, 450.0)
         : size.height * 0.5;
     final horizontalPadding = Breakpoints.getHorizontalPadding(context);
+    final reduceMotion = context.reduceMotion;
+    final parallax =
+        homeHeroParallaxOffset(_scrollOffset, reduceMotion: reduceMotion);
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Stack(
         children: [
-          // Background image
-          SizedBox(
-            width: size.width,
-            height: heroHeight,
-            child: _backdropUrl != null
-                ? CachedNetworkImage(
-                    imageUrl: _backdropUrl!,
-                    fit: BoxFit.cover,
-                    cacheManager: BackdropCacheManager(),
-                    placeholder: (context, url) => Container(
-                      color: AppColors.surface,
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      color: AppColors.surface,
-                      child: const Icon(
-                        Icons.movie_rounded,
-                        size: 64,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  )
-                : Container(
-                    color: AppColors.surface,
-                    child: const Icon(
-                      Icons.movie_rounded,
-                      size: 64,
-                      color: AppColors.textSecondary,
-                    ),
+          // Background image with bounded parallax. The image is over-sized by
+          // 2 * _maxParallax and clipped to the hero so translation never
+          // reveals a gap.
+          ClipRect(
+            child: SizedBox(
+              width: size.width,
+              height: heroHeight,
+              child: OverflowBox(
+                minWidth: size.width,
+                maxWidth: size.width,
+                minHeight: heroHeight + _maxParallax * 2,
+                maxHeight: heroHeight + _maxParallax * 2,
+                child: Transform.translate(
+                  offset: Offset(0, parallax),
+                  child: SizedBox(
+                    width: size.width,
+                    height: heroHeight + _maxParallax * 2,
+                    child: _backdropUrl != null
+                        ? CachedNetworkImage(
+                            imageUrl: _backdropUrl!,
+                            fit: BoxFit.cover,
+                            cacheManager: BackdropCacheManager(),
+                            placeholder: (context, url) => Container(
+                              color: AppColors.surface,
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: AppColors.surface,
+                              child: const Icon(
+                                Icons.movie_rounded,
+                                size: 64,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          )
+                        : Container(
+                            color: AppColors.surface,
+                            child: const Icon(
+                              Icons.movie_rounded,
+                              size: 64,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
                   ),
+                ),
+              ),
+            ),
           ),
 
           // Gradient overlays
@@ -425,7 +497,7 @@ class _HeroSection extends StatelessWidget {
 
                 // Title
                 Text(
-                  item.title,
+                  widget.item.title,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     shadows: [
@@ -441,9 +513,9 @@ class _HeroSection extends StatelessWidget {
                 const SizedBox(height: 8),
 
                 // Subtitle/info
-                if (item.showTitle != null)
+                if (widget.item.showTitle != null)
                   Text(
-                    item.showTitle!,
+                    widget.item.showTitle!,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -456,7 +528,7 @@ class _HeroSection extends StatelessWidget {
                   children: [
                     // Play button
                     FilledButton.icon(
-                      onPressed: onTap,
+                      onPressed: widget.onTap,
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Play'),
                       style: FilledButton.styleFrom(
@@ -473,7 +545,7 @@ class _HeroSection extends StatelessWidget {
 
                     // More info button
                     OutlinedButton.icon(
-                      onPressed: onTap,
+                      onPressed: widget.onTap,
                       icon: const Icon(Icons.info_outline_rounded, size: 20),
                       label: const Text('More Info'),
                       style: OutlinedButton.styleFrom(
