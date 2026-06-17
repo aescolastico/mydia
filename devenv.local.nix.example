@@ -16,6 +16,7 @@
   env.P2P_BIND_PORT = "5001";
   env.DATABASE_PORT = "5002";
   env.FLUTTER_DEV_PORT = "5003";
+  env.HTTPS_PORT = "5004";
 
   # Only relevant under DATABASE_TYPE=postgres — keep in sync with DATABASE_PORT
   # above (services.postgres.port is the Nix-side option, DATABASE_PORT is what

@@ -38,6 +38,7 @@ let
   p2pPort = portBase + 1;
   pgPort = portBase + 2;
   flutterPort = portBase + 3;
+  httpsPort = portBase + 4;
 
   # ── Shared caches outside any worktree (KTD4 / R11) ─────────────────────────
   # Immutable/derived downloads are shared so a second worktree's first run
@@ -131,6 +132,7 @@ in
 
     # Per-worktree ports (R8). lib.mkDefault so devenv.local.nix can pin them (R9).
     PORT = lib.mkDefault (toString phxPort);
+    HTTPS_PORT = lib.mkDefault (toString httpsPort);
     P2P_BIND_PORT = lib.mkDefault (toString p2pPort);
     FLUTTER_DEV_PORT = lib.mkDefault (toString flutterPort);
 
@@ -263,7 +265,7 @@ in
   enterShell = ''
     echo ""
     echo "Mydia dev environment (devenv) — $DEVENV_ROOT"
-    echo "  Phoenix:   http://localhost:$PORT"
+    echo "  Phoenix:   http://localhost:$PORT  ·  https://localhost:$HTTPS_PORT"
     echo "  P2P bind:  $P2P_BIND_PORT"
     echo "  Flutter:   dev-server port $FLUTTER_DEV_PORT"
     ${lib.optionalString usePostgres ''
