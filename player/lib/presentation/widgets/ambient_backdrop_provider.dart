@@ -61,6 +61,12 @@ class AmbientBackdropController extends _$AmbientBackdropController {
 /// synchronously while building (which Riverpod disallows). Grid/settings
 /// screens pass [BackdropSource.none] to show the calm static fallback.
 void publishBackdropSource(WidgetRef ref, BackdropSource source) {
+  // Skip scheduling entirely when the published source is already identical.
+  // Many screens call this unconditionally from `build`, so without this guard
+  // every rebuild (scroll, hover, animation) would enqueue a redundant
+  // post-frame callback. A cheap read-and-compare avoids that churn.
+  if (ref.read(ambientBackdropControllerProvider) == source) return;
+
   SchedulerBinding.instance.addPostFrameCallback((_) {
     // The ref may have been disposed if the screen left the tree before the
     // post-frame callback ran; guard against that.
