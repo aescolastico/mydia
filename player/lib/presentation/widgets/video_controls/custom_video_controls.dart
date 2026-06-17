@@ -6,6 +6,10 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../core/player/duration_override.dart';
 import '../../../core/player/platform_features.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/colors.dart';
+import '../../../core/theme/depth_tokens.dart';
+import '../glass_surface.dart';
 import 'bottom_controls_bar.dart';
 import 'center_play_button.dart';
 import 'control_button.dart';
@@ -259,7 +263,10 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Top gradient for top bar readability
+        // Top gradient backs the player screen's top bar (back/title), which
+        // lives outside this controls widget; retained so that title stays
+        // legible over bright frames (R10). The bottom scrim is replaced by the
+        // token-driven glass control bar below.
         Positioned(
           top: 0,
           left: 0,
@@ -272,25 +279,6 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
                 end: Alignment.bottomCenter,
                 colors: [
                   Colors.black.withValues(alpha: 0.5),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-          ),
-        ),
-        // Bottom gradient for bottom controls readability
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 200,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [
-                  Colors.black.withValues(alpha: 0.6),
                   Colors.transparent,
                 ],
               ),
@@ -320,36 +308,42 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
             ],
           ),
         ),
-        // Bottom controls
+        // Bottom controls: a token-driven real-blur glass bar (R4). Over
+        // playing video the backdrop is the video itself, so this is the
+        // fixed-surface case R8 allows. The chrome fill clears the R10
+        // legibility floor, so the white controls no longer rely on per-glyph
+        // text shadows.
         Positioned(
           left: 20,
           right: 20,
           bottom: 20,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Progress bar
-              VideoProgressBar(
-                player: player,
-                onSeekStart: _handleSeekStart,
-                onSeekEnd: _handleSeekEnd,
-              ),
-              const SizedBox(height: 8),
-              // Bottom controls bar
-              BottomControlsBar(
-                player: player,
-                onAudioTap: widget.onAudioTap,
-                onSubtitleTap: widget.onSubtitleTap,
-                onQualityTap: widget.onQualityTap,
-                onFullscreenTap: widget.onFullscreenTap,
-                isFullscreen: widget.isFullscreen,
-                audioTrackCount: widget.audioTrackCount,
-                subtitleTrackCount: widget.subtitleTrackCount,
-                selectedAudioLabel: widget.selectedAudioLabel,
-                selectedSubtitleLabel: widget.selectedSubtitleLabel,
-                selectedQualityLabel: widget.selectedQualityLabel,
-              ),
-            ],
+          child: VideoControlsGlassBar(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Progress bar
+                VideoProgressBar(
+                  player: player,
+                  onSeekStart: _handleSeekStart,
+                  onSeekEnd: _handleSeekEnd,
+                ),
+                const SizedBox(height: 8),
+                // Bottom controls bar
+                BottomControlsBar(
+                  player: player,
+                  onAudioTap: widget.onAudioTap,
+                  onSubtitleTap: widget.onSubtitleTap,
+                  onQualityTap: widget.onQualityTap,
+                  onFullscreenTap: widget.onFullscreenTap,
+                  isFullscreen: widget.isFullscreen,
+                  audioTrackCount: widget.audioTrackCount,
+                  subtitleTrackCount: widget.subtitleTrackCount,
+                  selectedAudioLabel: widget.selectedAudioLabel,
+                  selectedSubtitleLabel: widget.selectedSubtitleLabel,
+                  selectedQualityLabel: widget.selectedQualityLabel,
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -373,5 +367,40 @@ class _CustomVideoControlsState extends State<_CustomVideoControls>
     final targetPosition = newPosition > duration ? duration : newPosition;
     player.seek(targetPosition);
     _showControls();
+  }
+}
+
+/// The video player's bottom control chrome (R4/R10): a token-driven real-blur
+/// glass bar. Over playing video the backdrop is the video itself, so this is
+/// the fixed-surface case R8 permits. The chrome fill clears the R10 legibility
+/// floor, so the white controls inside no longer rely on per-glyph text
+/// shadows.
+///
+/// Extracted as a public widget so the glass composition is unit-testable
+/// without a media_kit [Player].
+class VideoControlsGlassBar extends StatelessWidget {
+  final Widget child;
+
+  const VideoControlsGlassBar({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassSurface(
+      blurSigma: DepthTokens.blurChrome,
+      fillColor: AppColors.background.withValues(
+        alpha: DepthTokens.chromeFillOpacity,
+      ),
+      borderRadius: BorderRadius.circular(AppTheme.radiusCard),
+      border: const Border.fromBorderSide(
+        BorderSide(
+          color: DepthTokens.rimColor,
+          width: DepthTokens.rimWidth,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+        child: child,
+      ),
+    );
   }
 }
