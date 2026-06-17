@@ -26,6 +26,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:player/core/theme/colors.dart';
+import 'package:player/core/theme/depth_tokens.dart';
 import 'package:player/presentation/widgets/ambient_backdrop.dart';
 
 /// WCAG relative luminance of an opaque [color].
@@ -95,6 +96,54 @@ void main() {
       // A sanity bound: the scrimmed bright artwork must read as a dark surface
       // so the cinematic look and contrast both hold.
       expect(_relativeLuminance(effectiveBackground), lessThan(0.25));
+    });
+  });
+
+  // U10 — chrome legibility floor (plan R10; AE4). Glass chrome (sidebar, app
+  // bars, video controls) floats over the *scrimmed* backdrop and adds its own
+  // translucent fill on top, so the surface text sits on is even darker than
+  // the bare scrim. We assert primary/secondary text clear the WCAG floor over
+  // worst-case bright artwork behind both layers.
+  group('chrome glass legibility over bright artwork (R10/AE4)', () {
+    // Sidebar/control chrome: surface tint at the chrome fill opacity, over the
+    // scrimmed white backdrop.
+    final sidebarBg = _composite(
+      AppColors.surface.withValues(alpha: DepthTokens.chromeFillOpacity),
+      effectiveBackground,
+    );
+    // App-bar/video chrome: background tint at the chrome fill opacity.
+    final barBg = _composite(
+      AppColors.background.withValues(alpha: DepthTokens.chromeFillOpacity),
+      effectiveBackground,
+    );
+
+    test('sidebar chrome keeps primary text comfortably AAA', () {
+      expect(
+        _contrastRatio(AppColors.textPrimary, sidebarBg),
+        greaterThanOrEqualTo(7.0),
+      );
+    });
+
+    test('sidebar chrome keeps secondary text above the AA body floor', () {
+      expect(
+        _contrastRatio(AppColors.textSecondary, sidebarBg),
+        greaterThanOrEqualTo(4.5),
+      );
+    });
+
+    test('bar/video chrome keeps white controls strongly legible', () {
+      // The video controls and app-bar icons/text are white-on-chrome.
+      expect(
+        _contrastRatio(const Color(0xFFFFFFFF), barBg),
+        greaterThanOrEqualTo(7.0),
+      );
+    });
+
+    test('the chrome fill clears the configured legibility floor', () {
+      expect(
+        DepthTokens.chromeFillOpacity,
+        greaterThanOrEqualTo(DepthTokens.glassLegibilityFloor),
+      );
     });
   });
 }
