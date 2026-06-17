@@ -35,7 +35,10 @@ let
   hexToInt = s: lib.foldl' (acc: c: acc * 16 + hexMap.${c}) 0 (lib.stringToCharacters s);
   digest = builtins.substring 0 8 (builtins.hashString "sha256" config.devenv.root);
   raw = hexToInt digest;
-  offset = raw - (raw / 100) * 100;
+  # lib.mod is integer modulo (Nix `/` on integers is already integer division,
+  # but the named helper makes the integer intent unambiguous — the offset must
+  # be a whole 0..99 so derived ports stay integers).
+  offset = lib.mod raw 100;
   portBase = 4000 + offset * 10;
   phxPort = portBase;
   p2pPort = portBase + 1;

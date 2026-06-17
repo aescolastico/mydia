@@ -49,10 +49,19 @@ in_shell() {
     devenv shell -- "$@"
 }
 
-# Run a shell snippet inside the devenv shell (for chained/`cd` commands).
+# Run a shell snippet inside the devenv shell (for chained/`cd` commands with
+# NO user-supplied arguments — never interpolate "$@"/"$*" into the snippet, as
+# that loses quoting and lets shell metacharacters through).
 # Usage: in_shell_sh "cd player && flutter pub get"
 in_shell_sh() {
     devenv shell -- bash -c "$1"
+}
+
+# Run a command (argv-safe) inside the devenv shell from the player/ directory.
+# Args are passed positionally, so quoting/whitespace and metacharacters are
+# preserved exactly. Usage: in_player flutter pub get
+in_player() {
+    devenv shell -- bash -c 'cd player && exec "$@"' _ "$@"
 }
 
 # Show help if no arguments provided
@@ -280,7 +289,7 @@ case "$COMMAND" in
         elif [[ "$1" == "test" ]]; then
             echo -e "${GREEN}Running tests...${NC}"
             test_exit_code=0
-            in_shell_sh "mix test --color ${*:2}" || test_exit_code=$?
+            in_shell mix test --color "${@:2}" || test_exit_code=$?
             [ $test_exit_code -ne 0 ] && print_test_rerun_hints
             exit $test_exit_code
         else
@@ -292,13 +301,13 @@ case "$COMMAND" in
     test)
         echo -e "${GREEN}Running tests...${NC}"
         test_exit_code=0
-        in_shell_sh "mix test --color $*" || test_exit_code=$?
+        in_shell mix test --color "$@" || test_exit_code=$?
         [ $test_exit_code -ne 0 ] && print_test_rerun_hints
         exit $test_exit_code
         ;;
     feature-test)
         echo -e "${GREEN}Running feature tests (Wallaby browser tests)...${NC}"
-        in_shell_sh "MIX_ENV=test ./scripts/run-feature-tests.sh $*"
+        in_shell env MIX_ENV=test ./scripts/run-feature-tests.sh "$@"
         ;;
     format)
         echo -e "${GREEN}Formatting code...${NC}"
@@ -334,7 +343,7 @@ case "$COMMAND" in
     # ── Flutter / player ─────────────────────────────────────────────────────
     flutter)
         echo -e "${GREEN}Running flutter command...${NC}"
-        in_shell_sh "cd player && flutter $*"
+        in_player flutter "$@"
         ;;
     player)
         case "$1" in
