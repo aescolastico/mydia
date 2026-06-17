@@ -50,20 +50,15 @@ class _PlayButtonState extends State<PlayButton>
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: _enabled
-                ? const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: _enabled ? null : AppColors.surfaceVariant,
+            // Solid primary fill to match the system's flat primary actions
+            // (FilledButton, hero Play, card play overlay) — no two-hue
+            // gradient.
+            color: _enabled ? AppColors.primary : AppColors.surfaceVariant,
             boxShadow: _enabled
                 ? [
                     BoxShadow(
-                      color: AppColors.primary.withValues(alpha: 0.5),
+                      color: AppColors.primary.withValues(alpha: 0.4),
                       blurRadius: 16,
-                      spreadRadius: 1,
                       offset: const Offset(0, 4),
                     ),
                   ]

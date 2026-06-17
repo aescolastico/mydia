@@ -116,16 +116,10 @@ class _DropdownButton extends StatelessWidget {
       child: Container(
         width: 28,
         height: 28,
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [
-              AppColors.primary.withValues(alpha: 0.3),
-              AppColors.secondary.withValues(alpha: 0.3),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          // Neutral surface fill (no two-hue gradient) to match the system.
+          color: AppColors.surfaceVariant,
         ),
         child: const Center(
           child: Icon(
