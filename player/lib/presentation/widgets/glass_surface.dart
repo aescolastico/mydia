@@ -3,24 +3,40 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../../core/theme/colors.dart';
+import '../../core/theme/depth_tokens.dart';
 
 /// A single reusable frosted-glass surface that subsumes the player's three
-/// ad-hoc `BackdropFilter` variants (app bar, modal, card hover overlay).
+/// ad-hoc `BackdropFilter` variants (app bar, modal, card hover overlay), plus
+/// a no-live-blur faux-glass variant for scrolling-quantity content (R8).
 ///
-/// Internally this is `RepaintBoundary > ClipRRect > BackdropFilter > fill`,
-/// so live blur stays isolated to small fixed-position chrome (R8/R11) and the
-/// blur region repaints independently of surrounding content.
+/// Internally this is `RepaintBoundary > ClipRRect > BackdropFilter > fill` for
+/// real-blur chrome, so live blur stays isolated to small fixed-position chrome
+/// (R8/R11) and the blur region repaints independently of surrounding content.
+/// When [live] is false (see [GlassSurface.faux]) the [BackdropFilter] is
+/// omitted entirely — `RepaintBoundary > ClipRRect > fill` — so no blur pass is
+/// created for rails, grids, and other content that appears in scrolling
+/// quantity.
+///
+/// All blur sigmas, fill opacities, and rim treatments are sourced from
+/// [DepthTokens] (R2) rather than per-call literals.
 ///
 /// Use the named constructors ([GlassSurface.appBar], [GlassSurface.modal],
-/// [GlassSurface.hoverOverlay]) to reproduce the existing visual treatments
-/// exactly; the unnamed constructor is available for bespoke surfaces.
+/// [GlassSurface.hoverOverlay], [GlassSurface.faux]) to reproduce the
+/// established visual treatments; the unnamed constructor is available for
+/// bespoke surfaces.
 ///
-/// When several glass surfaces are visible at once, wrap them in a
+/// When several real-blur surfaces are visible at once, wrap them in a
 /// [BackdropGroup] and pass `grouped: true` so they share a single backdrop
-/// rendering pass (uses [BackdropFilter.grouped]).
+/// rendering pass (uses [BackdropFilter.grouped]). Faux surfaces ignore
+/// [grouped] — there is no backdrop pass to share.
 class GlassSurface extends StatelessWidget {
-  /// Gaussian blur sigma applied behind the surface.
+  /// Gaussian blur sigma applied behind the surface. Ignored when [live] is
+  /// false.
   final double blurSigma;
+
+  /// Whether to render a live [BackdropFilter] (real glass) or omit it
+  /// (faux-glass, R8). Defaults to true.
+  final bool live;
 
   /// Solid fill painted over the blur. Ignored when [gradient] is set.
   final Color? fillColor;
@@ -36,7 +52,8 @@ class GlassSurface extends StatelessWidget {
   final BoxBorder? border;
 
   /// Whether to participate in an enclosing [BackdropGroup] for a shared
-  /// rendering pass. Requires a [BackdropGroup] ancestor.
+  /// rendering pass. Requires a [BackdropGroup] ancestor. No-op when [live] is
+  /// false.
   final bool grouped;
 
   final Widget? child;
@@ -44,6 +61,7 @@ class GlassSurface extends StatelessWidget {
   const GlassSurface({
     super.key,
     required this.blurSigma,
+    this.live = true,
     this.fillColor,
     this.gradient,
     this.borderRadius = BorderRadius.zero,
@@ -52,32 +70,34 @@ class GlassSurface extends StatelessWidget {
     this.child,
   });
 
-  /// App-bar chrome glass: blur sigma 10, [AppColors.background] fill, no
-  /// border, square corners. Pass [opacity] to override the fill alpha
-  /// (0.85 for the library/downloads bars, 0.8 elsewhere).
+  /// App-bar chrome glass: chrome blur sigma, [AppColors.background] fill at the
+  /// chrome fill opacity, no border, square corners. Pass [opacity] to override
+  /// the fill alpha (0.85 for the library/downloads bars, the chrome token
+  /// elsewhere). The default fill clears the R10 legibility floor.
   GlassSurface.appBar({
     Key? key,
-    double opacity = 0.8,
+    double opacity = DepthTokens.chromeFillOpacity,
     bool grouped = false,
     Widget? child,
   }) : this(
           key: key,
-          blurSigma: 10,
+          blurSigma: DepthTokens.blurChrome,
           fillColor: AppColors.background.withValues(alpha: opacity),
           grouped: grouped,
           child: child,
         );
 
-  /// Modal / sheet glass: blur sigma 8, [AppColors.surface] @0.6 fill,
-  /// [AppColors.border] @0.2 border, radius 20.
+  /// Modal / sheet glass: modal blur sigma, [AppColors.surface] at the modal
+  /// fill opacity, [AppColors.border] @0.2 border, radius 20.
   GlassSurface.modal({
     Key? key,
     bool grouped = false,
     Widget? child,
   }) : this(
           key: key,
-          blurSigma: 8,
-          fillColor: AppColors.surface.withValues(alpha: 0.6),
+          blurSigma: DepthTokens.blurModal,
+          fillColor:
+              AppColors.surface.withValues(alpha: DepthTokens.modalFillOpacity),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: AppColors.border.withValues(alpha: 0.2),
@@ -86,7 +106,7 @@ class GlassSurface extends StatelessWidget {
           child: child,
         );
 
-  /// Media-card hover overlay glass: blur sigma 2, vertical black gradient
+  /// Media-card hover overlay glass: hover blur sigma, vertical black gradient
   /// (0.3 -> 0.6), radius 12.
   GlassSurface.hoverOverlay({
     Key? key,
@@ -95,7 +115,7 @@ class GlassSurface extends StatelessWidget {
     Widget? child,
   }) : this(
           key: key,
-          blurSigma: 2,
+          blurSigma: DepthTokens.blurHoverOverlay,
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -109,8 +129,51 @@ class GlassSurface extends StatelessWidget {
           child: child,
         );
 
+  /// Faux-glass: a token-driven translucent surface with **no** live blur
+  /// ([BackdropFilter] is omitted). Used for surfaces that appear in scrolling
+  /// quantity — rails, grids, per-card overlays — where a live blur pass would
+  /// be too expensive on Flutter web (R8). Renders the translucent [fillColor]
+  /// (or [gradient]) plus, by default, the light rim token as a 1px edge.
+  ///
+  /// Pass `showRim: false` to drop the rim (e.g. a darkening scrim over a
+  /// poster that should not gain a visible border).
+  const GlassSurface.faux({
+    Key? key,
+    Color? fillColor,
+    Gradient? gradient,
+    BorderRadius? borderRadius,
+    bool showRim = true,
+    Widget? child,
+  }) : this(
+          key: key,
+          blurSigma: DepthTokens.blurNone,
+          live: false,
+          fillColor: fillColor,
+          gradient: gradient,
+          borderRadius: borderRadius ?? BorderRadius.zero,
+          border: showRim
+              ? const Border.fromBorderSide(
+                  BorderSide(
+                    color: DepthTokens.rimColor,
+                    width: DepthTokens.rimWidth,
+                  ),
+                )
+              : null,
+          child: child,
+        );
+
   @override
   Widget build(BuildContext context) {
+    // Faux-glass: no BackdropFilter at all (R8).
+    if (!live) {
+      return RepaintBoundary(
+        child: ClipRRect(
+          borderRadius: borderRadius,
+          child: _fill(),
+        ),
+      );
+    }
+
     final filter = ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma);
     final backdrop = grouped
         ? BackdropFilter.grouped(filter: filter, child: _fill())

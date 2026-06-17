@@ -133,17 +133,13 @@ class _BottomControlsBarState extends State<BottomControlsBar> {
 
         return Text(
           _formatDuration(position),
-          style: TextStyle(
+          // No per-glyph shadow: the token glass control bar backs the text
+          // (R10). See U5.
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 13,
             fontWeight: FontWeight.w500,
-            fontFeatures: const [FontFeature.tabularFigures()],
-            shadows: [
-              Shadow(
-                color: Colors.black.withValues(alpha: 0.5),
-                blurRadius: 4,
-              ),
-            ],
+            fontFeatures: [FontFeature.tabularFigures()],
           ),
         );
       },
@@ -173,12 +169,6 @@ class _BottomControlsBarState extends State<BottomControlsBar> {
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
                 fontFeatures: const [FontFeature.tabularFigures()],
-                shadows: [
-                  Shadow(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    blurRadius: 4,
-                  ),
-                ],
               ),
             );
           },
@@ -269,12 +259,6 @@ class _BottomControlsBarState extends State<BottomControlsBar> {
             _getVolumeIcon(isMuted ? 0 : widget.player.state.volume),
             color: Colors.white,
             size: 20,
-            shadows: const [
-              Shadow(
-                color: Color(0x60000000),
-                blurRadius: 6,
-              ),
-            ],
           ),
         ),
       ),
@@ -295,12 +279,6 @@ class _BottomControlsBarState extends State<BottomControlsBar> {
                 : Icons.fullscreen_rounded,
             color: Colors.white,
             size: 20,
-            shadows: const [
-              Shadow(
-                color: Color(0x60000000),
-                blurRadius: 6,
-              ),
-            ],
           ),
         ),
       ),
@@ -325,12 +303,6 @@ class _BottomControlsBarState extends State<BottomControlsBar> {
             color:
                 enabled ? Colors.white : Colors.white.withValues(alpha: 0.35),
             size: 20,
-            shadows: const [
-              Shadow(
-                color: Color(0x60000000),
-                blurRadius: 6,
-              ),
-            ],
           ),
         ),
       ),

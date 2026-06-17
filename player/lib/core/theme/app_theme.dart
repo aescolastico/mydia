@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'colors.dart';
+import 'depth_tokens.dart';
 
 /// Mydia Design System Theme
 ///
@@ -21,16 +22,18 @@ class AppTheme {
       // Font family - matches web app
       fontFamily: 'Inter',
 
-      // Color scheme - Full Material 3 surface hierarchy
+      // Color scheme - Full Material 3 surface hierarchy.
+      // The surface tones are sourced from DepthTokens so the layered depth
+      // hierarchy (R1) has a single source of truth; values are unchanged.
       colorScheme: const ColorScheme.dark(
-        surface: AppColors.background,
-        surfaceDim: Color(0xFF0D1724),
-        surfaceContainerLowest: AppColors.background,
-        surfaceContainerLow: Color(0xFF101B2C),
-        surfaceContainer: AppColors.surface,
-        surfaceContainerHigh: Color(0xFF182436),
-        surfaceContainerHighest: AppColors.surfaceVariant,
-        surfaceBright: Color(0xFF253550),
+        surface: DepthTokens.surfaceBase,
+        surfaceDim: DepthTokens.surfaceDim,
+        surfaceContainerLowest: DepthTokens.surfaceBase,
+        surfaceContainerLow: DepthTokens.surfaceLow,
+        surfaceContainer: DepthTokens.surfaceContainer,
+        surfaceContainerHigh: DepthTokens.surfaceHigh,
+        surfaceContainerHighest: DepthTokens.surfaceVariant,
+        surfaceBright: DepthTokens.surfaceBright,
         primary: AppColors.primary,
         primaryContainer: AppColors.primaryFocus,
         secondary: AppColors.secondary,
