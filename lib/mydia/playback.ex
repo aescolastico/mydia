@@ -283,6 +283,85 @@ defmodule Mydia.Playback do
   end
 
   @doc """
+  Marks every episode in a season watched for a user.
+
+  Loads the season's episodes (ordered by `episode_number`) and idempotently
+  marks each via `ensure_watched/3`, so already-watched episodes are not
+  re-stamped and emit no duplicate `"finished"` event. Returns `:ok` once the
+  whole season has been processed; an empty or non-existent season is a no-op.
+
+  ## Options
+    * `:origin` - the write origin forwarded to `ensure_watched/3` (default
+      `"player"`)
+    * `:watched_at` - the `DateTime` the watch happened, forwarded to
+      `ensure_watched/3`
+  """
+  @spec mark_season_watched(binary(), binary(), integer(), keyword()) :: :ok
+  def mark_season_watched(user_id, show_id, season_number, opts \\ []) do
+    show_id
+    |> season_episode_ids(season_number)
+    |> Enum.each(&ensure_watched(user_id, [episode_id: &1], opts))
+  end
+
+  @doc """
+  Marks every episode in a season unwatched for a user.
+
+  Loads the season's episodes and deletes each progress row via
+  `delete_progress/2`, treating `:not_found` as success. This discards any
+  in-progress resume positions in the season (the accepted Plex-model
+  consequence) and emits no event, consistent with `delete_progress/2`.
+  Returns `:ok` once the whole season is cleared, or `{:error, reason}` if a
+  delete fails unexpectedly (e.g. `Repo.delete/1` returns a changeset error).
+  """
+  @spec mark_season_unwatched(binary(), binary(), integer()) :: :ok | {:error, term()}
+  def mark_season_unwatched(user_id, show_id, season_number) do
+    show_id
+    |> season_episode_ids(season_number)
+    |> Enum.reduce_while(:ok, fn episode_id, :ok ->
+      case delete_progress(user_id, episode_id: episode_id) do
+        {:ok, _progress} -> {:cont, :ok}
+        {:error, :not_found} -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  @doc """
+  Marks the anchor episode and all earlier episodes in its season watched.
+
+  Resolves the anchor episode's show and season, loads that season's episodes,
+  filters to those with `episode_number <= anchor.episode_number`, and marks
+  each via `ensure_watched/3`. Season-scoped and inclusive — it never crosses
+  season boundaries. Returns `:ok` (a missing episode is a no-op).
+
+  ## Options
+    * `:origin` / `:watched_at` - forwarded to `ensure_watched/3`
+  """
+  @spec mark_episodes_up_to_watched(binary(), binary(), keyword()) :: :ok
+  def mark_episodes_up_to_watched(user_id, episode_id, opts \\ []) do
+    case Repo.get(Mydia.Media.Episode, episode_id) do
+      nil ->
+        :ok
+
+      anchor ->
+        anchor.media_item_id
+        |> season_episodes(anchor.season_number)
+        |> Enum.filter(&(&1.episode_number <= anchor.episode_number))
+        |> Enum.each(&ensure_watched(user_id, [episode_id: &1.id], opts))
+    end
+  end
+
+  defp season_episodes(show_id, season_number) do
+    Mydia.Media.list_episodes(show_id, season: season_number)
+  end
+
+  defp season_episode_ids(show_id, season_number) do
+    show_id
+    |> season_episodes(season_number)
+    |> Enum.map(& &1.id)
+  end
+
+  @doc """
   Gets the next episode to watch for a TV series.
 
   Returns a tuple with the watch state and episode:

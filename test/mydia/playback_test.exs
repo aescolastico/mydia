@@ -302,6 +302,165 @@ defmodule Mydia.PlaybackTest do
     end
   end
 
+  describe "mark_season_watched/3 and mark_season_unwatched/3" do
+    setup do
+      {:ok, user} = create_user()
+      {:ok, show} = create_show()
+      [e1, e2, e3] = for n <- 1..3, do: create_episode_in(show, 1, n)
+      %{user: user, show: show, e1: e1, e2: e2, e3: e3}
+    end
+
+    test "marks every episode in the season watched", ctx do
+      assert :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+
+      for ep <- [ctx.e1, ctx.e2, ctx.e3] do
+        assert Playback.get_progress(ctx.user.id, episode_id: ep.id).watched == true
+      end
+    end
+
+    test "is idempotent over already-watched episodes", ctx do
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: ctx.e1.id)
+
+      assert :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+
+      for ep <- [ctx.e1, ctx.e2, ctx.e3] do
+        assert Playback.get_progress(ctx.user.id, episode_id: ep.id).watched == true
+      end
+    end
+
+    # Covers AE2: in-progress resume positions are discarded along with watched rows.
+    test "mark_season_unwatched deletes every progress row, including in-progress resume positions",
+         ctx do
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: ctx.e1.id)
+
+      {:ok, _} =
+        Playback.save_progress(ctx.user.id, [episode_id: ctx.e2.id], %{
+          position_seconds: 60,
+          duration_seconds: 100
+        })
+
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: ctx.e3.id)
+
+      assert :ok = Playback.mark_season_unwatched(ctx.user.id, ctx.show.id, 1)
+
+      for ep <- [ctx.e1, ctx.e2, ctx.e3] do
+        assert Playback.get_progress(ctx.user.id, episode_id: ep.id) == nil
+      end
+    end
+
+    test "mark_season_unwatched on a season with no progress is a no-op", ctx do
+      assert :ok = Playback.mark_season_unwatched(ctx.user.id, ctx.show.id, 1)
+    end
+
+    test "an empty or invalid season number is a no-op", ctx do
+      assert :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 99)
+      assert :ok = Playback.mark_season_unwatched(ctx.user.id, ctx.show.id, 99)
+    end
+  end
+
+  describe "mark_episodes_up_to_watched/3" do
+    setup do
+      {:ok, user} = create_user()
+      {:ok, show} = create_show()
+      episodes = for n <- 1..6, do: create_episode_in(show, 1, n)
+      %{user: user, show: show, episodes: episodes}
+    end
+
+    # Covers AE1.
+    test "marks the anchor and all earlier episodes, leaving later ones untouched", ctx do
+      [e1, e2, e3, e4, e5, e6] = ctx.episodes
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: e1.id)
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: e2.id)
+
+      {:ok, _} =
+        Playback.save_progress(ctx.user.id, [episode_id: e3.id], %{
+          position_seconds: 40,
+          duration_seconds: 100
+        })
+
+      assert :ok = Playback.mark_episodes_up_to_watched(ctx.user.id, e4.id)
+
+      for ep <- [e1, e2, e3, e4] do
+        assert Playback.get_progress(ctx.user.id, episode_id: ep.id).watched == true
+      end
+
+      assert Playback.get_progress(ctx.user.id, episode_id: e5.id) == nil
+      assert Playback.get_progress(ctx.user.id, episode_id: e6.id) == nil
+    end
+
+    test "does not affect episodes in other seasons sharing the same episode_number", ctx do
+      [_e1, _e2, _e3, e4, _e5, _e6] = ctx.episodes
+      s2e4 = create_episode_in(ctx.show, 2, 4)
+
+      assert :ok = Playback.mark_episodes_up_to_watched(ctx.user.id, e4.id)
+
+      assert Playback.get_progress(ctx.user.id, episode_id: s2e4.id) == nil
+    end
+
+    test "a missing episode is a no-op", ctx do
+      assert :ok = Playback.mark_episodes_up_to_watched(ctx.user.id, Ecto.UUID.generate())
+    end
+  end
+
+  describe "explicit watched-action event semantics (U3)" do
+    setup do
+      {:ok, user} = create_user()
+      {:ok, show} = create_show()
+      episodes = for n <- 1..3, do: create_episode_in(show, 1, n)
+      %{user: user, show: show, episodes: episodes}
+    end
+
+    test "re-marking an already-watched season emits no new finished events", ctx do
+      :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+      assert length(playback_events(ctx.user, "finished")) == 3
+
+      :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+      assert length(playback_events(ctx.user, "finished")) == 3
+    end
+
+    test "marking a partially-watched season emits finished only for previously-unwatched episodes",
+         ctx do
+      [e1, _e2, _e3] = ctx.episodes
+      :changed = Playback.ensure_watched(ctx.user.id, episode_id: e1.id)
+      assert length(playback_events(ctx.user, "finished")) == 1
+
+      :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+      # Only e2 and e3 cross the unwatched -> watched edge.
+      assert length(playback_events(ctx.user, "finished")) == 3
+    end
+
+    test "mark_season_unwatched emits no playback event", ctx do
+      :ok = Playback.mark_season_watched(ctx.user.id, ctx.show.id, 1)
+      finished_before = playback_events(ctx.user, "finished")
+      progressed_before = playback_events(ctx.user, "progressed")
+
+      :ok = Playback.mark_season_unwatched(ctx.user.id, ctx.show.id, 1)
+
+      assert playback_events(ctx.user, "finished") == finished_before
+      assert playback_events(ctx.user, "progressed") == progressed_before
+    end
+
+    test "mark_episodes_up_to_watched sets watched regardless of completion_percentage", ctx do
+      [e1, _e2, _e3] = ctx.episodes
+
+      {:ok, progress} =
+        Playback.save_progress(ctx.user.id, [episode_id: e1.id], %{
+          position_seconds: 10,
+          duration_seconds: 100
+        })
+
+      assert progress.completion_percentage < 90.0
+      assert progress.watched == false
+
+      :ok = Playback.mark_episodes_up_to_watched(ctx.user.id, e1.id)
+
+      updated = Playback.get_progress(ctx.user.id, episode_id: e1.id)
+      # The watched boolean EpisodeCard reads is set without crossing 90%.
+      assert updated.watched == true
+      assert updated.completion_percentage < 90.0
+    end
+  end
+
   # Helper functions for test setup
   describe "playback events (U1)" do
     setup do
@@ -457,5 +616,30 @@ defmodule Mydia.PlaybackTest do
       title: "Pilot",
       monitored: true
     })
+  end
+
+  defp create_show do
+    Media.create_media_item(
+      %{
+        title: "Test Show #{System.unique_integer([:positive])}",
+        tmdb_id: System.unique_integer([:positive]),
+        type: "tv_show",
+        monitored: true
+      },
+      skip_episode_refresh: true
+    )
+  end
+
+  defp create_episode_in(show, season_number, episode_number) do
+    {:ok, episode} =
+      Media.create_episode(%{
+        media_item_id: show.id,
+        season_number: season_number,
+        episode_number: episode_number,
+        title: "S#{season_number}E#{episode_number}",
+        monitored: true
+      })
+
+    episode
   end
 end

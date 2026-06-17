@@ -52,6 +52,31 @@ class Episode {
     );
   }
 
+  /// Returns a copy with the given fields replaced.
+  ///
+  /// [clearProgress] forces [progress] to null (used when marking unwatched),
+  /// since a plain null [progress] argument cannot be distinguished from
+  /// "leave unchanged".
+  Episode copyWith({
+    Progress? progress,
+    bool clearProgress = false,
+  }) {
+    return Episode(
+      id: id,
+      seasonNumber: seasonNumber,
+      episodeNumber: episodeNumber,
+      title: title,
+      overview: overview,
+      airDate: airDate,
+      runtime: runtime,
+      monitored: monitored,
+      thumbnailUrl: thumbnailUrl,
+      hasFile: hasFile,
+      progress: clearProgress ? null : (progress ?? this.progress),
+      files: files,
+    );
+  }
+
   String get episodeCode => 'S${seasonNumber.toString().padLeft(2, '0')}E${episodeNumber.toString().padLeft(2, '0')}';
 
   String get runtimeDisplay {
