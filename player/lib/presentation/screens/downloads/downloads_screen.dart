@@ -1,9 +1,9 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/cache/poster_cache_manager.dart';
+import '../../widgets/glass_surface.dart';
 import '../../../core/downloads/download_providers.dart';
 import '../../../core/downloads/download_queue_providers.dart';
 import '../../../core/downloads/storage_quota_providers.dart';
@@ -756,12 +756,9 @@ class DownloadsScreen extends ConsumerWidget {
 
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            color: AppColors.background.withValues(alpha: 0.85),
-            child: SafeArea(
+      child: GlassSurface.appBar(
+          opacity: 0.85,
+          child: SafeArea(
               child: SizedBox(
                 height: kToolbarHeight,
                 child: Padding(
@@ -798,9 +795,7 @@ class DownloadsScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          ),
         ),
-      ),
     );
   }
 

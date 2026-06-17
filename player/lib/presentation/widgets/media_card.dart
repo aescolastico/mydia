@@ -1,10 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
 import '../../domain/models/media_file.dart';
+import 'glass_surface.dart';
 import 'progress_overlay.dart';
 import 'quality_badge.dart';
 
@@ -203,44 +203,30 @@ class _MediaCardState extends State<MediaCard>
                           opacity: _isHovered ? 1.0 : 0.0,
                           duration: const Duration(milliseconds: 200),
                           curve: Curves.easeOut,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-                              child: Container(
-                                width: cardWidth,
-                                height: cardHeight,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.black.withValues(alpha: 0.3),
-                                      Colors.black.withValues(alpha: 0.6),
+                          child: SizedBox(
+                            width: cardWidth,
+                            height: cardHeight,
+                            child: GlassSurface.hoverOverlay(
+                              child: Center(
+                                child: Container(
+                                  width: 56,
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primary
+                                            .withValues(alpha: 0.4),
+                                        blurRadius: 16,
+                                        offset: const Offset(0, 4),
+                                      ),
                                     ],
                                   ),
-                                ),
-                                child: Center(
-                                  child: Container(
-                                    width: 56,
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primary,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.primary
-                                              .withValues(alpha: 0.4),
-                                          blurRadius: 16,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Icon(
-                                      Icons.play_arrow_rounded,
-                                      size: 32,
-                                      color: Colors.white,
-                                    ),
+                                  child: const Icon(
+                                    Icons.play_arrow_rounded,
+                                    size: 32,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),

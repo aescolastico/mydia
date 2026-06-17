@@ -1,10 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../widgets/content_rail.dart';
+import '../widgets/glass_surface.dart';
 import '../widgets/shimmer_card.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
@@ -237,11 +237,9 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: AppBar(
-          backgroundColor: AppColors.background.withValues(alpha: 0.8),
+    return GlassSurface.appBar(
+      child: AppBar(
+          backgroundColor: Colors.transparent,
           elevation: 0,
           titleSpacing: 0,
           leading: IconButton(
@@ -251,12 +249,12 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
             },
             tooltip: 'Menu',
           ),
-          title: Row(
+          title: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const MydiaLogo(size: 32),
-              const SizedBox(width: 10),
-              const Text(
+              MydiaLogo(size: 32),
+              SizedBox(width: 10),
+              Text(
                 'Mydia Player',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
@@ -283,7 +281,6 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
             const SizedBox(width: 8),
           ],
         ),
-      ),
     );
   }
 }

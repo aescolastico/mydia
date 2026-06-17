@@ -14,6 +14,7 @@ import '../screens/collections/collection_detail_controller.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/p2p/p2p_service.dart';
 import '../../core/theme/colors.dart';
+import 'glass_surface.dart';
 import 'offline_banner.dart';
 
 /// Connection status badge for the settings icon.
@@ -1008,13 +1009,12 @@ class _ModernBottomNav extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: Container(
+        child: DecoratedBox(
+          // Drop shadow lives on an outer box; GlassSurface clips its own
+          // blurred fill so the pill now reads as true frosted glass over the
+          // ambient backdrop instead of a near-opaque surface.
           decoration: BoxDecoration(
-            color: AppColors.surface.withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: AppColors.border.withValues(alpha: 0.2),
-            ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.1),
@@ -1024,7 +1024,14 @@ class _ModernBottomNav extends StatelessWidget {
               ),
             ],
           ),
-          child: Padding(
+          child: GlassSurface(
+            blurSigma: 10,
+            fillColor: AppColors.surface.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.2),
+            ),
+            child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -1085,6 +1092,7 @@ class _ModernBottomNav extends StatelessWidget {
                 ),
               ],
             ),
+          ),
           ),
         ),
       ),

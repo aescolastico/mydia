@@ -1,9 +1,9 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'library_controller.dart';
 import '../../widgets/app_shell.dart';
+import '../../widgets/glass_surface.dart';
 import '../../widgets/media_poster.dart';
 import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/colors.dart';
@@ -151,12 +151,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
     return PreferredSize(
       preferredSize: Size.fromHeight(showSearch ? 120 : kToolbarHeight),
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            color: AppColors.background.withValues(alpha: 0.85),
-            child: SafeArea(
+      child: GlassSurface.appBar(
+          opacity: 0.85,
+          child: SafeArea(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -279,9 +276,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 ],
               ),
             ),
-          ),
         ),
-      ),
     );
   }
 

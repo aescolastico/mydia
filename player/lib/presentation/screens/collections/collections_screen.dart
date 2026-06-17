@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'collections_controller.dart';
 import '../../../domain/models/collection.dart';
 import '../../widgets/app_shell.dart';
+import '../../widgets/glass_surface.dart';
 import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/colors.dart';
 
@@ -45,11 +45,9 @@ class CollectionsScreen extends ConsumerWidget {
     }
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+      child: GlassSurface.appBar(
           child: AppBar(
-            backgroundColor: AppColors.background.withValues(alpha: 0.8),
+            backgroundColor: Colors.transparent,
             elevation: 0,
             leading: IconButton(
               icon: const Icon(Icons.menu_rounded),
@@ -95,7 +93,6 @@ class CollectionsScreen extends ConsumerWidget {
             ],
           ),
         ),
-      ),
     );
   }
 

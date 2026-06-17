@@ -1,10 +1,10 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'recently_added_controller.dart';
 import '../../widgets/media_poster.dart';
 import '../../widgets/app_shell.dart';
+import '../../widgets/glass_surface.dart';
 import '../../../core/layout/breakpoints.dart';
 import '../../../core/theme/colors.dart';
 
@@ -52,11 +52,9 @@ class RecentlyAddedScreen extends ConsumerWidget {
           preferredSize: Size.fromHeight(0), child: SizedBox.shrink());
     return PreferredSize(
       preferredSize: const Size.fromHeight(kToolbarHeight),
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+      child: GlassSurface.appBar(
           child: AppBar(
-            backgroundColor: AppColors.background.withValues(alpha: 0.8),
+            backgroundColor: Colors.transparent,
             elevation: 0,
             leading: IconButton(
               icon: const Icon(Icons.menu_rounded),
@@ -102,7 +100,6 @@ class RecentlyAddedScreen extends ConsumerWidget {
             ],
           ),
         ),
-      ),
     );
   }
 
