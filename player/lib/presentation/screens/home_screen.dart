@@ -1,13 +1,15 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
+import '../widgets/ambient_backdrop_provider.dart';
 import '../widgets/content_rail.dart';
+import '../widgets/glass_surface.dart';
 import '../widgets/shimmer_card.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
+import '../../core/ui/reduced_motion.dart';
 import '../widgets/app_shell.dart';
 import 'home/home_controller.dart';
 
@@ -33,6 +35,7 @@ class HomeScreen extends ConsumerWidget {
     final bottomPadding = isDesktop ? 32.0 : 100.0;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: isDesktop ? null : _ModernAppBar(),
       body: RefreshIndicator(
@@ -40,12 +43,42 @@ class HomeScreen extends ConsumerWidget {
           await ref.read(homeControllerProvider.notifier).refresh();
         },
         child: homeData.when(
-          loading: () => _buildShimmerLoading(context),
-          error: (error, stackTrace) => _buildErrorView(context, error, ref),
+          loading: () {
+            // No hero pick yet -> calm static fallback.
+            publishBackdropSource(ref, BackdropSource.none);
+            return _buildShimmerLoading(context);
+          },
+          error: (error, stackTrace) {
+            publishBackdropSource(ref, BackdropSource.none);
+            return _buildErrorView(context, error, ref);
+          },
           data: (data) {
             if (data.isEmpty) {
+              publishBackdropSource(ref, BackdropSource.none);
               return _buildEmptyState(context);
             }
+
+            // Feed the shell ambient backdrop from the hero pick:
+            // continueWatching.first ?? recentlyAdded.first, using
+            // backdropUrl ?? posterUrl (plan U5 / AE1). Branch by concrete
+            // type so the getters resolve (the two lists hold different types).
+            final BackdropSource heroSource;
+            if (data.continueWatching.isNotEmpty) {
+              final item = data.continueWatching.first;
+              heroSource = BackdropSource(
+                imageUrl: item.backdropUrl ?? item.posterUrl,
+                id: item.id,
+              );
+            } else if (data.recentlyAdded.isNotEmpty) {
+              final item = data.recentlyAdded.first;
+              heroSource = BackdropSource(
+                imageUrl: item.backdropUrl ?? item.posterUrl,
+                id: item.id,
+              );
+            } else {
+              heroSource = BackdropSource.none;
+            }
+            publishBackdropSource(ref, heroSource);
 
             return CustomScrollView(
               slivers: [
@@ -237,58 +270,70 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: AppBar(
-          backgroundColor: AppColors.background.withValues(alpha: 0.8),
-          elevation: 0,
-          titleSpacing: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.menu_rounded),
-            onPressed: () {
-              AppShell.scaffoldKey.currentState?.openDrawer();
-            },
-            tooltip: 'Menu',
-          ),
-          title: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const MydiaLogo(size: 32),
-              const SizedBox(width: 10),
-              const Text(
-                'Mydia Player',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
-                ),
+    return GlassSurface.appBar(
+      child: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        titleSpacing: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.menu_rounded),
+          onPressed: () {
+            AppShell.scaffoldKey.currentState?.openDrawer();
+          },
+          tooltip: 'Menu',
+        ),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MydiaLogo(size: 32),
+            SizedBox(width: 10),
+            Text(
+              'Mydia Player',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
               ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceVariant.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.search_rounded, size: 20),
-              ),
-              onPressed: () {
-                context.push('/search');
-              },
-              tooltip: 'Search',
             ),
-            const SizedBox(width: 8),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.search_rounded, size: 20),
+            ),
+            onPressed: () {
+              context.push('/search');
+            },
+            tooltip: 'Search',
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
     );
   }
 }
 
-class _HeroSection extends StatelessWidget {
+/// Max vertical parallax travel (logical px) for the home hero. The hero image
+/// is over-sized by `2 * homeHeroMaxParallax` and clipped so translation never
+/// reveals an edge gap.
+const double homeHeroMaxParallax = 40;
+
+/// Bounded parallax translation for the home hero at a given [scrollOffset].
+///
+/// Moves the image up at ~30% of scroll speed, clamped to
+/// `±homeHeroMaxParallax`. Returns `0` when [reduceMotion] is true so the hero
+/// stays static (plan U7 / AE4). Pure function, exposed for testing.
+double homeHeroParallaxOffset(double scrollOffset, {required bool reduceMotion}) {
+  if (reduceMotion) return 0;
+  return (-scrollOffset * 0.3).clamp(-homeHeroMaxParallax, homeHeroMaxParallax);
+}
+
+class _HeroSection extends StatefulWidget {
   final dynamic item;
   final VoidCallback onTap;
 
@@ -297,9 +342,45 @@ class _HeroSection extends StatelessWidget {
     required this.onTap,
   });
 
+  @override
+  State<_HeroSection> createState() => _HeroSectionState();
+}
+
+class _HeroSectionState extends State<_HeroSection> {
+  static const double _maxParallax = homeHeroMaxParallax;
+
+  ScrollPosition? _position;
+  double _scrollOffset = 0;
+
   String? get _backdropUrl {
+    final item = widget.item;
     if (item.backdropUrl != null) return item.backdropUrl;
     return item.posterUrl;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final newPosition = Scrollable.maybeOf(context)?.position;
+    if (newPosition != _position) {
+      _position?.removeListener(_onScroll);
+      _position = newPosition;
+      _position?.addListener(_onScroll);
+      _onScroll();
+    }
+  }
+
+  void _onScroll() {
+    final offset = _position?.pixels ?? 0;
+    if (offset != _scrollOffset) {
+      setState(() => _scrollOffset = offset);
+    }
+  }
+
+  @override
+  void dispose() {
+    _position?.removeListener(_onScroll);
+    super.dispose();
   }
 
   @override
@@ -311,40 +392,60 @@ class _HeroSection extends StatelessWidget {
         ? (size.height * 0.45).clamp(300.0, 450.0)
         : size.height * 0.5;
     final horizontalPadding = Breakpoints.getHorizontalPadding(context);
+    final reduceMotion = context.reduceMotion;
+    final parallax =
+        homeHeroParallaxOffset(_scrollOffset, reduceMotion: reduceMotion);
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: Stack(
         children: [
-          // Background image
-          SizedBox(
-            width: size.width,
-            height: heroHeight,
-            child: _backdropUrl != null
-                ? CachedNetworkImage(
-                    imageUrl: _backdropUrl!,
-                    fit: BoxFit.cover,
-                    cacheManager: BackdropCacheManager(),
-                    placeholder: (context, url) => Container(
-                      color: AppColors.surface,
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      color: AppColors.surface,
-                      child: const Icon(
-                        Icons.movie_rounded,
-                        size: 64,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  )
-                : Container(
-                    color: AppColors.surface,
-                    child: const Icon(
-                      Icons.movie_rounded,
-                      size: 64,
-                      color: AppColors.textSecondary,
-                    ),
+          // Background image with bounded parallax. The image is over-sized by
+          // 2 * _maxParallax and clipped to the hero so translation never
+          // reveals a gap.
+          ClipRect(
+            child: SizedBox(
+              width: size.width,
+              height: heroHeight,
+              child: OverflowBox(
+                minWidth: size.width,
+                maxWidth: size.width,
+                minHeight: heroHeight + _maxParallax * 2,
+                maxHeight: heroHeight + _maxParallax * 2,
+                child: Transform.translate(
+                  offset: Offset(0, parallax),
+                  child: SizedBox(
+                    width: size.width,
+                    height: heroHeight + _maxParallax * 2,
+                    child: _backdropUrl != null
+                        ? CachedNetworkImage(
+                            imageUrl: _backdropUrl!,
+                            fit: BoxFit.cover,
+                            cacheManager: BackdropCacheManager(),
+                            placeholder: (context, url) => Container(
+                              color: AppColors.surface,
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: AppColors.surface,
+                              child: const Icon(
+                                Icons.movie_rounded,
+                                size: 64,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          )
+                        : Container(
+                            color: AppColors.surface,
+                            child: const Icon(
+                              Icons.movie_rounded,
+                              size: 64,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
                   ),
+                ),
+              ),
+            ),
           ),
 
           // Gradient overlays
@@ -396,7 +497,7 @@ class _HeroSection extends StatelessWidget {
 
                 // Title
                 Text(
-                  item.title,
+                  widget.item.title,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     shadows: [
@@ -412,9 +513,9 @@ class _HeroSection extends StatelessWidget {
                 const SizedBox(height: 8),
 
                 // Subtitle/info
-                if (item.showTitle != null)
+                if (widget.item.showTitle != null)
                   Text(
-                    item.showTitle!,
+                    widget.item.showTitle!,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -427,7 +528,7 @@ class _HeroSection extends StatelessWidget {
                   children: [
                     // Play button
                     FilledButton.icon(
-                      onPressed: onTap,
+                      onPressed: widget.onTap,
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Play'),
                       style: FilledButton.styleFrom(
@@ -444,7 +545,7 @@ class _HeroSection extends StatelessWidget {
 
                     // More info button
                     OutlinedButton.icon(
-                      onPressed: onTap,
+                      onPressed: widget.onTap,
                       icon: const Icon(Icons.info_outline_rounded, size: 20),
                       label: const Text('More Info'),
                       style: OutlinedButton.styleFrom(

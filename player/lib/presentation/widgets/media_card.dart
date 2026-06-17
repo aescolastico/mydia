@@ -1,12 +1,13 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
 import '../../domain/models/media_file.dart';
+import 'glass_surface.dart';
 import 'progress_overlay.dart';
 import 'quality_badge.dart';
+import 'specular_sheen.dart';
 
 class MediaCard extends StatefulWidget {
   final String? posterUrl;
@@ -17,6 +18,7 @@ class MediaCard extends StatefulWidget {
   final double? width;
   final double? height;
   final List<MediaFile>? files;
+
   /// If true, uses responsive sizing based on screen width
   final bool responsive;
 
@@ -162,64 +164,55 @@ class _MediaCardState extends State<MediaCard>
                       child: child,
                     );
                   },
-                  child: ClipRRect(
+                  child: SpecularSheen(
                     borderRadius: BorderRadius.circular(12),
-                    child: Stack(
-                      children: [
-                        // Poster image
-                        SizedBox(
-                          width: cardWidth,
-                          height: cardHeight,
-                          child: widget.posterUrl != null
-                              ? CachedNetworkImage(
-                                  imageUrl: widget.posterUrl!,
-                                  fit: BoxFit.cover,
-                                  cacheManager: PosterCacheManager(),
-                                  placeholder: (context, url) => _buildPlaceholder(),
-                                  errorWidget: (context, url, error) =>
-                                      _buildPlaceholder(),
-                                )
-                              : _buildPlaceholder(),
-                        ),
-
-                        // Progress overlay at bottom
-                        if (widget.progressPercentage != null &&
-                            widget.progressPercentage! > 0)
-                          ProgressOverlay(percentage: widget.progressPercentage!),
-
-                        // Quality badges at top-right
-                        if (quality.hasQuality)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: QualityBadgeRow(
-                              badges: quality.toBadges(),
-                              spacing: 4.0,
-                            ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Stack(
+                        children: [
+                          // Poster image
+                          SizedBox(
+                            width: cardWidth,
+                            height: cardHeight,
+                            child: widget.posterUrl != null
+                                ? CachedNetworkImage(
+                                    imageUrl: widget.posterUrl!,
+                                    fit: BoxFit.cover,
+                                    cacheManager: PosterCacheManager(),
+                                    placeholder: (context, url) =>
+                                        _buildPlaceholder(),
+                                    errorWidget: (context, url, error) =>
+                                        _buildPlaceholder(),
+                                  )
+                                : _buildPlaceholder(),
                           ),
 
-                        // Hover overlay with glassmorphism
-                        AnimatedOpacity(
-                          opacity: _isHovered ? 1.0 : 0.0,
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeOut,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-                              child: Container(
-                                width: cardWidth,
-                                height: cardHeight,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.black.withValues(alpha: 0.3),
-                                      Colors.black.withValues(alpha: 0.6),
-                                    ],
-                                  ),
-                                ),
+                          // Progress overlay at bottom
+                          if (widget.progressPercentage != null &&
+                              widget.progressPercentage! > 0)
+                            ProgressOverlay(
+                                percentage: widget.progressPercentage!),
+
+                          // Quality badges at top-right
+                          if (quality.hasQuality)
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: QualityBadgeRow(
+                                badges: quality.toBadges(),
+                                spacing: 4.0,
+                              ),
+                            ),
+
+                          // Hover overlay with glassmorphism
+                          AnimatedOpacity(
+                            opacity: _isHovered ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOut,
+                            child: SizedBox(
+                              width: cardWidth,
+                              height: cardHeight,
+                              child: GlassSurface.hoverOverlay(
                                 child: Center(
                                   child: Container(
                                     width: 56,
@@ -246,8 +239,8 @@ class _MediaCardState extends State<MediaCard>
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),

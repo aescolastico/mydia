@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -9,6 +8,7 @@ import '../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../core/downloads/download_providers.dart';
 import '../../core/downloads/download_job_providers.dart';
 import '../../core/theme/colors.dart';
+import 'glass_surface.dart';
 import 'quality_download_dialog.dart';
 import 'quality_badge.dart';
 
@@ -194,34 +194,32 @@ class _EpisodeCardState extends ConsumerState<EpisodeCard>
           ),
 
           // Hover overlay with play button
-          AnimatedOpacity(
-            opacity: _isHovered && widget.episode.hasFile ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 200),
-            child: ClipRRect(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.5),
-                  child: Center(
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.4),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.play_arrow_rounded,
-                        size: 28,
-                        color: Colors.white,
-                      ),
+          Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: _isHovered && widget.episode.hasFile ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: GlassSurface(
+                blurSigma: 2,
+                fillColor: Colors.black.withValues(alpha: 0.5),
+                child: Center(
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 28,
+                      color: Colors.white,
                     ),
                   ),
                 ),

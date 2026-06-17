@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/auth/auth_service.dart';
 import '../../core/p2p/p2p_service.dart' show defaultRelayUrl;
 import '../../core/theme/colors.dart';
+import '../widgets/glass_surface.dart';
 import '../widgets/update_required_dialog.dart';
 import 'login/login_controller.dart';
 
@@ -504,23 +503,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
   Widget _buildClaimCodeCard(LoginState loginState, bool isCompact) {
     return Container(
       constraints: const BoxConstraints(maxWidth: 360),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: Container(
-            padding: EdgeInsets.all(isCompact ? 20 : 24),
-            decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.2),
-              ),
-            ),
-            child: _showDirectConnection
-                ? _buildDirectConnectionContent(loginState, isCompact)
-                : _buildClaimCodeContent(loginState, isCompact),
-          ),
+      child: GlassSurface.modal(
+        child: Padding(
+          padding: EdgeInsets.all(isCompact ? 20 : 24),
+          child: _showDirectConnection
+              ? _buildDirectConnectionContent(loginState, isCompact)
+              : _buildClaimCodeContent(loginState, isCompact),
         ),
       ),
     );

@@ -8,6 +8,7 @@ import '../../core/connection/connection_provider.dart';
 import '../../core/graphql/graphql_provider.dart';
 import '../../core/update/update_provider.dart';
 import '../../core/update/updaters/macos_updater.dart';
+import '../widgets/ambient_backdrop_provider.dart';
 import '../widgets/connection_status_indicator.dart';
 import '../widgets/update_tile.dart';
 import 'settings/settings_controller.dart';
@@ -51,8 +52,14 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(settingsControllerProvider);
 
+    // Settings shows the calm static backdrop, never a stale title image
+    // (plan U5 / AE3).
+    publishBackdropSource(ref, BackdropSource.none);
+
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
         title: const Text('Settings'),
       ),
       body: settingsAsync.when(
