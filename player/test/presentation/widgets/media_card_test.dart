@@ -89,24 +89,24 @@ void main() {
   });
 
   group('MediaCard hover demotion (R11)', () {
-    testWidgets('hover lifts slightly with no scale jump or live blur',
-        (tester) async {
+    testWidgets('hover does not move or scale the poster; only the shadow '
+        'firms up', (tester) async {
       await tester.pumpWidget(_host(const MediaCard(title: 'Movie')));
 
       await _hover(tester, find.byType(MediaCard));
 
-      // A gentle upward lift...
-      expect(_liftY(tester), lessThan(0));
-      // ...but never a scale jump (the prior 1.04 treatment is gone).
+      // No offset/lift — the poster stays put (R11).
+      expect(_liftY(tester), 0);
+      // No scale jump (the prior 1.04 treatment is gone).
       expect(_maxScale(tester), lessThanOrEqualTo(1.001));
-      // ...and still no per-card BackdropFilter (faux overlay).
+      // No per-card BackdropFilter (faux overlay).
       expect(find.byType(BackdropFilter), findsNothing);
-      // The shadow deepens to the hover token.
+      // The only hover response is a slight shadow deepening.
       expect(_shadowDecoration(tester).boxShadow, DepthTokens.posterHover);
     });
 
-    testWidgets('under reduced motion the lift collapses but resting shadow '
-        'stays (AE1)', (tester) async {
+    testWidgets('under reduced motion the hover accent collapses but resting '
+        'shadow stays (AE1)', (tester) async {
       await tester.pumpWidget(
         _host(const MediaCard(title: 'Movie'), reduceMotion: true),
       );

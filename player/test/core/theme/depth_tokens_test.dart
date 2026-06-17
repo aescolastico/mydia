@@ -61,7 +61,6 @@ void main() {
       expect(DepthTokens.posterResting, isNotEmpty);
       expect(DepthTokens.posterResting.first.color.a, greaterThan(0));
       expect(DepthTokens.chrome, isA<List<BoxShadow>>());
-      expect(DepthTokens.posterHoverLift, greaterThan(0));
     });
 
     test('hover shadow is a deeper accent than resting, but bounded (R11)', () {

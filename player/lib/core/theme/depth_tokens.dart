@@ -107,19 +107,16 @@ abstract final class DepthTokens {
     ),
   ];
 
-  /// Gentle hover shadow for posters — a small deepening, not the prior pass's
-  /// 0.35-alpha / 20-blur jump (R11).
+  /// Hover shadow for posters — a barely-there deepening over [posterResting]
+  /// at the same offset, so the poster firms up slightly without lifting or
+  /// "floating" (R11). The poster does not translate on hover.
   static const List<BoxShadow> posterHover = <BoxShadow>[
     BoxShadow(
-      color: Color(0x38000000), // black @ 0.22
-      blurRadius: 12,
-      offset: Offset(0, 6),
+      color: Color(0x2E000000), // black @ 0.18
+      blurRadius: 10,
+      offset: Offset(0, 4),
     ),
   ];
-
-  /// Vertical lift (logical px, translated up) applied to a poster on hover.
-  /// Small accent only — replaces the 1.04/1.02 scale jump (R11).
-  static const double posterHoverLift = 4.0;
 
   /// Layered drop shadow for glass chrome panels (sidebar, floating bars) so
   /// they read as elevated over the ambient backdrop. Matches the mobile bottom

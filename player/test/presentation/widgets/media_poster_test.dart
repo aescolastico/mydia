@@ -70,20 +70,21 @@ void main() {
       expect(find.byType(BackdropFilter), findsNothing);
     });
 
-    testWidgets('hover lifts and deepens the shadow with no scale jump',
+    testWidgets('hover deepens the shadow with no offset or scale jump',
         (tester) async {
       await tester.pumpWidget(_host(const MediaPoster(title: 'Show')));
       await tester.pump();
 
       await _hover(tester, find.byType(MediaPoster));
 
-      expect(_liftY(tester), lessThan(0));
+      // No lift/offset and no scale — only the shadow firms up (R11).
+      expect(_liftY(tester), 0);
       expect(_maxScale(tester), lessThanOrEqualTo(1.001));
       expect(_shadowDecoration(tester).boxShadow, DepthTokens.posterHover);
     });
 
-    testWidgets('under reduced motion the lift collapses; resting shadow stays',
-        (tester) async {
+    testWidgets('under reduced motion the hover accent collapses; resting '
+        'shadow stays', (tester) async {
       await tester.pumpWidget(
         _host(const MediaPoster(title: 'Show'), reduceMotion: true),
       );

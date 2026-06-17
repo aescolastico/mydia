@@ -59,11 +59,11 @@ class _MediaPosterState extends ConsumerState<MediaPoster> {
             child: Builder(
               builder: (context) {
                 final reduceMotion = context.reduceMotion;
-                final lifted = _isHovered && !reduceMotion;
-                // Solid, always-elevated poster (R7): a resting token shadow at
-                // rest that deepens to the hover token, plus a small lift — no
-                // scale jump (R11). Motion collapses under reduced motion while
-                // the resting shadow remains.
+                final deepened = _isHovered && !reduceMotion;
+                // Solid, always-elevated poster (R7): a resting token shadow
+                // that firms up slightly on hover — no lift, no scale (R11).
+                // Under reduced motion the hover accent collapses and the
+                // resting shadow stays.
                 return MouseRegion(
                   onEnter: (_) => _handleHoverEnter(),
                   onExit: (_) => _handleHoverExit(),
@@ -71,17 +71,9 @@ class _MediaPosterState extends ConsumerState<MediaPoster> {
                     duration:
                         reduceMotion ? Duration.zero : DepthTokens.motionMedium,
                     curve: DepthTokens.curveStandard,
-                    transform: Matrix4.translationValues(
-                      0,
-                      lifted ? -DepthTokens.posterHoverLift : 0,
-                      0,
-                    ),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(8),
-                      // Resting shadow at rest; deepens on hover. Under reduced
-                      // motion the hover accent collapses and the resting shadow
-                      // stays (AE1) — gated on [lifted], not raw hover.
-                      boxShadow: lifted
+                      boxShadow: deepened
                           ? DepthTokens.posterHover
                           : DepthTokens.posterResting,
                     ),

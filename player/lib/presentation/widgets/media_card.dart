@@ -50,8 +50,8 @@ class _MediaCardState extends ConsumerState<MediaCard>
     with SingleTickerProviderStateMixin {
   bool _isHovered = false;
 
-  // Drives the gentle hover accent: a small lift + a slight shadow deepening
-  // (R11). Replaces the prior 1.04 scale jump and animated shadow growth.
+  // Drives the gentle hover accent: a slight shadow deepening only — no lift,
+  // scale, or sheen (R11).
   late AnimationController _animationController;
 
   @override
@@ -112,8 +112,9 @@ class _MediaCardState extends ConsumerState<MediaCard>
       cardHeight = widget.height ?? _defaultHeight;
     }
 
-    // Gentle hover accent (R11): a small lift, no scale jump and no specular
-    // sheen. Collapses to no motion under reduced motion.
+    // Hover accent (R11): the poster stays put — no lift, no scale jump, no
+    // sheen. Its resting shadow only firms up slightly on hover. Collapses to
+    // no change under reduced motion.
     final reduceMotion = context.reduceMotion;
 
     return MouseRegion(
@@ -121,154 +122,143 @@ class _MediaCardState extends ConsumerState<MediaCard>
       onExit: (_) => _handleHoverExit(),
       child: GestureDetector(
         onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _animationController,
-          builder: (context, child) {
-            final t = reduceMotion ? 0.0 : _animationController.value;
-            return Transform.translate(
-              offset: Offset(0, -DepthTokens.posterHoverLift * t),
-              child: child,
-            );
-          },
-          child: SizedBox(
-            width: cardWidth,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Poster container — a solid, always-elevated object with a
-                // resting token shadow that deepens slightly on hover (R7).
-                AnimatedBuilder(
-                  animation: _animationController,
-                  builder: (context, child) {
-                    final t = reduceMotion ? 0.0 : _animationController.value;
-                    return DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: BoxShadow.lerpList(
-                          DepthTokens.posterResting,
-                          DepthTokens.posterHover,
-                          t,
-                        ),
+        child: SizedBox(
+          width: cardWidth,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Poster container — a solid, always-elevated object with a
+              // resting token shadow that deepens slightly on hover (R7).
+              AnimatedBuilder(
+                animation: _animationController,
+                builder: (context, child) {
+                  final t = reduceMotion ? 0.0 : _animationController.value;
+                  return DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: BoxShadow.lerpList(
+                        DepthTokens.posterResting,
+                        DepthTokens.posterHover,
+                        t,
                       ),
-                      child: child,
-                    );
-                  },
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Stack(
-                      children: [
-                        // Poster image
-                        SizedBox(
+                    ),
+                    child: child,
+                  );
+                },
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    children: [
+                      // Poster image
+                      SizedBox(
+                        width: cardWidth,
+                        height: cardHeight,
+                        child: widget.posterUrl != null
+                            ? CachedNetworkImage(
+                                imageUrl: widget.posterUrl!,
+                                fit: BoxFit.cover,
+                                cacheManager: PosterCacheManager(),
+                                placeholder: (context, url) =>
+                                    _buildPlaceholder(),
+                                errorWidget: (context, url, error) =>
+                                    _buildPlaceholder(),
+                              )
+                            : _buildPlaceholder(),
+                      ),
+
+                      // Progress overlay at bottom
+                      if (widget.progressPercentage != null &&
+                          widget.progressPercentage! > 0)
+                        ProgressOverlay(percentage: widget.progressPercentage!),
+
+                      // Quality badges at top-right
+                      if (quality.hasQuality)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: QualityBadgeRow(
+                            badges: quality.toBadges(),
+                            spacing: 4.0,
+                          ),
+                        ),
+
+                      // Hover overlay: a faux-glass darkening scrim with no
+                      // live blur, so per-card scrolling content never
+                      // creates a BackdropFilter pass (R8).
+                      AnimatedOpacity(
+                        opacity: _isHovered ? 1.0 : 0.0,
+                        duration: DepthTokens.motionMedium,
+                        curve: Curves.easeOut,
+                        child: SizedBox(
                           width: cardWidth,
                           height: cardHeight,
-                          child: widget.posterUrl != null
-                              ? CachedNetworkImage(
-                                  imageUrl: widget.posterUrl!,
-                                  fit: BoxFit.cover,
-                                  cacheManager: PosterCacheManager(),
-                                  placeholder: (context, url) =>
-                                      _buildPlaceholder(),
-                                  errorWidget: (context, url, error) =>
-                                      _buildPlaceholder(),
-                                )
-                              : _buildPlaceholder(),
-                        ),
-
-                        // Progress overlay at bottom
-                        if (widget.progressPercentage != null &&
-                            widget.progressPercentage! > 0)
-                          ProgressOverlay(
-                              percentage: widget.progressPercentage!),
-
-                        // Quality badges at top-right
-                        if (quality.hasQuality)
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: QualityBadgeRow(
-                              badges: quality.toBadges(),
-                              spacing: 4.0,
+                          child: GlassSurface.faux(
+                            showRim: false,
+                            borderRadius: BorderRadius.circular(12),
+                            gradient: const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Color(0x4D000000), // black @ 0.3
+                                Color(0x99000000), // black @ 0.6
+                              ],
                             ),
-                          ),
-
-                        // Hover overlay: a faux-glass darkening scrim with no
-                        // live blur, so per-card scrolling content never
-                        // creates a BackdropFilter pass (R8).
-                        AnimatedOpacity(
-                          opacity: _isHovered ? 1.0 : 0.0,
-                          duration: DepthTokens.motionMedium,
-                          curve: Curves.easeOut,
-                          child: SizedBox(
-                            width: cardWidth,
-                            height: cardHeight,
-                            child: GlassSurface.faux(
-                              showRim: false,
-                              borderRadius: BorderRadius.circular(12),
-                              gradient: const LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Color(0x4D000000), // black @ 0.3
-                                  Color(0x99000000), // black @ 0.6
-                                ],
-                              ),
-                              child: Center(
-                                child: Container(
-                                  width: 56,
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.primary,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppColors.primary
-                                            .withValues(alpha: 0.4),
-                                        blurRadius: 16,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: const Icon(
-                                    Icons.play_arrow_rounded,
-                                    size: 32,
-                                    color: Colors.white,
-                                  ),
+                            child: Center(
+                              child: Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.primary
+                                          .withValues(alpha: 0.4),
+                                      blurRadius: 16,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.play_arrow_rounded,
+                                  size: 32,
+                                  color: Colors.white,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
+              ),
+              const SizedBox(height: 10),
 
-                // Title
+              // Title
+              Text(
+                widget.title,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      height: 1.2,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+
+              // Subtitle
+              if (widget.subtitle != null) ...[
+                const SizedBox(height: 4),
                 Text(
-                  widget.title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        height: 1.2,
+                  widget.subtitle!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
                       ),
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-
-                // Subtitle
-                if (widget.subtitle != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.subtitle!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textSecondary,
-                        ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
               ],
-            ),
+            ],
           ),
         ),
       ),
