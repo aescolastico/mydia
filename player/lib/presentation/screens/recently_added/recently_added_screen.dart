@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'recently_added_controller.dart';
 import '../../widgets/media_poster.dart';
+import '../../widgets/ambient_backdrop_provider.dart';
 import '../../widgets/app_shell.dart';
 import '../../widgets/glass_surface.dart';
 import '../../../core/layout/breakpoints.dart';
@@ -25,7 +26,11 @@ class RecentlyAddedScreen extends ConsumerWidget {
     final data = ref.watch(recentlyAddedControllerProvider);
     final isDesktop = Breakpoints.isDesktop(context);
 
+    // Grid screens use the calm static backdrop (no per-title artwork).
+    publishBackdropSource(ref, BackdropSource.none);
+
     return Scaffold(
+      backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: _buildAppBar(context, isDesktop),
       body: RefreshIndicator(

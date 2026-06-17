@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/cache/poster_cache_manager.dart';
+import '../../widgets/ambient_backdrop_provider.dart';
 import '../../widgets/glass_surface.dart';
 import '../../../core/downloads/download_providers.dart';
 import '../../../core/downloads/download_queue_providers.dart';
@@ -22,6 +23,9 @@ class DownloadsScreen extends ConsumerWidget {
     final downloadedMediaAsync = ref.watch(downloadedMediaProvider);
     final downloadQueueAsync = ref.watch(downloadQueueProvider);
     final failedDownloadsAsync = ref.watch(failedDownloadsProvider);
+
+    // Downloads uses the calm static backdrop (no per-title artwork).
+    publishBackdropSource(ref, BackdropSource.none);
 
     // Grouping Logic
     final items = <String, DownloadGroup>{};
@@ -84,6 +88,7 @@ class DownloadsScreen extends ConsumerWidget {
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: _buildAppBar(context, ref),
       body: CustomScrollView(

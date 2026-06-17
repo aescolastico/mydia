@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../core/cache/poster_cache_manager.dart';
+import '../widgets/ambient_backdrop_provider.dart';
 import '../widgets/content_rail.dart';
 import '../widgets/glass_surface.dart';
 import '../widgets/shimmer_card.dart';
@@ -33,6 +34,7 @@ class HomeScreen extends ConsumerWidget {
     final bottomPadding = isDesktop ? 32.0 : 100.0;
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: isDesktop ? null : _ModernAppBar(),
       body: RefreshIndicator(
@@ -40,12 +42,42 @@ class HomeScreen extends ConsumerWidget {
           await ref.read(homeControllerProvider.notifier).refresh();
         },
         child: homeData.when(
-          loading: () => _buildShimmerLoading(context),
-          error: (error, stackTrace) => _buildErrorView(context, error, ref),
+          loading: () {
+            // No hero pick yet -> calm static fallback.
+            publishBackdropSource(ref, BackdropSource.none);
+            return _buildShimmerLoading(context);
+          },
+          error: (error, stackTrace) {
+            publishBackdropSource(ref, BackdropSource.none);
+            return _buildErrorView(context, error, ref);
+          },
           data: (data) {
             if (data.isEmpty) {
+              publishBackdropSource(ref, BackdropSource.none);
               return _buildEmptyState(context);
             }
+
+            // Feed the shell ambient backdrop from the hero pick:
+            // continueWatching.first ?? recentlyAdded.first, using
+            // backdropUrl ?? posterUrl (plan U5 / AE1). Branch by concrete
+            // type so the getters resolve (the two lists hold different types).
+            final BackdropSource heroSource;
+            if (data.continueWatching.isNotEmpty) {
+              final item = data.continueWatching.first;
+              heroSource = BackdropSource(
+                imageUrl: item.backdropUrl ?? item.posterUrl,
+                id: item.id,
+              );
+            } else if (data.recentlyAdded.isNotEmpty) {
+              final item = data.recentlyAdded.first;
+              heroSource = BackdropSource(
+                imageUrl: item.backdropUrl ?? item.posterUrl,
+                id: item.id,
+              );
+            } else {
+              heroSource = BackdropSource.none;
+            }
+            publishBackdropSource(ref, heroSource);
 
             return CustomScrollView(
               slivers: [
