@@ -114,6 +114,7 @@ class _ContentRailState extends State<ContentRail> {
                 itemBuilder: (context, index) {
                   final item = widget.items[index];
                   return Padding(
+                    key: _keyFor(item, index),
                     padding: EdgeInsets.only(
                       right: index < widget.items.length - 1 ? cardSpacing : 0,
                     ),
@@ -172,6 +173,16 @@ class _ContentRailState extends State<ContentRail> {
         ),
       ],
     );
+  }
+
+  /// Stable, id-based key for a rail item so the [ListView.builder] cards keep
+  /// their identity as the list updates (player key convention). Falls back to
+  /// an index key for unrecognized item types.
+  Key _keyFor(dynamic item, int index) {
+    if (item is ContinueWatchingItem) return ValueKey('cw-${item.id}');
+    if (item is RecentlyAddedItem) return ValueKey('ra-${item.id}');
+    if (item is UpNextItem) return ValueKey('un-${item.episode.id}');
+    return ValueKey('rail-$index');
   }
 
   Widget _buildCard(BuildContext context, dynamic item) {
