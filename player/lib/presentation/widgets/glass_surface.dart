@@ -137,7 +137,7 @@ class GlassSurface extends StatelessWidget {
   ///
   /// Pass `showRim: false` to drop the rim (e.g. a darkening scrim over a
   /// poster that should not gain a visible border).
-  GlassSurface.faux({
+  const GlassSurface.faux({
     Key? key,
     Color? fillColor,
     Gradient? gradient,

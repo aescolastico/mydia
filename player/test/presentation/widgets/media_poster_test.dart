@@ -7,15 +7,19 @@
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:player/core/theme/depth_tokens.dart';
 import 'package:player/presentation/widgets/media_poster.dart';
 
-Widget _host(Widget child, {bool reduceMotion = false}) => MaterialApp(
-      home: MediaQuery(
-        data: MediaQueryData(disableAnimations: reduceMotion),
-        child: Scaffold(
-          body: Center(child: SizedBox(width: 140, height: 230, child: child)),
+Widget _host(Widget child, {bool reduceMotion = false}) => ProviderScope(
+      child: MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: reduceMotion),
+          child: Scaffold(
+            body:
+                Center(child: SizedBox(width: 140, height: 230, child: child)),
+          ),
         ),
       ),
     );

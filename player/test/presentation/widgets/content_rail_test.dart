@@ -6,6 +6,7 @@
 // (player key convention), and the scroll-edge fade gradients still render.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:player/domain/models/recently_added_item.dart';
 import 'package:player/presentation/widgets/content_rail.dart';
@@ -16,8 +17,10 @@ List<RecentlyAddedItem> _items(int n) => List.generate(
       (i) => RecentlyAddedItem(id: '$i', type: 'movie', title: 'Title $i'),
     );
 
-Widget _host(Widget child) => MaterialApp(
-      home: Scaffold(body: child),
+Widget _host(Widget child) => ProviderScope(
+      child: MaterialApp(
+        home: Scaffold(body: child),
+      ),
     );
 
 void main() {

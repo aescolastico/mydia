@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/depth_tokens.dart';
 import '../../core/ui/reduced_motion.dart';
+import 'ambient_backdrop_provider.dart';
 import 'progress_overlay.dart';
 
-class MediaPoster extends StatefulWidget {
+class MediaPoster extends ConsumerStatefulWidget {
   final String? posterUrl;
   final String title;
   final double? progressPercentage;
@@ -25,11 +27,26 @@ class MediaPoster extends StatefulWidget {
   });
 
   @override
-  State<MediaPoster> createState() => _MediaPosterState();
+  ConsumerState<MediaPoster> createState() => _MediaPosterState();
 }
 
-class _MediaPosterState extends State<MediaPoster> {
+class _MediaPosterState extends ConsumerState<MediaPoster> {
   bool _isHovered = false;
+
+  void _handleHoverEnter() {
+    setState(() => _isHovered = true);
+    // Drive the ambient backdrop to this poster's artwork so the real-blur
+    // chrome tints with it (R5/R9). Skipped when there is no artwork.
+    final url = widget.posterUrl;
+    if (url != null && url.isNotEmpty) {
+      publishBackdropHover(ref, BackdropSource(imageUrl: url, id: url));
+    }
+  }
+
+  void _handleHoverExit() {
+    setState(() => _isHovered = false);
+    clearBackdropHover(ref);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,8 +65,8 @@ class _MediaPosterState extends State<MediaPoster> {
                 // scale jump (R11). Motion collapses under reduced motion while
                 // the resting shadow remains.
                 return MouseRegion(
-                  onEnter: (_) => setState(() => _isHovered = true),
-                  onExit: (_) => setState(() => _isHovered = false),
+                  onEnter: (_) => _handleHoverEnter(),
+                  onExit: (_) => _handleHoverExit(),
                   child: AnimatedContainer(
                     duration:
                         reduceMotion ? Duration.zero : DepthTokens.motionMedium,

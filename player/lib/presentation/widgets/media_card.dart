@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/cache/poster_cache_manager.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/depth_tokens.dart';
 import '../../core/ui/reduced_motion.dart';
 import '../../domain/models/media_file.dart';
+import 'ambient_backdrop_provider.dart';
 import 'glass_surface.dart';
 import 'progress_overlay.dart';
 import 'quality_badge.dart';
 
-class MediaCard extends StatefulWidget {
+class MediaCard extends ConsumerStatefulWidget {
   final String? posterUrl;
   final String title;
   final String? subtitle;
@@ -41,10 +43,10 @@ class MediaCard extends StatefulWidget {
       Breakpoints.getCardSize(context);
 
   @override
-  State<MediaCard> createState() => _MediaCardState();
+  ConsumerState<MediaCard> createState() => _MediaCardState();
 }
 
-class _MediaCardState extends State<MediaCard>
+class _MediaCardState extends ConsumerState<MediaCard>
     with SingleTickerProviderStateMixin {
   bool _isHovered = false;
 
@@ -70,11 +72,19 @@ class _MediaCardState extends State<MediaCard>
   void _handleHoverEnter() {
     setState(() => _isHovered = true);
     _animationController.forward();
+    // Drive the ambient backdrop to this poster's artwork so the real-blur
+    // chrome tints with it (R5/R9). Skipped when there is no artwork.
+    final url = widget.posterUrl;
+    if (url != null && url.isNotEmpty) {
+      publishBackdropHover(ref, BackdropSource(imageUrl: url, id: url));
+    }
   }
 
   void _handleHoverExit() {
     setState(() => _isHovered = false);
     _animationController.reverse();
+    // Revert to the screen's default backdrop.
+    clearBackdropHover(ref);
   }
 
   // Default dimensions for non-responsive mode
