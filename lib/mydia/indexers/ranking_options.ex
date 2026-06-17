@@ -39,21 +39,20 @@ defmodule Mydia.Indexers.RankingOptions do
 
   Required: `:media_type`. Everything else is optional; nil/empty values are
   skipped (mirroring the jobs' `maybe_add_option/3` behavior) so the penalty
-  math never receives nils.
+  math and downstream consumers never receive nils.
   """
   @spec build(input()) :: keyword()
   def build(%{media_type: media_type} = input) do
     quality_profile = Map.get(input, :quality_profile)
 
     base_opts =
-      [
-        size_range: Map.get(input, :size_range),
-        search_query: Map.get(input, :search_query),
-        media_type: media_type,
-        expected_title: Map.get(input, :expected_title)
-      ]
-      # Omit :min_seeders when nil so the ranker's default (0) applies; passing
-      # an explicit nil would break the seeder-minimum comparison.
+      [media_type: media_type]
+      # Skip nil scalar keys so the penalty math and downstream consumers never
+      # see them. Omitting :min_seeders when nil lets the ranker's default (0)
+      # apply; an explicit nil would break the seeder-minimum comparison.
+      |> maybe_put(:size_range, Map.get(input, :size_range))
+      |> maybe_put(:search_query, Map.get(input, :search_query))
+      |> maybe_put(:expected_title, Map.get(input, :expected_title))
       |> maybe_put(:min_seeders, Map.get(input, :min_seeders))
       |> maybe_put(:expected_season, Map.get(input, :expected_season))
       |> maybe_put(:expected_episode, Map.get(input, :expected_episode))

@@ -109,7 +109,15 @@ defmodule MydiaWeb.MediaLive.Show.SearchEvents do
      socket
      |> assign(:show_manual_search_modal, true)
      |> assign(:manual_search_query, search_query)
-     |> assign(:manual_search_context, %{type: :episode, episode_id: episode_id})
+     |> assign(
+       :manual_search_context,
+       %{
+         type: :episode,
+         episode_id: episode_id,
+         season_number: episode.season_number,
+         episode_number: episode.episode_number
+       }
+     )
      |> assign(:searching, true)
      |> assign(:results_empty?, false)
      |> assign(:download_error, nil)

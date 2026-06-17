@@ -232,6 +232,13 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
     })
   end
 
+  # Prefer the season/episode the modal already loaded into the context, so
+  # re-sorts and modal re-renders don't re-query the episode on every call.
+  defp expected_identity(%{type: :episode, season_number: season, episode_number: episode})
+       when not is_nil(season) and not is_nil(episode) do
+    {season, episode}
+  end
+
   defp expected_identity(%{type: :episode, episode_id: episode_id}) do
     episode = Media.get_episode!(episode_id)
     {episode.season_number, episode.episode_number}

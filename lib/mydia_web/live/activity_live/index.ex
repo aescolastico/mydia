@@ -625,10 +625,9 @@ defmodule MydiaWeb.ActivityLive.Index do
   defp format_penalty_summary(penalties) when is_map(penalties) do
     penalties
     |> Enum.filter(fn {_key, value} -> is_number(value) and value < 0.0 end)
-    |> Enum.map(fn {key, value} ->
+    |> Enum.map_join(", ", fn {key, value} ->
       "#{format_breakdown_label(key)}: #{trunc(value)}"
     end)
-    |> Enum.join(", ")
   end
 
   defp format_penalty_summary(_), do: ""

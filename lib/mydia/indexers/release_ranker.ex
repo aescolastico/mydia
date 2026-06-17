@@ -58,9 +58,9 @@ defmodule Mydia.Indexers.ReleaseRanker do
   @type score_breakdown :: ScoreBreakdown.t()
 
   @type ranking_options :: [
-          min_seeders: non_neg_integer(),
+          min_seeders: non_neg_integer() | nil,
           min_ratio: float() | nil,
-          size_range: {non_neg_integer(), non_neg_integer()},
+          size_range: {non_neg_integer() | nil, non_neg_integer() | nil} | nil,
           preferred_qualities: [String.t()],
           preferred_tags: [String.t()],
           blocked_tags: [String.t()],
@@ -167,20 +167,20 @@ defmodule Mydia.Indexers.ReleaseRanker do
   end
 
   @doc """
-  Filters results to only those meeting minimum criteria.
+  Applies the surviving hard removals to a result list.
 
-  Removes results that:
-  - Have fewer than `:min_seeders` seeders
-  - Have seeder ratio below `:min_ratio` (if specified)
-  - Fall outside the `:size_range` (in MB)
-  - Contain any `:blocked_tags` in their title
+  Only two hard removals remain — everything else (size, seeders, ratio,
+  identity) is now a soft scoring penalty applied during ranking, so weak
+  releases sink to the bottom instead of disappearing. Removes results that:
+  - Contain any `:blocked_tags` in their title (R8)
+  - Are NZB results posted more recently than `:min_post_age_minutes` (timing safeguard)
 
   ## Examples
 
-      iex> ReleaseRanker.filter_acceptable(results, min_seeders: 10, blocked_tags: ["CAM"])
+      iex> ReleaseRanker.filter_acceptable(results, blocked_tags: ["CAM"])
       [%SearchResult{...}, ...]
 
-      iex> ReleaseRanker.filter_acceptable(results, min_ratio: 0.15)
+      iex> ReleaseRanker.filter_acceptable(results, min_post_age_minutes: 30)
       [%SearchResult{...}, ...]
   """
   @spec filter_acceptable([SearchResult.t()], ranking_options()) :: [SearchResult.t()]
@@ -700,8 +700,8 @@ defmodule Mydia.Indexers.ReleaseRanker do
   # are soft penalties on accepted results.
   defp get_rejection_reason(result, blocked_tags, expected_title) do
     cond do
-      invalid_release_reason(result) ->
-        "invalid: #{invalid_release_reason(result)}"
+      invalid_reason = invalid_release_reason(result) ->
+        "invalid: #{invalid_reason}"
 
       blocked_tag = find_blocked_tag(result, blocked_tags) ->
         "blocked_tag: #{blocked_tag}"
