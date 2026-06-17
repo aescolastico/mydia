@@ -3,7 +3,8 @@ defmodule MydiaWeb.Schema.Resolvers.PlaybackResolver do
   Resolvers for playback-related GraphQL mutations.
   """
 
-  alias Mydia.{Media, Playback}
+  alias Mydia.{Media, Playback, Repo}
+  alias Mydia.Media.{Episode, MediaItem}
 
   def update_movie_progress(_parent, args, %{context: context}) do
     %{movie_id: movie_id, position_seconds: position} = args
@@ -169,28 +170,39 @@ defmodule MydiaWeb.Schema.Resolvers.PlaybackResolver do
         {:error, "Authentication required"}
 
       user ->
-        # Get all episodes in the season
-        episodes =
-          Media.list_episodes(show_id)
-          |> Enum.filter(&(&1.season_number == season_number))
+        with {:ok, show} <- load_show(show_id) do
+          :ok = Playback.mark_season_watched(user.id, show_id, season_number)
+          {:ok, show}
+        end
+    end
+  end
 
-        # Mark each episode as watched
-        Enum.each(episodes, fn episode ->
-          case Playback.mark_watched(user.id, episode_id: episode.id) do
-            {:ok, _} ->
-              :ok
+  def mark_season_unwatched(_parent, %{show_id: show_id, season_number: season_number}, %{
+        context: context
+      }) do
+    case context[:current_user] do
+      nil ->
+        {:error, "Authentication required"}
 
-            {:error, :not_found} ->
-              Playback.save_progress(user.id, [episode_id: episode.id], %{
-                position_seconds: 0,
-                duration_seconds: 1,
-                watched: true
-              })
-          end
-        end)
+      user ->
+        with {:ok, show} <- load_show(show_id) do
+          :ok = Playback.mark_season_unwatched(user.id, show_id, season_number)
+          {:ok, show}
+        end
+    end
+  end
 
-        show = Media.get_media_item!(show_id)
-        {:ok, Map.put(show, :added_at, show.inserted_at)}
+  def mark_episodes_up_to_watched(_parent, %{episode_id: episode_id}, %{context: context}) do
+    case context[:current_user] do
+      nil ->
+        {:error, "Authentication required"}
+
+      user ->
+        with {:ok, episode} <- load_episode(episode_id),
+             {:ok, show} <- load_show(episode.media_item_id) do
+          :ok = Playback.mark_episodes_up_to_watched(user.id, episode_id)
+          {:ok, show}
+        end
     end
   end
 
@@ -214,6 +226,21 @@ defmodule MydiaWeb.Schema.Resolvers.PlaybackResolver do
   end
 
   # Private helper functions
+
+  # Safe loaders return an error tuple (not a raised 500) for unknown ids.
+  defp load_show(show_id) do
+    case Repo.get(MediaItem, show_id) do
+      nil -> {:error, "Show not found"}
+      show -> {:ok, Map.put(show, :added_at, show.inserted_at)}
+    end
+  end
+
+  defp load_episode(episode_id) do
+    case Repo.get(Episode, episode_id) do
+      nil -> {:error, "Episode not found"}
+      episode -> {:ok, episode}
+    end
+  end
 
   defp format_progress(progress) do
     %{

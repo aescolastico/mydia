@@ -59,6 +59,19 @@ defmodule MydiaWeb.Schema.MutationTypes do
       resolve(&PlaybackResolver.mark_season_watched/3)
     end
 
+    @desc "Mark all episodes in a season as unwatched"
+    field :mark_season_unwatched, :tv_show do
+      arg(:show_id, non_null(:id))
+      arg(:season_number, non_null(:integer))
+      resolve(&PlaybackResolver.mark_season_unwatched/3)
+    end
+
+    @desc "Mark an episode and all earlier episodes in its season as watched"
+    field :mark_episodes_up_to_watched, :tv_show do
+      arg(:episode_id, non_null(:id))
+      resolve(&PlaybackResolver.mark_episodes_up_to_watched/3)
+    end
+
     @desc "Toggle favorite status for a media item"
     field :toggle_favorite, :toggle_favorite_result do
       arg(:media_item_id, non_null(:id))
