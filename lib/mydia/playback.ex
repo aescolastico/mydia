@@ -310,13 +310,20 @@ defmodule Mydia.Playback do
   `delete_progress/2`, treating `:not_found` as success. This discards any
   in-progress resume positions in the season (the accepted Plex-model
   consequence) and emits no event, consistent with `delete_progress/2`.
-  Returns `:ok`.
+  Returns `:ok` once the whole season is cleared, or `{:error, reason}` if a
+  delete fails unexpectedly (e.g. `Repo.delete/1` returns a changeset error).
   """
-  @spec mark_season_unwatched(binary(), binary(), integer()) :: :ok
+  @spec mark_season_unwatched(binary(), binary(), integer()) :: :ok | {:error, term()}
   def mark_season_unwatched(user_id, show_id, season_number) do
     show_id
     |> season_episode_ids(season_number)
-    |> Enum.each(&delete_progress(user_id, episode_id: &1))
+    |> Enum.reduce_while(:ok, fn episode_id, :ok ->
+      case delete_progress(user_id, episode_id: episode_id) do
+        {:ok, _progress} -> {:cont, :ok}
+        {:error, :not_found} -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   @doc """

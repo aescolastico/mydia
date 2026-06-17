@@ -185,8 +185,8 @@ defmodule MydiaWeb.Schema.Resolvers.PlaybackResolver do
         {:error, "Authentication required"}
 
       user ->
-        with {:ok, show} <- load_show(show_id) do
-          :ok = Playback.mark_season_unwatched(user.id, show_id, season_number)
+        with {:ok, show} <- load_show(show_id),
+             :ok <- Playback.mark_season_unwatched(user.id, show_id, season_number) do
           {:ok, show}
         end
     end

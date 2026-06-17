@@ -302,7 +302,7 @@ defmodule Mydia.PlaybackTest do
     end
   end
 
-  describe "mark_season_watched/4 and mark_season_unwatched/3" do
+  describe "mark_season_watched/3 and mark_season_unwatched/3" do
     setup do
       {:ok, user} = create_user()
       {:ok, show} = create_show()

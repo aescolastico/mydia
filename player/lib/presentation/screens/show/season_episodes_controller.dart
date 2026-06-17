@@ -95,8 +95,9 @@ class SeasonEpisodesController extends _$SeasonEpisodesController {
   //
   // Each action mirrors movie_detail_controller's toggleFavorite(): apply the
   // new watched state to the affected episodes immediately (Plex-style, no
-  // confirmation), await the mutation, revert the whole list on failure, and
-  // reconcile from the server on success.
+  // confirmation), await the mutation, and revert the whole list on failure.
+  // On success the optimistic list is kept as-is (no server reconciliation);
+  // the next refresh() re-fetches authoritative state from the server.
 
   /// Marks a single episode watched.
   Future<void> markEpisodeWatched(Episode episode) {
