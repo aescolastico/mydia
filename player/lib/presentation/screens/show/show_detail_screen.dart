@@ -626,6 +626,12 @@ class ShowDetailScreen extends ConsumerWidget {
                   selectedSeason: selectedSeason,
                   availableSeasons: availableSeasons,
                 ),
+              // Season watched actions render on web too, where downloads are
+              // unsupported — so they live outside the isDownloadSupported gate.
+              _SeasonActionsButton(
+                showId: id,
+                selectedSeason: selectedSeason,
+              ),
             ],
           ),
         ),
@@ -1011,6 +1017,94 @@ class _BulkDownloadButton extends ConsumerWidget {
       parts.add('${result.failed} failed');
     }
     return parts.join(', ');
+  }
+}
+
+/// Overflow menu in the "Episodes" title row that marks the currently selected
+/// season watched or unwatched. Renders on all platforms (including web, where
+/// downloads are unsupported), so it sits outside the download-support gate.
+class _SeasonActionsButton extends ConsumerWidget {
+  final String showId;
+  final int selectedSeason;
+
+  const _SeasonActionsButton({
+    required this.showId,
+    required this.selectedSeason,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return PopupMenuButton<String>(
+      icon: const Icon(
+        Icons.more_vert_rounded,
+        color: AppColors.textSecondary,
+        size: 22,
+      ),
+      tooltip: 'Season actions',
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      style: const ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      onSelected: (value) => _handleSeasonAction(context, ref, value),
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'season_watched',
+          child: Row(
+            children: [
+              Icon(Icons.visibility_rounded, size: 18),
+              SizedBox(width: 12),
+              Text('Mark season watched'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'season_unwatched',
+          child: Row(
+            children: [
+              Icon(Icons.visibility_off_rounded, size: 18),
+              SizedBox(width: 12),
+              Text('Mark season unwatched'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _handleSeasonAction(
+    BuildContext context,
+    WidgetRef ref,
+    String value,
+  ) async {
+    final controller = ref.read(
+      seasonEpisodesControllerProvider(
+        showId: showId,
+        seasonNumber: selectedSeason,
+      ).notifier,
+    );
+
+    try {
+      if (value == 'season_watched') {
+        await controller.markSeasonWatched();
+      } else if (value == 'season_unwatched') {
+        await controller.markSeasonUnwatched();
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update season watched status'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 }
 

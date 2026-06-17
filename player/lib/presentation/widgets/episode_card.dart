@@ -8,6 +8,7 @@ import '../../core/downloads/download_service.dart' show isDownloadSupported;
 import '../../core/downloads/download_providers.dart';
 import '../../core/downloads/download_job_providers.dart';
 import '../../core/theme/colors.dart';
+import '../screens/show/season_episodes_controller.dart';
 import 'glass_surface.dart';
 import 'quality_download_dialog.dart';
 import 'quality_badge.dart';
@@ -405,7 +406,13 @@ class _EpisodeCardState extends ConsumerState<EpisodeCard>
   }
 
   Widget _buildActionButtons(BuildContext context, bool isDownloaded) {
-    if (!widget.episode.hasFile || !isDownloadSupported) {
+    // The watched-status menu renders independently of download support (e.g.
+    // Flutter web, where downloads are unavailable) as long as we know which
+    // season-scoped controller to dispatch to.
+    final showWatchedMenu = widget.showId != null;
+    final showDownload = widget.episode.hasFile && isDownloadSupported;
+
+    if (!showWatchedMenu && !showDownload) {
       return const SizedBox(width: 16);
     }
 
@@ -414,18 +421,105 @@ class _EpisodeCardState extends ConsumerState<EpisodeCard>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Download button
-          _ActionButton(
-            icon: isDownloaded
-                ? Icons.download_done_rounded
-                : Icons.download_rounded,
-            color: isDownloaded ? AppColors.success : AppColors.textSecondary,
-            onTap: () => _handleDownload(context, isDownloaded),
-            tooltip: isDownloaded ? 'Downloaded' : 'Download',
-          ),
+          if (showDownload)
+            _ActionButton(
+              icon: isDownloaded
+                  ? Icons.download_done_rounded
+                  : Icons.download_rounded,
+              color: isDownloaded ? AppColors.success : AppColors.textSecondary,
+              onTap: () => _handleDownload(context, isDownloaded),
+              tooltip: isDownloaded ? 'Downloaded' : 'Download',
+            ),
+          if (showWatchedMenu) _buildWatchedMenu(context),
         ],
       ),
     );
+  }
+
+  Widget _buildWatchedMenu(BuildContext context) {
+    final watched = widget.episode.progress?.watched ?? false;
+
+    return PopupMenuButton<String>(
+      icon: const Icon(
+        Icons.more_vert_rounded,
+        color: AppColors.textSecondary,
+        size: 22,
+      ),
+      tooltip: 'Episode actions',
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      style: const ButtonStyle(
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      onSelected: _handleWatchedAction,
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: watched ? 'unwatched' : 'watched',
+          child: Row(
+            children: [
+              Icon(
+                watched
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+                size: 18,
+              ),
+              const SizedBox(width: 12),
+              Text(watched ? 'Mark unwatched' : 'Mark watched'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'this_and_previous',
+          child: Row(
+            children: [
+              Icon(Icons.playlist_add_check_rounded, size: 18),
+              SizedBox(width: 12),
+              Text('Mark this and previous watched'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _handleWatchedAction(String value) async {
+    final showId = widget.showId;
+    if (showId == null) return;
+
+    final controller = ref.read(
+      seasonEpisodesControllerProvider(
+        showId: showId,
+        seasonNumber: widget.episode.seasonNumber,
+      ).notifier,
+    );
+
+    try {
+      switch (value) {
+        case 'watched':
+          await controller.markEpisodeWatched(widget.episode);
+          break;
+        case 'unwatched':
+          await controller.markEpisodeUnwatched(widget.episode);
+          break;
+        case 'this_and_previous':
+          await controller.markThisAndPreviousWatched(widget.episode);
+          break;
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update watched status'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleDownload(BuildContext context, bool isDownloaded) async {

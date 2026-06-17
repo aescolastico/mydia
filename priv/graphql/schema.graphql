@@ -91,6 +91,12 @@ type RootMutationType {
   "Mark all episodes in a season as watched"
   markSeasonWatched(showId: ID!, seasonNumber: Int!): TvShow
 
+  "Mark all episodes in a season as unwatched"
+  markSeasonUnwatched(showId: ID!, seasonNumber: Int!): TvShow
+
+  "Mark an episode and all earlier episodes in its season as watched"
+  markEpisodesUpToWatched(episodeId: ID!): TvShow
+
   "Toggle favorite status for a media item"
   toggleFavorite(mediaItemId: ID!): ToggleFavoriteResult
 

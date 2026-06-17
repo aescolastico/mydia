@@ -2217,3 +2217,935 @@ class _CopyWithStubImpl$Mutation$MarkSeasonWatched$markSeasonWatched<TRes>
 
   call({String? id, String? title, String? $__typename}) => _res;
 }
+
+class Variables$Mutation$MarkSeasonUnwatched {
+  factory Variables$Mutation$MarkSeasonUnwatched({
+    required String showId,
+    required int seasonNumber,
+  }) => Variables$Mutation$MarkSeasonUnwatched._({
+    r'showId': showId,
+    r'seasonNumber': seasonNumber,
+  });
+
+  Variables$Mutation$MarkSeasonUnwatched._(this._$data);
+
+  factory Variables$Mutation$MarkSeasonUnwatched.fromJson(
+    Map<String, dynamic> data,
+  ) {
+    final result$data = <String, dynamic>{};
+    final l$showId = data['showId'];
+    result$data['showId'] = (l$showId as String);
+    final l$seasonNumber = data['seasonNumber'];
+    result$data['seasonNumber'] = (l$seasonNumber as int);
+    return Variables$Mutation$MarkSeasonUnwatched._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get showId => (_$data['showId'] as String);
+
+  int get seasonNumber => (_$data['seasonNumber'] as int);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$showId = showId;
+    result$data['showId'] = l$showId;
+    final l$seasonNumber = seasonNumber;
+    result$data['seasonNumber'] = l$seasonNumber;
+    return result$data;
+  }
+
+  CopyWith$Variables$Mutation$MarkSeasonUnwatched<
+    Variables$Mutation$MarkSeasonUnwatched
+  >
+  get copyWith =>
+      CopyWith$Variables$Mutation$MarkSeasonUnwatched(this, (i) => i);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Variables$Mutation$MarkSeasonUnwatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$showId = showId;
+    final lOther$showId = other.showId;
+    if (l$showId != lOther$showId) {
+      return false;
+    }
+    final l$seasonNumber = seasonNumber;
+    final lOther$seasonNumber = other.seasonNumber;
+    if (l$seasonNumber != lOther$seasonNumber) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$showId = showId;
+    final l$seasonNumber = seasonNumber;
+    return Object.hashAll([l$showId, l$seasonNumber]);
+  }
+}
+
+abstract class CopyWith$Variables$Mutation$MarkSeasonUnwatched<TRes> {
+  factory CopyWith$Variables$Mutation$MarkSeasonUnwatched(
+    Variables$Mutation$MarkSeasonUnwatched instance,
+    TRes Function(Variables$Mutation$MarkSeasonUnwatched) then,
+  ) = _CopyWithImpl$Variables$Mutation$MarkSeasonUnwatched;
+
+  factory CopyWith$Variables$Mutation$MarkSeasonUnwatched.stub(TRes res) =
+      _CopyWithStubImpl$Variables$Mutation$MarkSeasonUnwatched;
+
+  TRes call({String? showId, int? seasonNumber});
+}
+
+class _CopyWithImpl$Variables$Mutation$MarkSeasonUnwatched<TRes>
+    implements CopyWith$Variables$Mutation$MarkSeasonUnwatched<TRes> {
+  _CopyWithImpl$Variables$Mutation$MarkSeasonUnwatched(
+    this._instance,
+    this._then,
+  );
+
+  final Variables$Mutation$MarkSeasonUnwatched _instance;
+
+  final TRes Function(Variables$Mutation$MarkSeasonUnwatched) _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({Object? showId = _undefined, Object? seasonNumber = _undefined}) =>
+      _then(
+        Variables$Mutation$MarkSeasonUnwatched._({
+          ..._instance._$data,
+          if (showId != _undefined && showId != null)
+            'showId': (showId as String),
+          if (seasonNumber != _undefined && seasonNumber != null)
+            'seasonNumber': (seasonNumber as int),
+        }),
+      );
+}
+
+class _CopyWithStubImpl$Variables$Mutation$MarkSeasonUnwatched<TRes>
+    implements CopyWith$Variables$Mutation$MarkSeasonUnwatched<TRes> {
+  _CopyWithStubImpl$Variables$Mutation$MarkSeasonUnwatched(this._res);
+
+  TRes _res;
+
+  call({String? showId, int? seasonNumber}) => _res;
+}
+
+class Mutation$MarkSeasonUnwatched {
+  Mutation$MarkSeasonUnwatched({
+    this.markSeasonUnwatched,
+    this.$__typename = 'RootMutationType',
+  });
+
+  factory Mutation$MarkSeasonUnwatched.fromJson(Map<String, dynamic> json) {
+    final l$markSeasonUnwatched = json['markSeasonUnwatched'];
+    final l$$__typename = json['__typename'];
+    return Mutation$MarkSeasonUnwatched(
+      markSeasonUnwatched: l$markSeasonUnwatched == null
+          ? null
+          : Mutation$MarkSeasonUnwatched$markSeasonUnwatched.fromJson(
+              (l$markSeasonUnwatched as Map<String, dynamic>),
+            ),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final Mutation$MarkSeasonUnwatched$markSeasonUnwatched? markSeasonUnwatched;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$markSeasonUnwatched = markSeasonUnwatched;
+    _resultData['markSeasonUnwatched'] = l$markSeasonUnwatched?.toJson();
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$markSeasonUnwatched = markSeasonUnwatched;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$markSeasonUnwatched, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Mutation$MarkSeasonUnwatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$markSeasonUnwatched = markSeasonUnwatched;
+    final lOther$markSeasonUnwatched = other.markSeasonUnwatched;
+    if (l$markSeasonUnwatched != lOther$markSeasonUnwatched) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Mutation$MarkSeasonUnwatched
+    on Mutation$MarkSeasonUnwatched {
+  CopyWith$Mutation$MarkSeasonUnwatched<Mutation$MarkSeasonUnwatched>
+  get copyWith => CopyWith$Mutation$MarkSeasonUnwatched(this, (i) => i);
+}
+
+abstract class CopyWith$Mutation$MarkSeasonUnwatched<TRes> {
+  factory CopyWith$Mutation$MarkSeasonUnwatched(
+    Mutation$MarkSeasonUnwatched instance,
+    TRes Function(Mutation$MarkSeasonUnwatched) then,
+  ) = _CopyWithImpl$Mutation$MarkSeasonUnwatched;
+
+  factory CopyWith$Mutation$MarkSeasonUnwatched.stub(TRes res) =
+      _CopyWithStubImpl$Mutation$MarkSeasonUnwatched;
+
+  TRes call({
+    Mutation$MarkSeasonUnwatched$markSeasonUnwatched? markSeasonUnwatched,
+    String? $__typename,
+  });
+  CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes>
+  get markSeasonUnwatched;
+}
+
+class _CopyWithImpl$Mutation$MarkSeasonUnwatched<TRes>
+    implements CopyWith$Mutation$MarkSeasonUnwatched<TRes> {
+  _CopyWithImpl$Mutation$MarkSeasonUnwatched(this._instance, this._then);
+
+  final Mutation$MarkSeasonUnwatched _instance;
+
+  final TRes Function(Mutation$MarkSeasonUnwatched) _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({
+    Object? markSeasonUnwatched = _undefined,
+    Object? $__typename = _undefined,
+  }) => _then(
+    Mutation$MarkSeasonUnwatched(
+      markSeasonUnwatched: markSeasonUnwatched == _undefined
+          ? _instance.markSeasonUnwatched
+          : (markSeasonUnwatched
+                as Mutation$MarkSeasonUnwatched$markSeasonUnwatched?),
+      $__typename: $__typename == _undefined || $__typename == null
+          ? _instance.$__typename
+          : ($__typename as String),
+    ),
+  );
+
+  CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes>
+  get markSeasonUnwatched {
+    final local$markSeasonUnwatched = _instance.markSeasonUnwatched;
+    return local$markSeasonUnwatched == null
+        ? CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched.stub(
+            _then(_instance),
+          )
+        : CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched(
+            local$markSeasonUnwatched,
+            (e) => call(markSeasonUnwatched: e),
+          );
+  }
+}
+
+class _CopyWithStubImpl$Mutation$MarkSeasonUnwatched<TRes>
+    implements CopyWith$Mutation$MarkSeasonUnwatched<TRes> {
+  _CopyWithStubImpl$Mutation$MarkSeasonUnwatched(this._res);
+
+  TRes _res;
+
+  call({
+    Mutation$MarkSeasonUnwatched$markSeasonUnwatched? markSeasonUnwatched,
+    String? $__typename,
+  }) => _res;
+
+  CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes>
+  get markSeasonUnwatched =>
+      CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched.stub(_res);
+}
+
+const documentNodeMutationMarkSeasonUnwatched = DocumentNode(
+  definitions: [
+    OperationDefinitionNode(
+      type: OperationType.mutation,
+      name: NameNode(value: 'MarkSeasonUnwatched'),
+      variableDefinitions: [
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'showId')),
+          type: NamedTypeNode(name: NameNode(value: 'ID'), isNonNull: true),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'seasonNumber')),
+          type: NamedTypeNode(name: NameNode(value: 'Int'), isNonNull: true),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+      ],
+      directives: [],
+      selectionSet: SelectionSetNode(
+        selections: [
+          FieldNode(
+            name: NameNode(value: 'markSeasonUnwatched'),
+            alias: null,
+            arguments: [
+              ArgumentNode(
+                name: NameNode(value: 'showId'),
+                value: VariableNode(name: NameNode(value: 'showId')),
+              ),
+              ArgumentNode(
+                name: NameNode(value: 'seasonNumber'),
+                value: VariableNode(name: NameNode(value: 'seasonNumber')),
+              ),
+            ],
+            directives: [],
+            selectionSet: SelectionSetNode(
+              selections: [
+                FieldNode(
+                  name: NameNode(value: 'id'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: 'title'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: '__typename'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+              ],
+            ),
+          ),
+          FieldNode(
+            name: NameNode(value: '__typename'),
+            alias: null,
+            arguments: [],
+            directives: [],
+            selectionSet: null,
+          ),
+        ],
+      ),
+    ),
+  ],
+);
+
+class Mutation$MarkSeasonUnwatched$markSeasonUnwatched {
+  Mutation$MarkSeasonUnwatched$markSeasonUnwatched({
+    required this.id,
+    required this.title,
+    this.$__typename = 'TvShow',
+  });
+
+  factory Mutation$MarkSeasonUnwatched$markSeasonUnwatched.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$id = json['id'];
+    final l$title = json['title'];
+    final l$$__typename = json['__typename'];
+    return Mutation$MarkSeasonUnwatched$markSeasonUnwatched(
+      id: (l$id as String),
+      title: (l$title as String),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String id;
+
+  final String title;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$id = id;
+    _resultData['id'] = l$id;
+    final l$title = title;
+    _resultData['title'] = l$title;
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$id = id;
+    final l$title = title;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$id, l$title, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Mutation$MarkSeasonUnwatched$markSeasonUnwatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$id = id;
+    final lOther$id = other.id;
+    if (l$id != lOther$id) {
+      return false;
+    }
+    final l$title = title;
+    final lOther$title = other.title;
+    if (l$title != lOther$title) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Mutation$MarkSeasonUnwatched$markSeasonUnwatched
+    on Mutation$MarkSeasonUnwatched$markSeasonUnwatched {
+  CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<
+    Mutation$MarkSeasonUnwatched$markSeasonUnwatched
+  >
+  get copyWith =>
+      CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched(this, (i) => i);
+}
+
+abstract class CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes> {
+  factory CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched(
+    Mutation$MarkSeasonUnwatched$markSeasonUnwatched instance,
+    TRes Function(Mutation$MarkSeasonUnwatched$markSeasonUnwatched) then,
+  ) = _CopyWithImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched;
+
+  factory CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched.stub(
+    TRes res,
+  ) = _CopyWithStubImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched;
+
+  TRes call({String? id, String? title, String? $__typename});
+}
+
+class _CopyWithImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes>
+    implements CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes> {
+  _CopyWithImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched(
+    this._instance,
+    this._then,
+  );
+
+  final Mutation$MarkSeasonUnwatched$markSeasonUnwatched _instance;
+
+  final TRes Function(Mutation$MarkSeasonUnwatched$markSeasonUnwatched) _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({
+    Object? id = _undefined,
+    Object? title = _undefined,
+    Object? $__typename = _undefined,
+  }) => _then(
+    Mutation$MarkSeasonUnwatched$markSeasonUnwatched(
+      id: id == _undefined || id == null ? _instance.id : (id as String),
+      title: title == _undefined || title == null
+          ? _instance.title
+          : (title as String),
+      $__typename: $__typename == _undefined || $__typename == null
+          ? _instance.$__typename
+          : ($__typename as String),
+    ),
+  );
+}
+
+class _CopyWithStubImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes>
+    implements CopyWith$Mutation$MarkSeasonUnwatched$markSeasonUnwatched<TRes> {
+  _CopyWithStubImpl$Mutation$MarkSeasonUnwatched$markSeasonUnwatched(this._res);
+
+  TRes _res;
+
+  call({String? id, String? title, String? $__typename}) => _res;
+}
+
+class Variables$Mutation$MarkEpisodesUpToWatched {
+  factory Variables$Mutation$MarkEpisodesUpToWatched({
+    required String episodeId,
+  }) => Variables$Mutation$MarkEpisodesUpToWatched._({r'episodeId': episodeId});
+
+  Variables$Mutation$MarkEpisodesUpToWatched._(this._$data);
+
+  factory Variables$Mutation$MarkEpisodesUpToWatched.fromJson(
+    Map<String, dynamic> data,
+  ) {
+    final result$data = <String, dynamic>{};
+    final l$episodeId = data['episodeId'];
+    result$data['episodeId'] = (l$episodeId as String);
+    return Variables$Mutation$MarkEpisodesUpToWatched._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get episodeId => (_$data['episodeId'] as String);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$episodeId = episodeId;
+    result$data['episodeId'] = l$episodeId;
+    return result$data;
+  }
+
+  CopyWith$Variables$Mutation$MarkEpisodesUpToWatched<
+    Variables$Mutation$MarkEpisodesUpToWatched
+  >
+  get copyWith =>
+      CopyWith$Variables$Mutation$MarkEpisodesUpToWatched(this, (i) => i);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Variables$Mutation$MarkEpisodesUpToWatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$episodeId = episodeId;
+    final lOther$episodeId = other.episodeId;
+    if (l$episodeId != lOther$episodeId) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$episodeId = episodeId;
+    return Object.hashAll([l$episodeId]);
+  }
+}
+
+abstract class CopyWith$Variables$Mutation$MarkEpisodesUpToWatched<TRes> {
+  factory CopyWith$Variables$Mutation$MarkEpisodesUpToWatched(
+    Variables$Mutation$MarkEpisodesUpToWatched instance,
+    TRes Function(Variables$Mutation$MarkEpisodesUpToWatched) then,
+  ) = _CopyWithImpl$Variables$Mutation$MarkEpisodesUpToWatched;
+
+  factory CopyWith$Variables$Mutation$MarkEpisodesUpToWatched.stub(TRes res) =
+      _CopyWithStubImpl$Variables$Mutation$MarkEpisodesUpToWatched;
+
+  TRes call({String? episodeId});
+}
+
+class _CopyWithImpl$Variables$Mutation$MarkEpisodesUpToWatched<TRes>
+    implements CopyWith$Variables$Mutation$MarkEpisodesUpToWatched<TRes> {
+  _CopyWithImpl$Variables$Mutation$MarkEpisodesUpToWatched(
+    this._instance,
+    this._then,
+  );
+
+  final Variables$Mutation$MarkEpisodesUpToWatched _instance;
+
+  final TRes Function(Variables$Mutation$MarkEpisodesUpToWatched) _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({Object? episodeId = _undefined}) => _then(
+    Variables$Mutation$MarkEpisodesUpToWatched._({
+      ..._instance._$data,
+      if (episodeId != _undefined && episodeId != null)
+        'episodeId': (episodeId as String),
+    }),
+  );
+}
+
+class _CopyWithStubImpl$Variables$Mutation$MarkEpisodesUpToWatched<TRes>
+    implements CopyWith$Variables$Mutation$MarkEpisodesUpToWatched<TRes> {
+  _CopyWithStubImpl$Variables$Mutation$MarkEpisodesUpToWatched(this._res);
+
+  TRes _res;
+
+  call({String? episodeId}) => _res;
+}
+
+class Mutation$MarkEpisodesUpToWatched {
+  Mutation$MarkEpisodesUpToWatched({
+    this.markEpisodesUpToWatched,
+    this.$__typename = 'RootMutationType',
+  });
+
+  factory Mutation$MarkEpisodesUpToWatched.fromJson(Map<String, dynamic> json) {
+    final l$markEpisodesUpToWatched = json['markEpisodesUpToWatched'];
+    final l$$__typename = json['__typename'];
+    return Mutation$MarkEpisodesUpToWatched(
+      markEpisodesUpToWatched: l$markEpisodesUpToWatched == null
+          ? null
+          : Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched.fromJson(
+              (l$markEpisodesUpToWatched as Map<String, dynamic>),
+            ),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched?
+  markEpisodesUpToWatched;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$markEpisodesUpToWatched = markEpisodesUpToWatched;
+    _resultData['markEpisodesUpToWatched'] = l$markEpisodesUpToWatched
+        ?.toJson();
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$markEpisodesUpToWatched = markEpisodesUpToWatched;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$markEpisodesUpToWatched, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Mutation$MarkEpisodesUpToWatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$markEpisodesUpToWatched = markEpisodesUpToWatched;
+    final lOther$markEpisodesUpToWatched = other.markEpisodesUpToWatched;
+    if (l$markEpisodesUpToWatched != lOther$markEpisodesUpToWatched) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Mutation$MarkEpisodesUpToWatched
+    on Mutation$MarkEpisodesUpToWatched {
+  CopyWith$Mutation$MarkEpisodesUpToWatched<Mutation$MarkEpisodesUpToWatched>
+  get copyWith => CopyWith$Mutation$MarkEpisodesUpToWatched(this, (i) => i);
+}
+
+abstract class CopyWith$Mutation$MarkEpisodesUpToWatched<TRes> {
+  factory CopyWith$Mutation$MarkEpisodesUpToWatched(
+    Mutation$MarkEpisodesUpToWatched instance,
+    TRes Function(Mutation$MarkEpisodesUpToWatched) then,
+  ) = _CopyWithImpl$Mutation$MarkEpisodesUpToWatched;
+
+  factory CopyWith$Mutation$MarkEpisodesUpToWatched.stub(TRes res) =
+      _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched;
+
+  TRes call({
+    Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched?
+    markEpisodesUpToWatched,
+    String? $__typename,
+  });
+  CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<TRes>
+  get markEpisodesUpToWatched;
+}
+
+class _CopyWithImpl$Mutation$MarkEpisodesUpToWatched<TRes>
+    implements CopyWith$Mutation$MarkEpisodesUpToWatched<TRes> {
+  _CopyWithImpl$Mutation$MarkEpisodesUpToWatched(this._instance, this._then);
+
+  final Mutation$MarkEpisodesUpToWatched _instance;
+
+  final TRes Function(Mutation$MarkEpisodesUpToWatched) _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({
+    Object? markEpisodesUpToWatched = _undefined,
+    Object? $__typename = _undefined,
+  }) => _then(
+    Mutation$MarkEpisodesUpToWatched(
+      markEpisodesUpToWatched: markEpisodesUpToWatched == _undefined
+          ? _instance.markEpisodesUpToWatched
+          : (markEpisodesUpToWatched
+                as Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched?),
+      $__typename: $__typename == _undefined || $__typename == null
+          ? _instance.$__typename
+          : ($__typename as String),
+    ),
+  );
+
+  CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<TRes>
+  get markEpisodesUpToWatched {
+    final local$markEpisodesUpToWatched = _instance.markEpisodesUpToWatched;
+    return local$markEpisodesUpToWatched == null
+        ? CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched.stub(
+            _then(_instance),
+          )
+        : CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+            local$markEpisodesUpToWatched,
+            (e) => call(markEpisodesUpToWatched: e),
+          );
+  }
+}
+
+class _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched<TRes>
+    implements CopyWith$Mutation$MarkEpisodesUpToWatched<TRes> {
+  _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched(this._res);
+
+  TRes _res;
+
+  call({
+    Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched?
+    markEpisodesUpToWatched,
+    String? $__typename,
+  }) => _res;
+
+  CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<TRes>
+  get markEpisodesUpToWatched =>
+      CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched.stub(
+        _res,
+      );
+}
+
+const documentNodeMutationMarkEpisodesUpToWatched = DocumentNode(
+  definitions: [
+    OperationDefinitionNode(
+      type: OperationType.mutation,
+      name: NameNode(value: 'MarkEpisodesUpToWatched'),
+      variableDefinitions: [
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'episodeId')),
+          type: NamedTypeNode(name: NameNode(value: 'ID'), isNonNull: true),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+      ],
+      directives: [],
+      selectionSet: SelectionSetNode(
+        selections: [
+          FieldNode(
+            name: NameNode(value: 'markEpisodesUpToWatched'),
+            alias: null,
+            arguments: [
+              ArgumentNode(
+                name: NameNode(value: 'episodeId'),
+                value: VariableNode(name: NameNode(value: 'episodeId')),
+              ),
+            ],
+            directives: [],
+            selectionSet: SelectionSetNode(
+              selections: [
+                FieldNode(
+                  name: NameNode(value: 'id'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: 'title'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: '__typename'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+              ],
+            ),
+          ),
+          FieldNode(
+            name: NameNode(value: '__typename'),
+            alias: null,
+            arguments: [],
+            directives: [],
+            selectionSet: null,
+          ),
+        ],
+      ),
+    ),
+  ],
+);
+
+class Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched {
+  Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched({
+    required this.id,
+    required this.title,
+    this.$__typename = 'TvShow',
+  });
+
+  factory Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$id = json['id'];
+    final l$title = json['title'];
+    final l$$__typename = json['__typename'];
+    return Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+      id: (l$id as String),
+      title: (l$title as String),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String id;
+
+  final String title;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$id = id;
+    _resultData['id'] = l$id;
+    final l$title = title;
+    _resultData['title'] = l$title;
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$id = id;
+    final l$title = title;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$id, l$title, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$id = id;
+    final lOther$id = other.id;
+    if (l$id != lOther$id) {
+      return false;
+    }
+    final l$title = title;
+    final lOther$title = other.title;
+    if (l$title != lOther$title) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched
+    on Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched {
+  CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+    Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched
+  >
+  get copyWith =>
+      CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+        this,
+        (i) => i,
+      );
+}
+
+abstract class CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+  TRes
+> {
+  factory CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+    Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched instance,
+    TRes Function(Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched)
+    then,
+  ) = _CopyWithImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched;
+
+  factory CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched.stub(
+    TRes res,
+  ) = _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched;
+
+  TRes call({String? id, String? title, String? $__typename});
+}
+
+class _CopyWithImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+  TRes
+>
+    implements
+        CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+          TRes
+        > {
+  _CopyWithImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+    this._instance,
+    this._then,
+  );
+
+  final Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched _instance;
+
+  final TRes Function(Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched)
+  _then;
+
+  static const _undefined = <dynamic, dynamic>{};
+
+  TRes call({
+    Object? id = _undefined,
+    Object? title = _undefined,
+    Object? $__typename = _undefined,
+  }) => _then(
+    Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+      id: id == _undefined || id == null ? _instance.id : (id as String),
+      title: title == _undefined || title == null
+          ? _instance.title
+          : (title as String),
+      $__typename: $__typename == _undefined || $__typename == null
+          ? _instance.$__typename
+          : ($__typename as String),
+    ),
+  );
+}
+
+class _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+  TRes
+>
+    implements
+        CopyWith$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched<
+          TRes
+        > {
+  _CopyWithStubImpl$Mutation$MarkEpisodesUpToWatched$markEpisodesUpToWatched(
+    this._res,
+  );
+
+  TRes _res;
+
+  call({String? id, String? title, String? $__typename}) => _res;
+}
