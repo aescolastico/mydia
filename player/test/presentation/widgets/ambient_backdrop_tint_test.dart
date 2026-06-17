@@ -130,4 +130,50 @@ void main() {
       );
     });
   });
+
+  group('default updates are not masked by a matching hover (regression)', () {
+    testWidgets('a published default is recorded even when it equals the '
+        'active hover; clearHover then settles on it', (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.listen(ambientBackdropControllerProvider, (_, __) {});
+      final notifier =
+          container.read(ambientBackdropControllerProvider.notifier);
+
+      const art = BackdropSource(imageUrl: 'u', id: 'a');
+
+      // Hover the same artwork the screen is about to publish as its default.
+      notifier.setHover(art);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: _DefaultPublisher(art)),
+        ),
+      );
+      // Let the post-frame publish run.
+      await tester.pump();
+      await tester.pump();
+
+      // The default was recorded despite equaling the active hover...
+      expect(notifier.defaultSource, art);
+      // ...so clearing the hover settles on it, not a stale fallback.
+      notifier.clearHover();
+      expect(container.read(ambientBackdropControllerProvider), art);
+    });
+  });
+}
+
+/// Publishes a fixed source as the screen default from `build`, like a real
+/// browse screen.
+class _DefaultPublisher extends ConsumerWidget {
+  final BackdropSource source;
+
+  const _DefaultPublisher(this.source);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    publishBackdropSource(ref, source);
+    return const SizedBox.shrink();
+  }
 }

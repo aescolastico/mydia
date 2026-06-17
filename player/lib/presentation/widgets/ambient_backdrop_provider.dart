@@ -49,6 +49,11 @@ class AmbientBackdropController extends _$AmbientBackdropController {
   @override
   BackdropSource build() => BackdropSource.none;
 
+  /// The screen's default (fallback) source, ignoring any active hover
+  /// override. Lets [publishBackdropSource] guard against the real default
+  /// rather than the effective state.
+  BackdropSource get defaultSource => _default;
+
   BackdropSource get _effective => _hover ?? _default;
 
   void _apply() {
@@ -95,11 +100,16 @@ class AmbientBackdropController extends _$AmbientBackdropController {
 /// screens pass [BackdropSource.none] to show the calm static fallback. A
 /// hover override (see [publishBackdropHover]) takes precedence over this.
 void publishBackdropSource(WidgetRef ref, BackdropSource source) {
-  // Skip scheduling when the effective source already equals this default, so
+  // Skip scheduling when the stored default already equals this source, so
   // screens that rebuild on scroll/animation don't enqueue redundant post-frame
-  // callbacks. While a poster is hovered the effective source is the hover
-  // override, so this still schedules to keep the underlying default current.
-  if (ref.read(ambientBackdropControllerProvider) == source) return;
+  // callbacks. Guarding against the *default* (not the effective state) means a
+  // hovered poster whose artwork happens to equal `source` no longer blocks the
+  // underlying default from being updated — otherwise clearHover() could revert
+  // to a stale default.
+  if (ref.read(ambientBackdropControllerProvider.notifier).defaultSource ==
+      source) {
+    return;
+  }
 
   SchedulerBinding.instance.addPostFrameCallback((_) {
     // The ref may have been disposed if the screen left the tree before the
