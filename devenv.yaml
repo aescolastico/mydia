@@ -14,6 +14,12 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
+  # Backs git-hooks.hooks (Rust/mix/dart pre-commit hooks). Follows nixpkgs.
+  git-hooks:
+    url: github:cachix/git-hooks.nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
 
 # pkgs.flutter (and its Android/SDK closure) is unfree.
 allowUnfree: true

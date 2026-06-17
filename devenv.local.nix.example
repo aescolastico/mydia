@@ -1,0 +1,24 @@
+# Per-worktree port override (escape hatch for R9).
+#
+# Copy to devenv.local.nix (git-ignored) to pin ports explicitly — useful when
+# two worktrees happen to hash to the same base, or when you want a fixed,
+# memorable port instead of the hash-derived one:
+#
+#   cp devenv.local.nix.example devenv.local.nix
+#
+# devenv auto-merges devenv.local.nix over devenv.nix. The hash-derived ports in
+# devenv.nix use lib.mkDefault, so a plain assignment here wins. After editing,
+# re-enter the shell (direnv reloads automatically) to pick up the new ports.
+{ ... }:
+
+{
+  env.PORT = "5000";
+  env.P2P_BIND_PORT = "5001";
+  env.DATABASE_PORT = "5002";
+  env.FLUTTER_DEV_PORT = "5003";
+
+  # Only relevant under DATABASE_TYPE=postgres — keep in sync with DATABASE_PORT
+  # above (services.postgres.port is the Nix-side option, DATABASE_PORT is what
+  # the Elixir app reads):
+  # services.postgres.port = 5002;
+}
