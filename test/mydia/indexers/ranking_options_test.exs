@@ -32,7 +32,15 @@ defmodule Mydia.Indexers.RankingOptionsTest do
       movie = RankingOptions.build(Map.put(common, :media_type, :movie))
       episode = RankingOptions.build(Map.put(common, :media_type, :episode))
 
-      for key <- [:min_seeders, :size_range, :search_query, :expected_title, :blocked_tags, :preferred_tags, :preferred_qualities] do
+      for key <- [
+            :min_seeders,
+            :size_range,
+            :search_query,
+            :expected_title,
+            :blocked_tags,
+            :preferred_tags,
+            :preferred_qualities
+          ] do
         assert Keyword.get(movie, key) == Keyword.get(episode, key)
       end
 

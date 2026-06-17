@@ -990,7 +990,9 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
       title_match = List.first(ranked).breakdown.title_match
 
       assert title_match > 0.0
-      assert title_match <= 10.0, "title_match should be in the raw 0-10 range, got #{title_match}"
+
+      assert title_match <= 10.0,
+             "title_match should be in the raw 0-10 range, got #{title_match}"
     end
 
     test "size carries the real file-size sub-score when a profile is set" do
@@ -1004,7 +1006,11 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
         })
 
       ranked =
-        ReleaseRanker.rank_all([result], quality_profile: profile, media_type: :movie, min_seeders: 0)
+        ReleaseRanker.rank_all([result],
+          quality_profile: profile,
+          media_type: :movie,
+          min_seeders: 0
+        )
 
       # Real contribution surfaced, not hardcoded 0.0
       assert List.first(ranked).breakdown.size > 0.0

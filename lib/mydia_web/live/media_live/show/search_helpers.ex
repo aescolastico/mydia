@@ -265,7 +265,8 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpers do
   Accepts the full ranking options keyword list so penalties (which depend on
   size_range and expected season/episode) match what the ranker computed.
   """
-  def profile_score_breakdown(%SearchResult{} = result, ranking_opts) when is_list(ranking_opts) do
+  def profile_score_breakdown(%SearchResult{} = result, ranking_opts)
+      when is_list(ranking_opts) do
     breakdown = ReleaseRanker.calculate_score_breakdown(result, ranking_opts)
     scorer = SearchScorer.score_result_with_breakdown(result, ranking_opts)
 

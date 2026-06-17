@@ -333,7 +333,8 @@ defmodule Mydia.Indexers.ReleaseRanker do
     seeder_ratio = if total_peers > 0, do: seeders / total_peers, else: 0.0
 
     # Add tag_bonus to the base score, then subtract any soft penalties.
-    total_score = score_result.score + tag_bonus + size_penalty + seeder_penalty + identity_penalty
+    total_score =
+      score_result.score + tag_bonus + size_penalty + seeder_penalty + identity_penalty
 
     Logger.info("""
     [ReleaseRanker] Score breakdown for: #{result.title}
