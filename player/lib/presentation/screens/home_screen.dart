@@ -9,7 +9,6 @@ import '../widgets/glass_surface.dart';
 import '../widgets/shimmer_card.dart';
 import '../../core/layout/breakpoints.dart';
 import '../../core/theme/colors.dart';
-import '../../core/ui/reduced_motion.dart';
 import '../widgets/app_shell.dart';
 import 'home/home_controller.dart';
 
@@ -318,22 +317,7 @@ class _ModernAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// Max vertical parallax travel (logical px) for the home hero. The hero image
-/// is over-sized by `2 * homeHeroMaxParallax` and clipped so translation never
-/// reveals an edge gap.
-const double homeHeroMaxParallax = 40;
-
-/// Bounded parallax translation for the home hero at a given [scrollOffset].
-///
-/// Moves the image up at ~30% of scroll speed, clamped to
-/// `±homeHeroMaxParallax`. Returns `0` when [reduceMotion] is true so the hero
-/// stays static (plan U7 / AE4). Pure function, exposed for testing.
-double homeHeroParallaxOffset(double scrollOffset, {required bool reduceMotion}) {
-  if (reduceMotion) return 0;
-  return (-scrollOffset * 0.3).clamp(-homeHeroMaxParallax, homeHeroMaxParallax);
-}
-
-class _HeroSection extends StatefulWidget {
+class _HeroSection extends StatelessWidget {
   final dynamic item;
   final VoidCallback onTap;
 
@@ -342,45 +326,9 @@ class _HeroSection extends StatefulWidget {
     required this.onTap,
   });
 
-  @override
-  State<_HeroSection> createState() => _HeroSectionState();
-}
-
-class _HeroSectionState extends State<_HeroSection> {
-  static const double _maxParallax = homeHeroMaxParallax;
-
-  ScrollPosition? _position;
-  double _scrollOffset = 0;
-
   String? get _backdropUrl {
-    final item = widget.item;
     if (item.backdropUrl != null) return item.backdropUrl;
     return item.posterUrl;
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final newPosition = Scrollable.maybeOf(context)?.position;
-    if (newPosition != _position) {
-      _position?.removeListener(_onScroll);
-      _position = newPosition;
-      _position?.addListener(_onScroll);
-      _onScroll();
-    }
-  }
-
-  void _onScroll() {
-    final offset = _position?.pixels ?? 0;
-    if (offset != _scrollOffset) {
-      setState(() => _scrollOffset = offset);
-    }
-  }
-
-  @override
-  void dispose() {
-    _position?.removeListener(_onScroll);
-    super.dispose();
   }
 
   @override
@@ -392,59 +340,42 @@ class _HeroSectionState extends State<_HeroSection> {
         ? (size.height * 0.45).clamp(300.0, 450.0)
         : size.height * 0.5;
     final horizontalPadding = Breakpoints.getHorizontalPadding(context);
-    final reduceMotion = context.reduceMotion;
-    final parallax =
-        homeHeroParallaxOffset(_scrollOffset, reduceMotion: reduceMotion);
 
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: onTap,
       child: Stack(
         children: [
-          // Background image with bounded parallax. The image is over-sized by
-          // 2 * _maxParallax and clipped to the hero so translation never
-          // reveals a gap.
+          // Static background image (parallax removed in favor of resting
+          // depth, plan R11/U9).
           ClipRect(
             child: SizedBox(
               width: size.width,
               height: heroHeight,
-              child: OverflowBox(
-                minWidth: size.width,
-                maxWidth: size.width,
-                minHeight: heroHeight + _maxParallax * 2,
-                maxHeight: heroHeight + _maxParallax * 2,
-                child: Transform.translate(
-                  offset: Offset(0, parallax),
-                  child: SizedBox(
-                    width: size.width,
-                    height: heroHeight + _maxParallax * 2,
-                    child: _backdropUrl != null
-                        ? CachedNetworkImage(
-                            imageUrl: _backdropUrl!,
-                            fit: BoxFit.cover,
-                            cacheManager: BackdropCacheManager(),
-                            placeholder: (context, url) => Container(
-                              color: AppColors.surface,
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              color: AppColors.surface,
-                              child: const Icon(
-                                Icons.movie_rounded,
-                                size: 64,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          )
-                        : Container(
-                            color: AppColors.surface,
-                            child: const Icon(
-                              Icons.movie_rounded,
-                              size: 64,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                  ),
-                ),
-              ),
+              child: _backdropUrl != null
+                  ? CachedNetworkImage(
+                      imageUrl: _backdropUrl!,
+                      fit: BoxFit.cover,
+                      cacheManager: BackdropCacheManager(),
+                      placeholder: (context, url) => Container(
+                        color: AppColors.surface,
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        color: AppColors.surface,
+                        child: const Icon(
+                          Icons.movie_rounded,
+                          size: 64,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    )
+                  : Container(
+                      color: AppColors.surface,
+                      child: const Icon(
+                        Icons.movie_rounded,
+                        size: 64,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
             ),
           ),
 
@@ -497,7 +428,7 @@ class _HeroSectionState extends State<_HeroSection> {
 
                 // Title
                 Text(
-                  widget.item.title,
+                  item.title,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     shadows: [
@@ -513,9 +444,9 @@ class _HeroSectionState extends State<_HeroSection> {
                 const SizedBox(height: 8),
 
                 // Subtitle/info
-                if (widget.item.showTitle != null)
+                if (item.showTitle != null)
                   Text(
-                    widget.item.showTitle!,
+                    item.showTitle!,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -528,7 +459,7 @@ class _HeroSectionState extends State<_HeroSection> {
                   children: [
                     // Play button
                     FilledButton.icon(
-                      onPressed: widget.onTap,
+                      onPressed: onTap,
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Play'),
                       style: FilledButton.styleFrom(
@@ -545,7 +476,7 @@ class _HeroSectionState extends State<_HeroSection> {
 
                     // More info button
                     OutlinedButton.icon(
-                      onPressed: widget.onTap,
+                      onPressed: onTap,
                       icon: const Icon(Icons.info_outline_rounded, size: 20),
                       label: const Text('More Info'),
                       style: OutlinedButton.styleFrom(
