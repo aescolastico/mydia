@@ -107,6 +107,89 @@ void main() {
     });
   });
 
+  group('GlassSurface.faux (R8)', () {
+    testWidgets('renders no BackdropFilter while painting fill + rim',
+        (tester) async {
+      await tester.pumpWidget(
+        _host(
+          GlassSurface.faux(
+            fillColor: AppColors.surface.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(12),
+            child: const SizedBox(width: 50, height: 50),
+          ),
+        ),
+      );
+
+      // The whole point of faux-glass: zero live blur passes.
+      expect(find.byType(BackdropFilter), findsNothing);
+
+      final decorated = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byType(ClipRRect),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      final decoration = decorated.decoration as BoxDecoration;
+      expect(decoration.color, AppColors.surface.withValues(alpha: 0.5));
+      // Rim is applied by default.
+      expect(decoration.border, isNotNull);
+    });
+
+    testWidgets('still wraps in a RepaintBoundary', (tester) async {
+      await tester.pumpWidget(
+        _host(GlassSurface.faux(child: const SizedBox())),
+      );
+      expect(
+        find.ancestor(
+          of: find.byType(ClipRRect),
+          matching: find.byType(RepaintBoundary),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('showRim: false drops the rim border', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          GlassSurface.faux(
+            showRim: false,
+            gradient: const LinearGradient(
+              colors: [Colors.black, Colors.transparent],
+            ),
+            child: const SizedBox(),
+          ),
+        ),
+      );
+      final decorated = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byType(ClipRRect),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      final decoration = decorated.decoration as BoxDecoration;
+      expect(decoration.border, isNull);
+      expect(decoration.gradient, isA<LinearGradient>());
+    });
+
+    testWidgets('a faux surface and a real-blur surface co-render; only the '
+        'real one adds a blur pass', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GlassSurface.appBar(child: const Text('real')),
+              GlassSurface.faux(child: const Text('faux')),
+            ],
+          ),
+        ),
+      );
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      expect(find.text('real'), findsOneWidget);
+      expect(find.text('faux'), findsOneWidget);
+    });
+  });
+
   group('grouped rendering', () {
     testWidgets('a BackdropGroup wrapping two grouped surfaces builds and '
         'both render', (tester) async {
