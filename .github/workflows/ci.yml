@@ -27,6 +27,14 @@ env:
   # Bump Flutter in all four together. Elixir/OTP/Rust are bumped once in
   # devenv.nix (plus the Dockerfile prod base) — CI follows automatically.
   FLUTTER_VERSION: "3.44.2"
+  # Harden Rust crate fetches against transient crates.io flakiness. The Rustler
+  # NIF (native/mydia_p2p) is built during `mix compile`; CI intermittently hit
+  # "download of … failed / curl failed / [16] Error in the HTTP2 framing layer".
+  # Forcing HTTP/1.1 (no multiplexing) sidesteps that libcurl HTTP/2 bug and a
+  # generous retry count rides out brief network blips. Inherited into the
+  # `devenv shell` subshells below (cargo reads these from the environment).
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_RETRY: "10"
 
 # The three Elixir jobs below run their steps inside a single `devenv shell --
 # bash` heredoc so the environment evaluates once and `_build` stays warm across
@@ -83,6 +91,22 @@ jobs:
           key: ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
           restore-keys: |
             ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-
+
+      # Materialize the devenv toolchain with a retry BEFORE the test step. Nix
+      # evaluation can transiently fail with "path '…/test-timeout.patch' is not
+      # valid" when a substituted nixpkgs source (e.g. ffmpeg's libopus) lands
+      # incompletely from the binary cache. Isolating the env build here means a
+      # single flaky substitution is retried cheaply, and the real test step runs
+      # against an already-warm store without retries masking genuine failures.
+      - name: Warm devenv environment
+        run: |
+          for attempt in 1 2 3; do
+            if devenv shell -- true; then exit 0; fi
+            echo "::warning::devenv shell attempt $attempt failed"
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          echo "::error::devenv environment failed to materialize after 3 attempts"
+          exit 1
 
       - name: Test (SQLite) under devenv
         run: |
@@ -164,6 +188,18 @@ jobs:
           key: ${{ runner.os }}-build-devenv-postgres-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
           restore-keys: |
             ${{ runner.os }}-build-devenv-postgres-${{ hashFiles('**/mix.lock') }}-
+
+      # See the `test` job for why the environment is warmed (with retry) before
+      # the test step — guards against transient Nix substitution failures.
+      - name: Warm devenv environment
+        run: |
+          for attempt in 1 2 3; do
+            if devenv shell -- true; then exit 0; fi
+            echo "::warning::devenv shell attempt $attempt failed"
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          echo "::error::devenv environment failed to materialize after 3 attempts"
+          exit 1
 
       # DATABASE_* is exported INSIDE the shell so it overrides devenv.nix's
       # per-worktree defaults (DATABASE_HOST/PORT/USER) and points at the GitHub
@@ -259,6 +295,19 @@ jobs:
           key: ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
           restore-keys: |
             ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-
+
+      # See the `test` job for why the environment is warmed (with retry) before
+      # the test step — guards against transient Nix substitution failures (this
+      # job hit the libopus "path is not valid" flake most often).
+      - name: Warm devenv environment
+        run: |
+          for attempt in 1 2 3; do
+            if devenv shell -- true; then exit 0; fi
+            echo "::warning::devenv shell attempt $attempt failed"
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          echo "::error::devenv environment failed to materialize after 3 attempts"
+          exit 1
 
       # chromium + chromedriver come from devenv (devenv.nix sets CHROME_PATH /
       # CHROMEDRIVER_PATH); run-feature-tests.sh finds chromium on PATH and honors
