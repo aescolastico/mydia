@@ -6,16 +6,18 @@
 # `mix test`, `mix precommit`, Flutter codegen) runs natively in this shell;
 # each git worktree derives its own non-colliding ports and isolated state.
 #
-# ⚠️ KEEP IN SYNC across all toolchain sources — bump together:
+# ⚠️ KEEP IN SYNC — this file is the source of truth for the Elixir/OTP/Rust
+# toolchain, and the CI test jobs consume it directly (`devenv shell -- …` in
+# .github/workflows/ci.yml), so those versions are NO LONGER duplicated in CI.
+# Bump Elixir/OTP/Rust here (and the Dockerfile prod base) and CI follows. Only
+# Flutter still needs manual syncing across non-devenv consumers — bump together:
 #   - this file                       (beam.packages.erlang_28 + rust 1.96.0 + flutter344 = 3.44.2)
-#   - .github/workflows/ci.yml        (ELIXIR_VERSION / OTP_VERSION / FLUTTER_VERSION + rust-toolchain)
+#   - .github/workflows/ci.yml        (FLUTTER_VERSION — the Flutter test-player job only)
 #   - .github/workflows/ci-player.yml (FLUTTER_VERSION)
-#   - Dockerfile                      (FROM elixir:1.19-otp-28 base AND the
+#   - Dockerfile                      (FROM elixir:1.19-otp-28 prod base AND the
 #                                      cirruslabs/flutter builder stage — bump BOTH)
-# If they drift, local devenv and CI compile under different toolchains and
-# "green locally" stops predicting "green in CI". Flutter is pinned to an
-# explicit flutterNNN attribute (not the floating `flutter` alias) so the
-# version here always matches the FLUTTER_VERSION strings in the CI workflows.
+# Flutter is pinned to an explicit flutterNNN attribute (not the floating
+# `flutter` alias) so the version here always matches the FLUTTER_VERSION strings.
 
 let
   # Elixir 1.19 / OTP 28 built as a matched pair from one beam set. devenv's
