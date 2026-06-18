@@ -117,6 +117,102 @@ jobs:
       - name: Run tests
         run: mix test --cover
 
+  # ── U1 spike: devenv-in-CI (TEMPORARY A/B measurement job) ───────────────────
+  # Runs the SAME SQLite checks as `test` above, but provisions the toolchain
+  # from devenv.nix instead of setup-beam + dtolnay/rust-toolchain, so its
+  # wall-clock can be compared against `test` on the same runner and commit.
+  # Plan: docs/plans/2026-06-18-001-build-ci-devenv-migration-plan.md (U1).
+  #   Gate: warm wall-clock within ~1.2x the `test` baseline -> go.
+  #   On go, rollout (U2-U6) replaces `test` with this and deletes this job.
+  #
+  # ⚠️ SETUP REQUIRED before this job can cache the project's own derivations:
+  #   1. Create a PUBLIC Cachix cache named `mydia` (cachix.org).
+  #   2. Add a write-scoped CACHIX_AUTH_TOKEN as a repo (or environment) secret.
+  # Without the token the job still runs read-only (pulls devenv's public cache);
+  # it just won't populate the project cache, so the warm path won't be measured.
+  test-devenv:
+    name: Test / devenv (spike)
+    runs-on: ubuntu-latest
+    # GitHub sets CI=true automatically; stated explicitly so devenv.nix's KTD7
+    # guard (skip enterShell setup tasks) is obvious to a reader of this job.
+    env:
+      CI: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Reads devenv's public cache (pre-built common packages, no auth) plus the
+      # project cache; pushes the project's own derivations only on same-repo
+      # events, so fork PRs never receive or use the token (KTD1).
+      - name: Setup Cachix
+        uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        with:
+          name: mydia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          extraPullNames: devenv
+          skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+
+      # Pin the devenv CLI to match local (2.x) before rollout (KTD6): resolve a
+      # nixpkgs rev that ships the intended devenv and use
+      # `nix profile install nixpkgs/<rev>#devenv`. The registry alias below is
+      # acceptable for the spike measurement only.
+      - name: Install devenv
+        run: nix profile install nixpkgs#devenv
+
+      # Cache the Elixir build separately from the nix store so the warm path
+      # exercises a warm _build too, isolating the measurement to toolchain
+      # provisioning. Mirrors the `test` job's key shape (own `-devenv-` scope).
+      - name: Cache dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-deps-devenv-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-devenv-
+
+      - name: Cache build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: _build
+          key: ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
+          restore-keys: |
+            ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-
+
+      # All steps run in ONE devenv shell so the environment evaluates once and
+      # _build stays warm across steps (mirrors `./dev mix precommit`, dev:159-211).
+      # CI=true makes devenv.nix skip its enterShell setup tasks (KTD7), so this
+      # job runs the equivalent setup (hex/rebar/deps/ecto) explicitly. ffmpeg,
+      # MIX_ENV, and the Rust/wasm32 toolchain come from devenv, not apt/actions.
+      - name: Test under devenv
+        run: |
+          devenv shell -- bash <<'DEVENV'
+          set -euo pipefail
+          export MIX_ENV=test
+          mix local.hex --force --if-missing
+          mix local.rebar --force --if-missing
+          mix deps.get
+          mix deps.unlock --check-unused
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          if grep -n "exit_status: 0" .credo.exs; then
+            echo "::error::exit_status: 0 found in .credo.exs - fix the finding or disable the check with false (see CONTRIBUTING.md)"
+            exit 1
+          fi
+          mix credo --strict
+          # Advisory dead-code report (non-blocking, mirrors the `test` job).
+          UNUSED_CHECK=true mix compile --force || true
+          mix ecto.create
+          mix ecto.migrate
+          mix test --cover
+          DEVENV
+
   test-postgres:
     name: Test / PostgreSQL
     runs-on: ubuntu-latest

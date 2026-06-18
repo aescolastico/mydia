@@ -61,6 +61,16 @@ let
   # start a Postgres process.
   dbType = builtins.getEnv "DATABASE_TYPE";
   usePostgres = dbType == "postgres" || dbType == "postgresql";
+
+  # ── CI task guard (KTD7) ────────────────────────────────────────────────────
+  # In CI the workflow runs its own hex/deps/ecto/asset setup explicitly inside
+  # the devenv shell, so the first-run tasks below must NOT auto-fire on shell
+  # entry — otherwise every CI job would run `flutter pub get` and a dev-DB
+  # migrate against dev defaults, polluting results and inflating the measured
+  # closure. GitHub Actions (and most CI) export CI=true; read it at eval time
+  # and drop the enterShell trigger when set. Local shells are unaffected.
+  isCI = builtins.getEnv "CI" != "";
+  onEnterShell = lib.optionals (!isCI) [ "devenv:enterShell" ];
 in
 {
   languages.elixir = {
@@ -189,7 +199,7 @@ in
   tasks = {
     "mydia:hex" = {
       exec = "mix local.hex --force --if-missing && mix local.rebar --force --if-missing";
-      before = [ "devenv:enterShell" ];
+      before = onEnterShell;
       # Cheap no-op once installed into the shared MIX_HOME.
       execIfModified = [ "mix.exs" ];
     };
@@ -197,7 +207,7 @@ in
     "mydia:deps" = {
       exec = "mix deps.get";
       execIfModified = [ "mix.exs" "mix.lock" ];
-      before = [ "devenv:enterShell" ];
+      before = onEnterShell;
       after = [ "mydia:hex" ];
     };
 
@@ -208,7 +218,7 @@ in
       exec = "mix ecto.create --quiet && mix mydia.backup_before_migrate && mix ecto.migrate";
       # Re-run when a migration is added/changed (idempotent otherwise).
       execIfModified = [ "priv/repo/migrations" ];
-      before = [ "devenv:enterShell" ];
+      before = onEnterShell;
       after = [ "mydia:deps" ] ++ lib.optional usePostgres "devenv:processes:postgres@ready";
     };
 
@@ -218,14 +228,14 @@ in
       # be installed separately or CSS rebuilds silently fail.
       exec = "mix assets.setup && cd assets && npm install";
       execIfModified = [ "assets/package.json" "assets/package-lock.json" ];
-      before = [ "devenv:enterShell" ];
+      before = onEnterShell;
       after = [ "mydia:deps" ];
     };
 
     "mydia:flutter" = {
       exec = "cd player && flutter pub get";
       execIfModified = [ "player/pubspec.yaml" "player/pubspec.lock" ];
-      before = [ "devenv:enterShell" ];
+      before = onEnterShell;
     };
   };
 
