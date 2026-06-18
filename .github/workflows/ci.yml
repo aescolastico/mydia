@@ -8,6 +8,9 @@ on:
   pull_request:
     branches:
       - "**"
+  # Manual trigger for the devenv-in-CI spike (test-devenv), which is gated to
+  # this event so it never runs as a per-PR check while it's being proven (U1).
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -133,11 +136,15 @@ jobs:
   test-devenv:
     name: Test / devenv (spike)
     runs-on: ubuntu-latest
-    # Non-gating: this is a temporary measurement job, not a quality gate. It must
-    # not fail the PR while devenv-in-CI is being proven (U1). The real gates are
-    # the `test` / `test-postgres` / `test-e2e` jobs. Remove this flag (and this
-    # job, replacing `test`) only after the spike is green and measured.
-    continue-on-error: true
+    # Measurement spike, NOT a per-PR gate — run it on demand:
+    #   gh workflow run CI --ref <branch>
+    # Gated to workflow_dispatch so it is skipped (neutral, not red) on PRs while
+    # devenv-in-CI is being proven (U1). First manual run found: the closure
+    # builds after pinning the CLI to the locked nixpkgs (KTD6), cold build ~13min,
+    # but `mix test` shows 15 parity failures vs the setup-beam `test` baseline
+    # (suspect: nixpkgs ffmpeg vs apt ffmpeg in media/preview tests, or a
+    # devenv-set env var). Resolve parity before promoting this to a gate / rollout.
+    if: github.event_name == 'workflow_dispatch'
     # GitHub sets CI=true automatically; stated explicitly so devenv.nix's KTD7
     # guard (skip enterShell setup tasks) is obvious to a reader of this job.
     env:
