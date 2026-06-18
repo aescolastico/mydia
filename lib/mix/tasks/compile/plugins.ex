@@ -82,21 +82,28 @@ defmodule Mix.Tasks.Compile.Plugins do
   # ── Toolchain probing ─────────────────────────────────────────────────────
 
   # Returns nil when the toolchain can build wasm, or a human reason string when
-  # it cannot. When `rustup` is absent (e.g. apk cargo), we can't enumerate
-  # targets, so we let the build itself surface a missing-target error.
+  # it cannot. We probe the active rust toolchain's own sysroot rather than
+  # asking `rustup`: a foreign `rustup` on PATH (e.g. a CI runner's system
+  # rustup sitting alongside a Nix/devenv `cargo`) reports targets for ITS
+  # toolchain, not the `cargo`/`rustc` actually in use — a false negative that
+  # silently skips the guest build. `<rustc --print sysroot>/lib/rustlib/<target>`
+  # is exactly where `cargo build --target` looks for the target std, so the
+  # check is correct for rustup- and Nix-managed toolchains alike.
   defp toolchain_gap do
     cond do
       System.find_executable("cargo") == nil -> "cargo not found on PATH"
-      System.find_executable("rustup") == nil -> nil
       wasm_target_installed?() -> nil
       true -> "the #{@target} rust target is not installed"
     end
   end
 
   defp wasm_target_installed? do
-    case System.cmd("rustup", ["target", "list", "--installed"], stderr_to_stdout: true) do
-      {out, 0} -> out |> String.split("\n") |> Enum.member?(@target)
-      _ -> false
+    case System.cmd("rustc", ["--print", "sysroot"], stderr_to_stdout: true) do
+      {sysroot, 0} ->
+        File.dir?(Path.join([String.trim(sysroot), "lib", "rustlib", @target]))
+
+      _ ->
+        false
     end
   rescue
     _ -> false

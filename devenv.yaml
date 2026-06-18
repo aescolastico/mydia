@@ -1,0 +1,25 @@
+# devenv inputs. See https://devenv.sh/reference/options/
+#
+# Pinned to nixos-unstable for parity with flake.nix / player/flake.nix, which
+# both resolve `beam.packages.erlang_28.elixir_1_19` and `pkgs.flutter` from
+# this same channel. devenv.lock pins the exact rev.
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/nixos-unstable
+  # Backs languages.rust (channel/version/targets/components). Follows nixpkgs
+  # so the Rust toolchain and the rest of the shell share one package set,
+  # mirroring flake.nix / player/flake.nix.
+  rust-overlay:
+    url: github:oxalica/rust-overlay
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+  # Backs git-hooks.hooks (Rust/mix/dart pre-commit hooks). Follows nixpkgs.
+  git-hooks:
+    url: github:cachix/git-hooks.nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+
+# pkgs.flutter (and its Android/SDK closure) is unfree.
+allowUnfree: true

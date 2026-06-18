@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - "**"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,14 +16,26 @@ concurrency:
 
 env:
   MIX_ENV: test
-  # ⚠️ KEEP IN SYNC across all three toolchain sources — bump together:
-  #   - these vars                      (ELIXIR_VERSION / OTP_VERSION)
-  #   - nix/devShells/flake-module.nix  (elixir_1_19 + erlang_28)
-  #   - Dockerfile.dev                  (FROM elixir:1.19-otp-28)
-  # If they drift, local nix, Docker dev, and CI compile under different toolchains.
-  ELIXIR_VERSION: "1.19"
-  OTP_VERSION: "28"
-  FLUTTER_VERSION: "3.38.6"
+  # ⚠️ KEEP IN SYNC — the Elixir/OTP/Rust toolchain for the test jobs now comes
+  # from devenv.nix (the jobs run `devenv shell -- …`), so it is NOT duplicated
+  # here anymore. Only Flutter is still pinned in two non-devenv places:
+  #   - this var (FLUTTER_VERSION)        — used by the Flutter `test-player` job
+  #   - .github/workflows/ci-player.yml   (FLUTTER_VERSION)
+  #   - devenv.nix                        (flutter344 = 3.44.2)
+  #   - Dockerfile                        (cirruslabs/flutter builder stage + the
+  #                                         elixir:1.19-otp-28 prod base image)
+  # Bump Flutter in all four together. Elixir/OTP/Rust are bumped once in
+  # devenv.nix (plus the Dockerfile prod base) — CI follows automatically.
+  FLUTTER_VERSION: "3.44.2"
+
+# The three Elixir jobs below run their steps inside a single `devenv shell --
+# bash` heredoc so the environment evaluates once and `_build` stays warm across
+# steps (mirrors `./dev mix precommit`, dev:159-211). The toolchain (Elixir, OTP,
+# Rust + wasm32-wasip2, Node, ffmpeg, chromium/chromedriver) comes from
+# devenv.nix. GitHub sets CI=true, which makes devenv.nix skip its enterShell
+# setup tasks (KTD7) — each job runs the equivalent setup (hex/rebar/deps/ecto)
+# explicitly. The Nix/Cachix/devenv setup steps are duplicated across the three
+# jobs; a composite action (U2) is a deferred DRY follow-up.
 
 jobs:
   test:
@@ -31,90 +44,70 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      # The :plugins mix compiler builds the bundled WASM guests for wasm32
-      # during `mix compile`. Provision the target explicitly rather than
-      # assuming the runner's ambient toolchain is rustup-managed.
-      #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
-      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
-      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
-      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
-      # instantiate ("incompatible plugin contract"). Bump this together with
-      # the nix toolchain.
-      - name: Setup Rust (wasm32 for plugin guests)
-        uses: dtolnay/rust-toolchain@1.96.0
+      # Reads devenv's public cache (pre-built common packages, no auth) plus the
+      # project cache; pushes the project's own derivations only on same-repo
+      # events, so fork PRs never receive or use the token (KTD1).
+      - name: Setup Cachix
+        uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
-          targets: wasm32-wasip2
+          name: mydia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          extraPullNames: devenv
+          skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+
+      # Pin the devenv CLI to the SAME nixpkgs the repo locks (KTD6); rev mirrors
+      # devenv.lock's nixpkgs node — bump both together.
+      - name: Install devenv
+        run: nix profile install github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#devenv
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: deps
-          key: ${{ runner.os }}-deps-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-deps-devenv-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-deps-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
+            ${{ runner.os }}-deps-devenv-
 
       - name: Cache build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: _build
-          key: ${{ runner.os }}-build-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
+          key: ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
           restore-keys: |
-            ${{ runner.os }}-build-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-
+            ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-
 
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Check unused dependencies
-        run: mix deps.unlock --check-unused
-
-      - name: Compile
-        run: mix compile --warnings-as-errors
-
-      - name: Check formatting
-        run: mix format --check-formatted
-
-      # Guard against re-grandfathering: a Credo check must be enabled-and-
-      # gating or `false`, never `exit_status: 0`. See CONTRIBUTING.md.
-      - name: Forbid Credo grandfathering
+      - name: Test (SQLite) under devenv
         run: |
+          devenv shell -- bash <<'DEVENV'
+          set -euo pipefail
+          export MIX_ENV=test
+          mix local.hex --force --if-missing
+          mix local.rebar --force --if-missing
+          mix deps.get
+          mix deps.unlock --check-unused
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          # Guard against re-grandfathering: a Credo check must be enabled-and-
+          # gating or `false`, never `exit_status: 0`. See CONTRIBUTING.md.
           if grep -n "exit_status: 0" .credo.exs; then
             echo "::error::exit_status: 0 found in .credo.exs - fix the finding or disable the check with false (see CONTRIBUTING.md)"
             exit 1
           fi
-
-      - name: Run Credo
-        run: mix credo --strict
-
-      # Advisory by design, not grandfathering. mix_unused's export analysis
-      # cannot trace framework dispatch (controller actions, HEEx components,
-      # behaviour callbacks, runtime dispatch); rule-shaped ignores in mix.exs
-      # cover the structural blind spots, and provably-dead code is deleted at
-      # the source. The irreducible residual is intentional public API plus
-      # default-argument arity artifacts, which cannot be driven to a principled
-      # zero on a Phoenix app without deleting live code. So this step reports
-      # for awareness but does not block. See CONTRIBUTING.md ("Quality gates").
-      - name: Dead code report (advisory)
-        run: UNUSED_CHECK=true mix compile --force
-        continue-on-error: true
-
-      - name: Setup database
-        run: mix ecto.create && mix ecto.migrate
-
-      - name: Run tests
-        run: mix test --cover
+          mix credo --strict
+          # Advisory dead-code report (non-blocking; see CONTRIBUTING.md "Quality gates").
+          UNUSED_CHECK=true mix compile --force || true
+          mix ecto.create
+          mix ecto.migrate
+          mix test --cover
+          DEVENV
 
   test-postgres:
     name: Test / PostgreSQL
@@ -135,76 +128,68 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    env:
-      DATABASE_TYPE: postgres
-      DATABASE_HOST: localhost
-      DATABASE_PORT: 5432
-      DATABASE_USER: postgres
-      DATABASE_PASSWORD: postgres
-      DATABASE_NAME: mydia_test
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      # The :plugins mix compiler builds the bundled WASM guests for wasm32
-      # during `mix compile`. Provision the target explicitly rather than
-      # assuming the runner's ambient toolchain is rustup-managed.
-      #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
-      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
-      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
-      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
-      # instantiate ("incompatible plugin contract"). Bump this together with
-      # the nix toolchain.
-      - name: Setup Rust (wasm32 for plugin guests)
-        uses: dtolnay/rust-toolchain@1.96.0
+      - name: Setup Cachix
+        uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
-          targets: wasm32-wasip2
+          name: mydia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          extraPullNames: devenv
+          skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+
+      - name: Install devenv
+        run: nix profile install github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#devenv
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: deps
-          key: ${{ runner.os }}-deps-postgres-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          key: ${{ runner.os }}-deps-devenv-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-deps-postgres-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
+            ${{ runner.os }}-deps-devenv-
 
       - name: Cache build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: _build
-          key: ${{ runner.os }}-build-postgres-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
+          key: ${{ runner.os }}-build-devenv-postgres-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
           restore-keys: |
-            ${{ runner.os }}-build-postgres-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}-
+            ${{ runner.os }}-build-devenv-postgres-${{ hashFiles('**/mix.lock') }}-
 
-      - name: Install dependencies
-        run: mix deps.get
-
-      - name: Compile
-        run: mix compile
-
-      - name: Create database
-        run: mix ecto.create
-
-      - name: Run migrations
-        run: mix ecto.migrate
-
-      - name: Verify migrations
-        run: mix ecto.migrations
-
-      - name: Run tests
-        run: mix test --cover
+      # DATABASE_* is exported INSIDE the shell so it overrides devenv.nix's
+      # per-worktree defaults (DATABASE_HOST/PORT/USER) and points at the GitHub
+      # `services: postgres` container. DATABASE_TYPE is set here (not at job/eval
+      # level) so the compile-time adapter is Postgres without devenv defining an
+      # unused devenv-managed Postgres service at eval time (KTD4).
+      - name: Test (PostgreSQL) under devenv
+        run: |
+          devenv shell -- bash <<'DEVENV'
+          set -euo pipefail
+          export MIX_ENV=test
+          export DATABASE_TYPE=postgres
+          export DATABASE_HOST=localhost
+          export DATABASE_PORT=5432
+          export DATABASE_USER=postgres
+          export DATABASE_PASSWORD=postgres
+          export DATABASE_NAME=mydia_test
+          mix local.hex --force --if-missing
+          mix local.rebar --force --if-missing
+          mix deps.get
+          mix compile
+          mix ecto.create
+          mix ecto.migrate
+          mix ecto.migrations
+          mix test --cover
+          DEVENV
 
   test-player:
     name: Test / Player
@@ -240,65 +225,61 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup Elixir
-        uses: erlef/setup-beam@v1
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      # The :plugins mix compiler builds the bundled WASM guests for wasm32
-      # during `mix compile`. Provision the target explicitly rather than
-      # assuming the runner's ambient toolchain is rustup-managed.
-      #
-      # PINNED to match nix's rustToolchain (nix/devShells/flake-module.nix,
-      # `rust-bin.stable.latest`). The guest is a wasip2 component whose WASI
-      # world version tracks the Rust toolchain (1.96 -> wasi 0.2.6). The host
-      # is wasmex 0.14 / wasmtime 39, which only validates up to wasi 0.2.6;
-      # a bleeding-edge `@stable` emits wasi 0.2.9 and the component fails to
-      # instantiate ("incompatible plugin contract"). Bump this together with
-      # the nix toolchain.
-      - name: Setup Rust (wasm32 for plugin guests)
-        uses: dtolnay/rust-toolchain@1.96.0
+      - name: Setup Cachix
+        uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
         with:
-          targets: wasm32-wasip2
+          name: mydia
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          extraPullNames: devenv
+          skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
-      - name: Install Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
+      - name: Install devenv
+        run: nix profile install github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#devenv
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          path: deps
+          key: ${{ runner.os }}-deps-devenv-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-mix-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-
+            ${{ runner.os }}-deps-devenv-
 
-      - name: Install dependencies
-        run: mix deps.get
+      - name: Cache build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: _build
+          key: ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('lib/**/*.ex', 'test/**/*.exs') }}
+          restore-keys: |
+            ${{ runner.os }}-build-devenv-${{ hashFiles('**/mix.lock') }}-
 
-      - name: Compile
-        run: mix compile
-
-      - name: Install Node.js dependencies
-        run: npm ci --prefix assets
-
-      - name: Build assets
-        run: mix assets.deploy
-        env:
-          MIX_ENV: test
-
-      - name: Run feature tests
-        run: ./scripts/run-feature-tests.sh
+      # chromium + chromedriver come from devenv (devenv.nix sets CHROME_PATH /
+      # CHROMEDRIVER_PATH); run-feature-tests.sh finds chromium on PATH and honors
+      # CHROMEDRIVER_PATH, so no separate Chrome action is needed.
+      - name: Feature tests (E2E) under devenv
+        run: |
+          devenv shell -- bash <<'DEVENV'
+          set -euo pipefail
+          export MIX_ENV=test
+          mix local.hex --force --if-missing
+          mix local.rebar --force --if-missing
+          mix deps.get
+          mix compile
+          npm ci --prefix assets
+          mix assets.deploy
+          ./scripts/run-feature-tests.sh
+          DEVENV
 
       - name: Upload screenshots on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: wallaby-screenshots
           path: tmp/wallaby_screenshots/

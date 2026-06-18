@@ -29,10 +29,10 @@ if [ ! -d "$PLUGINS_DIR" ]; then
 fi
 
 # Verify the *active* toolchain has the target's std, by probing its sysroot
-# directly rather than asking rustup — the pinned nix toolchain (devShells.rust)
-# bakes the target in and exposes no rustup, while a leaked host rustup would
-# report the target missing and give a false negative. When running outside nix
-# with a host rustup, add it once: rustup target add $TARGET.
+# directly rather than asking rustup — the pinned devenv toolchain (languages.rust
+# in devenv.nix) bakes the target in and exposes no rustup, while a leaked host
+# rustup would report the target missing and give a false negative. When running
+# outside the devenv shell with a host rustup, add it once: rustup target add $TARGET.
 SYSROOT="$(rustc --print sysroot 2>/dev/null || true)"
 if [ -n "$SYSROOT" ] && [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
   if command -v rustup >/dev/null 2>&1; then
@@ -42,7 +42,7 @@ if [ -n "$SYSROOT" ] && [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
   if [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
     echo "Rust target $TARGET is not installed for the active toolchain. Run:"
     echo "  rustup target add $TARGET"
-    echo "  (or lint via: nix develop .#rust -c scripts/check-plugins.sh)"
+    echo "  (or lint via: devenv shell -- scripts/check-plugins.sh)"
     exit 1
   fi
 fi
