@@ -133,6 +133,11 @@ jobs:
   test-devenv:
     name: Test / devenv (spike)
     runs-on: ubuntu-latest
+    # Non-gating: this is a temporary measurement job, not a quality gate. It must
+    # not fail the PR while devenv-in-CI is being proven (U1). The real gates are
+    # the `test` / `test-postgres` / `test-e2e` jobs. Remove this flag (and this
+    # job, replacing `test`) only after the spike is green and measured.
+    continue-on-error: true
     # GitHub sets CI=true automatically; stated explicitly so devenv.nix's KTD7
     # guard (skip enterShell setup tasks) is obvious to a reader of this job.
     env:
@@ -159,12 +164,13 @@ jobs:
           extraPullNames: devenv
           skipPush: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
-      # Pin the devenv CLI to match local (2.x) before rollout (KTD6): resolve a
-      # nixpkgs rev that ships the intended devenv and use
-      # `nix profile install nixpkgs/<rev>#devenv`. The registry alias below is
-      # acceptable for the spike measurement only.
+      # Pin the devenv CLI to the SAME nixpkgs the repo locks (KTD6) so the CLI
+      # and the evaluated environment come from one nixpkgs — the unpinned
+      # `nixpkgs#devenv` resolves against the runner's registry (a different rev)
+      # and mismatches the lock. Rev mirrors devenv.lock's nixpkgs node; bump
+      # both together.
       - name: Install devenv
-        run: nix profile install nixpkgs#devenv
+        run: nix profile install github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f#devenv
 
       # Cache the Elixir build separately from the nix store so the warm path
       # exercises a warm _build too, isolating the measurement to toolchain
