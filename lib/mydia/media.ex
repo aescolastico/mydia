@@ -1015,6 +1015,19 @@ defmodule Mydia.Media do
 
   def get_media_status(%MediaItem{type: "tv_show", episodes: episodes}) do
     monitored_episodes = Enum.filter(episodes, & &1.monitored)
+    today = Date.utc_today()
+
+    # Unreleased episodes (future or unknown air date) should not contribute to
+    # missing/partial aggregate status for the show.
+    released_monitored_episodes =
+      Enum.filter(monitored_episodes, fn ep ->
+        case ep.air_date do
+          %Date{} = air_date -> Date.compare(air_date, today) != :gt
+          _ -> false
+        end
+      end)
+
+    total_released_monitored = length(released_monitored_episodes)
     total_monitored = length(monitored_episodes)
 
     if total_monitored == 0 do
@@ -1024,7 +1037,7 @@ defmodule Mydia.Media do
       {:not_monitored, %{downloaded: downloaded_count, total: total_episodes}}
     else
       downloaded_count =
-        monitored_episodes
+        released_monitored_episodes
         |> Enum.count(fn ep -> length(ep.media_files) > 0 end)
 
       has_active_downloads =
@@ -1033,22 +1046,17 @@ defmodule Mydia.Media do
           Enum.any?(ep.downloads, &download_active?/1)
         end)
 
-      all_upcoming =
-        monitored_episodes
-        |> Enum.all?(fn ep ->
-          ep.air_date && Date.compare(ep.air_date, Date.utc_today()) == :gt
-        end)
-
       status =
         cond do
-          downloaded_count == total_monitored -> :downloaded
+          total_released_monitored == 0 and has_active_downloads -> :downloading
+          total_released_monitored == 0 -> :upcoming
+          downloaded_count == total_released_monitored -> :downloaded
           has_active_downloads -> :downloading
-          all_upcoming -> :upcoming
           downloaded_count > 0 -> :partial
           true -> :missing
         end
 
-      {status, %{downloaded: downloaded_count, total: total_monitored}}
+      {status, %{downloaded: downloaded_count, total: total_released_monitored}}
     end
   end
 

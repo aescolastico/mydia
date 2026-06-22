@@ -1893,4 +1893,74 @@ defmodule Mydia.MediaTest do
       assert File.exists?(abs)
     end
   end
+
+  describe "get_media_status/1 with unreleased episodes" do
+    import Mydia.MediaFixtures
+
+    test "does not mark show partial when only unreleased monitored episodes are missing" do
+      media_item = media_item_fixture(%{type: "tv_show", monitored: true})
+
+      past_date = Date.add(Date.utc_today(), -10)
+      future_date = Date.add(Date.utc_today(), 10)
+
+      released_episode =
+        episode_fixture(%{
+          media_item_id: media_item.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: past_date,
+          monitored: true
+        })
+
+      _future_episode =
+        episode_fixture(%{
+          media_item_id: media_item.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: future_date,
+          monitored: true
+        })
+
+      media_file_fixture(%{episode_id: released_episode.id})
+
+      reloaded =
+        Media.get_media_item!(media_item.id,
+          preload: [episodes: [:media_files, :downloads]]
+        )
+
+      assert Media.get_media_status(reloaded) == {:downloaded, %{downloaded: 1, total: 1}}
+    end
+
+    test "does not count unreleased monitored episodes toward missing denominator" do
+      media_item = media_item_fixture(%{type: "tv_show", monitored: true})
+
+      past_date = Date.add(Date.utc_today(), -10)
+      future_date = Date.add(Date.utc_today(), 10)
+
+      _released_missing =
+        episode_fixture(%{
+          media_item_id: media_item.id,
+          season_number: 1,
+          episode_number: 1,
+          air_date: past_date,
+          monitored: true
+        })
+
+      _future_episode =
+        episode_fixture(%{
+          media_item_id: media_item.id,
+          season_number: 1,
+          episode_number: 2,
+          air_date: future_date,
+          monitored: true
+        })
+
+      reloaded =
+        Media.get_media_item!(media_item.id,
+          preload: [episodes: [:media_files, :downloads]]
+        )
+
+      assert Media.get_media_status(reloaded) == {:missing, %{downloaded: 0, total: 1}}
+    end
+  end
 end
