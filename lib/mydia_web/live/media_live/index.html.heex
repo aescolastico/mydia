@@ -660,6 +660,11 @@
                     </button>
                   </li>
                   <li>
+                    <button type="button" phx-click="batch_rename_files" class="gap-2">
+                      <.icon name="hero-pencil-square" class="w-4 h-4" /> Rename files
+                    </button>
+                  </li>
+                  <li>
                     <button
                       type="button"
                       phx-click="show_delete_confirmation"
@@ -695,6 +700,14 @@
       selected_count={MapSet.size(@selected_ids)}
       delete_files={@delete_files}
     />
+
+    <%!-- Rename Files Modal --%>
+    <%= if @show_rename_modal do %>
+      <Modals.rename_files_modal
+        rename_previews={@rename_previews}
+        renaming_files={@renaming_files}
+      />
+    <% end %>
 
     <%!-- Batch Edit Modal --%>
     <.modal id="batch-edit-modal" show={@show_batch_edit_modal} on_cancel="cancel_batch_edit">

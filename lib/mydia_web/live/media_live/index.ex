@@ -5,6 +5,8 @@ defmodule MydiaWeb.MediaLive.Index do
   alias Mydia.Metadata.Structs.MediaMetadata
   alias Mydia.Settings
   alias Mydia.Collections
+  alias Mydia.Library.FileRenamer
+  alias MydiaWeb.MediaLive.Show.Modals
 
   require Logger
 
@@ -42,6 +44,9 @@ defmodule MydiaWeb.MediaLive.Index do
      |> assign(:show_add_to_collection_modal, false)
      |> assign(:user_collections, [])
      |> assign(:all_visible_ids, MapSet.new())
+     |> assign(:show_rename_modal, false)
+     |> assign(:rename_previews, [])
+     |> assign(:renaming_files, false)
      |> stream(:media_items, [])}
   end
 
@@ -335,6 +340,45 @@ defmodule MydiaWeb.MediaLive.Index do
      |> load_media_items(reset: true)}
   end
 
+  def handle_event("batch_rename_files", _params, socket) do
+    rename_previews =
+      socket.assigns.selected_ids
+      |> MapSet.to_list()
+      |> Enum.flat_map(fn id ->
+        id
+        |> Media.get_media_item!()
+        |> FileRenamer.generate_rename_previews_for_media_item()
+      end)
+
+    {:noreply,
+     socket
+     |> assign(:show_rename_modal, true)
+     |> assign(:rename_previews, rename_previews)
+     |> assign(:renaming_files, false)}
+  end
+
+  def handle_event("hide_rename_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_rename_modal, false)
+     |> assign(:rename_previews, [])
+     |> assign(:renaming_files, false)}
+  end
+
+  def handle_event("confirm_rename_files", _params, socket) do
+    rename_specs =
+      Enum.map(socket.assigns.rename_previews, fn preview ->
+        %{file_id: preview.file_id, new_path: preview.proposed_path}
+      end)
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, true)
+     |> start_async(:rename_files, fn ->
+       FileRenamer.rename_files_batch(rename_specs)
+     end)}
+  end
+
   def handle_event("show_delete_confirmation", _params, socket) do
     {:noreply,
      socket
@@ -605,6 +649,49 @@ defmodule MydiaWeb.MediaLive.Index do
 
     Logger.warning("Unhandled message in MediaLive.Index: #{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_async(:rename_files, {:ok, {:ok, results}}, socket) do
+    success_count = Enum.count(results, &match?({:ok, _}, &1))
+    error_count = Enum.count(results, &match?({:error, _}, &1))
+
+    message =
+      cond do
+        error_count == 0 -> "Successfully renamed #{success_count} #{pluralize_files(success_count)}"
+        success_count == 0 -> "Failed to rename all files"
+        true -> "Renamed #{success_count} #{pluralize_files(success_count)}, #{error_count} failed"
+      end
+
+    flash_type = if error_count > 0, do: :warning, else: :info
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, false)
+     |> assign(:show_rename_modal, false)
+     |> assign(:rename_previews, [])
+     |> assign(:selection_mode, false)
+     |> assign(:selected_ids, MapSet.new())
+     |> put_flash(flash_type, message)
+     |> load_media_items(reset: true)}
+  end
+
+  def handle_async(:rename_files, {:ok, {:error, reason}}, socket) do
+    Logger.error("Batch file rename failed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, false)
+     |> put_flash(:error, "Failed to rename files: #{inspect(reason)}")}
+  end
+
+  def handle_async(:rename_files, {:exit, reason}, socket) do
+    Logger.error("Batch file rename task crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, false)
+     |> put_flash(:error, "File rename failed unexpectedly")}
   end
 
   defp load_media_items(socket, opts) do

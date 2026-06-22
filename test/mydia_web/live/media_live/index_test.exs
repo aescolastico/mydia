@@ -340,4 +340,62 @@ defmodule MydiaWeb.MediaLive.IndexTest do
       assert socket.assigns.delete_files == true
     end
   end
+
+  describe "bulk rename files" do
+    setup %{conn: conn} do
+      admin = admin_user_fixture()
+      %{conn: log_in_user(conn, admin)}
+    end
+
+    defp rename_stub_socket(assigns) do
+      %Phoenix.LiveView.Socket{
+        assigns: Map.merge(%{__changed__: %{}}, assigns),
+        private: %{live_temp: %{}}
+      }
+    end
+
+    test "batch_rename_files opens the rename modal scoped to the selected items" do
+      item = media_item_fixture(%{title: "The Matrix", type: "movie"})
+
+      {:noreply, socket} =
+        MydiaWeb.MediaLive.Index.handle_event(
+          "batch_rename_files",
+          %{},
+          rename_stub_socket(%{selected_ids: MapSet.new([item.id])})
+        )
+
+      assert socket.assigns.show_rename_modal == true
+      assert socket.assigns.renaming_files == false
+      assert is_list(socket.assigns.rename_previews)
+    end
+
+    test "hide_rename_modal closes the modal and clears previews" do
+      {:noreply, socket} =
+        MydiaWeb.MediaLive.Index.handle_event(
+          "hide_rename_modal",
+          %{},
+          rename_stub_socket(%{
+            show_rename_modal: true,
+            rename_previews: [%{file_id: "x"}],
+            renaming_files: true
+          })
+        )
+
+      assert socket.assigns.show_rename_modal == false
+      assert socket.assigns.rename_previews == []
+      assert socket.assigns.renaming_files == false
+    end
+
+    test "the Rename files action appears in the selection toolbar", %{conn: conn} do
+      media_item_fixture(%{title: "The Matrix", type: "movie"})
+
+      {:ok, view, _html} = live(conn, ~p"/movies")
+
+      view
+      |> element("button[phx-click='toggle_selection_mode']", "Select")
+      |> render_click()
+
+      assert has_element?(view, "button[phx-click='batch_rename_files']", "Rename files")
+    end
+  end
 end
