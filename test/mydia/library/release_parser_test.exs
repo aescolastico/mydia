@@ -214,5 +214,20 @@ defmodule Mydia.Library.ReleaseParserTest do
       assert result.title == "Movie Name"
       assert result.year == 2020
     end
+
+    test "TV show root folder without season folder is still classified as tv_show" do
+      result =
+        ReleaseParser.parse_with_path(
+          "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.title == "Blades of the Guardians"
+      assert result.year == 2023
+      assert result.external_id == nil
+      assert result.external_provider == nil
+      assert result.season == 1
+      assert result.episodes == [8]
+    end
   end
 end

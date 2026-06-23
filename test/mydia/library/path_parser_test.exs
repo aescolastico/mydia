@@ -165,6 +165,18 @@ defmodule Mydia.Library.PathParserTest do
     test "returns false for non-binary input" do
       assert PathParser.is_tv_path?(nil) == false
     end
+
+    test "returns true for season-folderless TV path" do
+      assert PathParser.is_tv_path?(
+               "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+             ) == true
+    end
+
+    test "returns false for season-folderless movie path" do
+      assert PathParser.is_tv_path?(
+               "/media/library/movies/Twister (1996)/Twister.1996.1080p.BluRay.x264.mkv"
+             ) == false
+    end
   end
 
   describe "real-world examples from task-265" do
@@ -547,6 +559,20 @@ defmodule Mydia.Library.PathParserTest do
                year: nil,
                external_id: "123",
                external_provider: :tmdb
+             }
+    end
+
+    test "extracts TV show metadata from a show root folder" do
+      result =
+        PathParser.extract_tv_show_from_path(
+          "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E03.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+        )
+
+      assert result == %{
+               title: "Blades of the Guardians",
+               year: 2023,
+               external_id: nil,
+               external_provider: nil
              }
     end
 

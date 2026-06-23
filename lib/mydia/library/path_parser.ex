@@ -427,7 +427,10 @@ defmodule Mydia.Library.PathParser do
           end
 
         :error ->
-          nil
+          case maybe_extract_tv_show_from_parent(dir_segments) do
+            %{} = result -> result
+            nil -> nil
+          end
       end
     end
   end
@@ -462,6 +465,30 @@ defmodule Mydia.Library.PathParser do
     end)
   end
 
+  # Fallback for TV paths where media files are directly under the show folder
+  # (no season subfolder), e.g. /media/tv/Show Name (2023)/episode.mkv
+  defp maybe_extract_tv_show_from_parent(dir_segments) do
+    case Enum.at(dir_segments, -1) do
+      parent_folder when is_binary(parent_folder) ->
+        if valid_show_name?(parent_folder) and likely_tv_path?(dir_segments) do
+          parse_tv_show_folder(parent_folder)
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp likely_tv_path?(dir_segments) when is_list(dir_segments) do
+    tv_indicators = ~w(tv shows series television)
+
+    Enum.any?(dir_segments, fn segment ->
+      String.downcase(segment) in tv_indicators
+    end)
+  end
+
   @doc """
   Checks if a path appears to be a TV show library path.
 
@@ -477,7 +504,7 @@ defmodule Mydia.Library.PathParser do
   """
   @spec is_tv_path?(String.t()) :: boolean()
   def is_tv_path?(path) when is_binary(path) do
-    extract_from_path(path) != nil
+    extract_from_path(path) != nil or extract_tv_show_from_path(path) != nil
   end
 
   def is_tv_path?(_), do: false

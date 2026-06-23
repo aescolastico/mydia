@@ -110,11 +110,17 @@ defmodule Mydia.Library.ReleaseParser do
   def parse_with_path(file_path, opts \\ []) when is_binary(file_path) do
     filename = Path.basename(file_path)
     filename_result = parse(filename, opts)
+    tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
+    tv = PathParser.extract_from_path(file_path)
 
     cond do
-      tv = PathParser.extract_from_path(file_path) ->
-        tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
-        merge_tv_folder(filename_result, filename, file_path, tv, tv_folder_info)
+      tv_folder_info ->
+        # If season can't be inferred from folders, keep any season parsed from filename.
+        tv_context = tv || %{show_name: tv_folder_info.title, season: filename_result.season}
+        merge_tv_folder(filename_result, filename, file_path, tv_context, tv_folder_info)
+
+      tv ->
+        merge_tv_folder(filename_result, filename, file_path, tv, nil)
 
       movie = PathParser.extract_movie_from_path(file_path) ->
         merge_movie_folder(filename_result, filename, file_path, movie)
