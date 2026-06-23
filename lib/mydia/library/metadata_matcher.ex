@@ -24,7 +24,10 @@ defmodule Mydia.Library.MetadataMatcher do
   This removes:
   - Year suffixes and everything after (e.g., ".1989-...", "(1989)", etc.)
   - Release group tags, quality indicators, codec info
-  - IMDB/TVDB ID annotations like {imdb-...} or [tvdbid-...]
+  - Provider ID annotations in any supported tag form:
+    `{tmdb-...}`, `{tmdbid-...}`, `[tmdb-...]`, `[tmdbid-...]`,
+    `{tvdb-...}`, `{tvdbid-...}`, `[tvdb-...]`, `[tvdbid-...]`,
+    `{imdb-...}`, `{imdbid-...}`, `[imdb-...]`, `[imdbid-...]`
   - File separators (., -, _, +) replaced with spaces
   - Multiple whitespace collapsed to single space
 
@@ -42,11 +45,11 @@ defmodule Mydia.Library.MetadataMatcher do
   @spec normalize_search_query(String.t()) :: String.t()
   def normalize_search_query(query) when is_binary(query) do
     query
-    # Remove IMDB/TVDB/TMDB ID annotations like {imdb-tt0096697} or [tvdbid-12345]
-    |> String.replace(~r/\{imdb-[^\}]+\}/i, "")
-    |> String.replace(~r/\[tvdbid-[^\]]+\]/i, "")
-    |> String.replace(~r/\{tmdb-[^\}]+\}/i, "")
-    |> String.replace(~r/\[tmdbid-[^\]]+\]/i, "")
+    # Remove provider ID annotations in any supported tag form:
+    # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+    # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+    # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
+    |> String.replace(~r/[\[{](?:tmdbid|tmdb|tvdbid|tvdb|imdbid|imdb)-[^\]}]+[\]}]/i, "")
     # Remove year in parentheses and everything after: (1989)...
     |> String.replace(~r/\(\d{4}\).*$/, "")
     # Remove year with separators and everything after: .1989-... or -1989. or _1989_
@@ -117,8 +120,12 @@ defmodule Mydia.Library.MetadataMatcher do
 
   Returns the best match or error if no suitable match found.
 
-  When parsed info contains an external_id (e.g., from folder name like [tmdb-664]),
-  it will perform a direct lookup instead of searching by title.
+  When parsed info contains an external_id from any supported provider tag
+  (`{tmdb-...}`, `{tmdbid-...}`, `[tmdb-...]`, `[tmdbid-...]`,
+  `{tvdb-...}`, `{tvdbid-...}`, `[tvdb-...]`, `[tvdbid-...]`,
+  `{imdb-...}`, `{imdbid-...}`, `[imdb-...]`, `[imdbid-...]`),
+  it will perform a direct lookup when the metadata provider supports it
+  before falling back to normal title lookup.
   """
   @spec match_movie(map(), map(), keyword()) :: {:ok, match_result()} | {:error, term()}
   def match_movie(%{type: :movie} = parsed, config, opts \\ []) do
@@ -132,28 +139,36 @@ defmodule Mydia.Library.MetadataMatcher do
         match_movie_by_title(parsed, config, opts)
 
       {:error, reason} ->
-        # External ID lookup failed, fall back to title-based matching
-        Logger.warning("External ID lookup failed, falling back to title search",
+        # Provider tags get first chance, but unsupported providers or bad ids
+        # fall through the explicit lookup order before the normal stock path.
+        Logger.warning("Movie external ID lookup failed; falling back to title search",
           external_id: parsed.external_id,
           external_provider: parsed.external_provider,
           reason: reason
         )
 
-        match_movie_by_title(parsed, config, opts)
+        match_movie_with_provider_title_fallbacks(parsed, config, opts)
     end
   end
 
-  # Lookup movie directly by external provider ID (from folder name like [tmdb-664])
+  # Lookup movie directly by external provider ID from any supported provider tag
+  # form. Remote detail lookup is currently backed by the relay for TMDB movies;
+  # TVDB movie and IMDb detail lookups are parsed but blocked because the relay
+  # has no direct movie-detail endpoint for those providers.
   defp lookup_by_external_id(parsed, config, opts) do
-    # Check if we have external ID and provider
-    external_id = Map.get(parsed, :external_id)
-    external_provider = Map.get(parsed, :external_provider)
+    parsed
+    |> provider_lookup_candidates()
+    |> try_direct_lookup_candidates(&lookup_movie_direct_candidate(&1, parsed, config, opts))
+  end
 
-    case {external_id, external_provider} do
-      {nil, _} ->
+  defp lookup_movie_direct_candidate(candidate, parsed, config, opts) do
+    id = candidate_id(candidate)
+
+    case {id, candidate_provider(candidate)} do
+      {nil, _provider} ->
         {:error, :no_external_id}
 
-      {_, nil} ->
+      {_id, nil} ->
         {:error, :no_external_id}
 
       {id, :tmdb} ->
@@ -162,7 +177,8 @@ defmodule Mydia.Library.MetadataMatcher do
           title: parsed.title
         )
 
-        fetch_opts = Keyword.merge(opts, media_type: :movie)
+        # Explicit external provider IDs must override any preferred provider in opts.
+        fetch_opts = Keyword.merge(opts, media_type: :movie, provider: :tmdb)
 
         case Metadata.fetch_by_id(config, id, fetch_opts) do
           {:ok, result} ->
@@ -196,14 +212,21 @@ defmodule Mydia.Library.MetadataMatcher do
             {:error, reason}
         end
 
-      {id, provider} ->
-        # Other providers (tvdb, imdb) - not yet supported for direct lookup
-        Logger.warning("Direct lookup not supported for provider",
-          provider: provider,
-          id: id
-        )
+      {id, :tvdb} ->
+        unsupported_direct_lookup(:movie, :tvdb, id)
 
-        {:error, :unsupported_provider}
+      {id, :imdb} ->
+        unsupported_direct_lookup(:movie, :imdb, id)
+
+      {id, provider} ->
+        unsupported_direct_lookup(:movie, provider, id)
+    end
+  end
+
+  defp match_movie_with_provider_title_fallbacks(parsed, config, opts) do
+    case match_provider_title_candidates(parsed, config, opts, :movie) do
+      {:ok, _match} = success -> success
+      {:error, _reason} -> match_movie_by_title(parsed, config, opts)
     end
   end
 
@@ -271,8 +294,12 @@ defmodule Mydia.Library.MetadataMatcher do
 
   Returns the best match or error if no suitable match found.
 
-  When parsed info contains an external_id (e.g., from folder name like [tvdb-81189]),
-  it will perform a direct lookup instead of searching by title.
+  When parsed info contains an external_id from any supported provider tag
+  (`{tmdb-...}`, `{tmdbid-...}`, `[tmdb-...]`, `[tmdbid-...]`,
+  `{tvdb-...}`, `{tvdbid-...}`, `[tvdb-...]`, `[tvdbid-...]`,
+  `{imdb-...}`, `{imdbid-...}`, `[imdb-...]`, `[imdbid-...]`),
+  it will perform a direct lookup when the metadata provider supports it
+  before falling back to normal title lookup.
   """
   @spec match_tv_show(map(), map(), keyword()) :: {:ok, match_result()} | {:error, term()}
   def match_tv_show(%{type: :tv_show} = parsed, config, opts \\ []) do
@@ -286,28 +313,37 @@ defmodule Mydia.Library.MetadataMatcher do
         match_tv_show_by_title(parsed, config, opts)
 
       {:error, reason} ->
-        # External ID lookup failed, fall back to title-based matching
-        Logger.warning("TV show external ID lookup failed, falling back to title search",
+        # Provider tags get first chance, but unsupported providers or bad ids
+        # fall through the explicit lookup order before the normal stock path.
+        Logger.warning(
+          "TV show external ID lookup failed; falling back to title search",
           external_id: Map.get(parsed, :external_id),
           external_provider: Map.get(parsed, :external_provider),
           reason: reason
         )
 
-        match_tv_show_by_title(parsed, config, opts)
+        match_tv_show_with_provider_title_fallbacks(parsed, config, opts)
     end
   end
 
-  # Lookup TV show directly by external provider ID (from folder name like [tvdb-81189])
+  # Lookup TV show directly by external provider ID from any supported provider
+  # tag form. Remote detail lookup is currently backed by the relay for TMDB and
+  # TVDB shows; IMDb detail lookup is parsed but blocked because the relay has
+  # no direct IMDb detail endpoint.
   defp lookup_tv_show_by_external_id(parsed, config, opts) do
-    # Check if we have external ID and provider
-    external_id = Map.get(parsed, :external_id)
-    external_provider = Map.get(parsed, :external_provider)
+    parsed
+    |> provider_lookup_candidates()
+    |> try_direct_lookup_candidates(&lookup_tv_show_direct_candidate(&1, parsed, config, opts))
+  end
 
-    case {external_id, external_provider} do
-      {nil, _} ->
+  defp lookup_tv_show_direct_candidate(candidate, parsed, config, opts) do
+    id = candidate_id(candidate)
+
+    case {id, candidate_provider(candidate)} do
+      {nil, _provider} ->
         {:error, :no_external_id}
 
-      {_, nil} ->
+      {_id, nil} ->
         {:error, :no_external_id}
 
       {id, :tmdb} ->
@@ -316,7 +352,8 @@ defmodule Mydia.Library.MetadataMatcher do
           title: parsed.title
         )
 
-        fetch_opts = Keyword.merge(opts, media_type: :tv_show)
+        # Explicit external provider IDs must override any preferred provider in opts.
+        fetch_opts = Keyword.merge(opts, media_type: :tv_show, provider: :tmdb)
 
         case Metadata.fetch_by_id(config, id, fetch_opts) do
           {:ok, result} ->
@@ -391,16 +428,124 @@ defmodule Mydia.Library.MetadataMatcher do
             {:error, reason}
         end
 
-      {id, provider} ->
-        # Other providers (imdb) - not yet supported for direct lookup
-        Logger.warning("Direct TV show lookup not supported for provider",
-          provider: provider,
-          id: id
-        )
+      {id, :imdb} ->
+        unsupported_direct_lookup(:tv_show, :imdb, id)
 
-        {:error, :unsupported_provider}
+      {id, provider} ->
+        unsupported_direct_lookup(:tv_show, provider, id)
     end
   end
+
+  defp match_tv_show_with_provider_title_fallbacks(parsed, config, opts) do
+    case match_provider_title_candidates(parsed, config, opts, :tv_show) do
+      {:ok, _match} = success -> success
+      {:error, _reason} -> match_tv_show_by_title(parsed, config, opts)
+    end
+  end
+
+  defp unsupported_direct_lookup(media_type, provider, id) do
+    Logger.warning("Direct lookup not supported for provider tag",
+      media_type: media_type,
+      provider: provider,
+      id: id
+    )
+
+    {:error, {:unsupported_direct_lookup, media_type, provider}}
+  end
+
+  defp try_direct_lookup_candidates(candidates, lookup_fun) do
+    candidates
+    |> Enum.filter(&(not is_nil(candidate_provider(&1)) and not is_nil(candidate_id(&1))))
+    |> Enum.reduce_while({:error, :no_external_id}, fn candidate, {:error, _last_reason} ->
+      case lookup_fun.(candidate) do
+        {:ok, _match} = success -> {:halt, success}
+        {:error, reason} -> {:cont, {:error, reason}}
+      end
+    end)
+  end
+
+  defp match_provider_title_candidates(parsed, config, opts, media_type) do
+    parsed
+    |> provider_lookup_candidates()
+    |> Enum.filter(&supported_title_candidate?(media_type, &1))
+    |> Enum.reduce_while({:error, :no_provider_title_candidate}, fn candidate,
+                                                                    {:error, _last_reason} ->
+      provider = title_search_provider(media_type, candidate_provider(candidate))
+      candidate_title = candidate_title(candidate)
+
+      candidate_parsed = %{
+        parsed
+        | title: candidate_title,
+          year: candidate_year(candidate) || Map.get(parsed, :year)
+      }
+
+      candidate_opts = Keyword.put(opts, :provider, provider)
+
+      Logger.info("Trying provider-scoped title fallback",
+        media_type: media_type,
+        source: candidate_source(candidate),
+        provider: provider,
+        title: candidate_title
+      )
+
+      result =
+        case media_type do
+          :movie -> search_external_movie(candidate_parsed, config, candidate_opts)
+          :tv_show -> search_external_tv_show(candidate_parsed, config, candidate_opts)
+        end
+
+      case result do
+        {:ok, _match} = success -> {:halt, success}
+        {:error, reason} -> {:cont, {:error, reason}}
+      end
+    end)
+  end
+
+  defp supported_title_candidate?(media_type, candidate) do
+    provider = candidate_provider(candidate)
+    title = candidate_title(candidate)
+
+    not is_nil(title_search_provider(media_type, provider)) and is_binary(title) and
+      String.trim(title) != ""
+  end
+
+  defp provider_lookup_candidates(parsed) do
+    case Map.get(parsed, :provider_lookup_candidates) do
+      candidates when is_list(candidates) and candidates != [] ->
+        candidates
+
+      _ ->
+        fallback_provider_lookup_candidates(parsed)
+    end
+  end
+
+  defp fallback_provider_lookup_candidates(parsed) do
+    case {Map.get(parsed, :external_provider), Map.get(parsed, :external_id)} do
+      {nil, _id} ->
+        []
+
+      {provider, id} ->
+        [
+          %{
+            source: :parsed,
+            provider: provider,
+            id: id,
+            title: Map.get(parsed, :title),
+            year: Map.get(parsed, :year)
+          }
+        ]
+    end
+  end
+
+  defp candidate_source(candidate), do: Map.get(candidate, :source)
+  defp candidate_provider(candidate), do: Map.get(candidate, :provider)
+  defp candidate_id(candidate), do: Map.get(candidate, :id)
+  defp candidate_title(candidate), do: Map.get(candidate, :title)
+  defp candidate_year(candidate), do: Map.get(candidate, :year)
+
+  defp title_search_provider(:tv_show, provider) when provider in [:tmdb, :tvdb], do: provider
+  defp title_search_provider(:movie, :tmdb), do: :tmdb
+  defp title_search_provider(_media_type, _provider), do: nil
 
   # Match TV show by title (original behavior)
   defp match_tv_show_by_title(parsed, config, opts) do

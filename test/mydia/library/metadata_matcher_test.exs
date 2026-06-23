@@ -1,5 +1,5 @@
 defmodule Mydia.Library.MetadataMatcherTest do
-  use ExUnit.Case, async: true
+  use Mydia.DataCase, async: true
 
   alias Mydia.Library.MetadataMatcher
 
@@ -82,6 +82,84 @@ defmodule Mydia.Library.MetadataMatcherTest do
     end
   end
 
+  describe "match_movie/3 with an explicit provider tag" do
+    setup do
+      bypass = Bypass.open()
+      %{bypass: bypass, config: metadata_relay_config(bypass)}
+    end
+
+    test "matches a movie directly by TMDB id", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+      stub_tmdb_movie(bypass, id, "Tagged Movie", 2020)
+
+      parsed = %{
+        type: :movie,
+        title: "Folder Title",
+        year: 2020,
+        external_id: to_string(id),
+        external_provider: :tmdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_movie(parsed, config, provider: :tvdb)
+      assert match.provider_id == to_string(id)
+      assert match.provider_type == :tmdb
+      assert match.title == "Tagged Movie"
+      assert match.year == 2020
+      assert match.match_type == :direct_id_lookup
+    end
+
+    test "falls back to TMDB title search for unsupported TVDB movie direct lookup",
+         %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+      title = "Tagged Movie #{id}"
+      stub_tmdb_movie_search(bypass, id, title, 2020)
+
+      parsed = %{
+        type: :movie,
+        title: title,
+        year: 2020,
+        external_id: "12345",
+        external_provider: :tvdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_movie(parsed, config, [])
+      assert match.provider_id == to_string(id)
+      assert match.provider_type == :tmdb
+      assert match.title == title
+      refute match.match_type == :direct_id_lookup
+    end
+
+    test "falls back to title search when a direct TMDB movie id is invalid",
+         %{bypass: bypass, config: config} do
+      bad_id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      title = "Bad Tagged Movie #{fallback_id}"
+
+      stub_not_found(bypass, "/tmdb/movies/#{bad_id}")
+      stub_tmdb_movie_search(bypass, fallback_id, title, 2021)
+
+      parsed = %{
+        type: :movie,
+        title: title,
+        year: 2021,
+        external_id: to_string(bad_id),
+        external_provider: :tmdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_movie(parsed, config, [])
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tmdb
+      assert match.title == title
+      refute match.match_type == :direct_id_lookup
+    end
+  end
+
   describe "match_tv_show/3" do
     test "matches TV show with exact title" do
       parsed = %{
@@ -131,6 +209,309 @@ defmodule Mydia.Library.MetadataMatcherTest do
     end
   end
 
+  describe "match_tv_show/3 with an explicit provider tag" do
+    setup do
+      bypass = Bypass.open()
+      %{bypass: bypass, config: metadata_relay_config(bypass)}
+    end
+
+    test "matches a TV show directly by TMDB id", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+      stub_tmdb_show(bypass, id, "Tagged TMDB Show", 2020)
+
+      parsed = %{
+        type: :tv_show,
+        title: "Folder Title",
+        year: 2020,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(id),
+        external_provider: :tmdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tvdb)
+      assert match.provider_id == to_string(id)
+      assert match.provider_type == :tmdb
+      assert match.title == "Tagged TMDB Show"
+      assert match.year == 2020
+      assert match.match_type == :direct_id_lookup
+    end
+
+    test "matches a TV show directly by TVDB id", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+      stub_tvdb_show(bypass, id, "Tagged TVDB Show", 2021)
+
+      parsed = %{
+        type: :tv_show,
+        title: "Folder Title",
+        year: 2021,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(id),
+        external_provider: :tvdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tmdb)
+      assert match.provider_id == to_string(id)
+      assert match.provider_type == :tvdb
+      assert match.title == "Tagged TVDB Show"
+      assert match.year == 2021
+      assert match.match_type == :direct_id_lookup
+    end
+
+    test "falls back to the default TVDB title search when the tagged lookup fails",
+         %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      title = "Tagged Show #{fallback_id}"
+
+      stub_not_found(bypass, "/tvdb/series/#{id}/extended")
+      stub_tvdb_search(bypass, fallback_id, title, 2008)
+
+      parsed = %{
+        type: :tv_show,
+        title: title,
+        year: 2008,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(id),
+        external_provider: :tvdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, [])
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tvdb
+      assert match.title == title
+      assert match.match_type == :full_match
+    end
+
+    test "falls back to TVDB title search for unsupported IMDb TV show direct lookup",
+         %{bypass: bypass, config: config} do
+      fallback_id = System.unique_integer([:positive])
+      title = "Tagged IMDb Show #{fallback_id}"
+      stub_tvdb_search(bypass, fallback_id, title, 2009)
+
+      parsed = %{
+        type: :tv_show,
+        title: title,
+        year: 2009,
+        season: 1,
+        episodes: [1],
+        external_id: "tt1234567",
+        external_provider: :imdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, [])
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tvdb
+      assert match.title == title
+      assert match.match_type == :full_match
+    end
+
+    test "falls back to parsed TVDB title search when a direct TVDB id is invalid",
+         %{bypass: bypass, config: config} do
+      bad_id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      title = "Bad Tagged TV Show #{fallback_id}"
+
+      stub_not_found(bypass, "/tvdb/series/#{bad_id}/extended")
+      stub_tvdb_search(bypass, fallback_id, title, 2010)
+
+      parsed = %{
+        type: :tv_show,
+        title: title,
+        year: 2010,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(bad_id),
+        external_provider: :tvdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tmdb)
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tvdb
+      assert match.title == title
+      assert match.match_type == :full_match
+    end
+
+    test "falls back to parsed TMDB title search when a direct TMDB id is invalid",
+         %{bypass: bypass, config: config} do
+      bad_id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      title = "Bad Tagged TMDB Show #{fallback_id}"
+
+      stub_not_found(bypass, "/tmdb/tv/shows/#{bad_id}")
+      stub_tmdb_show_search(bypass, fallback_id, title, 2011)
+
+      parsed = %{
+        type: :tv_show,
+        title: title,
+        year: 2011,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(bad_id),
+        external_provider: :tmdb,
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tvdb)
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tmdb
+      assert match.title == title
+      assert match.match_type == :full_match
+    end
+
+    test "tries file direct id before folder direct id",
+         %{bypass: bypass, config: config} do
+      bad_file_id = System.unique_integer([:positive])
+      folder_id = System.unique_integer([:positive])
+      folder_title = "Folder Candidate Show #{folder_id}"
+
+      stub_not_found(bypass, "/tmdb/tv/shows/#{bad_file_id}")
+      stub_tvdb_show(bypass, folder_id, folder_title, 2022)
+
+      parsed = %{
+        type: :tv_show,
+        title: folder_title,
+        year: 2022,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(bad_file_id),
+        external_provider: :tmdb,
+        provider_lookup_candidates: [
+          %{
+            source: :file,
+            provider: :tmdb,
+            id: to_string(bad_file_id),
+            title: "File Candidate Show #{bad_file_id}",
+            year: 2020
+          },
+          %{
+            source: :folder,
+            provider: :tvdb,
+            id: to_string(folder_id),
+            title: folder_title,
+            year: 2022
+          }
+        ],
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tmdb)
+      assert match.provider_id == to_string(folder_id)
+      assert match.provider_type == :tvdb
+      assert match.title == folder_title
+      assert match.match_type == :direct_id_lookup
+    end
+
+    test "tries file provider title fallback before folder provider title fallback",
+         %{bypass: bypass, config: config} do
+      bad_file_id = System.unique_integer([:positive])
+      bad_folder_id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      file_title = "File Candidate Title #{fallback_id}"
+      folder_title = "Folder Candidate Title #{bad_folder_id}"
+
+      stub_not_found(bypass, "/tmdb/tv/shows/#{bad_file_id}")
+      stub_not_found(bypass, "/tvdb/series/#{bad_folder_id}/extended")
+      stub_tmdb_show_search(bypass, fallback_id, file_title, 2020)
+
+      parsed = %{
+        type: :tv_show,
+        title: folder_title,
+        year: 2021,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(bad_file_id),
+        external_provider: :tmdb,
+        provider_lookup_candidates: [
+          %{
+            source: :file,
+            provider: :tmdb,
+            id: to_string(bad_file_id),
+            title: file_title,
+            year: 2020
+          },
+          %{
+            source: :folder,
+            provider: :tvdb,
+            id: to_string(bad_folder_id),
+            title: folder_title,
+            year: 2021
+          }
+        ],
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tvdb)
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tmdb
+      assert match.title == file_title
+      assert match.match_type == :full_match
+    end
+
+    test "tries folder provider title fallback after file provider title fallback misses",
+         %{bypass: bypass, config: config} do
+      bad_file_id = System.unique_integer([:positive])
+      bad_folder_id = System.unique_integer([:positive])
+      fallback_id = System.unique_integer([:positive])
+      file_title = "Missing File Candidate #{bad_file_id}"
+      folder_title = "Folder Candidate Title #{fallback_id}"
+
+      stub_not_found(bypass, "/tmdb/tv/shows/#{bad_file_id}")
+      stub_not_found(bypass, "/tvdb/series/#{bad_folder_id}/extended")
+      stub_tmdb_show_search_empty(bypass)
+      stub_tvdb_search(bypass, fallback_id, folder_title, 2021)
+
+      parsed = %{
+        type: :tv_show,
+        title: folder_title,
+        year: 2021,
+        season: 1,
+        episodes: [1],
+        external_id: to_string(bad_file_id),
+        external_provider: :tmdb,
+        provider_lookup_candidates: [
+          %{
+            source: :file,
+            provider: :tmdb,
+            id: to_string(bad_file_id),
+            title: file_title,
+            year: 2020
+          },
+          %{
+            source: :folder,
+            provider: :tvdb,
+            id: to_string(bad_folder_id),
+            title: folder_title,
+            year: 2021
+          }
+        ],
+        quality: %{},
+        confidence: 0.9
+      }
+
+      assert {:ok, match} = MetadataMatcher.match_tv_show(parsed, config, provider: :tmdb)
+      assert match.provider_id == to_string(fallback_id)
+      assert match.provider_type == :tvdb
+      assert match.title == folder_title
+      assert match.match_type == :full_match
+    end
+  end
+
   describe "normalize_search_query/1" do
     test "removes year suffix with separator and everything after" do
       assert MetadataMatcher.normalize_search_query("The.Simpsons.1989-(71663)") == "The Simpsons"
@@ -153,6 +534,12 @@ defmodule Mydia.Library.MetadataMatcherTest do
                "The Simpsons"
 
       assert MetadataMatcher.normalize_search_query("Movie.Name{IMDB-tt1234567}") == "Movie Name"
+
+      assert MetadataMatcher.normalize_search_query("Movie.Name[imdbid-tt1234567]") ==
+               "Movie Name"
+
+      assert MetadataMatcher.normalize_search_query("Movie.Name{IMDBID-tt1234567}") ==
+               "Movie Name"
     end
 
     test "removes TVDB ID annotations" do
@@ -160,11 +547,15 @@ defmodule Mydia.Library.MetadataMatcherTest do
                "The Simpsons"
 
       assert MetadataMatcher.normalize_search_query("Show[TVDBID-12345]") == "Show"
+      assert MetadataMatcher.normalize_search_query("Show{tvdb-12345}") == "Show"
+      assert MetadataMatcher.normalize_search_query("Show[TVDB-12345]") == "Show"
     end
 
     test "removes TMDB ID annotations" do
       assert MetadataMatcher.normalize_search_query("Movie.Name{tmdb-123}") == "Movie Name"
       assert MetadataMatcher.normalize_search_query("Show[tmdbid-456]") == "Show"
+      assert MetadataMatcher.normalize_search_query("Movie.Name[tmdb-123]") == "Movie Name"
+      assert MetadataMatcher.normalize_search_query("Show{TMDBID-456}") == "Show"
     end
 
     test "removes quality indicators and everything after" do
@@ -532,6 +923,155 @@ defmodule Mydia.Library.MetadataMatcherTest do
   # Helper functions to test private logic
   # In a real implementation, these would call the actual private functions
   # or we'd use mocks to test the full public API
+
+  defp metadata_relay_config(bypass) do
+    %{
+      type: :metadata_relay,
+      base_url: "http://localhost:#{bypass.port}",
+      options: %{language: "en-US", include_adult: false}
+    }
+  end
+
+  defp stub_tmdb_movie(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tmdb/movies/#{id}", fn conn ->
+      body =
+        Jason.encode!(%{
+          "id" => id,
+          "title" => title,
+          "release_date" => "#{year}-01-01",
+          "runtime" => 120,
+          "genres" => [],
+          "credits" => %{"cast" => [], "crew" => []},
+          "alternative_titles" => %{"titles" => []},
+          "videos" => %{"results" => []}
+        })
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, body)
+    end)
+  end
+
+  defp stub_tmdb_show(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+      body =
+        Jason.encode!(%{
+          "id" => id,
+          "name" => title,
+          "first_air_date" => "#{year}-01-01",
+          "episode_run_time" => [45],
+          "number_of_seasons" => 1,
+          "number_of_episodes" => 1,
+          "genres" => [],
+          "credits" => %{"cast" => [], "crew" => []},
+          "alternative_titles" => %{"results" => []},
+          "videos" => %{"results" => []},
+          "seasons" => []
+        })
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, body)
+    end)
+  end
+
+  defp stub_tvdb_show(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tvdb/series/#{id}/extended", fn conn ->
+      body =
+        Jason.encode!(%{
+          "data" => %{
+            "id" => id,
+            "name" => title,
+            "firstAired" => "#{year}-01-01",
+            "status" => %{"name" => "Continuing"},
+            "seasons" => [],
+            "episodes" => [],
+            "genres" => [],
+            "translations" => %{}
+          }
+        })
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(200, body)
+    end)
+  end
+
+  defp stub_tmdb_movie_search(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tmdb/movies/search", fn conn ->
+      body =
+        Jason.encode!(%{
+          "results" => [
+            %{
+              "id" => id,
+              "title" => title,
+              "release_date" => "#{year}-01-01",
+              "popularity" => 100.0,
+              "overview" => "Fallback movie result"
+            }
+          ]
+        })
+
+      json_response(conn, body)
+    end)
+  end
+
+  defp stub_tmdb_show_search(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tmdb/tv/search", fn conn ->
+      body =
+        Jason.encode!(%{
+          "results" => [
+            %{
+              "id" => id,
+              "name" => title,
+              "first_air_date" => "#{year}-01-01",
+              "popularity" => 100.0,
+              "overview" => "Fallback TV result"
+            }
+          ]
+        })
+
+      json_response(conn, body)
+    end)
+  end
+
+  defp stub_tmdb_show_search_empty(bypass) do
+    Bypass.stub(bypass, "GET", "/tmdb/tv/search", fn conn ->
+      json_response(conn, Jason.encode!(%{"results" => []}))
+    end)
+  end
+
+  defp stub_tvdb_search(bypass, id, title, year) do
+    Bypass.stub(bypass, "GET", "/tvdb/search", fn conn ->
+      body =
+        Jason.encode!(%{
+          "data" => [
+            %{
+              "tvdb_id" => id,
+              "name" => title,
+              "year" => to_string(year),
+              "overview" => "Fallback TVDB result",
+              "translations" => %{},
+              "overviews" => %{}
+            }
+          ]
+        })
+
+      json_response(conn, body)
+    end)
+  end
+
+  defp stub_not_found(bypass, path) do
+    Bypass.stub(bypass, "GET", path, fn conn ->
+      Plug.Conn.resp(conn, 404, "not found")
+    end)
+  end
+
+  defp json_response(conn, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.resp(200, body)
+  end
 
   defp calculate_test_movie_score(result, parsed) do
     base_score = 0.5

@@ -47,9 +47,16 @@ defmodule Mydia.Metadata.Provider.Relay do
     * `/tmdb/tv/search` - Search TV shows via TMDB
     * `/tmdb/movies/{id}` - Get movie details from TMDB
     * `/tmdb/tv/shows/{id}` - Get TV show details from TMDB
+    * `/tvdb/search` - Search TV shows via TVDB
+    * `/tvdb/series/{id}/extended` - Get TV show details from TVDB
     * `/tmdb/movies/{id}/images` - Get movie images from TMDB
     * `/tmdb/tv/shows/{id}/images` - Get TV show images from TMDB
+    * `/tvdb/series/{id}/extended` - Get TV show images from TVDB artworks
     * `/tmdb/tv/shows/{id}/{season_number}` - Get TV season details from TMDB
+    * `/tvdb/seasons/{id}/extended` - Get TV season details from TVDB
+
+  The current relay API does not expose IMDb detail lookup or TVDB movie detail
+  lookup endpoints.
 
   ## Image URLs
 
