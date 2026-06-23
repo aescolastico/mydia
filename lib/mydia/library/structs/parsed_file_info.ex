@@ -23,9 +23,16 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
     :episodes,
     :quality,
     :release_group,
-    # External provider ID (extracted from folder name like [tmdb-664])
+    # External provider ID extracted from a folder or filename provider tag.
+    # Supported tag forms: {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+    # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+    # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
     :external_id,
     :external_provider,
+    # Ordered explicit-provider lookup candidates. File-level candidates
+    # precede folder-level candidates so lookup can try file id/provider,
+    # then folder id/provider, then provider-scoped title fallbacks.
+    :provider_lookup_candidates,
     # Sample/trailer/extras detection
     # Indicates the file is a sample, trailer, or extra/bonus content
     is_sample: false,
@@ -53,6 +60,13 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
   @type media_type :: :movie | :tv_show | :unknown
 
   @type external_provider :: :tmdb | :tvdb | :imdb | nil
+  @type provider_lookup_candidate :: %{
+          optional(:source) => :file | :folder,
+          optional(:provider) => external_provider(),
+          optional(:id) => String.t() | nil,
+          optional(:title) => String.t() | nil,
+          optional(:year) => integer() | nil
+        }
 
   @type detection_method :: :filename | :folder | :duration | nil
 
@@ -68,6 +82,7 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
           original_filename: String.t(),
           external_id: String.t() | nil,
           external_provider: external_provider(),
+          provider_lookup_candidates: [provider_lookup_candidate()] | nil,
           is_sample: boolean(),
           is_trailer: boolean(),
           is_extra: boolean(),
@@ -98,6 +113,7 @@ defmodule Mydia.Library.Structs.ParsedFileInfo do
       original_filename: original_filename,
       external_id: metadata[:external_id],
       external_provider: metadata[:external_provider],
+      provider_lookup_candidates: metadata[:provider_lookup_candidates],
       is_sample: metadata[:is_sample] || false,
       is_trailer: metadata[:is_trailer] || false,
       is_extra: metadata[:is_extra] || false,

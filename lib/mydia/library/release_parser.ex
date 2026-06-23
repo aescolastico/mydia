@@ -111,18 +111,19 @@ defmodule Mydia.Library.ReleaseParser do
     filename = Path.basename(file_path)
     filename_result = parse(filename, opts)
     tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
+    tv_folder_only_info = PathParser.extract_tv_show_folder_from_path(file_path)
     tv = PathParser.extract_from_path(file_path)
 
     cond do
       tv_folder_info ->
         # If season can't be inferred from folders, keep any season parsed from filename.
         tv_context = tv || %{show_name: tv_folder_info.title, season: filename_result.season}
-        merge_tv_folder(filename_result, filename, file_path, tv_context, tv_folder_info)
+        merge_tv_folder(filename_result, filename, file_path, tv_context, tv_folder_only_info)
 
       tv ->
         merge_tv_folder(filename_result, filename, file_path, tv, nil)
 
-      movie = PathParser.extract_movie_from_path(file_path) ->
+      movie = PathParser.extract_movie_folder_from_path(file_path) ->
         merge_movie_folder(filename_result, filename, file_path, movie)
 
       true ->
@@ -311,6 +312,19 @@ defmodule Mydia.Library.ReleaseParser do
 
     field_confidence = maybe_add_binding_confidence(resolver_result)
 
+    # File-level provider tags embedded in the filename are authoritative and
+    # take precedence over folder-level tags downstream. Supported tag forms:
+    # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+    # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+    # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
+    {external_id, external_provider} =
+      PathParser.extract_external_id_tag(Path.basename(filename))
+
+    provider_lookup_candidates =
+      build_provider_lookup_candidates(
+        provider_lookup_candidate(:file, external_provider, external_id, title, year)
+      )
+
     %ParsedFileInfo{
       type: type,
       title: title,
@@ -321,6 +335,9 @@ defmodule Mydia.Library.ReleaseParser do
       release_group: release_group,
       confidence: confidence,
       original_filename: filename,
+      external_id: external_id,
+      external_provider: external_provider,
+      provider_lookup_candidates: provider_lookup_candidates,
       field_confidence: nilify(field_confidence),
       engine_flags: resolver_result.engine_flags
     }
@@ -399,14 +416,55 @@ defmodule Mydia.Library.ReleaseParser do
   defp maybe_merge_folder_context(result, nil), do: result
 
   defp maybe_merge_folder_context(%ParsedFileInfo{} = result, %{} = context) do
+    provider_lookup_candidates =
+      build_provider_lookup_candidates([
+        provider_lookup_candidate(
+          :file,
+          result.external_provider,
+          result.external_id,
+          result.title,
+          result.year
+        ),
+        provider_lookup_candidate(
+          :folder,
+          context[:external_provider],
+          context[:external_id],
+          context[:title],
+          context[:year]
+        )
+      ])
+
     %ParsedFileInfo{
       result
       | title: context[:title] || result.title,
         year: context[:year] || result.year,
         season: context[:season] || result.season,
-        external_id: context[:external_id] || result.external_id,
-        external_provider: context[:external_provider] || result.external_provider
+        external_id: result.external_id || context[:external_id],
+        external_provider: result.external_provider || context[:external_provider],
+        provider_lookup_candidates: provider_lookup_candidates
     }
+  end
+
+  defp provider_lookup_candidate(_source, nil, _id, _title, _year), do: nil
+
+  defp provider_lookup_candidate(source, provider, id, title, year) do
+    %{
+      source: source,
+      provider: provider,
+      id: id,
+      title: title,
+      year: year
+    }
+  end
+
+  defp build_provider_lookup_candidates(candidate_or_candidates) do
+    candidate_or_candidates
+    |> List.wrap()
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> nil
+      candidates -> candidates
+    end
   end
 
   # ---- parse_with_path/2 helpers ----
@@ -414,8 +472,40 @@ defmodule Mydia.Library.ReleaseParser do
   defp merge_tv_folder(filename_result, filename, file_path, tv, tv_folder_info) do
     folder_title = if tv_folder_info, do: tv_folder_info.title, else: tv.show_name
     folder_year = if tv_folder_info, do: tv_folder_info.year, else: nil
-    external_id = if tv_folder_info, do: tv_folder_info.external_id, else: nil
-    external_provider = if tv_folder_info, do: tv_folder_info.external_provider, else: nil
+
+    # Precedence: file-level tag (parsed from the filename) wins over the
+    # folder-level tag. The id and provider are kept together as an atomic
+    # pair from whichever level supplied the tag, so a file tag can switch
+    # both the show and the provider away from the folder tag.
+    {external_id, external_provider} =
+      cond do
+        filename_result.external_id != nil ->
+          {filename_result.external_id, filename_result.external_provider}
+
+        tv_folder_info != nil and tv_folder_info.external_id != nil ->
+          {tv_folder_info.external_id, tv_folder_info.external_provider}
+
+        true ->
+          {nil, nil}
+      end
+
+    provider_lookup_candidates =
+      build_provider_lookup_candidates([
+        provider_lookup_candidate(
+          :file,
+          filename_result.external_provider,
+          filename_result.external_id,
+          filename_result.title,
+          filename_result.year
+        ),
+        provider_lookup_candidate(
+          :folder,
+          if(tv_folder_info, do: tv_folder_info.external_provider),
+          if(tv_folder_info, do: tv_folder_info.external_id),
+          folder_title,
+          folder_year
+        )
+      ])
 
     base_confidence =
       folder_enhanced_tv_confidence(filename_result, folder_title, tv.season)
@@ -439,6 +529,7 @@ defmodule Mydia.Library.ReleaseParser do
       original_filename: filename,
       external_id: external_id,
       external_provider: external_provider,
+      provider_lookup_candidates: provider_lookup_candidates,
       field_confidence: filename_result.field_confidence,
       engine_flags: filename_result.engine_flags
     }
@@ -447,6 +538,38 @@ defmodule Mydia.Library.ReleaseParser do
 
   defp merge_movie_folder(filename_result, filename, file_path, movie_info) do
     confidence = movie_folder_confidence(movie_info, filename_result)
+
+    # Precedence: file-level tag wins over the folder-level tag (kept as an
+    # atomic id/provider pair from whichever level supplied it).
+    {external_id, external_provider} =
+      cond do
+        filename_result.external_id != nil ->
+          {filename_result.external_id, filename_result.external_provider}
+
+        movie_info.external_id != nil ->
+          {movie_info.external_id, movie_info.external_provider}
+
+        true ->
+          {nil, nil}
+      end
+
+    provider_lookup_candidates =
+      build_provider_lookup_candidates([
+        provider_lookup_candidate(
+          :file,
+          filename_result.external_provider,
+          filename_result.external_id,
+          filename_result.title,
+          filename_result.year
+        ),
+        provider_lookup_candidate(
+          :folder,
+          movie_info.external_provider,
+          movie_info.external_id,
+          movie_info.title,
+          movie_info.year
+        )
+      ])
 
     %ParsedFileInfo{
       type: :movie,
@@ -458,8 +581,9 @@ defmodule Mydia.Library.ReleaseParser do
       release_group: filename_result.release_group,
       confidence: confidence,
       original_filename: filename,
-      external_id: movie_info.external_id,
-      external_provider: movie_info.external_provider,
+      external_id: external_id,
+      external_provider: external_provider,
+      provider_lookup_candidates: provider_lookup_candidates,
       field_confidence: filename_result.field_confidence,
       engine_flags: filename_result.engine_flags
     }

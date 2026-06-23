@@ -166,15 +166,15 @@ defmodule Mydia.Library.PathParserTest do
       assert PathParser.is_tv_path?(nil) == false
     end
 
-    test "returns true for season-folderless TV path" do
+    test "returns true for season-folderless TV path with show metadata folder" do
       assert PathParser.is_tv_path?(
-               "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+               "/media/library/tv/Blades of the Guardians (2023) {tmdb-107463}/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
              ) == true
     end
 
     test "returns false for season-folderless movie path" do
       assert PathParser.is_tv_path?(
-               "/media/library/movies/Twister (1996)/Twister.1996.1080p.BluRay.x264.mkv"
+               "/media/library/movies/Twister (1996) [tmdb-664]/Twister.1996.1080p.BluRay.x264.mkv"
              ) == false
     end
   end
@@ -278,6 +278,26 @@ defmodule Mydia.Library.PathParserTest do
              }
     end
 
+    test "parses movie folder provider tag aliases" do
+      cases = [
+        {"Movie A (2020) [tmdbid-100]", "Movie A", "100", :tmdb},
+        {"Movie B (2020) {tmdb-101}", "Movie B", "101", :tmdb},
+        {"Movie C (2020) [tvdbid-200]", "Movie C", "200", :tvdb},
+        {"Movie D (2020) {tvdb-201}", "Movie D", "201", :tvdb},
+        {"Movie E (2020) [imdbid-tt300]", "Movie E", "tt300", :imdb},
+        {"Movie F (2020) {imdb-tt301}", "Movie F", "tt301", :imdb}
+      ]
+
+      for {folder, title, external_id, external_provider} <- cases do
+        assert PathParser.parse_movie_folder(folder) == %{
+                 title: title,
+                 year: 2020,
+                 external_id: external_id,
+                 external_provider: external_provider
+               }
+      end
+    end
+
     test "handles case-insensitive provider names" do
       result = PathParser.parse_movie_folder("Movie (2020) [TMDB-123]")
 
@@ -367,6 +387,34 @@ defmodule Mydia.Library.PathParserTest do
              }
     end
 
+    test "extracts movie external provider ID from filename when folder has none" do
+      result =
+        PathParser.extract_movie_from_path(
+          "/media/movies/Twister (1996)/Twister.1996.{tmdb-664}.1080p.BluRay.mkv"
+        )
+
+      assert result == %{
+               title: "Twister",
+               year: 1996,
+               external_id: "664",
+               external_provider: :tmdb
+             }
+    end
+
+    test "prioritizes filename external provider ID over folder ID for movie paths" do
+      result =
+        PathParser.extract_movie_from_path(
+          "/media/movies/Twister (1996) [tmdb-664]/Twister.1996.{imdbid-tt1745960}.mkv"
+        )
+
+      assert result == %{
+               title: "Twister",
+               year: 1996,
+               external_id: "tt1745960",
+               external_provider: :imdb
+             }
+    end
+
     test "returns nil for file not in movie folder structure" do
       result = PathParser.extract_movie_from_path("/downloads/random_movie.mkv")
 
@@ -441,6 +489,26 @@ defmodule Mydia.Library.PathParserTest do
              }
     end
 
+    test "parses TV show folder provider tag aliases" do
+      cases = [
+        {"Show A (2020) [tmdbid-100]", "Show A", "100", :tmdb},
+        {"Show B (2020) {tmdb-101}", "Show B", "101", :tmdb},
+        {"Show C (2020) [tvdbid-200]", "Show C", "200", :tvdb},
+        {"Show D (2020) {tvdb-201}", "Show D", "201", :tvdb},
+        {"Show E (2020) [imdbid-tt300]", "Show E", "tt300", :imdb},
+        {"Show F (2020) {imdb-tt301}", "Show F", "tt301", :imdb}
+      ]
+
+      for {folder, title, external_id, external_provider} <- cases do
+        assert PathParser.parse_tv_show_folder(folder) == %{
+                 title: title,
+                 year: 2020,
+                 external_id: external_id,
+                 external_provider: external_provider
+               }
+      end
+    end
+
     test "handles case-insensitive provider names" do
       result = PathParser.parse_tv_show_folder("Show Name [TVDB-12345]")
 
@@ -449,6 +517,17 @@ defmodule Mydia.Library.PathParserTest do
                year: nil,
                external_id: "12345",
                external_provider: :tvdb
+             }
+    end
+
+    test "parses TV show folder with brace-wrapped tmdb suffix" do
+      result = PathParser.parse_tv_show_folder("Blades of the Guardians (2023) {tmdb-107463}")
+
+      assert result == %{
+               title: "Blades of the Guardians",
+               year: 2023,
+               external_id: "107463",
+               external_provider: :tmdb
              }
     end
 
@@ -466,6 +545,27 @@ defmodule Mydia.Library.PathParserTest do
 
     test "returns nil for nil input" do
       assert PathParser.parse_tv_show_folder(nil) == nil
+    end
+  end
+
+  describe "extract_external_id_tag/1" do
+    test "extracts provider tag aliases from filenames" do
+      cases = [
+        {"Show.S01E01.[tmdbid-100].mkv", {"100", :tmdb}},
+        {"Show.S01E01.{tmdb-101}.mkv", {"101", :tmdb}},
+        {"Show.S01E01.[tvdbid-200].mkv", {"200", :tvdb}},
+        {"Show.S01E01.{tvdb-201}.mkv", {"201", :tvdb}},
+        {"Movie.[imdbid-tt300].mkv", {"tt300", :imdb}},
+        {"Movie.{imdb-tt301}.mkv", {"tt301", :imdb}}
+      ]
+
+      for {filename, expected} <- cases do
+        assert PathParser.extract_external_id_tag(filename) == expected
+      end
+    end
+
+    test "returns nil tuple when no provider tag exists" do
+      assert PathParser.extract_external_id_tag("Show.S01E01.mkv") == {nil, nil}
     end
   end
 
@@ -522,6 +622,34 @@ defmodule Mydia.Library.PathParserTest do
              }
     end
 
+    test "extracts TV show external provider ID from filename when folder has none" do
+      result =
+        PathParser.extract_tv_show_from_path(
+          "/media/tv/Bluey (2018)/Season 03/Bluey.S03E01.{tmdb-82728}.mkv"
+        )
+
+      assert result == %{
+               title: "Bluey",
+               year: 2018,
+               external_id: "82728",
+               external_provider: :tmdb
+             }
+    end
+
+    test "prioritizes filename external provider ID over folder ID for TV paths" do
+      result =
+        PathParser.extract_tv_show_from_path(
+          "/media/tv/The Office (2005) [tmdb-2316]/Season 02/The.Office.S02E01.{tvdbid-73244}.mkv"
+        )
+
+      assert result == %{
+               title: "The Office",
+               year: 2005,
+               external_id: "73244",
+               external_provider: :tvdb
+             }
+    end
+
     test "handles deep path structure with TV show metadata" do
       result =
         PathParser.extract_tv_show_from_path(
@@ -562,17 +690,17 @@ defmodule Mydia.Library.PathParserTest do
              }
     end
 
-    test "extracts TV show metadata from a show root folder" do
+    test "extracts TV show metadata from brace-wrapped tmdb path" do
       result =
         PathParser.extract_tv_show_from_path(
-          "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E03.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+          "/media/library/tv/Blades of the Guardians (2023) {tmdb-107463}/Blades.of.the.Guardians.S01E03.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
         )
 
       assert result == %{
                title: "Blades of the Guardians",
                year: 2023,
-               external_id: nil,
-               external_provider: nil
+               external_id: "107463",
+               external_provider: :tmdb
              }
     end
 

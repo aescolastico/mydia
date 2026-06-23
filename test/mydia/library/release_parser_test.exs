@@ -215,19 +215,69 @@ defmodule Mydia.Library.ReleaseParserTest do
       assert result.year == 2020
     end
 
-    test "TV show root folder without season folder is still classified as tv_show" do
+    test "TV folder with tmdb and no season folder is still classified as tv_show" do
       result =
         ReleaseParser.parse_with_path(
-          "/media/library/tv/Blades of the Guardians (2023)/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
+          "/media/library/tv/Blades of the Guardians (2023) {tmdb-107463}/Blades.of.the.Guardians.S01E08.2023.1080p.BluRay.x264.FLAC.2.0-ADE.mkv"
         )
 
       assert result.type == :tv_show
       assert result.title == "Blades of the Guardians"
       assert result.year == 2023
-      assert result.external_id == nil
-      assert result.external_provider == nil
+      assert result.external_id == "107463"
+      assert result.external_provider == :tmdb
       assert result.season == 1
       assert result.episodes == [8]
+    end
+
+    test "file-level tag overrides folder-level tag (id and provider together)" do
+      result =
+        ReleaseParser.parse_with_path(
+          "/media/tv/Severance (2022) {tvdbid-371980}/Season 1/Severance.S01E03.{tmdb-95396}.mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.external_id == "95396"
+      assert result.external_provider == :tmdb
+
+      assert Enum.map(result.provider_lookup_candidates, &Map.take(&1, [:source, :provider, :id])) ==
+               [
+                 %{source: :file, provider: :tmdb, id: "95396"},
+                 %{source: :folder, provider: :tvdb, id: "371980"}
+               ]
+    end
+
+    test "falls back to folder-level tag when the filename has no tag" do
+      result =
+        ReleaseParser.parse_with_path(
+          "/media/tv/Severance (2022) {tvdbid-371980}/Season 1/Severance.S01E03.mkv"
+        )
+
+      assert result.type == :tv_show
+      assert result.external_id == "371980"
+      assert result.external_provider == :tvdb
+
+      assert Enum.map(result.provider_lookup_candidates, &Map.take(&1, [:source, :provider, :id])) ==
+               [
+                 %{source: :folder, provider: :tvdb, id: "371980"}
+               ]
+    end
+
+    test "movie file-level tag overrides folder-level tag" do
+      result =
+        ReleaseParser.parse_with_path(
+          "/media/movies/Twister (1996) [tvdbid-1234]/Twister.1996.1080p.{tmdb-664}.mkv"
+        )
+
+      assert result.type == :movie
+      assert result.external_id == "664"
+      assert result.external_provider == :tmdb
+
+      assert Enum.map(result.provider_lookup_candidates, &Map.take(&1, [:source, :provider, :id])) ==
+               [
+                 %{source: :file, provider: :tmdb, id: "664"},
+                 %{source: :folder, provider: :tvdb, id: "1234"}
+               ]
     end
   end
 end

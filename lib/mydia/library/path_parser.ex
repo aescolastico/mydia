@@ -32,8 +32,13 @@ defmodule Mydia.Library.PathParser do
 
   ## Movies
 
-  For files in structured movie library paths like `/media/movies/{Movie Title (Year) [tmdb-ID]}/`,
-  folder names are parsed to extract title, year, and external provider IDs.
+  For files in structured movie library paths, folder names are parsed to
+  extract title, year, and external provider IDs.
+
+  Supported provider tag forms are:
+  `{tmdb-...}`, `{tmdbid-...}`, `[tmdb-...]`, `[tmdbid-...]`,
+  `{tvdb-...}`, `{tvdbid-...}`, `[tvdb-...]`, `[tvdbid-...]`,
+  `{imdb-...}`, `{imdbid-...}`, `[imdb-...]`, `[imdbid-...]`.
 
   ### Movie Folder Patterns Recognized
 
@@ -150,17 +155,27 @@ defmodule Mydia.Library.PathParser do
 
   def parse_season_folder(_), do: :error
 
-  # Movie folder pattern: "Movie Title (Year) [provider-id]" or just "Movie Title (Year)"
+  # Movie folder pattern: "Movie Title (Year) [provider-id]" or
+  # "Movie Title (Year) {provider-id}", or just "Movie Title (Year)".
+  # Supported provider tag forms:
+  # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+  # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
   # Captures: 1=title, 2=year (optional), 3=provider (optional), 4=id (optional)
   # Examples:
   #   "Twister (1996)" -> title="Twister", year=1996
   #   "Twister (1996) [tmdb-664]" -> title="Twister", year=1996, provider=tmdb, id=664
   #   "The Matrix [tmdb-603]" -> title="The Matrix", provider=tmdb, id=603
   defp movie_folder_pattern do
-    ~r/^(.+?)\s*(?:\((\d{4})\))?\s*(?:\[(tmdb|tvdb|imdb)-([^\]]+)\])?\s*$/i
+    ~r/^(.+?)\s*(?:\((\d{4})\))?\s*(?:[\[{](tmdb|tmdbid|tvdb|tvdbid|imdb|imdbid)-([^\]}]+)[\]}])?\s*$/i
   end
 
-  # TV show folder pattern: "Show Name (Year) [provider-id]" or just "Show Name [provider-id]"
+  # TV show folder pattern: "Show Name (Year) [provider-id]",
+  # "Show Name (Year) {provider-id}", or just "Show Name [provider-id]".
+  # Supported provider tag forms:
+  # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+  # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
   # This pattern is the same as movie_folder_pattern but is used in a TV context
   # Captures: 1=title, 2=year (optional), 3=provider (optional), 4=id (optional)
   # Examples:
@@ -168,7 +183,7 @@ defmodule Mydia.Library.PathParser do
   #   "The Office (2005) [tmdb-2316]" -> title="The Office", year=2005, provider=tmdb, id=2316
   #   "Bluey (2018)" -> title="Bluey", year=2018
   defp tv_show_folder_pattern do
-    ~r/^(.+?)\s*(?:\((\d{4})\))?\s*(?:\[(tmdb|tvdb|imdb)-([^\]]+)\])?\s*$/i
+    ~r/^(.+?)\s*(?:\((\d{4})\))?\s*(?:[\[{](tmdb|tmdbid|tvdb|tvdbid|imdb|imdbid)-([^\]}]+)[\]}])?\s*$/i
   end
 
   @doc """
@@ -273,6 +288,46 @@ defmodule Mydia.Library.PathParser do
 
   def parse_tv_show_folder(_), do: nil
 
+  # Matches an explicit provider-ID tag anywhere within a string, such as a
+  # filename like `Show.S01E01.{tmdb-1234}.mkv` or `Movie [tmdbid-664].mkv`.
+  # Supported provider tag forms:
+  # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+  # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
+  @external_id_tag_re ~r/[\[{](tmdb|tmdbid|tvdb|tvdbid|imdb|imdbid)-([^\]}\s]+)[\]}]/i
+
+  @doc """
+  Extracts an explicit provider-ID tag from anywhere within a string
+  (typically a filename), returning `{external_id, external_provider}`.
+
+  Unlike `parse_movie_folder/1` and `parse_tv_show_folder/1`, which require the
+  tag to terminate a clean `Title (Year) [tag]` folder name, this scans for the
+  tag anywhere in the string so it works on release-style filenames.
+
+  Returns `{nil, nil}` when no recognized tag is present.
+
+  ## Examples
+
+      iex> PathParser.extract_external_id_tag("Severance.S01E01.{tmdb-95396}.mkv")
+      {"95396", :tmdb}
+
+      iex> PathParser.extract_external_id_tag("Some.Show.S01E01.mkv")
+      {nil, nil}
+  """
+  @spec extract_external_id_tag(String.t()) :: {String.t() | nil, atom() | nil}
+  def extract_external_id_tag(name) when is_binary(name) do
+    case Regex.run(@external_id_tag_re, name) do
+      [_full, provider_str, id_str] ->
+        {provider, id} = parse_provider_id(provider_str, id_str)
+        {id, provider}
+
+      _ ->
+        {nil, nil}
+    end
+  end
+
+  def extract_external_id_tag(_), do: {nil, nil}
+
   # Extract year, provider, and id from regex captures
   defp extract_movie_folder_parts([]), do: {nil, nil, nil}
 
@@ -311,8 +366,11 @@ defmodule Mydia.Library.PathParser do
     provider =
       case String.downcase(provider_str) do
         "tmdb" -> :tmdb
+        "tmdbid" -> :tmdb
         "tvdb" -> :tvdb
+        "tvdbid" -> :tvdb
         "imdb" -> :imdb
+        "imdbid" -> :imdb
         _ -> nil
       end
 
@@ -325,8 +383,11 @@ defmodule Mydia.Library.PathParser do
   defp parse_provider(provider_str) do
     case String.downcase(provider_str) do
       "tmdb" -> :tmdb
+      "tmdbid" -> :tmdb
       "tvdb" -> :tvdb
+      "tvdbid" -> :tvdb
       "imdb" -> :imdb
+      "imdbid" -> :imdb
       _ -> nil
     end
   end
@@ -347,11 +408,11 @@ defmodule Mydia.Library.PathParser do
   """
   @spec extract_movie_from_path(String.t()) :: map() | nil
   def extract_movie_from_path(path) when is_binary(path) do
-    # Get the parent folder of the file
-    parent_folder = path |> Path.dirname() |> Path.basename()
-
-    case parse_movie_folder(parent_folder) do
+    case extract_movie_folder_from_path(path) do
       %{} = result ->
+        parent_folder = path |> Path.dirname() |> Path.basename()
+        result = apply_filename_external_id(result, path)
+
         Logger.debug("Extracted movie metadata from folder",
           path: path,
           folder: parent_folder,
@@ -371,10 +432,28 @@ defmodule Mydia.Library.PathParser do
   def extract_movie_from_path(_), do: nil
 
   @doc """
+  Extracts movie metadata from the parent folder only.
+
+  This intentionally ignores filename-level provider tags so callers that need
+  ordered file-vs-folder lookup candidates can keep both signals separate.
+  """
+  @spec extract_movie_folder_from_path(String.t()) :: map() | nil
+  def extract_movie_folder_from_path(path) when is_binary(path) do
+    parent_folder = path |> Path.dirname() |> Path.basename()
+    parse_movie_folder(parent_folder)
+  end
+
+  def extract_movie_folder_from_path(_), do: nil
+
+  @doc """
   Extracts TV show metadata from a file path by examining the show folder.
 
   Looks at the show folder (parent of season folder) to extract external provider IDs.
-  This is used to enhance TV show matching when folder names contain [tvdb-123] or similar.
+  This is used to enhance TV show matching when folder names contain any
+  supported provider tag form:
+  `{tmdb-...}`, `{tmdbid-...}`, `[tmdb-...]`, `[tmdbid-...]`,
+  `{tvdb-...}`, `{tvdbid-...}`, `[tvdb-...]`, `[tvdbid-...]`,
+  `{imdb-...}`, `{imdbid-...}`, `[imdb-...]`, `[imdbid-...]`.
 
   Returns a map with `:title`, `:year`, `:external_id`, and `:external_provider` keys
   if a TV show folder with metadata is found, or nil otherwise.
@@ -395,6 +474,35 @@ defmodule Mydia.Library.PathParser do
   """
   @spec extract_tv_show_from_path(String.t()) :: map() | nil
   def extract_tv_show_from_path(path) when is_binary(path) do
+    case extract_tv_show_folder_from_path(path) do
+      %{} = result ->
+        result = apply_filename_external_id(result, path)
+
+        Logger.debug("Extracted TV show metadata from folder",
+          path: path,
+          title: result.title,
+          year: result.year,
+          external_id: result.external_id,
+          external_provider: result.external_provider
+        )
+
+        result
+
+      nil ->
+        nil
+    end
+  end
+
+  def extract_tv_show_from_path(_), do: nil
+
+  @doc """
+  Extracts TV show metadata from the show folder only.
+
+  This intentionally ignores filename-level provider tags so callers that need
+  ordered file-vs-folder lookup candidates can keep both signals separate.
+  """
+  @spec extract_tv_show_folder_from_path(String.t()) :: map() | nil
+  def extract_tv_show_folder_from_path(path) when is_binary(path) do
     # Split path into segments
     segments = path |> Path.split() |> Enum.reject(&(&1 == "/" || &1 == ""))
 
@@ -427,15 +535,12 @@ defmodule Mydia.Library.PathParser do
           end
 
         :error ->
-          case maybe_extract_tv_show_from_parent(dir_segments) do
-            %{} = result -> result
-            nil -> nil
-          end
+          maybe_extract_tv_show_from_parent(dir_segments)
       end
     end
   end
 
-  def extract_tv_show_from_path(_), do: nil
+  def extract_tv_show_folder_from_path(_), do: nil
 
   # Finds the show folder by looking for the folder before the season folder
   defp find_show_folder(dir_segments) do
@@ -466,7 +571,11 @@ defmodule Mydia.Library.PathParser do
   end
 
   # Fallback for TV paths where media files are directly under the show folder
-  # (no season subfolder), e.g. /media/tv/Show Name (2023)/episode.mkv
+  # (no season subfolder), e.g. /media/tv/Show Name (2023) {tmdb-123}/episode.mkv.
+  # The show folder may use any supported provider tag form:
+  # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+  # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
   defp maybe_extract_tv_show_from_parent(dir_segments) do
     case Enum.at(dir_segments, -1) do
       parent_folder when is_binary(parent_folder) ->
@@ -487,6 +596,32 @@ defmodule Mydia.Library.PathParser do
     Enum.any?(dir_segments, fn segment ->
       String.downcase(segment) in tv_indicators
     end)
+  end
+
+  defp filename_external_id_pattern do
+    ~r/[\[{](tmdb|tmdbid|tvdb|tvdbid|imdb|imdbid)-([^\]}]+)[\]}]/i
+  end
+
+  defp extract_external_id_from_filename(path) when is_binary(path) do
+    filename = path |> Path.basename() |> Path.rootname()
+
+    case Regex.run(filename_external_id_pattern(), filename) do
+      [_full, provider_str, id_str] ->
+        parse_provider_id(provider_str, id_str)
+
+      _ ->
+        {nil, nil}
+    end
+  end
+
+  defp apply_filename_external_id(result, path) when is_map(result) and is_binary(path) do
+    case extract_external_id_from_filename(path) do
+      {provider, id} when not is_nil(provider) and not is_nil(id) ->
+        %{result | external_provider: provider, external_id: id}
+
+      _ ->
+        result
+    end
   end
 
   @doc """
