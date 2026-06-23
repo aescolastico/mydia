@@ -37,7 +37,13 @@ defmodule Mydia.Config.LoaderTest do
         "TV_PATH",
         "METADATA_LANGUAGE",
         "LOG_LEVEL",
-        "OBAN_POLL_INTERVAL"
+        "OBAN_POLL_INTERVAL",
+        "NAMING_SEASON_FOLDERS",
+        "NAMING_SEASON_FOLDER",
+        "NAMING_MOVIE_FOLDER",
+        "NAMING_TV_FOLDER",
+        "NAMING_MOVIE_FILE",
+        "NAMING_EPISODE_FILE"
       ] ++ download_client_vars
 
     # Store original values
@@ -232,6 +238,100 @@ defmodule Mydia.Config.LoaderTest do
       System.put_env("METADATA_LANGUAGE", "pt-BR")
       {:ok, config} = Loader.load(config_file: "nonexistent.yml")
       assert config.metadata.language == "pt-BR"
+    end
+
+    test "naming config loads defaults" do
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+
+      assert config.naming.season_folders == true
+      assert config.naming.season_folder == "Season {{season}}"
+      assert config.naming.movie_folder == "{{title}} ({{year}})"
+      assert config.naming.tv_folder == "{{title}}"
+    end
+
+    test "naming config: database overrides defaults, env overrides database" do
+      {:ok, _setting} =
+        Mydia.Settings.create_config_setting(%{
+          key: "naming.movie_folder",
+          value: "{{title}} [{{year}}]",
+          category: :naming
+        })
+
+      {:ok, _setting} =
+        Mydia.Settings.create_config_setting(%{
+          key: "naming.season_folders",
+          value: "false",
+          category: :naming
+        })
+
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+      assert config.naming.movie_folder == "{{title}} [{{year}}]"
+      assert config.naming.season_folders == false
+      # untouched key keeps its default
+      assert config.naming.tv_folder == "{{title}}"
+
+      System.put_env("NAMING_MOVIE_FOLDER", "{{title}}")
+      System.put_env("NAMING_SEASON_FOLDERS", "true")
+
+      {:ok, config} = Loader.load(config_file: "nonexistent.yml")
+      assert config.naming.movie_folder == "{{title}}"
+      assert config.naming.season_folders == true
+    end
+
+    test "naming config: reload/0 reflects saved settings in runtime config" do
+      original = Application.get_env(:mydia, :runtime_config)
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :runtime_config, original)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
+      end)
+
+      for {key, value} <- [
+            {"naming.season_folders", "false"},
+            {"naming.season_folder", "Season {{season}}"},
+            {"naming.movie_folder", "{{title}} ({{year}}) {{{tmdb}}}"},
+            {"naming.tv_folder", "{{title}}"},
+            {"naming.movie_file", "{{title}} ({{year}})"},
+            {"naming.episode_file", "{{title}} - {{sxxeyy}}"}
+          ] do
+        {:ok, _} =
+          Mydia.Settings.create_config_setting(%{key: key, value: value, category: :naming})
+      end
+
+      assert {:ok, _config} = Loader.reload(config_file: "nonexistent.yml")
+
+      naming = Mydia.Settings.RuntimeConfig.get_naming_config()
+      assert naming.season_folders == false
+      assert naming.movie_folder == "{{title}} ({{year}}) {{{tmdb}}}"
+      assert naming.movie_file == "{{title}} ({{year}})"
+    end
+
+    test "naming config: blank template falls back to default instead of failing" do
+      original = Application.get_env(:mydia, :runtime_config)
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:mydia, :runtime_config, original)
+        else
+          Application.delete_env(:mydia, :runtime_config)
+        end
+      end)
+
+      # Simulates the corrupted state where a required template was saved blank.
+      {:ok, _} =
+        Mydia.Settings.create_config_setting(%{
+          key: "naming.season_folder",
+          value: "",
+          category: :naming
+        })
+
+      assert {:ok, _config} = Loader.reload(config_file: "nonexistent.yml")
+
+      naming = Mydia.Settings.RuntimeConfig.get_naming_config()
+      assert naming.season_folder == "Season {{season}}"
     end
 
     test "returns error for invalid configuration" do

@@ -61,6 +61,13 @@ defmodule MydiaWeb.AdminComponents do
         Library
       </.tab_link>
       <.tab_link
+        active={@active_tab == :file_management}
+        to="/admin/config/file-management"
+        icon="hero-document-text"
+      >
+        Files
+      </.tab_link>
+      <.tab_link
         active={@active_tab == :media_servers}
         to="/admin/config/media-servers"
         icon="hero-server-stack"

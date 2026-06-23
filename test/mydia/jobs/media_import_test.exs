@@ -1413,4 +1413,204 @@ defmodule Mydia.Jobs.MediaImportTest do
              "refresh_episodes_for_tv_show should be invoked at most once per import job; got #{refresh_attempts} attempts across 5 unresolved files"
     end
   end
+
+  # Regression: the targeted-import branch (resolved file mappings) used to
+  # hardcode a "Season NN" subfolder, ignoring the user's `season_folders`
+  # naming setting. Files moved from downloads into the library respected the
+  # file-name and folder-name templates but not the "no season folder" toggle.
+  describe "targeted import honors the season_folders naming setting" do
+    @tag :tmp_dir
+    test "omits the season subfolder when season_folders is disabled",
+         %{tmp_dir: tmp_dir} do
+      put_naming(%{season_folders: false})
+
+      {_media_item, episode, download, file_path} =
+        seed_targeted_tv_import(tmp_dir, "NoSeasonFolderClient", "no-season-folder-1")
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "target_files" => [%{"path" => file_path, "episode_id" => episode.id}]
+               })
+
+      media_file =
+        Library.list_media_files()
+        |> Enum.find(&(&1.episode_id == episode.id))
+
+      assert media_file, "expected a media_file to be created for the targeted episode"
+
+      refute media_file.relative_path =~ ~r{Season }i,
+             "did not expect a season folder, got: #{media_file.relative_path}"
+    end
+
+    @tag :tmp_dir
+    test "keeps the season subfolder when season_folders is enabled",
+         %{tmp_dir: tmp_dir} do
+      put_naming(%{season_folders: true})
+
+      {_media_item, episode, download, file_path} =
+        seed_targeted_tv_import(tmp_dir, "SeasonFolderClient", "season-folder-1")
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "target_files" => [%{"path" => file_path, "episode_id" => episode.id}]
+               })
+
+      media_file =
+        Library.list_media_files()
+        |> Enum.find(&(&1.episode_id == episode.id))
+
+      assert media_file, "expected a media_file to be created for the targeted episode"
+
+      assert media_file.relative_path =~ "Season 01",
+             "expected a Season 01 folder, got: #{media_file.relative_path}"
+    end
+  end
+
+  # Regression: the normal (non-targeted) import path in `import_file/5` also
+  # hardcoded a "Season NN" subfolder for both the season-pack and parsed-episode
+  # branches. This is the path most real downloads take, so the "no season
+  # folder" setting was still ignored after the targeted-path fix.
+  describe "normal import honors the season_folders naming setting" do
+    @tag :tmp_dir
+    test "omits the season subfolder when season_folders is disabled",
+         %{tmp_dir: tmp_dir} do
+      put_naming(%{season_folders: false})
+
+      {_media_item, episode, download, _file_path, download_dir} =
+        seed_normal_tv_import(tmp_dir, "NoSeasonNormalClient", "no-season-normal-1")
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      media_file =
+        Library.list_media_files()
+        |> Enum.find(&(&1.episode_id == episode.id))
+
+      assert media_file, "expected a media_file to be created for the episode"
+
+      refute media_file.relative_path =~ ~r{Season }i,
+             "did not expect a season folder, got: #{media_file.relative_path}"
+    end
+
+    @tag :tmp_dir
+    test "keeps the season subfolder when season_folders is enabled",
+         %{tmp_dir: tmp_dir} do
+      put_naming(%{season_folders: true})
+
+      {_media_item, episode, download, _file_path, download_dir} =
+        seed_normal_tv_import(tmp_dir, "SeasonNormalClient", "season-normal-1")
+
+      assert {:ok, :imported} =
+               perform_job(MediaImport, %{
+                 "download_id" => download.id,
+                 "save_path" => download_dir
+               })
+
+      media_file =
+        Library.list_media_files()
+        |> Enum.find(&(&1.episode_id == episode.id))
+
+      assert media_file, "expected a media_file to be created for the episode"
+
+      assert media_file.relative_path =~ "Season 01",
+             "expected a Season 01 folder, got: #{media_file.relative_path}"
+    end
+  end
+
+  # Sets the global :runtime_config to defaults with the given naming overrides,
+  # restoring the previous value after the test. `get_naming_config/0` reads
+  # this, which is what FileNamer.season_folders_enabled?/0 consults.
+  defp put_naming(overrides) do
+    base = Mydia.Config.Schema.defaults()
+    config = %{base | naming: struct(base.naming, overrides)}
+
+    previous = Application.get_env(:mydia, :runtime_config)
+    Application.put_env(:mydia, :runtime_config, config)
+
+    on_exit(fn ->
+      case previous do
+        nil -> Application.delete_env(:mydia, :runtime_config)
+        value -> Application.put_env(:mydia, :runtime_config, value)
+      end
+    end)
+  end
+
+  defp seed_targeted_tv_import(tmp_dir, client_name, download_id) do
+    _library_path = create_test_library_path(tmp_dir, :series)
+
+    download_dir = Path.join(tmp_dir, "downloads")
+    File.mkdir_p!(download_dir)
+    file_path = Path.join(download_dir, "Mystery.Show.S01E01.mkv")
+    File.write!(file_path, "fake video")
+
+    media_item = media_item_fixture(%{type: "tv_show", title: "Mystery Show"})
+
+    episode =
+      episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 1})
+
+    {:ok, _} =
+      Settings.create_download_client_config(%{
+        name: client_name,
+        type: :qbittorrent,
+        host: "nonexistent.invalid",
+        port: 9999,
+        username: "test",
+        password: "test",
+        enabled: true,
+        priority: 1
+      })
+
+    download =
+      download_fixture(%{
+        media_item_id: media_item.id,
+        status: "completed",
+        completed_at: DateTime.utc_now(),
+        download_client: client_name,
+        download_client_id: download_id
+      })
+
+    {media_item, episode, download, file_path}
+  end
+
+  defp seed_normal_tv_import(tmp_dir, client_name, download_id) do
+    _library_path = create_test_library_path(tmp_dir, :series)
+
+    download_dir = Path.join(tmp_dir, "downloads")
+    File.mkdir_p!(download_dir)
+    file_path = Path.join(download_dir, "Mystery.Show.S01E01.mkv")
+    File.write!(file_path, "fake video")
+
+    media_item = media_item_fixture(%{type: "tv_show", title: "Mystery Show"})
+
+    episode =
+      episode_fixture(%{media_item_id: media_item.id, season_number: 1, episode_number: 1})
+
+    {:ok, _} =
+      Settings.create_download_client_config(%{
+        name: client_name,
+        type: :qbittorrent,
+        host: "nonexistent.invalid",
+        port: 9999,
+        username: "test",
+        password: "test",
+        enabled: true,
+        priority: 1
+      })
+
+    download =
+      download_fixture(%{
+        media_item_id: media_item.id,
+        status: "completed",
+        completed_at: DateTime.utc_now(),
+        download_client: client_name,
+        download_client_id: download_id
+      })
+
+    {media_item, episode, download, file_path, download_dir}
+  end
 end

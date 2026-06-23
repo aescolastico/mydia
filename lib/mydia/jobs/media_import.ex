@@ -474,12 +474,7 @@ defmodule Mydia.Jobs.MediaImport do
             # Build destination path for this episode
             dest_dir =
               if episode && download.media_item do
-                base_dir = build_series_base_path(download.media_item, library_path)
-
-                Path.join(
-                  base_dir,
-                  "Season #{String.pad_leading("#{episode.season_number}", 2, "0")}"
-                )
+                series_dest_dir(download.media_item, episode.season_number, library_path)
               else
                 build_destination_path(download, library_path)
               end
@@ -855,38 +850,33 @@ defmodule Mydia.Jobs.MediaImport do
       download.media_item && download.media_item.type == "movie" && library_path.auto_organize ->
         FileOrganizer.destination_path(download.media_item, library_path)
 
-      # TV episode - always use show folder + season subfolder
+      # TV episode - show folder + optional season subfolder
       download.episode && download.media_item ->
         # Get base folder (potentially category-aware)
         base_folder =
           if library_path.auto_organize do
             FileOrganizer.destination_path(download.media_item, library_path)
           else
-            title = sanitize_filename(download.media_item.title)
-            Path.join(library_path.path, title)
+            Path.join(library_path.path, FileNamer.generate_tv_folder(download.media_item))
           end
 
-        season = download.episode.season_number
-        Path.join(base_folder, "Season #{String.pad_leading("#{season}", 2, "0")}")
+        if FileNamer.season_folders_enabled?() do
+          season = download.episode.season_number
+          Path.join(base_folder, FileNamer.generate_season_folder(season))
+        else
+          base_folder
+        end
 
       # Movie without auto_organize
       download.media_item && download.media_item.type == "movie" ->
-        title = sanitize_filename(download.media_item.title)
-        year = download.media_item.year
-
-        if year do
-          Path.join([library_path.path, "#{title} (#{year})"])
-        else
-          Path.join([library_path.path, title])
-        end
+        Path.join(library_path.path, FileNamer.generate_movie_folder(download.media_item))
 
       # TV show (no specific episode) - use category-aware path if enabled
       download.media_item && download.media_item.type == "tv_show" ->
         if library_path.auto_organize do
           FileOrganizer.destination_path(download.media_item, library_path)
         else
-          title = sanitize_filename(download.media_item.title)
-          Path.join(library_path.path, title)
+          Path.join(library_path.path, FileNamer.generate_tv_folder(download.media_item))
         end
 
       # Unknown - use download title
@@ -901,26 +891,22 @@ defmodule Mydia.Jobs.MediaImport do
     cond do
       # TV episode
       download.episode && download.media_item ->
-        title = sanitize_filename(download.media_item.title)
-        season = download.episode.season_number
+        base = Path.join(library_root, FileNamer.generate_tv_folder(download.media_item))
 
-        Path.join([library_root, title, "Season #{String.pad_leading("#{season}", 2, "0")}"])
+        if FileNamer.season_folders_enabled?() do
+          season = download.episode.season_number
+          Path.join(base, FileNamer.generate_season_folder(season))
+        else
+          base
+        end
 
       # Movie
       download.media_item && download.media_item.type == "movie" ->
-        title = sanitize_filename(download.media_item.title)
-        year = download.media_item.year
-
-        if year do
-          Path.join([library_root, "#{title} (#{year})"])
-        else
-          Path.join([library_root, title])
-        end
+        Path.join(library_root, FileNamer.generate_movie_folder(download.media_item))
 
       # TV show (no specific episode) - fallback
       download.media_item && download.media_item.type == "tv_show" ->
-        title = sanitize_filename(download.media_item.title)
-        Path.join([library_root, title])
+        Path.join(library_root, FileNamer.generate_tv_folder(download.media_item))
 
       # Unknown - use download title
       true ->
@@ -935,8 +921,22 @@ defmodule Mydia.Jobs.MediaImport do
     if library_path.auto_organize do
       FileOrganizer.destination_path(media_item, library_path)
     else
-      title = sanitize_filename(media_item.title)
-      Path.join(library_path.path, title)
+      Path.join(library_path.path, FileNamer.generate_tv_folder(media_item))
+    end
+  end
+
+  # Builds the destination directory for a TV episode: the series base path plus
+  # an optional season subfolder. The season subfolder is only added when the
+  # user's `season_folders` naming setting is enabled, and uses the configurable
+  # `season_folder` template. Every TV import path must go through here so the
+  # setting is honored consistently.
+  defp series_dest_dir(media_item, season_number, library_path) do
+    base_dir = build_series_base_path(media_item, library_path)
+
+    if FileNamer.season_folders_enabled?() do
+      Path.join(base_dir, FileNamer.generate_season_folder(season_number))
+    else
+      base_dir
     end
   end
 
@@ -1152,10 +1152,8 @@ defmodule Mydia.Jobs.MediaImport do
             # Build destination path using the matched episode's actual
             # season — not the download-level season — so files from
             # `Complete S01-S03` packs land in the right `Season XX` dirs.
-            base_dir = build_series_base_path(media_item, library_path)
-
-            dest_dir =
-              Path.join(base_dir, "Season #{String.pad_leading("#{file_season}", 2, "0")}")
+            # Honors the season_folders setting (no season subfolder when off).
+            dest_dir = series_dest_dir(media_item, file_season, library_path)
 
             {episode, dest_dir}
           else
@@ -1197,11 +1195,9 @@ defmodule Mydia.Jobs.MediaImport do
               episode_id: episode.id
             )
 
-            # Build destination path using parsed season info (category-aware)
-            base_dir = build_series_base_path(media_item, library_path)
-
-            dest_dir =
-              Path.join(base_dir, "Season #{String.pad_leading("#{parsed.season}", 2, "0")}")
+            # Build destination path using parsed season info (category-aware).
+            # Honors the season_folders setting (no season subfolder when off).
+            dest_dir = series_dest_dir(media_item, parsed.season, library_path)
 
             {episode, dest_dir}
           else

@@ -1,0 +1,139 @@
+<Layouts.app {assigns}>
+  <div>
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold">Configuration</h1>
+        <p class="text-base-content/70 mt-1">
+          System status, application settings, and configuration management
+        </p>
+      </div>
+    </div>
+
+    <MydiaWeb.AdminComponents.tab_nav active_tab={@active_tab} />
+
+    <div class="bg-base-100">
+      <.form
+        for={@form}
+        id="file-management-form"
+        phx-change="validate"
+        phx-submit="save"
+        class="space-y-6"
+      >
+        <div class="card bg-base-100 border border-base-300">
+          <div class="card-body">
+            <h2 class="card-title text-lg">Folders</h2>
+            <p class="text-sm text-base-content/60 -mt-1">
+              How media folders are named inside each library path.
+            </p>
+
+            <.input
+              field={@form[:movie_folder]}
+              type="text"
+              label="Movie folder"
+              hint="Default: {{title}} ({{year}})"
+            />
+            <.field_preview preview={@previews["movie_folder"]} error={@errors["movie_folder"]} />
+
+            <.input
+              field={@form[:tv_folder]}
+              type="text"
+              label="TV show folder"
+              hint="Default: {{title}}"
+            />
+            <.field_preview preview={@previews["tv_folder"]} error={@errors["tv_folder"]} />
+
+            <div class="divider my-2"></div>
+
+            <.input
+              field={@form[:season_folders]}
+              type="checkbox"
+              label="Use season subfolders for TV shows"
+              class="toggle toggle-primary"
+            />
+
+            <div class={[not @season_folders && "hidden"]}>
+              <.input
+                field={@form[:season_folder]}
+                type="text"
+                label="Season folder"
+                hint="Default: Season {{season}}"
+              />
+              <.field_preview
+                preview={@previews["season_folder"]}
+                error={@errors["season_folder"]}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="card bg-base-100 border border-base-300">
+          <div class="card-body">
+            <h2 class="card-title text-lg">File names</h2>
+            <p class="text-sm text-base-content/60 -mt-1">
+              How individual media files are named. The file extension is added automatically.
+            </p>
+
+            <.input
+              field={@form[:movie_file]}
+              type="text"
+              label="Movie file"
+              hint="Default: {{title}} ({{year}}) {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
+            />
+            <.field_preview preview={@previews["movie_file"]} error={@errors["movie_file"]} />
+
+            <.input
+              field={@form[:episode_file]}
+              type="text"
+              label="Episode file"
+              hint="Default: {{title}} ({{year}}) - {{sxxeyy}} - {{episode_title}} {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
+            />
+            <.field_preview preview={@previews["episode_file"]} error={@errors["episode_file"]} />
+          </div>
+        </div>
+
+        <details class="collapse collapse-arrow bg-base-200/60 border border-base-300">
+          <summary class="collapse-title font-medium">
+            Available tokens
+          </summary>
+          <div class="collapse-content">
+            <p class="text-sm text-base-content/70 mb-3">
+              Tokens are written as <code class="badge badge-ghost" phx-no-curly-interpolation>{{token}}</code>.
+              A single <code class="badge badge-ghost" phx-no-curly-interpolation>{</code>
+              or <code class="badge badge-ghost" phx-no-curly-interpolation>}</code>
+              is treated as a literal character, so
+              <code class="badge badge-ghost" phx-no-curly-interpolation>{{{tmdb}}}</code>
+              renders as <code class="badge badge-ghost" phx-no-curly-interpolation>{tmdb-36557}</code>.
+              Empty tokens (e.g. a missing year) are removed along with any dangling separators.
+            </p>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Description</th>
+                    <th>Example</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={{token, description, sample} <- @token_catalog}>
+                    <td>
+                      <code class="badge badge-ghost">{"{{#{token}}}"}</code>
+                    </td>
+                    <td>{description}</td>
+                    <td class="text-base-content/70">{sample}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
+        <div class="flex justify-end">
+          <.button type="submit" variant="primary" disabled={@errors != %{}}>
+            <.icon name="hero-check" class="w-4 h-4" /> Save
+          </.button>
+        </div>
+      </.form>
+    </div>
+  </div>
+</Layouts.app>

@@ -92,6 +92,13 @@ defmodule Mydia.Application do
       # Crash capture is handled by Tower (see Mydia.CrashReporter.TowerReporter),
       # which auto-attaches its :logger handler on application start.
 
+      # The initial load_config!/0 above runs BEFORE Mydia.Repo is started, so
+      # database-backed settings (config_settings) cannot be read yet and the
+      # cached runtime_config falls back to YAML/defaults. Now that the Repo is
+      # running, reload so persisted UI settings take effect on boot. reload/0
+      # leaves the boot-time config untouched if the merged config is invalid.
+      reload_runtime_config()
+
       # Reset any jobs stuck in executing state from previous runs
       reset_stale_jobs()
       # Attach Oban job broadcaster for real-time job status updates
@@ -240,6 +247,21 @@ defmodule Mydia.Application do
 
   defp load_config! do
     Mydia.Config.Loader.load!()
+  end
+
+  defp reload_runtime_config do
+    case Mydia.Config.Loader.reload() do
+      {:ok, _config} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to reload runtime config from database after startup; " <>
+            "keeping boot-time config. Reason: #{inspect(reason)}"
+        )
+
+        :ok
+    end
   end
 
   defp ensure_default_quality_profiles do

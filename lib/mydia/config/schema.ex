@@ -17,6 +17,7 @@ defmodule Mydia.Config.Schema do
           auth: __MODULE__.Auth.t() | nil,
           media: __MODULE__.Media.t() | nil,
           metadata: __MODULE__.Metadata.t() | nil,
+          naming: __MODULE__.Naming.t() | nil,
           downloads: __MODULE__.Downloads.t() | nil,
           logging: __MODULE__.Logging.t() | nil,
           oban: __MODULE__.Oban.t() | nil,
@@ -80,6 +81,23 @@ defmodule Mydia.Config.Schema do
       # Language sent to TMDB/TVDB through metadata-relay. Accepts ISO 639-1
       # codes ("de") or BCP 47 language tags ("de-DE", "pt-BR").
       field :language, :string, default: "en-US"
+    end
+
+    embeds_one :naming, Naming, on_replace: :update, primary_key: false do
+      # File/folder naming templates (see Mydia.Library.NamingTemplate). Defaults
+      # reproduce the legacy hardcoded TRaSH-style output, so an un-edited
+      # install behaves identically.
+      field :season_folders, :boolean, default: true
+      field :season_folder, :string, default: "Season {{season}}"
+      field :movie_folder, :string, default: "{{title}} ({{year}})"
+      field :tv_folder, :string, default: "{{title}}"
+
+      field :movie_file, :string,
+        default: "{{title}} ({{year}}) {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
+
+      field :episode_file, :string,
+        default:
+          "{{title}} ({{year}}) - {{sxxeyy}} - {{episode_title}} {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
     end
 
     embeds_one :downloads, Downloads, on_replace: :update, primary_key: false do
@@ -223,6 +241,7 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:auth, with: &auth_changeset/2)
     |> cast_embed(:media, with: &media_changeset/2)
     |> cast_embed(:metadata, with: &metadata_changeset/2)
+    |> cast_embed(:naming, with: &naming_changeset/2)
     |> cast_embed(:downloads, with: &downloads_changeset/2)
     |> cast_embed(:logging, with: &logging_changeset/2)
     |> cast_embed(:oban, with: &oban_changeset/2)
@@ -315,6 +334,53 @@ defmodule Mydia.Config.Schema do
     |> cast(attrs, [:language])
     |> validate_required([:language])
     |> validate_length(:language, min: 2, max: 16)
+  end
+
+  defp naming_changeset(schema, attrs) do
+    string_fields = [:season_folder, :movie_folder, :tv_folder, :movie_file, :episode_file]
+
+    schema
+    |> cast(attrs, [:season_folders | string_fields])
+    |> restore_blank_naming_defaults(string_fields)
+    |> validate_required([:season_folders | string_fields])
+    |> validate_naming_template(:season_folder)
+    |> validate_naming_template(:movie_folder)
+    |> validate_naming_template(:tv_folder)
+    |> validate_naming_template(:movie_file)
+    |> validate_naming_template(:episode_file)
+  end
+
+  # Blank or missing naming templates fall back to their defaults instead of
+  # failing validation. This keeps a stray empty value (e.g. a hidden field that
+  # was submitted blank) from invalidating the whole config and bricking startup.
+  defp restore_blank_naming_defaults(changeset, string_fields) do
+    defaults = %__MODULE__.Naming{}
+
+    changeset =
+      Enum.reduce(string_fields, changeset, fn field, cs ->
+        value = get_field(cs, field)
+
+        if is_nil(value) or (is_binary(value) and String.trim(value) == "") do
+          put_change(cs, field, Map.fetch!(defaults, field))
+        else
+          cs
+        end
+      end)
+
+    if is_nil(get_field(changeset, :season_folders)) do
+      put_change(changeset, :season_folders, defaults.season_folders)
+    else
+      changeset
+    end
+  end
+
+  defp validate_naming_template(changeset, field) do
+    validate_change(changeset, field, fn ^field, template ->
+      case Mydia.Library.NamingTemplate.validate(template, Mydia.Library.NamingTemplate.tokens()) do
+        :ok -> []
+        {:error, unknown} -> [{field, "uses unknown tokens: #{Enum.join(unknown, ", ")}"}]
+      end
+    end)
   end
 
   defp downloads_changeset(schema, attrs) do
@@ -673,6 +739,7 @@ defmodule Mydia.Config.Schema do
       auth: %__MODULE__.Auth{},
       media: %__MODULE__.Media{},
       metadata: %__MODULE__.Metadata{},
+      naming: %__MODULE__.Naming{},
       downloads: %__MODULE__.Downloads{},
       logging: %__MODULE__.Logging{},
       oban: %__MODULE__.Oban{},

@@ -164,6 +164,7 @@ defmodule Mydia.Config.Loader do
       auth: load_auth_env(),
       media: load_media_env(),
       metadata: load_metadata_env(),
+      naming: load_naming_env(),
       downloads: load_downloads_env(),
       logging: load_logging_env(),
       oban: load_oban_env(),
@@ -249,6 +250,16 @@ defmodule Mydia.Config.Loader do
   defp load_metadata_env do
     %{}
     |> put_if_present(:language, System.get_env("METADATA_LANGUAGE"))
+  end
+
+  defp load_naming_env do
+    %{}
+    |> put_if_present(:season_folders, System.get_env("NAMING_SEASON_FOLDERS"), &parse_boolean/1)
+    |> put_if_present(:season_folder, System.get_env("NAMING_SEASON_FOLDER"))
+    |> put_if_present(:movie_folder, System.get_env("NAMING_MOVIE_FOLDER"))
+    |> put_if_present(:tv_folder, System.get_env("NAMING_TV_FOLDER"))
+    |> put_if_present(:movie_file, System.get_env("NAMING_MOVIE_FILE"))
+    |> put_if_present(:episode_file, System.get_env("NAMING_EPISODE_FILE"))
   end
 
   defp load_downloads_env do

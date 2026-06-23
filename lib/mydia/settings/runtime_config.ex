@@ -163,6 +163,19 @@ defmodule Mydia.Settings.RuntimeConfig do
     end
   end
 
+  @doc """
+  Returns the resolved file/folder naming configuration.
+
+  Falls back to schema defaults when no naming config is present so callers
+  always receive a fully-populated `Mydia.Config.Schema.Naming` struct.
+  """
+  def get_naming_config do
+    case get_runtime_config() do
+      %{naming: %_{} = naming} -> naming
+      _ -> %Mydia.Config.Schema.Naming{}
+    end
+  end
+
   def get_downloads_config do
     get_runtime_config().downloads
   end
