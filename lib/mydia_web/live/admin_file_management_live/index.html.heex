@@ -101,8 +101,9 @@
               A single <code class="badge badge-ghost" phx-no-curly-interpolation>{</code>
               or <code class="badge badge-ghost" phx-no-curly-interpolation>}</code>
               is treated as a literal character, so
-              <code class="badge badge-ghost" phx-no-curly-interpolation>{{{tmdb}}}</code>
+              <code class="badge badge-ghost" phx-no-curly-interpolation>{tmdb-{{tmdb}}}</code>
               renders as <code class="badge badge-ghost" phx-no-curly-interpolation>{tmdb-36557}</code>.
+              Provider tokens inject only the ID after the dash. Supported detectable provider tag prefixes are <code class="badge badge-ghost">tmdb-</code>, <code class="badge badge-ghost">tmdbid-</code>, <code class="badge badge-ghost">tvdb-</code>, <code class="badge badge-ghost">tvdbid-</code>, <code class="badge badge-ghost">imdb-</code>, and <code class="badge badge-ghost">imdbid-</code>.
               Empty tokens (e.g. a missing year) are removed along with any dangling separators.
             </p>
             <div class="overflow-x-auto">

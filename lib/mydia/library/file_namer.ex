@@ -190,9 +190,9 @@ defmodule Mydia.Library.FileNamer do
     %{
       "title" => Map.get(media_item, :title) || "",
       "year" => year_value(Map.get(media_item, :year)),
-      "tmdb" => provider_tag("tmdb", Map.get(media_item, :tmdb_id)),
-      "tvdb" => provider_tag("tvdb", Map.get(media_item, :tvdb_id)),
-      "imdb" => provider_tag("imdb", Map.get(media_item, :imdb_id))
+      "tmdb" => provider_id_value(Map.get(media_item, :tmdb_id)),
+      "tvdb" => provider_id_value(Map.get(media_item, :tvdb_id)),
+      "imdb" => provider_id_value(Map.get(media_item, :imdb_id))
     }
   end
 
@@ -213,9 +213,9 @@ defmodule Mydia.Library.FileNamer do
       "hdr" => build_hdr_tag(quality_info),
       "codec" => build_codec_tag(quality_info.codec),
       "release_group" => release_group_tag(release_group),
-      "tmdb" => provider_tag("tmdb", Map.get(media_item, :tmdb_id)),
-      "tvdb" => provider_tag("tvdb", Map.get(media_item, :tvdb_id)),
-      "imdb" => provider_tag("imdb", Map.get(media_item, :imdb_id))
+      "tmdb" => provider_id_value(Map.get(media_item, :tmdb_id)),
+      "tvdb" => provider_id_value(Map.get(media_item, :tvdb_id)),
+      "imdb" => provider_id_value(Map.get(media_item, :imdb_id))
     }
   end
 
@@ -226,9 +226,9 @@ defmodule Mydia.Library.FileNamer do
   defp release_group_tag(""), do: ""
   defp release_group_tag(group) when is_binary(group), do: "-#{group}"
 
-  defp provider_tag(_prefix, nil), do: ""
-  defp provider_tag(_prefix, ""), do: ""
-  defp provider_tag(prefix, id), do: "#{prefix}-#{id}"
+  defp provider_id_value(nil), do: ""
+  defp provider_id_value(""), do: ""
+  defp provider_id_value(id), do: to_string(id)
 
   # Resolved naming templates (DB/UI > YAML > schema defaults). Falls back to
   # schema defaults if the runtime config is unavailable.

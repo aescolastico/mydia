@@ -1,7 +1,13 @@
 defmodule Mydia.Library.FileNamerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mydia.Library.FileNamer
+
+  setup do
+    previous_runtime_config = Application.get_env(:mydia, :runtime_config)
+    on_exit(fn -> restore_runtime_config(previous_runtime_config) end)
+    :ok
+  end
 
   describe "generate_movie_filename/3" do
     test "generates TRaSH-compatible filename for movie" do
@@ -82,6 +88,39 @@ defmodule Mydia.Library.FileNamerTest do
       result = FileNamer.generate_movie_filename(media_item, quality_info, original)
 
       assert result == "Test Movie (2023) [WEB-DL-2160p-Repack] [DTS] [HDR] [x265]-GROUP.mkv"
+    end
+
+    test "provider tokens inject only IDs so the template chooses tag style" do
+      with_movie_file_template(
+        "{{title}} ({{year}}) {tmdbid-{{tmdb}}} [imdb-{{imdb}}] {{quality}}{{release_group}}"
+      )
+
+      media_item = %{
+        title: "Casino Royale",
+        year: 2006,
+        tmdb_id: 36557,
+        imdb_id: "tt0381061"
+      }
+
+      quality_info = %{
+        resolution: "1080p",
+        source: "Bluray",
+        codec: nil,
+        audio: nil,
+        hdr: false,
+        proper: false,
+        repack: false
+      }
+
+      result =
+        FileNamer.generate_movie_filename(
+          media_item,
+          quality_info,
+          "Casino.Royale.2006.1080p.BluRay-GROUP.mkv"
+        )
+
+      assert result ==
+               "Casino Royale (2006) {tmdbid-36557} [imdb-tt0381061] [Bluray-1080p]-GROUP.mkv"
     end
   end
 
@@ -174,4 +213,14 @@ defmodule Mydia.Library.FileNamerTest do
       assert FileNamer.sanitize_title("Too    Many    Spaces") == "Too Many Spaces"
     end
   end
+
+  defp with_movie_file_template(template) do
+    defaults = Mydia.Config.Schema.defaults()
+    naming = %{defaults.naming | movie_file: template}
+
+    Application.put_env(:mydia, :runtime_config, %{defaults | naming: naming})
+  end
+
+  defp restore_runtime_config(nil), do: Application.delete_env(:mydia, :runtime_config)
+  defp restore_runtime_config(config), do: Application.put_env(:mydia, :runtime_config, config)
 end

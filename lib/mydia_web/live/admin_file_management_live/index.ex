@@ -28,9 +28,9 @@ defmodule MydiaWeb.AdminFileManagementLive.Index do
     {"hdr", "HDR/Dolby Vision tag", "HDR"},
     {"codec", "Video codec tag", "x265"},
     {"release_group", "Release group (with leading dash)", "-RlsGrp"},
-    {"tmdb", "TMDB id tag", "tmdb-36557"},
-    {"tvdb", "TVDB id tag", "tvdbid-73244"},
-    {"imdb", "IMDb id tag", "imdbid-tt0381061"}
+    {"tmdb", "TMDB ID value", "36557"},
+    {"tvdb", "TVDB ID value", "73244"},
+    {"imdb", "IMDb ID value", "tt0381061"}
   ]
 
   # Movie previews (movie_folder, movie_file) render against a movie sample so
@@ -47,15 +47,15 @@ defmodule MydiaWeb.AdminFileManagementLive.Index do
     "hdr" => "",
     "codec" => "x265",
     "release_group" => "-RlsGrp",
-    "tmdb" => "tmdb-36557",
+    "tmdb" => "36557",
     "tvdb" => "",
-    "imdb" => "imdbid-tt0381061"
+    "imdb" => "tt0381061"
   }
 
   # TV previews (tv_folder, season_folder, episode_file) render against a TV
   # sample with season/episode data populated.
   @tv_context %{
-    "title" => "The Office (US)",
+    "title" => "The Office",
     "year" => "2005",
     "season" => "01",
     "episode" => "05",
@@ -66,9 +66,9 @@ defmodule MydiaWeb.AdminFileManagementLive.Index do
     "hdr" => "",
     "codec" => "x265",
     "release_group" => "-RlsGrp",
-    "tmdb" => "tmdb-2316",
-    "tvdb" => "tvdbid-73244",
-    "imdb" => "imdbid-tt0386676"
+    "tmdb" => "2316",
+    "tvdb" => "73244",
+    "imdb" => "tt0386676"
   }
 
   @impl true

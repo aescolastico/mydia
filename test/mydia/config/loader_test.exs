@@ -292,7 +292,7 @@ defmodule Mydia.Config.LoaderTest do
       for {key, value} <- [
             {"naming.season_folders", "false"},
             {"naming.season_folder", "Season {{season}}"},
-            {"naming.movie_folder", "{{title}} ({{year}}) {{{tmdb}}}"},
+            {"naming.movie_folder", "{{title}} ({{year}}) {tmdb-{{tmdb}}}"},
             {"naming.tv_folder", "{{title}}"},
             {"naming.movie_file", "{{title}} ({{year}})"},
             {"naming.episode_file", "{{title}} - {{sxxeyy}}"}
@@ -305,7 +305,7 @@ defmodule Mydia.Config.LoaderTest do
 
       naming = Mydia.Settings.RuntimeConfig.get_naming_config()
       assert naming.season_folders == false
-      assert naming.movie_folder == "{{title}} ({{year}}) {{{tmdb}}}"
+      assert naming.movie_folder == "{{title}} ({{year}}) {tmdb-{{tmdb}}}"
       assert naming.movie_file == "{{title}} ({{year}})"
     end
 

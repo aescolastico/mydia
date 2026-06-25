@@ -11,25 +11,26 @@ defmodule Mydia.Library.NamingTemplate do
   Because only `{{identifier}}` is a token, brace-wrapping a token works
   naturally:
 
-      iex> NamingTemplate.render("{{title}} ({{year}}) {{{tmdb}}}", %{
-      ...>   "title" => "The Office (US)", "year" => "2005", "tmdb" => "tmdb-2316"
+      iex> NamingTemplate.render("{{title}} ({{year}}) {tmdb-{{tmdb}}}", %{
+      ...>   "title" => "The Office", "year" => "2005", "tmdb" => "2316"
       ...> })
-      "The Office (US) (2005) {tmdb-2316}"
+      "The Office (2005) {tmdb-2316}"
 
-  In `{{{tmdb}}}` the match begins at the second `{` (since `{{{` is not a valid
-  identifier start), leaving the outer `{` and `}` as literals.
+  In `{tmdb-{{tmdb}}}` the provider tag style (`tmdb-`) is literal text chosen
+  by the user, while `{{tmdb}}` injects only the stored provider ID.
 
   ## Render post-processing
 
   After substitution the result is cleaned up, in order:
 
-  1. Empty literal `{}` and `()` pairs are removed. This handles a missing
-     provider id inside `{{{tmdb}}}` and a missing year inside `({{year}})`.
+  1. Empty provider ID tags such as `{tmdb-}` or `[tvdbid-]` are removed.
+  2. Empty literal `{}` and `()` pairs are removed. This handles a missing
+     provider id inside `{tmdb-{{tmdb}}}` and a missing year inside `({{year}})`.
      (Real titles never contain *empty* brace/paren pairs, so this is safe.)
-  2. Runs of whitespace are squeezed to a single space.
-  3. Dangling separators left by an empty token (a leading/trailing or doubled
+  3. Runs of whitespace are squeezed to a single space.
+  4. Dangling separators left by an empty token (a leading/trailing or doubled
      `-`) are trimmed.
-  4. Leading/trailing whitespace is trimmed.
+  5. Leading/trailing whitespace is trimmed.
 
   Callers are responsible for appending the file extension and for sanitizing
   illegal filename characters (see `Mydia.Library.FileNamer.sanitize_title/1`).
@@ -101,6 +102,7 @@ defmodule Mydia.Library.NamingTemplate do
   def render(template, context) when is_binary(template) and is_map(context) do
     template
     |> substitute(context)
+    |> collapse_empty_provider_tags()
     |> collapse_empty_pairs()
     |> squeeze_whitespace()
     |> trim_separators()
@@ -117,6 +119,10 @@ defmodule Mydia.Library.NamingTemplate do
   defp value_to_string(nil), do: ""
   defp value_to_string(value) when is_binary(value), do: value
   defp value_to_string(value), do: to_string(value)
+
+  defp collapse_empty_provider_tags(string) do
+    String.replace(string, ~r/[\{\[]\s*(?:tmdbid|tmdb|tvdbid|tvdb|imdbid|imdb)-\s*[\}\]]/i, "")
+  end
 
   defp collapse_empty_pairs(string) do
     string

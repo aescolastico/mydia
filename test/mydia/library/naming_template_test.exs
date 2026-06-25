@@ -10,23 +10,31 @@ defmodule Mydia.Library.NamingTemplateTest do
       assert NamingTemplate.render("a { b } c", %{}) == "a { b } c"
     end
 
-    test "brace-wrapped provider token renders {tag}" do
-      ctx = %{"tmdb" => "tmdb-2316"}
-      assert NamingTemplate.render("{{{tmdb}}}", ctx) == "{tmdb-2316}"
+    test "literal provider prefix plus ID token renders a detectable tag" do
+      ctx = %{"tmdb" => "2316"}
+      assert NamingTemplate.render("{tmdb-{{tmdb}}}", ctx) == "{tmdb-2316}"
     end
 
     test "full convention example" do
-      ctx = %{"title" => "The Office (US)", "year" => "2005", "tmdb" => "tmdb-2316"}
+      ctx = %{"title" => "The Office", "year" => "2005", "tmdb" => "2316"}
 
-      assert NamingTemplate.render("{{title}} ({{year}}) {{{tmdb}}}", ctx) ==
-               "The Office (US) (2005) {tmdb-2316}"
+      assert NamingTemplate.render("{{title}} ({{year}}) {tmdb-{{tmdb}}}", ctx) ==
+               "The Office (2005) {tmdb-2316}"
     end
 
-    test "missing provider id collapses the empty {} and trailing space" do
-      ctx = %{"title" => "The Office (US)", "year" => "2005"}
+    test "missing provider id collapses the empty provider tag and trailing space" do
+      ctx = %{"title" => "The Office", "year" => "2005"}
 
-      assert NamingTemplate.render("{{title}} ({{year}}) {{{tmdb}}}", ctx) ==
-               "The Office (US) (2005)"
+      assert NamingTemplate.render("{{title}} ({{year}}) {tmdb-{{tmdb}}}", ctx) ==
+               "The Office (2005)"
+    end
+
+    test "missing provider id collapses supported id tag aliases" do
+      assert NamingTemplate.render("{tmdbid-{{tmdb}}}", %{}) == ""
+      assert NamingTemplate.render("[tvdb-{{tvdb}}]", %{}) == ""
+      assert NamingTemplate.render("[tvdbid-{{tvdb}}]", %{}) == ""
+      assert NamingTemplate.render("{imdb-{{imdb}}}", %{}) == ""
+      assert NamingTemplate.render("{imdbid-{{imdb}}}", %{}) == ""
     end
   end
 

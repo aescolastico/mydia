@@ -57,6 +57,11 @@ defmodule MydiaWeb.AdminFileManagementLiveTest do
       assert has_element?(view, "#file-management-form")
       assert has_element?(view, "input[name='naming[movie_file]']")
       assert has_element?(view, "input[name='naming[episode_file]']")
+      assert has_element?(view, "p", "Provider tokens inject only the ID after the dash")
+      assert has_element?(view, "p", "Supported detectable provider tag prefixes")
+      assert has_element?(view, "code", "tmdbid-")
+      assert has_element?(view, "code", "tvdbid-")
+      assert has_element?(view, "code", "imdbid-")
     end
 
     test "shows a live preview as templates change", %{view: view} do
@@ -75,7 +80,26 @@ defmodule MydiaWeb.AdminFileManagementLiveTest do
         })
 
       assert html =~ "Casino Royale (2006)"
-      assert html =~ "The Office (US)"
+      assert html =~ "The Office"
+    end
+
+    test "previews provider tags from literal prefixes and ID tokens", %{view: view} do
+      html =
+        view
+        |> element("#file-management-form")
+        |> render_change(%{
+          "naming" => %{
+            "movie_folder" => "{{title}} ({{year}}) {tmdbid-{{tmdb}}} [imdb-{{imdb}}]",
+            "tv_folder" => "{{title}} [tvdb-{{tvdb}}]",
+            "season_folder" => "Season {{season}}",
+            "movie_file" => "{{title}}",
+            "episode_file" => "{{title}}",
+            "season_folders" => "true"
+          }
+        })
+
+      assert html =~ "Casino Royale (2006) {tmdbid-36557} [imdb-tt0381061]"
+      assert html =~ "The Office [tvdb-73244]"
     end
 
     test "flags unknown tokens and blocks save", %{view: view} do
