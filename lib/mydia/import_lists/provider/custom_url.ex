@@ -127,9 +127,11 @@ defmodule Mydia.ImportLists.Provider.CustomURL do
     cond do
       is_integer(item["tmdb_id"]) -> item["tmdb_id"]
       is_integer(item["tmdbId"]) -> item["tmdbId"]
+      is_integer(item["tmdb"]) -> item["tmdb"]
       is_integer(item["id"]) -> item["id"]
       is_binary(item["tmdb_id"]) -> parse_int(item["tmdb_id"])
       is_binary(item["tmdbId"]) -> parse_int(item["tmdbId"])
+      is_binary(item["tmdb"]) -> parse_int(item["tmdb"])
       is_binary(item["id"]) -> parse_int(item["id"])
       true -> nil
     end
