@@ -9,7 +9,7 @@ defmodule Mydia.Library.FileRenamer do
   import Ecto.Query, warn: false
 
   alias Mydia.Indexers.Structs.QualityInfo
-  alias Mydia.Library.{FileNamer, MediaFile}
+  alias Mydia.Library.{FileNamer, MediaFile, ProviderHealer}
   alias Mydia.Media.MediaItem
   alias Mydia.Repo
 
@@ -40,7 +40,7 @@ defmodule Mydia.Library.FileRenamer do
       cond do
         # TV Show Episode (associated with episode)
         file.episode_id && file.episode ->
-          media_item = file.episode.media_item
+          media_item = ProviderHealer.heal_from_path(file.episode.media_item, current_path)
           quality_info = build_quality_info(file)
 
           FileNamer.generate_episode_filename(
@@ -52,10 +52,11 @@ defmodule Mydia.Library.FileRenamer do
 
         # Movie
         file.media_item_id && file.media_item && file.media_item.type == "movie" ->
+          media_item = ProviderHealer.heal_from_path(file.media_item, current_path)
           quality_info = build_quality_info(file)
 
           FileNamer.generate_movie_filename(
-            file.media_item,
+            media_item,
             quality_info,
             current_filename
           )

@@ -316,17 +316,41 @@ defmodule Mydia.Library.PathParser do
   """
   @spec extract_external_id_tag(String.t()) :: {String.t() | nil, atom() | nil}
   def extract_external_id_tag(name) when is_binary(name) do
-    case Regex.run(@external_id_tag_re, name) do
-      [_full, provider_str, id_str] ->
-        {provider, id} = parse_provider_id(provider_str, id_str)
-        {id, provider}
-
-      _ ->
-        {nil, nil}
-    end
+    name
+    |> extract_external_id_tags()
+    |> List.first({nil, nil})
   end
 
   def extract_external_id_tag(_), do: {nil, nil}
+
+  @doc """
+  Extracts every explicit provider-ID tag from a string, returning `{id, provider}`
+  tuples in the order they appear.
+
+  Returns an empty list when no recognized tag is present.
+
+  ## Examples
+
+      iex> PathParser.extract_external_id_tags("Show {tvdb-371980}/S01E01 {tmdb-95396}.mkv")
+      [{"371980", :tvdb}, {"95396", :tmdb}]
+
+      iex> PathParser.extract_external_id_tags("Some.Show.S01E01.mkv")
+      []
+  """
+  @spec extract_external_id_tags(String.t()) :: [{String.t(), atom()}]
+  def extract_external_id_tags(name) when is_binary(name) do
+    @external_id_tag_re
+    |> Regex.scan(name)
+    |> Enum.flat_map(fn [_full, provider_str, id_str] ->
+      case parse_provider_id(provider_str, id_str) do
+        {nil, _id} -> []
+        {_provider, nil} -> []
+        {provider, id} -> [{id, provider}]
+      end
+    end)
+  end
+
+  def extract_external_id_tags(_), do: []
 
   # Extract year, provider, and id from regex captures
   defp extract_movie_folder_parts([]), do: {nil, nil, nil}

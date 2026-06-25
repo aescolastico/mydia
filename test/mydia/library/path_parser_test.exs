@@ -569,6 +569,23 @@ defmodule Mydia.Library.PathParserTest do
     end
   end
 
+  describe "extract_external_id_tags/1" do
+    test "extracts every provider tag in path order" do
+      path =
+        "/media/tv/Severance (2022) {tvdbid-371980}/Season 1/Severance.S01E01.[tmdb-95396].{imdb-tt11280740}.mkv"
+
+      assert PathParser.extract_external_id_tags(path) == [
+               {"371980", :tvdb},
+               {"95396", :tmdb},
+               {"tt11280740", :imdb}
+             ]
+    end
+
+    test "returns an empty list when no provider tag exists" do
+      assert PathParser.extract_external_id_tags("Show.S01E01.mkv") == []
+    end
+  end
+
   describe "extract_tv_show_from_path/1" do
     test "extracts TV show metadata with TVDB ID from full path" do
       result =

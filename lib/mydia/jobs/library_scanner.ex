@@ -28,6 +28,7 @@ defmodule Mydia.Jobs.LibraryScanner do
     MusicScanner,
     BookScanner,
     AdultScanner,
+    ProviderHealer,
     SampleDetector
   }
 
@@ -1094,6 +1095,13 @@ defmodule Mydia.Jobs.LibraryScanner do
                  media_file_id: media_file.id
                ) do
             {:ok, media_item} ->
+              # Auto-heal: backfill any provider id present in the on-disk path
+              # but missing from the matched media item. Supported tag forms:
+              # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+              # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+              # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
+              ProviderHealer.heal_from_path(media_item, file_info.path)
+
               Logger.info("Associated file with existing media item",
                 media_item_id: media_item.id,
                 title: media_item.title,
