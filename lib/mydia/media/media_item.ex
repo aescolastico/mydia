@@ -48,6 +48,13 @@ defmodule Mydia.Media.MediaItem do
     # (tv_show only; movies stay nil). Source of truth for provider-aware
     # refresh — not inferred from tvdb_id/tmdb_id presence.
     field :metadata_source, Ecto.Enum, values: [:tvdb, :tmdb]
+    # True when the provider was chosen explicitly via a provider tag
+    # ({tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+    # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+    # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...]).
+    # A locked show is never auto-reidentified to a different provider on
+    # refresh, even if its library prefers another one.
+    field :metadata_source_locked, :boolean, default: false
     field :metadata, Mydia.Media.MetadataType
     field :monitored, :boolean, default: true
 
@@ -83,6 +90,7 @@ defmodule Mydia.Media.MediaItem do
       :tvdb_id,
       :imdb_id,
       :metadata_source,
+      :metadata_source_locked,
       :metadata,
       :monitored,
       :monitoring_preset,

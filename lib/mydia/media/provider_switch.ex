@@ -66,8 +66,18 @@ defmodule Mydia.Media.ProviderSwitch do
   `metadata_source` (or is unknown/ambiguous), or `{:reidentify, target}` when
   the library provider differs and the show should be re-identified against
   `target`.
+
+  A show whose provider was chosen explicitly (`metadata_source_locked: true`)
+  by any supported provider tag ({tmdb-...}, {tmdbid-...}, [tmdb-...],
+  [tmdbid-...], {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...]) always re-fetches
+  from its pinned provider and is never auto-reidentified, regardless of
+  library preference.
   """
   @spec provider_refresh_decision(MediaItem.t()) :: :refetch | {:reidentify, atom()}
+  def provider_refresh_decision(%MediaItem{type: "tv_show", metadata_source_locked: true}),
+    do: :refetch
+
   def provider_refresh_decision(%MediaItem{type: "tv_show"} = media_item) do
     case resolve_library_provider(media_item) do
       {:ok, lib_provider} ->

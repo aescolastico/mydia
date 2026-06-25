@@ -161,10 +161,11 @@ defmodule Mydia.Library.MetadataEnricher do
         create_new_media_item(provider_id, media_type, match_result, config)
 
       item ->
-        # Update existing item with latest metadata. Pass the match's resolved
-        # provider so a nil-source item can adopt it (see provenance handling
-        # in update_existing_media_item/5).
-        update_existing_media_item(item, provider_id, media_type, config, provider_type)
+        # Update existing item with latest metadata. Pass the full match so a
+        # nil-source item can adopt its resolved provider (see provenance
+        # handling in update_existing_media_item/5) and a rescan of an
+        # explicitly-tagged file can lock a pre-existing item.
+        update_existing_media_item(item, provider_id, media_type, config, match_result)
     end
   end
 
@@ -196,29 +197,37 @@ defmodule Mydia.Library.MetadataEnricher do
          provider_id,
          media_type,
          config,
-         match_provider_type
+         match_result
        ) do
+    match_provider_type = Map.get(match_result, :provider_type, :tmdb)
+
     # Skip re-fetching metadata if the item was recently updated (within the last hour)
     # This avoids redundant HTTP calls when importing multiple files for the same show
     if recently_enriched?(existing_item) do
-      maybe_stamp_recently_enriched(existing_item, media_type, match_provider_type)
+      maybe_stamp_recently_enriched(existing_item, media_type, match_provider_type, match_result)
     else
       Logger.debug("Updating existing media item",
         id: existing_item.id,
         provider_id: provider_id
       )
 
-      # An explicit `metadata_source` is authoritative provenance and wins
-      # (preserve behavior from f1e4840f). Otherwise a nil-source item adopts
-      # the match's resolved provider. We never infer from id presence:
-      # maybe_discover_tvdb_id back-fills tvdb_id onto TMDB-matched shows, so
-      # id-inference would mis-stamp dual-id rows.
-      provider_type = existing_item.metadata_source || match_provider_type
+      # Normal title matches preserve explicit provenance (behavior from
+      # f1e4840f). A direct provider tag is a new explicit user choice, so it
+      # may change the stored source and remain pinned against library-default
+      # re-identification.
+      provider_type =
+        provider_type_for_update(existing_item, media_type, match_provider_type, match_result)
 
       case fetch_full_metadata(provider_id, media_type, config, provider_type) do
         {:ok, full_metadata} ->
+          # Preserve the resolved provider (existing source wins) while keeping
+          # the match's match_type so an explicit-tag rescan can lock the item.
           attrs =
-            build_media_item_attrs(full_metadata, media_type, %{provider_type: provider_type})
+            build_media_item_attrs(
+              full_metadata,
+              media_type,
+              Map.put(match_result, :provider_type, provider_type)
+            )
 
           Media.update_media_item(existing_item, attrs, reason: "Metadata enriched")
 
@@ -236,25 +245,42 @@ defmodule Mydia.Library.MetadataEnricher do
   # Within the freshness window we skip the relay re-fetch, but a nil-source TV
   # item must still record provenance — otherwise self-heal would silently
   # no-op for items rescanned within the hour. Stamp only (no relay call);
-  # items that already carry a source are left untouched.
-  defp maybe_stamp_recently_enriched(
-         %{metadata_source: nil} = existing_item,
-         :tv_show,
-         provider_type
-       )
-       when not is_nil(provider_type) do
-    Media.update_media_item(existing_item, %{metadata_source: provider_type},
-      reason: "Provenance recorded"
-    )
-  end
+  # items that already carry a source are left untouched. An explicit-tag
+  # rescan also pins the item so library-preference can't reidentify it.
+  defp maybe_stamp_recently_enriched(existing_item, media_type, provider_type, match_result) do
+    stamp = %{}
 
-  defp maybe_stamp_recently_enriched(existing_item, _media_type, _provider_type) do
-    Logger.debug("Skipping metadata re-fetch for recently enriched item",
-      id: existing_item.id,
-      title: existing_item.title
-    )
+    stamp =
+      cond do
+        media_type == :tv_show and explicit_tag_match?(match_result) and not is_nil(provider_type) ->
+          Map.put(stamp, :metadata_source, provider_type)
 
-    {:ok, existing_item}
+        media_type == :tv_show and is_nil(existing_item.metadata_source) and
+            not is_nil(provider_type) ->
+          Map.put(stamp, :metadata_source, provider_type)
+
+        true ->
+          stamp
+      end
+
+    stamp =
+      if media_type == :tv_show and explicit_tag_match?(match_result) and
+           not existing_item.metadata_source_locked do
+        Map.put(stamp, :metadata_source_locked, true)
+      else
+        stamp
+      end
+
+    if stamp == %{} do
+      Logger.debug("Skipping metadata re-fetch for recently enriched item",
+        id: existing_item.id,
+        title: existing_item.title
+      )
+
+      {:ok, existing_item}
+    else
+      Media.update_media_item(existing_item, stamp, reason: "Provenance recorded")
+    end
   end
 
   defp fetch_full_metadata(provider_id, media_type, config, provider_type) do
@@ -274,6 +300,22 @@ defmodule Mydia.Library.MetadataEnricher do
 
     Metadata.fetch_by_id_cached(config, provider_id, fetch_opts)
   end
+
+  defp provider_type_for_update(existing_item, :tv_show, match_provider_type, match_result) do
+    cond do
+      explicit_tag_match?(match_result) and match_provider_type in [:tmdb, :tvdb] ->
+        match_provider_type
+
+      not is_nil(existing_item.metadata_source) ->
+        existing_item.metadata_source
+
+      true ->
+        match_provider_type
+    end
+  end
+
+  defp provider_type_for_update(_existing_item, _media_type, match_provider_type, _match_result),
+    do: match_provider_type
 
   defp build_media_item_attrs(metadata, media_type, match_result) do
     provider_id = String.to_integer(to_string(metadata.provider_id))
@@ -308,8 +350,30 @@ defmodule Mydia.Library.MetadataEnricher do
         attrs
       end
 
+    # Pin TV shows matched via an explicit provider tag so a differing library
+    # preference never auto-reidentifies them. Supported tag forms are
+    # {tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+    # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+    # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...].
+    # Only ever sets the lock (never clears it), so a non-tagged rescan can't
+    # unpin an explicitly-tagged show.
+    attrs =
+      if media_type == :tv_show and explicit_tag_match?(match_result) do
+        Map.put(attrs, :metadata_source_locked, true)
+      else
+        attrs
+      end
+
     maybe_add_quality_profile(attrs, match_result)
   end
+
+  # A direct external-ID lookup from any supported provider tag form
+  # ({tmdb-...}, {tmdbid-...}, [tmdb-...], [tmdbid-...],
+  # {tvdb-...}, {tvdbid-...}, [tvdb-...], [tvdbid-...],
+  # {imdb-...}, {imdbid-...}, [imdb-...], [imdbid-...]) is the authoritative,
+  # user-chosen provider signal.
+  defp explicit_tag_match?(match_result),
+    do: Map.get(match_result, :match_type) == :direct_id_lookup
 
   # Normalize any provider signal to a concrete :tvdb / :tmdb value. Search
   # results from the relay carry provider: :metadata_relay for TMDB, which must

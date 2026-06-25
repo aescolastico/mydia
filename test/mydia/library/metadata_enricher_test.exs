@@ -461,6 +461,67 @@ defmodule Mydia.Library.MetadataEnricherTest do
     end
   end
 
+  describe "provider locking for explicitly-tagged TV shows" do
+    setup do
+      bypass = Bypass.open()
+
+      config = %{
+        type: :metadata_relay,
+        base_url: "http://localhost:#{bypass.port}",
+        options: %{language: "en-US", include_adult: false}
+      }
+
+      %{bypass: bypass, config: config}
+    end
+
+    test "locks the provider when matched via a direct id tag", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tv_body(id, "Tagged Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tmdb,
+        title: "Tagged Show",
+        match_type: :direct_id_lookup,
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.metadata_source == :tmdb
+      assert media_item.metadata_source_locked == true
+    end
+
+    test "does not lock when matched by title (no tag)", %{bypass: bypass, config: config} do
+      id = System.unique_integer([:positive])
+
+      Bypass.expect_once(bypass, "GET", "/tmdb/tv/shows/#{id}", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(tv_body(id, "Untagged Show")))
+      end)
+
+      match_result = %{
+        provider_id: to_string(id),
+        provider_type: :tmdb,
+        title: "Untagged Show",
+        match_type: :full_match,
+        metadata: %{media_type: :tv_show}
+      }
+
+      assert {:ok, media_item} =
+               MetadataEnricher.enrich(match_result, config: config, fetch_episodes: false)
+
+      assert media_item.metadata_source_locked == false
+    end
+  end
+
   describe "metadata_source adoption on the update path (U3)" do
     setup do
       bypass = Bypass.open()
@@ -565,6 +626,40 @@ defmodule Mydia.Library.MetadataEnricherTest do
       assert updated.metadata_source == :tmdb
     end
 
+    test "an explicit direct tag can switch an already-stamped source",
+         %{bypass: bypass, config: config} do
+      tmdb_id = System.unique_integer([:positive])
+      tvdb_id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Explicit TMDB",
+          tmdb_id: tmdb_id,
+          tvdb_id: tvdb_id,
+          metadata_source: :tvdb
+        })
+        |> backdate()
+
+      Bypass.stub(
+        bypass,
+        "GET",
+        "/tmdb/tv/shows/#{tmdb_id}",
+        &respond_json(&1, tv_body(tmdb_id, "Explicit TMDB"))
+      )
+
+      match =
+        tv_match(tmdb_id, :tmdb, "Explicit TMDB")
+        |> Map.put(:match_type, :direct_id_lookup)
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tmdb
+      assert updated.metadata_source_locked == true
+    end
+
     test "nil-source item still stamps within the recently-enriched window",
          %{config: config} do
       # Not backdated → recently enriched → fast path. No relay stub: the
@@ -586,6 +681,32 @@ defmodule Mydia.Library.MetadataEnricherTest do
 
       assert updated.id == item.id
       assert updated.metadata_source == :tmdb
+    end
+
+    test "an explicit direct tag can switch source within the recently-enriched window",
+         %{config: config} do
+      tmdb_id = System.unique_integer([:positive])
+      tvdb_id = System.unique_integer([:positive])
+
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Fresh Explicit TMDB",
+          tmdb_id: tmdb_id,
+          tvdb_id: tvdb_id,
+          metadata_source: :tvdb
+        })
+
+      match =
+        tv_match(tmdb_id, :tmdb, "Fresh Explicit TMDB")
+        |> Map.put(:match_type, :direct_id_lookup)
+
+      assert {:ok, updated} =
+               MetadataEnricher.enrich(match, config: config, fetch_episodes: false)
+
+      assert updated.id == item.id
+      assert updated.metadata_source == :tmdb
+      assert updated.metadata_source_locked == true
     end
 
     test "a stamped item within the recently-enriched window is left untouched",

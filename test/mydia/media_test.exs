@@ -1044,6 +1044,21 @@ defmodule Mydia.MediaTest do
       assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
     end
 
+    test "re-fetches (never re-identifies) when the show is provider-locked" do
+      item =
+        media_item_fixture(%{
+          type: "tv_show",
+          title: "Locked Show",
+          metadata_source: :tmdb,
+          metadata_source_locked: true
+        })
+
+      lib = library_path_fixture(%{type: "series", tv_metadata_source: :tvdb})
+      media_file_fixture(%{media_item_id: item.id, library_path_id: lib.id})
+
+      assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
+    end
+
     test "movies always re-fetch" do
       item = media_item_fixture(%{type: "movie", title: "A Movie", year: 2020})
       assert Mydia.Media.ProviderSwitch.provider_refresh_decision(item) == :refetch
