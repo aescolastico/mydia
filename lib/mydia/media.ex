@@ -968,7 +968,7 @@ defmodule Mydia.Media do
   - `:missing` - No episodes downloaded
   - `:upcoming` - All episodes are upcoming
 
-  For movies, returns simple status based on media files and downloads.
+  For movies, returns status based on media files, downloads, and release date.
 
   Returns tuple: `{status, %{downloaded: count, total: count}}` for TV shows
   or `{status, nil}` for movies.
@@ -999,6 +999,7 @@ defmodule Mydia.Media do
       cond do
         has_files -> :downloaded
         has_downloads -> :downloading
+        movie_upcoming?(media_item) -> :upcoming
         true -> :missing
       end
 
@@ -1059,6 +1060,12 @@ defmodule Mydia.Media do
       {status, %{downloaded: downloaded_count, total: total_released_monitored}}
     end
   end
+
+  defp movie_upcoming?(%MediaItem{metadata: %{release_date: %Date{} = release_date}}) do
+    Date.compare(release_date, Date.utc_today()) == :gt
+  end
+
+  defp movie_upcoming?(_media_item), do: false
 
   @doc """
   Re-fetches metadata from the provider and updates the media item.

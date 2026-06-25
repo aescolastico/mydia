@@ -1894,7 +1894,7 @@ defmodule Mydia.MediaTest do
     end
   end
 
-  describe "get_media_status/1 with unreleased episodes" do
+  describe "get_media_status/1 with unreleased media" do
     import Mydia.MediaFixtures
 
     test "does not mark show partial when only unreleased monitored episodes are missing" do
@@ -1961,6 +1961,69 @@ defmodule Mydia.MediaTest do
         )
 
       assert Media.get_media_status(reloaded) == {:missing, %{downloaded: 0, total: 1}}
+    end
+
+    test "marks future release movies without files as upcoming" do
+      future_date = Date.add(Date.utc_today(), 10)
+
+      movie =
+        media_item_fixture(%{
+          type: "movie",
+          title: "Future Movie",
+          year: future_date.year,
+          monitored: true,
+          metadata: %{
+            provider_id: "future-movie",
+            provider: :metadata_relay,
+            media_type: :movie,
+            release_date: future_date
+          }
+        })
+
+      reloaded =
+        Media.get_media_item!(movie.id,
+          preload: [:media_files, :downloads]
+        )
+
+      assert Media.get_media_status(reloaded) == {:upcoming, nil}
+    end
+
+    test "keeps future release movies with files downloaded" do
+      future_date = Date.add(Date.utc_today(), 10)
+
+      movie =
+        media_item_fixture(%{
+          type: "movie",
+          title: "Future Movie With File",
+          year: future_date.year,
+          monitored: true,
+          metadata: %{
+            provider_id: "future-movie-with-file",
+            provider: :metadata_relay,
+            media_type: :movie,
+            release_date: future_date
+          }
+        })
+
+      media_file_fixture(%{media_item_id: movie.id})
+
+      reloaded =
+        Media.get_media_item!(movie.id,
+          preload: [:media_files, :downloads]
+        )
+
+      assert Media.get_media_status(reloaded) == {:downloaded, nil}
+    end
+
+    test "keeps movies with no release date on the missing path" do
+      movie = media_item_fixture(%{type: "movie", monitored: true})
+
+      reloaded =
+        Media.get_media_item!(movie.id,
+          preload: [:media_files, :downloads]
+        )
+
+      assert Media.get_media_status(reloaded) == {:missing, nil}
     end
   end
 end
