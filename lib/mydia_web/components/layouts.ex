@@ -71,7 +71,7 @@ defmodule MydiaWeb.Layouts do
 
       <div class="drawer-content flex flex-col">
         <!-- Mobile header with menu button -->
-        <header class="lg:hidden navbar bg-base-300 border-b border-base-content/10">
+        <header class="lg:hidden sticky top-0 z-30 navbar bg-base-300/95 backdrop-blur border-b border-base-content/10">
           <div class="flex-none">
             <label for="main-drawer" class="btn btn-square btn-ghost">
               <.icon name="hero-bars-3" class="w-6 h-6" />
