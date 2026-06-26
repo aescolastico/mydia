@@ -22,6 +22,7 @@ defmodule MydiaWeb.MediaLive.Index do
      socket
      |> assign(:view_mode, :grid)
      |> assign(:search_query, "")
+     |> assign(:filter_progress, nil)
      |> assign(:filter_monitored, nil)
      |> assign(:filter_quality, nil)
      |> assign(:sort_by, "title_asc")
@@ -104,6 +105,14 @@ defmodule MydiaWeb.MediaLive.Index do
   def handle_event("filter", params, socket) do
     Logger.debug("Filter params: #{inspect(params)}")
 
+    progress =
+      case params["progress"] do
+        "missing" -> :missing
+        "partial" -> :partial
+        "downloaded" -> :downloaded
+        _ -> nil
+      end
+
     monitored =
       case params["monitored"] do
         "all" -> nil
@@ -124,6 +133,7 @@ defmodule MydiaWeb.MediaLive.Index do
 
     {:noreply,
      socket
+     |> assign(:filter_progress, progress)
      |> assign(:filter_monitored, monitored)
      |> assign(:filter_quality, quality)
      |> assign(:sort_by, sort_by)
@@ -168,6 +178,7 @@ defmodule MydiaWeb.MediaLive.Index do
     items = Media.list_media_items(query_opts)
     items = apply_search_filter(items, socket.assigns.search_query)
     items = apply_quality_filter(items, socket.assigns.filter_quality)
+    items = apply_progress_filter(items, socket.assigns.filter_progress)
 
     all_ids = MapSet.new(items, & &1.id)
 
@@ -222,6 +233,7 @@ defmodule MydiaWeb.MediaLive.Index do
     items = Media.list_media_items(query_opts)
     items = apply_search_filter(items, socket.assigns.search_query)
     items = apply_quality_filter(items, socket.assigns.filter_quality)
+    items = apply_progress_filter(items, socket.assigns.filter_progress)
 
     all_ids = MapSet.new(items, & &1.id)
 
@@ -626,6 +638,10 @@ defmodule MydiaWeb.MediaLive.Index do
     items = apply_quality_filter(items, socket.assigns.filter_quality)
     Logger.debug("load_media_items: after quality filter=#{length(items)}")
 
+    # Apply progress filtering (client-side for now)
+    items = apply_progress_filter(items, socket.assigns.filter_progress)
+    Logger.debug("load_media_items: after progress filter=#{length(items)}")
+
     # Apply sorting
     items = apply_sorting(items, socket.assigns.sort_by)
 
@@ -733,6 +749,71 @@ defmodule MydiaWeb.MediaLive.Index do
       |> Enum.any?(fn file -> file.resolution == quality end)
     end)
   end
+
+  defp apply_progress_filter(items, nil), do: items
+
+  defp apply_progress_filter(items, progress) do
+    Enum.filter(items, &(media_progress_status(&1) == progress))
+  end
+
+  defp media_progress_status(%{type: "movie"} = media_item) do
+    cond do
+      has_media_files?(media_item) -> :downloaded
+      progress_movie_upcoming?(media_item) -> :upcoming
+      true -> :missing
+    end
+  end
+
+  defp media_progress_status(%{type: "tv_show", episodes: episodes} = media_item)
+       when is_list(episodes) do
+    episodes
+    |> progress_relevant_episodes(media_item)
+    |> Enum.filter(&released_episode?/1)
+    |> episode_progress_status()
+  end
+
+  defp media_progress_status(_media_item), do: :missing
+
+  defp progress_relevant_episodes(episodes, %{monitored: false}), do: episodes
+
+  defp progress_relevant_episodes(episodes, _media_item) do
+    monitored_episodes = Enum.filter(episodes, & &1.monitored)
+
+    if monitored_episodes == [] do
+      episodes
+    else
+      monitored_episodes
+    end
+  end
+
+  defp episode_progress_status([]), do: :upcoming
+
+  defp episode_progress_status(episodes) do
+    downloaded_count = Enum.count(episodes, &has_media_files?/1)
+
+    cond do
+      downloaded_count == length(episodes) -> :downloaded
+      downloaded_count > 0 -> :partial
+      true -> :missing
+    end
+  end
+
+  defp has_media_files?(%{media_files: media_files}) when is_list(media_files),
+    do: media_files != []
+
+  defp has_media_files?(_item), do: false
+
+  defp released_episode?(%{air_date: %Date{} = air_date}) do
+    Date.compare(air_date, Date.utc_today()) != :gt
+  end
+
+  defp released_episode?(_episode), do: false
+
+  defp progress_movie_upcoming?(%{metadata: %{release_date: %Date{} = release_date}}) do
+    Date.compare(release_date, Date.utc_today()) == :gt
+  end
+
+  defp progress_movie_upcoming?(_media_item), do: false
 
   defp apply_sorting(items, sort_by) do
     Logger.debug("Applying sort: #{inspect(sort_by)} to #{length(items)} items")
