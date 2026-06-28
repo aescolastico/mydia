@@ -136,7 +136,10 @@ defmodule Mydia.Settings.QualityProfile do
 
     # HDR/Dolby Vision preferences
     hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-    require_hdr: false
+    require_hdr: false,
+
+    # Torrent source preferences
+    min_ratio: 0.2,  # minimum seeder/leecher ratio for torrents
   }
   """
   def validate_quality_standards(changeset) do
@@ -154,6 +157,7 @@ defmodule Mydia.Settings.QualityProfile do
         |> validate_sources(standards)
         |> validate_media_type_sizes(standards)
         |> validate_hdr_formats(standards)
+        |> validate_min_ratio(standards)
 
       _ ->
         add_error(changeset, :quality_standards, "must be a map")
@@ -552,6 +556,19 @@ defmodule Mydia.Settings.QualityProfile do
       add_error(changeset, :quality_standards, "require_hdr must be a boolean")
     else
       changeset
+    end
+  end
+
+  defp validate_min_ratio(changeset, standards) do
+    case Map.get(standards, :min_ratio) || Map.get(standards, "min_ratio") do
+      nil ->
+        changeset
+
+      value when is_number(value) and value >= 0 ->
+        changeset
+
+      _ ->
+        add_error(changeset, :quality_standards, "min_ratio must be a non-negative number")
     end
   end
 

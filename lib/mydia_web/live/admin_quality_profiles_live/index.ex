@@ -383,7 +383,9 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
 
     base_params = %{
       "name" => params["name"],
-      "description" => params["description"]
+      "description" => params["description"],
+      "upgrades_allowed" => params["upgrades_allowed"],
+      "upgrade_until_quality" => blank_to_nil(params["upgrade_until_quality"])
     }
 
     if quality_standards do
@@ -392,6 +394,9 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
       base_params
     end
   end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp transform_quality_standards(standards) when is_map(standards) do
     standards
@@ -413,6 +418,13 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
 
   defp transform_quality_standard_value(_key, ""), do: nil
   defp transform_quality_standard_value(_key, nil), do: nil
+
+  defp transform_quality_standard_value("min_ratio", value) when is_binary(value) do
+    case Float.parse(value) do
+      {float, ""} -> float
+      _ -> nil
+    end
+  end
 
   defp transform_quality_standard_value(key, value)
        when key in [

@@ -323,6 +323,34 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
         label="Description"
         rows="3"
       />
+
+      <.input
+        field={@form[:upgrades_allowed]}
+        type="checkbox"
+        label="Allow automatic quality upgrades"
+      />
+
+      <div class="form-control">
+        <label class="label">
+          <span class="label-text">Upgrade until quality</span>
+        </label>
+        <select
+          name="quality_profile[upgrade_until_quality]"
+          class="select select-bordered w-full"
+        >
+          <option value="" selected={!Ecto.Changeset.get_field(@form.source, :upgrade_until_quality)}>
+            No cap
+          </option>
+          <%= for res <- ["360p", "480p", "576p", "720p", "1080p", "2160p", "4320p"] do %>
+            <option
+              value={res}
+              selected={Ecto.Changeset.get_field(@form.source, :upgrade_until_quality) == res}
+            >
+              {res}
+            </option>
+          <% end %>
+        </select>
+      </div>
     </div>
     """
   end
@@ -531,6 +559,31 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
             </label>
           <% end %>
         </div>
+      </div>
+
+      <div class="form-control">
+        <label class="label">
+          <span class="label-text font-semibold">Minimum seeder ratio (torrents)</span>
+        </label>
+        <input
+          type="number"
+          name="quality_profile[quality_standards][min_ratio]"
+          placeholder="e.g. 0.2"
+          step="0.05"
+          min="0"
+          value={
+            get_in(
+              Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
+              [:min_ratio]
+            )
+          }
+          class="input input-bordered w-full"
+        />
+        <label class="label">
+          <span class="label-text-alt">
+            Reject torrents whose seeder/leecher ratio is below this value. Leave blank to disable.
+          </span>
+        </label>
       </div>
 
       <%!-- File Size Constraints --%>
