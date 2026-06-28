@@ -364,7 +364,7 @@ defmodule Mydia.Indexers.SearchScorer do
   defp extract_audio_channels(nil), do: nil
 
   defp extract_audio_channels(audio) when is_binary(audio) do
-    case Regex.run(~r/\b(\d\.\d(?:\.\d)?)\b/, audio) do
+    case Regex.run(~r/(?<!\d)(\d\.\d(?:\.\d)?)(?!\d)/, audio) do
       [_, channels] -> channels
       _ -> nil
     end
