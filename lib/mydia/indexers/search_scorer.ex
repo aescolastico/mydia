@@ -330,6 +330,7 @@ defmodule Mydia.Indexers.SearchScorer do
       source: quality.source,
       video_codec: video_codec,
       audio_codec: audio_codec,
+      audio_channels: extract_audio_channels(quality.audio),
       file_size_mb: file_size_mb,
       media_type: media_type
     }
@@ -355,6 +356,18 @@ defmodule Mydia.Indexers.SearchScorer do
       hdr: quality.hdr,
       size_mb: if(result.size, do: Float.round(result.size / (1024 * 1024), 1), else: nil)
     }
+  end
+
+  # Derive an audio channel layout (e.g. "5.1", "7.1", "7.1.2", "2.0") from the
+  # parsed audio string so quality_standards.preferred_audio_channels has a real
+  # effect on search ranking. Returns nil when no channel notation is present.
+  defp extract_audio_channels(nil), do: nil
+
+  defp extract_audio_channels(audio) when is_binary(audio) do
+    case Regex.run(~r/\b(\d\.\d(?:\.\d)?)\b/, audio) do
+      [_, channels] -> channels
+      _ -> nil
+    end
   end
 
   # Normalize video codec names to match quality profile format

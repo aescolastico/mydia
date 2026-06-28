@@ -289,6 +289,39 @@ defmodule Mydia.Indexers.SearchScorerTest do
     end
   end
 
+  describe "audio channels affect search score" do
+    test "preferred channels score higher than non-preferred" do
+      profile = %Mydia.Settings.QualityProfile{
+        name: "Chan",
+        quality_standards: %{
+          preferred_resolutions: ["1080p"],
+          preferred_audio_channels: ["7.1", "5.1", "2.0"]
+        }
+      }
+
+      base = fn audio ->
+        %Mydia.Indexers.SearchResult{
+          title: "Movie 1080p",
+          size: 5_000_000_000,
+          seeders: 10,
+          leechers: 0,
+          download_url: "magnet:?x",
+          indexer: "test",
+          download_protocol: :torrent,
+          quality: %Mydia.Library.Structs.Quality{resolution: "1080p", audio: audio}
+        }
+      end
+
+      {seven_one, _, _} =
+        Mydia.Indexers.SearchScorer.score_quality(base.("TrueHD 7.1"), profile, :movie)
+
+      {two_zero, _, _} =
+        Mydia.Indexers.SearchScorer.score_quality(base.("AAC 2.0"), profile, :movie)
+
+      assert seven_one > two_zero
+    end
+  end
+
   describe "real-world scoring scenarios" do
     test "well-seeded BluRay 1080p ranks higher than zero-seeder 4K" do
       bluray_1080p =
