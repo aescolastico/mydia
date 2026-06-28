@@ -71,7 +71,7 @@ defmodule MydiaWeb.Layouts do
 
       <div class="drawer-content flex flex-col">
         <!-- Mobile header with menu button -->
-        <header class="lg:hidden navbar bg-base-300 border-b border-base-content/10">
+        <header class="lg:hidden sticky top-0 z-30 navbar bg-base-300/95 backdrop-blur border-b border-base-content/10">
           <div class="flex-none">
             <label for="main-drawer" class="btn btn-square btn-ghost">
               <.icon name="hero-bars-3" class="w-6 h-6" />
@@ -86,7 +86,7 @@ defmodule MydiaWeb.Layouts do
         </header>
 
         <!-- Main content area -->
-        <main class="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 lg:p-8 pb-20 lg:pb-8">
+        <main class="flex-1 p-3 sm:p-4 md:p-6 lg:p-8 pb-20 lg:pb-8">
           {render_slot(@inner_block)}
         </main>
         <.mobile_dock current_user={@current_user} current_path={@current_path} />
