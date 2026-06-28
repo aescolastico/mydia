@@ -540,7 +540,7 @@ defmodule Mydia.Settings.QualityProfileEngine do
     # Resolution recommendations
     recommendations =
       if scoring_result.breakdown.resolution < 80.0 do
-        preferred_resolutions = get_in(profile.quality_standards, [:preferred_resolutions]) || []
+        preferred_resolutions = QualityProfile.preferred_resolutions(profile)
 
         if Enum.any?(preferred_resolutions) do
           best_resolution = List.first(preferred_resolutions)

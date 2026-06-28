@@ -291,15 +291,7 @@ defmodule Mydia.Settings.QualityProfile do
   # standalone `qualities` list gone, the allow-list lives entirely in
   # quality_standards.preferred_resolutions.
   defp validate_preferred_resolutions_present(changeset) do
-    standards = get_field(changeset, :quality_standards)
-
-    resolutions =
-      case standards do
-        %{} = s -> Map.get(s, :preferred_resolutions) || Map.get(s, "preferred_resolutions")
-        _ -> nil
-      end
-
-    if is_list(resolutions) and resolutions != [] do
+    if changeset |> apply_changes() |> preferred_resolutions() |> Enum.any?() do
       changeset
     else
       add_error(
