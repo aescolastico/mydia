@@ -101,7 +101,7 @@ defmodule Mydia.QueryHelpers.FilterableTest do
 
   describe "boolean filter" do
     test "filters by true" do
-      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      profile = quality_profile_fixture()
       # System profiles are seeded/created elsewhere; just verify non-system profiles are excluded
       results = ProfileFilters.list(is_system: false)
 
@@ -110,14 +110,14 @@ defmodule Mydia.QueryHelpers.FilterableTest do
     end
 
     test "filters by false" do
-      _profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      _profile = quality_profile_fixture()
       results = ProfileFilters.list(is_system: true)
 
       assert Enum.all?(results, &(&1.is_system == true))
     end
 
     test "skips non-boolean values" do
-      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      profile = quality_profile_fixture()
 
       # Non-boolean values fail the guard and fall through to the catch-all
       results = ProfileFilters.list(is_system: "not_a_boolean")
@@ -125,7 +125,7 @@ defmodule Mydia.QueryHelpers.FilterableTest do
     end
 
     test "skips nil" do
-      profile = quality_profile_fixture(%{qualities: ["1080p", "720p"]})
+      profile = quality_profile_fixture()
 
       results = ProfileFilters.list(is_system: nil)
       assert Enum.any?(results, &(&1.id == profile.id))

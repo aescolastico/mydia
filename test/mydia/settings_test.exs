@@ -1703,7 +1703,7 @@ defmodule Mydia.SettingsTest do
       assert message =~ "already exists"
     end
 
-    test "atomizes map keys in quality_standards and metadata_preferences" do
+    test "atomizes map keys in quality_standards" do
       json_data = """
       {
         "schema_version": 1,
