@@ -26,7 +26,6 @@ defmodule MydiaWeb.MediaLive.Show.SearchHelpersTest do
   defp build_quality_profile do
     %QualityProfile{
       name: "Test Profile",
-      qualities: ["1080p", "720p"],
       quality_standards: %{
         preferred_resolutions: ["1080p", "720p"]
       }

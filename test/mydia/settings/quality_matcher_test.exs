@@ -2,7 +2,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
   use Mydia.DataCase, async: true
 
   alias Mydia.Indexers.SearchResult
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Settings.QualityMatcher
   alias Mydia.Settings.QualityProfile
 
@@ -11,14 +11,11 @@ defmodule Mydia.Settings.QualityMatcherTest do
       # Create a profile with quality_standards
       profile = %QualityProfile{
         name: "Test HD Profile",
-        qualities: ["720p", "1080p"],
         quality_standards: %{
           preferred_video_codecs: ["h265", "h264"],
           preferred_audio_codecs: ["ac3", "aac"],
           preferred_resolutions: ["1080p", "720p"],
           preferred_sources: ["BluRay", "WEB-DL"],
-          min_video_bitrate_mbps: 5.0,
-          max_video_bitrate_mbps: 50.0,
           movie_min_size_mb: 2048,
           movie_max_size_mb: 15360
         }
@@ -37,7 +34,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -62,7 +59,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "WEB-DL",
           codec: "x264",
@@ -86,7 +83,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 2,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "480p",
           source: "WEB-DL",
           codec: "x264",
@@ -134,7 +131,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "BluRay",
           codec: "x265",
@@ -158,7 +155,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: nil,
           codec: nil,
@@ -179,14 +176,11 @@ defmodule Mydia.Settings.QualityMatcherTest do
     setup do
       profile = %QualityProfile{
         name: "Test HD Profile",
-        qualities: ["720p", "1080p", "2160p"],
         quality_standards: %{
           preferred_video_codecs: ["h265", "h264"],
           preferred_audio_codecs: ["atmos", "truehd", "dts-hd", "ac3"],
           preferred_resolutions: ["2160p", "1080p"],
           preferred_sources: ["BluRay", "REMUX", "WEB-DL"],
-          min_video_bitrate_mbps: 5.0,
-          max_video_bitrate_mbps: 50.0,
           movie_min_size_mb: 2048,
           movie_max_size_mb: 15360
         }
@@ -203,7 +197,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "2160p",
           source: "BluRay",
           codec: "h265",
@@ -221,7 +215,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "WEB-DL",
           codec: "x264",
@@ -250,7 +244,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 1,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: nil,
           codec: nil,
@@ -276,7 +270,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "WEB-DL",
           codec: "x264",
@@ -296,9 +290,9 @@ defmodule Mydia.Settings.QualityMatcherTest do
     setup do
       profile = %QualityProfile{
         name: "Test Profile",
-        qualities: ["720p", "1080p", "2160p"],
         upgrades_allowed: true,
-        upgrade_until_quality: "1080p"
+        upgrade_until_quality: "1080p",
+        quality_standards: %{preferred_resolutions: ["720p", "1080p", "2160p"]}
       }
 
       {:ok, profile: profile}
@@ -312,7 +306,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -336,7 +330,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -358,7 +352,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "2160p",
           source: "BluRay",
           codec: "x265",
@@ -380,7 +374,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 2,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "WEB-DL",
           codec: "x264",
@@ -402,7 +396,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 1,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "480p",
           source: "WEB-DL",
           codec: "x264",
@@ -428,6 +422,29 @@ defmodule Mydia.Settings.QualityMatcherTest do
       }
 
       refute QualityMatcher.is_upgrade?(result, profile, "720p")
+    end
+
+    test "uses preferred_resolutions (not qualities) for the allow-list" do
+      profile = %Mydia.Settings.QualityProfile{
+        name: "Std",
+        upgrades_allowed: true,
+        quality_standards: %{preferred_resolutions: ["1080p", "720p"]}
+      }
+
+      result = %Mydia.Indexers.SearchResult{
+        title: "Movie 1080p",
+        size: 1_000_000,
+        seeders: 10,
+        leechers: 1,
+        download_url: "magnet:?x",
+        indexer: "test",
+        quality: %Mydia.Library.Structs.Quality{resolution: "1080p"}
+      }
+
+      assert Mydia.Settings.QualityMatcher.is_upgrade?(result, profile, "720p")
+
+      not_allowed = %{result | quality: %Mydia.Library.Structs.Quality{resolution: "480p"}}
+      refute Mydia.Settings.QualityMatcher.is_upgrade?(not_allowed, profile, "720p")
     end
   end
 end

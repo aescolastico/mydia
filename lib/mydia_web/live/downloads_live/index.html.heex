@@ -218,7 +218,7 @@
             <% end %>
             <%!-- Line 3: compact metadata cluster (every metric carries an icon) --%>
             <div class="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-xs text-base-content/60">
-              <% quality_str = QualityInfo.format(get_metadata_value(download, "quality")) %>
+              <% quality_str = Quality.format(get_metadata_value(download, "quality")) %>
               <span :if={quality_str && quality_str != ""} class="badge badge-ghost badge-sm">
                 {quality_str}
               </span>

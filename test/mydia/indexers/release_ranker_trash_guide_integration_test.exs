@@ -53,7 +53,6 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   def trash_hd_bluray_web_profile do
     %QualityProfile{
       name: "TRaSH HD Bluray + WEB",
-      qualities: ["720p", "1080p"],
       upgrades_allowed: true,
       upgrade_until_quality: "1080p",
       quality_standards: %{
@@ -82,7 +81,6 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   def trash_uhd_bluray_web_profile do
     %QualityProfile{
       name: "TRaSH UHD Bluray + WEB",
-      qualities: ["2160p"],
       upgrades_allowed: true,
       upgrade_until_quality: "2160p",
       quality_standards: %{
@@ -112,7 +110,6 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   def trash_remux_web_1080p_profile do
     %QualityProfile{
       name: "TRaSH Remux + WEB 1080p",
-      qualities: ["1080p"],
       upgrades_allowed: true,
       upgrade_until_quality: "1080p",
       quality_standards: %{
@@ -136,7 +133,7 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   # TRASH GUIDE RELEASE GROUP TIERS
   # Source: https://github.com/TRaSH-Guides/Guides/tree/master/docs/json/radarr/cf
   # Note: Release groups are matched via preferred_tags in ReleaseRanker,
-  #       not via a field in QualityInfo struct
+  #       not via a field in Quality struct
   # ===========================================================================
 
   @web_tier_01_groups ~w(ABBIE AJP69 APEX BLUTONiUM CMRG CRFW CRUD FLUX GNOME HONE KiNGS Kitsune NOSiViD NTb NTG SiC TEPES TheFarm ZoroSenpai)
@@ -798,7 +795,7 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   # ===========================================================================
   # TEST: RELEASE GROUP TIER RANKING
   # TRaSH Guide defines release group quality tiers
-  # Release groups are matched via preferred_tags, not a QualityInfo field
+  # Release groups are matched via preferred_tags, not a Quality field
   # ===========================================================================
 
   describe "release group tier detection" do
@@ -1163,18 +1160,18 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
     test "HD Bluray + WEB profile filters correctly" do
       profile = trash_hd_bluray_web_profile()
 
-      # This profile allows 720p and 1080p only
-      assert "720p" in profile.qualities
-      assert "1080p" in profile.qualities
-      refute "2160p" in profile.qualities
+      # This profile allows 720p and 1080p only (via min/max resolution in quality_standards)
+      assert profile.quality_standards.min_resolution == "720p"
+      assert profile.quality_standards.max_resolution == "1080p"
+      refute "2160p" in profile.quality_standards.preferred_resolutions
     end
 
     test "UHD Bluray + WEB profile filters correctly" do
       profile = trash_uhd_bluray_web_profile()
 
       # This profile allows only 2160p
-      assert "2160p" in profile.qualities
-      refute "1080p" in profile.qualities
+      assert "2160p" in profile.quality_standards.preferred_resolutions
+      refute "1080p" in profile.quality_standards.preferred_resolutions
     end
 
     test "preferred_qualities from profile drives ranking" do
@@ -1193,8 +1190,11 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
         })
       ]
 
-      # Using profile's qualities as preferred_qualities
-      ranked = ReleaseRanker.rank_all(results, preferred_qualities: profile.qualities)
+      # Using profile's preferred_resolutions as preferred_qualities
+      ranked =
+        ReleaseRanker.rank_all(results,
+          preferred_qualities: profile.quality_standards.preferred_resolutions
+        )
 
       # 1080p should be first because it matches profile
       first = List.first(ranked)

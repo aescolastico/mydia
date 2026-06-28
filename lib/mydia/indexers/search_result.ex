@@ -31,14 +31,15 @@ defmodule Mydia.Indexers.SearchResult do
   ## Quality Information
 
   The `:quality` field contains parsed quality information extracted from
-  the release title as a `Mydia.Indexers.Structs.QualityInfo` struct:
+  the release title as a `Mydia.Library.Structs.Quality` struct:
 
-      %QualityInfo{
+      %Quality{
         resolution: "1080p" | "720p" | "2160p" | "480p" | nil,
         source: "BluRay" | "WEB-DL" | "WEBRip" | "HDTV" | nil,
         codec: "x264" | "x265" | "H.264" | "H.265" | nil,
         audio: "AAC" | "AC3" | "DTS" | "TrueHD" | nil,
         hdr: true | false,
+        hdr_format: "hdr10" | "hdr10+" | "dolby_vision" | nil,
         proper: true | false,
         repack: true | false
       }
@@ -57,7 +58,7 @@ defmodule Mydia.Indexers.SearchResult do
       ...> }
   """
 
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Indexers.Structs.SearchResultMetadata
 
   @type t :: %__MODULE__{
@@ -70,7 +71,7 @@ defmodule Mydia.Indexers.SearchResult do
           indexer: String.t(),
           category: integer() | nil,
           published_at: DateTime.t() | nil,
-          quality: QualityInfo.t() | nil,
+          quality: Quality.t() | nil,
           metadata: SearchResultMetadata.t() | nil,
           tmdb_id: integer() | nil,
           tvdb_id: integer() | nil,

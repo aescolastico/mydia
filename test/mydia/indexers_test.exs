@@ -226,7 +226,8 @@ defmodule Mydia.IndexersTest do
 
   describe "ranking algorithm" do
     test "ranks higher quality results first" do
-      alias Mydia.Indexers.{QualityParser, Structs.QualityInfo}
+      alias Mydia.Indexers.QualityParser
+      alias Mydia.Library.Structs.Quality
 
       low_quality = %SearchResult{
         title: "Movie.480p.WEBRip",
@@ -236,7 +237,7 @@ defmodule Mydia.IndexersTest do
         download_url: "magnet:?xt=urn:btih:abc123",
         indexer: "Test",
         quality:
-          QualityInfo.new(%{
+          Quality.new(%{
             resolution: "480p",
             source: "WEBRip",
             codec: "x264",
@@ -255,7 +256,7 @@ defmodule Mydia.IndexersTest do
         download_url: "magnet:?xt=urn:btih:def456",
         indexer: "Test",
         quality:
-          QualityInfo.new(%{
+          Quality.new(%{
             resolution: "2160p",
             source: "BluRay",
             codec: "x265",
@@ -301,7 +302,7 @@ defmodule Mydia.IndexersTest do
       # medium quality with many seeders
       # Should prefer quality (60% weight) but seeders still matter
 
-      alias Mydia.Indexers.Structs.QualityInfo
+      alias Mydia.Library.Structs.Quality
 
       high_qual_few_seeds = %SearchResult{
         title: "Movie.2160p.BluRay",
@@ -311,7 +312,7 @@ defmodule Mydia.IndexersTest do
         download_url: "magnet:?xt=urn:btih:abc123",
         indexer: "Test",
         quality:
-          QualityInfo.new(%{
+          Quality.new(%{
             resolution: "2160p",
             source: "BluRay",
             codec: "x265",
@@ -330,7 +331,7 @@ defmodule Mydia.IndexersTest do
         download_url: "magnet:?xt=urn:btih:def456",
         indexer: "Test",
         quality:
-          QualityInfo.new(%{
+          Quality.new(%{
             resolution: "1080p",
             source: "WEB-DL",
             codec: "x264",

@@ -8,7 +8,7 @@ defmodule Mydia.Indexers.QualityParser do
   ## Examples
 
       iex> QualityParser.parse("Movie.Name.2023.1080p.BluRay.x264.DTS-Group")
-      %QualityInfo{
+      %Quality{
         resolution: "1080p",
         source: "BluRay",
         codec: "x264",
@@ -19,7 +19,7 @@ defmodule Mydia.Indexers.QualityParser do
       }
 
       iex> QualityParser.parse("Show.S01E01.2160p.WEB-DL.HDR.H.265.AAC-Group")
-      %QualityInfo{
+      %Quality{
         resolution: "2160p",
         source: "WEB-DL",
         codec: "H.265",
@@ -30,7 +30,7 @@ defmodule Mydia.Indexers.QualityParser do
       }
   """
 
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
 
   # Resolution patterns (ordered by priority for matching)
   defp resolutions do
@@ -119,13 +119,13 @@ defmodule Mydia.Indexers.QualityParser do
   @doc """
   Parses quality information from a release title.
 
-  Returns a QualityInfo struct with parsed quality information, or nil values for
+  Returns a Quality struct with parsed quality information, or nil values for
   information that could not be extracted.
 
   ## Examples
 
       iex> QualityParser.parse("Movie.2023.1080p.BluRay.x264")
-      %QualityInfo{
+      %Quality{
         resolution: "1080p",
         source: "BluRay",
         codec: "x264",
@@ -136,7 +136,7 @@ defmodule Mydia.Indexers.QualityParser do
       }
 
       iex> QualityParser.parse("Show.S01E01.PROPER.REPACK.1080p.WEB-DL.x265")
-      %QualityInfo{
+      %Quality{
         resolution: "1080p",
         source: "WEB-DL",
         codec: "x265",
@@ -146,11 +146,11 @@ defmodule Mydia.Indexers.QualityParser do
         repack: true
       }
   """
-  @spec parse(String.t()) :: QualityInfo.t()
+  @spec parse(String.t()) :: Quality.t()
   def parse(title) when is_binary(title) do
     hdr_format = extract_hdr_format(title)
 
-    QualityInfo.new(
+    Quality.new(
       resolution: extract_resolution(title),
       source: extract_source(title),
       codec: extract_codec(title),
@@ -349,16 +349,16 @@ defmodule Mydia.Indexers.QualityParser do
 
   ## Examples
 
-      iex> quality = QualityInfo.new(resolution: "2160p", source: "BluRay", codec: "x265", hdr: true, hdr_format: "DV")
+      iex> quality = Quality.new(resolution: "2160p", source: "BluRay", codec: "x265", hdr: true, hdr_format: "DV")
       iex> QualityParser.quality_score(quality)
       1750
 
-      iex> quality = QualityInfo.new(resolution: "1080p", source: "WEB-DL", codec: "x264")
+      iex> quality = Quality.new(resolution: "1080p", source: "WEB-DL", codec: "x264")
       iex> QualityParser.quality_score(quality)
       1300
   """
-  @spec quality_score(QualityInfo.t()) :: integer()
-  def quality_score(%QualityInfo{} = quality) do
+  @spec quality_score(Quality.t()) :: integer()
+  def quality_score(%Quality{} = quality) do
     resolution_score(quality.resolution) +
       source_score(quality.source) +
       codec_score(quality.codec) +

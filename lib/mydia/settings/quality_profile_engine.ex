@@ -188,47 +188,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
     end
   end
 
-  @doc """
-  Gets metadata provider preferences for applying during metadata refresh.
-
-  Extracts the metadata_preferences from a quality profile and returns
-  them in a format suitable for passing to metadata enrichment functions.
-
-  ## Parameters
-
-    - `profile` - QualityProfile struct or profile ID
-
-  ## Returns
-
-    `{:ok, preferences}` where preferences is a map with:
-    - `:provider_priority` - Ordered list of providers
-    - `:field_providers` - Field-specific provider overrides
-    - `:language` - Language code for metadata
-    - `:region` - Region code for metadata
-    - Other preference settings
-
-  ## Examples
-
-      iex> get_metadata_preferences(profile)
-      {:ok, %{
-        provider_priority: ["metadata_relay", "tvdb", "tmdb"],
-        language: "en-US",
-        region: "US",
-        ...
-      }}
-  """
-  def get_metadata_preferences(%QualityProfile{} = profile) do
-    prefs = profile.metadata_preferences || %{}
-    {:ok, prefs}
-  end
-
-  def get_metadata_preferences(profile_id) when is_binary(profile_id) do
-    case fetch_profile(profile_id) do
-      {:ok, profile} -> get_metadata_preferences(profile)
-      error -> error
-    end
-  end
-
   ## Private Functions
 
   # Fetches a quality profile by ID
@@ -476,23 +435,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
     # Convert bytes to MB for file size
     file_size_mb = if media_file.size, do: div(media_file.size, 1_048_576), else: nil
 
-    # Extract video bitrate from total bitrate (approximation)
-    # Typically video is ~90% of total bitrate for high quality content
-    video_bitrate_mbps =
-      if media_file.bitrate do
-        Float.round(media_file.bitrate * 0.9 / 1_000_000, 1)
-      else
-        nil
-      end
-
-    # Audio bitrate approximation
-    audio_bitrate_kbps =
-      if media_file.bitrate do
-        round(media_file.bitrate * 0.1 / 1000)
-      else
-        nil
-      end
-
     # Build attributes map
     %{
       video_codec: media_file.codec,
@@ -500,8 +442,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
       audio_channels: extract_audio_channels(media_file),
       resolution: media_file.resolution,
       source: extract_source(media_file),
-      video_bitrate_mbps: video_bitrate_mbps,
-      audio_bitrate_kbps: audio_bitrate_kbps,
       file_size_mb: file_size_mb,
       media_type: media_type,
       hdr_format: media_file.hdr_format
@@ -600,7 +540,7 @@ defmodule Mydia.Settings.QualityProfileEngine do
     # Resolution recommendations
     recommendations =
       if scoring_result.breakdown.resolution < 80.0 do
-        preferred_resolutions = get_in(profile.quality_standards, [:preferred_resolutions]) || []
+        preferred_resolutions = QualityProfile.preferred_resolutions(profile)
 
         if Enum.any?(preferred_resolutions) do
           best_resolution = List.first(preferred_resolutions)

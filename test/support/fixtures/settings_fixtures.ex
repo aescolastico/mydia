@@ -34,9 +34,7 @@ defmodule Mydia.SettingsFixtures do
   def quality_profile_fixture(attrs \\ %{}) do
     default_attrs = %{
       name: "test-profile-#{System.unique_integer([:positive])}",
-      min_size: 0,
-      max_size: 10_737_418_240,
-      preferred_qualities: ["1080p", "720p"]
+      quality_standards: %{preferred_resolutions: ["1080p", "720p"]}
     }
 
     attrs = Map.merge(default_attrs, attrs)

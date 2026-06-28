@@ -2,7 +2,7 @@ defmodule Mydia.Indexers.QualityParserTest do
   use ExUnit.Case, async: true
 
   alias Mydia.Indexers.QualityParser
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
 
   describe "parse/1" do
     test "parses complete quality information" do
@@ -271,7 +271,7 @@ defmodule Mydia.Indexers.QualityParserTest do
   describe "quality_score/1" do
     test "scores 2160p BluRay with DV HDR highest" do
       quality =
-        QualityInfo.new(
+        Quality.new(
           resolution: "2160p",
           source: "BluRay",
           codec: "x265",
@@ -289,7 +289,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "scores 2160p BluRay with generic HDR" do
       quality =
-        QualityInfo.new(
+        Quality.new(
           resolution: "2160p",
           source: "BluRay",
           codec: "x265",
@@ -307,7 +307,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "scores 1080p WEB-DL x264 appropriately" do
       quality =
-        QualityInfo.new(
+        Quality.new(
           resolution: "1080p",
           source: "WEB-DL",
           codec: "x264",
@@ -324,7 +324,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "adds bonus for PROPER (25 points)" do
       quality_without =
-        QualityInfo.new(
+        Quality.new(
           resolution: "1080p",
           source: "BluRay",
           codec: "x264",
@@ -342,7 +342,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "adds bonus for REPACK (15 points)" do
       quality_without =
-        QualityInfo.new(
+        Quality.new(
           resolution: "1080p",
           source: "BluRay",
           codec: "x264",
@@ -360,7 +360,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "handles nil values gracefully" do
       quality =
-        QualityInfo.new(
+        Quality.new(
           resolution: nil,
           source: nil,
           codec: nil,
@@ -375,7 +375,7 @@ defmodule Mydia.Indexers.QualityParserTest do
 
     test "scores CAM releases lowest" do
       quality =
-        QualityInfo.new(
+        Quality.new(
           resolution: "480p",
           source: "CAM",
           codec: "XviD",

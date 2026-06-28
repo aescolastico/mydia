@@ -2,11 +2,11 @@ defmodule Mydia.Downloads.Structs.DownloadMetadataTest do
   use ExUnit.Case, async: true
 
   alias Mydia.Downloads.Structs.DownloadMetadata
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
 
   describe "to_map/1 and from_map/1 round-trip" do
     test "round-trips quality info through map serialization" do
-      quality = QualityInfo.new(resolution: "1080p", source: "BluRay", codec: "x264")
+      quality = Quality.new(resolution: "1080p", source: "BluRay", codec: "x264")
 
       metadata = DownloadMetadata.new(%{size: 1024, quality: quality})
       serialized = DownloadMetadata.to_map(metadata)
@@ -19,7 +19,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadataTest do
 
       restored = DownloadMetadata.from_map(json_map)
 
-      assert %QualityInfo{} = restored.quality
+      assert %Quality{} = restored.quality
       assert restored.quality.resolution == "1080p"
       assert restored.quality.source == "BluRay"
       assert restored.quality.codec == "x264"
@@ -44,7 +44,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadataTest do
   end
 
   describe "from_map/1" do
-    test "reconstructs QualityInfo from string-keyed quality map" do
+    test "reconstructs Quality from string-keyed quality map" do
       map = %{
         "size" => 1500,
         "seeders" => 5,
@@ -62,7 +62,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadataTest do
 
       result = DownloadMetadata.from_map(map)
 
-      assert %QualityInfo{} = result.quality
+      assert %Quality{} = result.quality
       assert result.quality.resolution == "1080p"
       assert result.quality.source == "Telesync"
     end
@@ -88,8 +88,8 @@ defmodule Mydia.Downloads.Structs.DownloadMetadataTest do
   end
 
   describe "to_map/1" do
-    test "converts QualityInfo struct to plain map" do
-      quality = QualityInfo.new(resolution: "1080p", source: "BluRay")
+    test "converts Quality struct to plain map" do
+      quality = Quality.new(resolution: "1080p", source: "BluRay")
       metadata = DownloadMetadata.new(%{size: 1024, quality: quality})
 
       result = DownloadMetadata.to_map(metadata)

@@ -6,7 +6,6 @@ defmodule Mydia.Settings.QualityProfile do
   import Ecto.Changeset
 
   alias Mydia.Settings.JsonAtomMapType
-  alias Mydia.Settings.StringListType
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -16,15 +15,12 @@ defmodule Mydia.Settings.QualityProfile do
           name: String.t() | nil,
           upgrades_allowed: boolean(),
           upgrade_until_quality: String.t() | nil,
-          qualities: [String.t()] | nil,
           description: String.t() | nil,
           is_system: boolean(),
           version: integer(),
           source_url: String.t() | nil,
           last_synced_at: DateTime.t() | nil,
           quality_standards: map() | nil,
-          metadata_preferences: map() | nil,
-          customizations: map() | nil,
           media_files: [Mydia.Library.MediaFile.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
@@ -74,7 +70,6 @@ defmodule Mydia.Settings.QualityProfile do
     field :name, :string
     field :upgrades_allowed, :boolean, default: true
     field :upgrade_until_quality, :string
-    field :qualities, StringListType
 
     # Enhanced fields for import/export and configuration management
     field :description, :string
@@ -83,8 +78,6 @@ defmodule Mydia.Settings.QualityProfile do
     field :source_url, :string
     field :last_synced_at, :utc_datetime
     field :quality_standards, JsonAtomMapType
-    field :metadata_preferences, JsonAtomMapType
-    field :customizations, JsonAtomMapType
 
     has_many :media_files, Mydia.Library.MediaFile
 
@@ -100,21 +93,17 @@ defmodule Mydia.Settings.QualityProfile do
       :name,
       :upgrades_allowed,
       :upgrade_until_quality,
-      :qualities,
       :description,
       :is_system,
       :version,
       :source_url,
       :last_synced_at,
-      :quality_standards,
-      :metadata_preferences,
-      :customizations
+      :quality_standards
     ])
-    |> validate_required([:name, :qualities])
-    |> validate_length(:qualities, min: 1)
+    |> validate_required([:name])
     |> unique_constraint(:name)
     |> validate_quality_standards()
-    |> validate_metadata_preferences()
+    |> validate_preferred_resolutions_present()
   end
 
   @doc """
@@ -139,16 +128,6 @@ defmodule Mydia.Settings.QualityProfile do
     # Source preferences (priority ordered)
     preferred_sources: ["BluRay", "REMUX", "WEB-DL"],
 
-    # Video bitrate ranges (Mbps)
-    min_video_bitrate_mbps: 5.0,
-    max_video_bitrate_mbps: 50.0,
-    preferred_video_bitrate_mbps: 15.0,
-
-    # Audio bitrate ranges (kbps)
-    min_audio_bitrate_kbps: 128,
-    max_audio_bitrate_kbps: 768,
-    preferred_audio_bitrate_kbps: 320,
-
     # File size guidelines (MB) - differentiated by media type
     movie_min_size_mb: 2048,
     movie_max_size_mb: 15360,
@@ -157,7 +136,10 @@ defmodule Mydia.Settings.QualityProfile do
 
     # HDR/Dolby Vision preferences
     hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-    require_hdr: false
+    require_hdr: false,
+
+    # Torrent source preferences
+    min_ratio: 0.2,  # minimum seeder/leecher ratio for torrents
   }
   """
   def validate_quality_standards(changeset) do
@@ -173,66 +155,12 @@ defmodule Mydia.Settings.QualityProfile do
         |> validate_resolution_ranges(standards)
         |> validate_resolutions(standards)
         |> validate_sources(standards)
-        |> validate_video_bitrates(standards)
-        |> validate_audio_bitrates(standards)
         |> validate_media_type_sizes(standards)
         |> validate_hdr_formats(standards)
+        |> validate_min_ratio(standards)
 
       _ ->
         add_error(changeset, :quality_standards, "must be a map")
-    end
-  end
-
-  @doc """
-  Validates the metadata_preferences map structure and values.
-
-  Expected structure:
-  %{
-    # Provider priority list - ordered list of providers to try in sequence
-    provider_priority: ["metadata_relay", "tvdb", "tmdb"],
-
-    # Per-field provider mapping - override specific fields to use specific providers
-    field_providers: %{
-      "title" => "tvdb",
-      "overview" => "tmdb",
-      "poster" => "tmdb",
-      "backdrop" => "tmdb"
-    },
-
-    # Language and region preferences
-    language: "en-US",
-    region: "US",
-    fallback_languages: ["en", "ja"],
-
-    # Auto-fetch settings
-    auto_fetch_enabled: true,
-    auto_refresh_interval_hours: 168,  # 7 days
-
-    # Fallback behavior
-    fallback_on_provider_failure: true,
-    skip_unavailable_providers: true,
-
-    # Conflict resolution
-    conflict_resolution: "prefer_newer",  # "prefer_newer", "prefer_older", "manual"
-    merge_strategy: "union"  # "union", "intersection", "priority"
-  }
-  """
-  def validate_metadata_preferences(changeset) do
-    case get_change(changeset, :metadata_preferences) do
-      nil ->
-        changeset
-
-      prefs when is_map(prefs) ->
-        changeset
-        |> validate_provider_priority(prefs)
-        |> validate_field_providers(prefs)
-        |> validate_language_settings(prefs)
-        |> validate_auto_fetch_settings(prefs)
-        |> validate_fallback_settings(prefs)
-        |> validate_conflict_resolution(prefs)
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "must be a map")
     end
   end
 
@@ -252,8 +180,6 @@ defmodule Mydia.Settings.QualityProfile do
       - `:audio_channels` - Audio channels (e.g., "5.1", "7.1")
       - `:resolution` - Resolution (e.g., "1080p", "2160p")
       - `:source` - Source type (e.g., "BluRay", "WEB-DL")
-      - `:video_bitrate_mbps` - Video bitrate in Mbps
-      - `:audio_bitrate_kbps` - Audio bitrate in kbps
       - `:file_size_mb` - File size in MB
       - `:media_type` - Either :movie or :episode
       - `:hdr_format` - HDR format if present (e.g., "dolby_vision", "hdr10")
@@ -291,8 +217,6 @@ defmodule Mydia.Settings.QualityProfile do
     audio_channels_score = score_audio_channels(standards, media_attrs)
     resolution_score = score_resolution(standards, media_attrs)
     source_score = score_source(standards, media_attrs)
-    video_bitrate_score = score_video_bitrate(standards, media_attrs)
-    audio_bitrate_score = score_audio_bitrate(standards, media_attrs)
     file_size_score = score_file_size(standards, media_attrs)
     hdr_score = score_hdr_format(standards, media_attrs)
 
@@ -309,8 +233,6 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels: audio_channels_score,
           resolution: resolution_score,
           source: source_score,
-          video_bitrate: video_bitrate_score,
-          audio_bitrate: audio_bitrate_score,
           file_size: file_size_score,
           hdr: hdr_score
         },
@@ -318,17 +240,15 @@ defmodule Mydia.Settings.QualityProfile do
       }
     else
       # Calculate weighted average
-      # Weights are somewhat arbitrary but prioritize codec and resolution
+      # Weights sum to 1.0; bitrate terms removed (no real effect on search ranking)
       weights = %{
-        video_codec: 0.20,
-        audio_codec: 0.15,
-        audio_channels: 0.10,
-        resolution: 0.20,
-        source: 0.10,
-        video_bitrate: 0.10,
-        audio_bitrate: 0.05,
-        file_size: 0.05,
-        hdr: 0.05
+        video_codec: 0.22,
+        audio_codec: 0.16,
+        audio_channels: 0.12,
+        resolution: 0.24,
+        source: 0.12,
+        file_size: 0.07,
+        hdr: 0.07
       }
 
       total_score =
@@ -337,8 +257,6 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels_score * weights.audio_channels +
           resolution_score * weights.resolution +
           source_score * weights.source +
-          video_bitrate_score * weights.video_bitrate +
-          audio_bitrate_score * weights.audio_bitrate +
           file_size_score * weights.file_size +
           hdr_score * weights.hdr
 
@@ -350,13 +268,37 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels: audio_channels_score,
           resolution: resolution_score,
           source: source_score,
-          video_bitrate: video_bitrate_score,
-          audio_bitrate: audio_bitrate_score,
           file_size: file_size_score,
           hdr: hdr_score
         },
         violations: []
       }
+    end
+  end
+
+  @doc """
+  Returns the profile's preferred resolution allow-list from quality_standards,
+  accepting atom or string keys. Returns [] when unset.
+  """
+  def preferred_resolutions(%__MODULE__{quality_standards: standards}) when is_map(standards) do
+    Map.get(standards, :preferred_resolutions) || Map.get(standards, "preferred_resolutions") ||
+      []
+  end
+
+  def preferred_resolutions(_profile), do: []
+
+  # A profile must specify at least one preferred resolution. With the
+  # standalone `qualities` list gone, the allow-list lives entirely in
+  # quality_standards.preferred_resolutions.
+  defp validate_preferred_resolutions_present(changeset) do
+    if changeset |> apply_changes() |> preferred_resolutions() |> Enum.any?() do
+      changeset
+    else
+      add_error(
+        changeset,
+        :quality_standards,
+        "must include at least one preferred resolution"
+      )
     end
   end
 
@@ -527,124 +469,6 @@ defmodule Mydia.Settings.QualityProfile do
     end
   end
 
-  defp validate_video_bitrates(changeset, standards) do
-    min_bitrate = Map.get(standards, :min_video_bitrate_mbps)
-    max_bitrate = Map.get(standards, :max_video_bitrate_mbps)
-    preferred_bitrate = Map.get(standards, :preferred_video_bitrate_mbps)
-
-    changeset =
-      if min_bitrate && !is_number(min_bitrate) do
-        add_error(changeset, :quality_standards, "min_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if max_bitrate && !is_number(max_bitrate) do
-        add_error(changeset, :quality_standards, "max_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if preferred_bitrate && !is_number(preferred_bitrate) do
-        add_error(changeset, :quality_standards, "preferred_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if min_bitrate && max_bitrate && min_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "min_video_bitrate_mbps cannot be greater than max_video_bitrate_mbps"
-        )
-      else
-        changeset
-      end
-
-    # Validate preferred is within range
-    if preferred_bitrate && min_bitrate && preferred_bitrate < min_bitrate do
-      add_error(
-        changeset,
-        :quality_standards,
-        "preferred_video_bitrate_mbps cannot be less than min_video_bitrate_mbps"
-      )
-    else
-      if preferred_bitrate && max_bitrate && preferred_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_video_bitrate_mbps cannot be greater than max_video_bitrate_mbps"
-        )
-      else
-        changeset
-      end
-    end
-  end
-
-  defp validate_audio_bitrates(changeset, standards) do
-    min_bitrate = Map.get(standards, :min_audio_bitrate_kbps)
-    max_bitrate = Map.get(standards, :max_audio_bitrate_kbps)
-    preferred_bitrate = Map.get(standards, :preferred_audio_bitrate_kbps)
-
-    changeset =
-      if min_bitrate && !is_integer(min_bitrate) do
-        add_error(changeset, :quality_standards, "min_audio_bitrate_kbps must be an integer")
-      else
-        changeset
-      end
-
-    changeset =
-      if max_bitrate && !is_integer(max_bitrate) do
-        add_error(changeset, :quality_standards, "max_audio_bitrate_kbps must be an integer")
-      else
-        changeset
-      end
-
-    changeset =
-      if preferred_bitrate && !is_integer(preferred_bitrate) do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_audio_bitrate_kbps must be an integer"
-        )
-      else
-        changeset
-      end
-
-    changeset =
-      if min_bitrate && max_bitrate && min_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "min_audio_bitrate_kbps cannot be greater than max_audio_bitrate_kbps"
-        )
-      else
-        changeset
-      end
-
-    # Validate preferred is within range
-    if preferred_bitrate && min_bitrate && preferred_bitrate < min_bitrate do
-      add_error(
-        changeset,
-        :quality_standards,
-        "preferred_audio_bitrate_kbps cannot be less than min_audio_bitrate_kbps"
-      )
-    else
-      if preferred_bitrate && max_bitrate && preferred_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_audio_bitrate_kbps cannot be greater than max_audio_bitrate_kbps"
-        )
-      else
-        changeset
-      end
-    end
-  end
-
   defp validate_media_type_sizes(changeset, standards) do
     # Validate movie sizes
     movie_min = Map.get(standards, :movie_min_size_mb)
@@ -738,225 +562,18 @@ defmodule Mydia.Settings.QualityProfile do
     end
   end
 
-  # Validation helpers for metadata_preferences
-
-  defp validate_provider_priority(changeset, prefs) do
-    case Map.get(prefs, :provider_priority) do
+  defp validate_min_ratio(changeset, standards) do
+    case Map.get(standards, :min_ratio) || Map.get(standards, "min_ratio") do
       nil ->
         changeset
 
-      priority when is_list(priority) ->
-        # Ensure it's a list of valid provider names (strings or atoms)
-        valid_names =
-          Enum.all?(priority, fn name ->
-            (is_binary(name) or is_atom(name)) and valid_provider_name?(name)
-          end)
-
-        if valid_names do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "provider_priority must be a list of valid provider names (metadata_relay, tvdb, tmdb, omdb)"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "provider_priority must be a list")
-    end
-  end
-
-  defp validate_field_providers(changeset, prefs) do
-    case Map.get(prefs, :field_providers) do
-      nil ->
-        changeset
-
-      field_map when is_map(field_map) ->
-        # Validate that all values are valid provider names
-        invalid_providers =
-          field_map
-          |> Map.values()
-          |> Enum.reject(&valid_provider_name?/1)
-
-        if Enum.empty?(invalid_providers) do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "field_providers contains invalid provider names: #{Enum.join(invalid_providers, ", ")}"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "field_providers must be a map")
-    end
-  end
-
-  defp validate_language_settings(changeset, prefs) do
-    changeset
-    |> validate_language_code(prefs, :language)
-    |> validate_region_code(prefs)
-    |> validate_fallback_languages(prefs)
-  end
-
-  defp validate_language_code(changeset, prefs, key) do
-    case Map.get(prefs, key) do
-      nil ->
-        changeset
-
-      lang when is_binary(lang) ->
-        # Accept both ISO 639-1 (2 chars) and locale codes (e.g., "en-US")
-        if valid_language_code?(lang) do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "#{key} must be a valid language code (e.g., 'en', 'ja', 'en-US', 'ja-JP')"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "#{key} must be a string")
-    end
-  end
-
-  defp validate_region_code(changeset, prefs) do
-    case Map.get(prefs, :region) do
-      nil ->
-        changeset
-
-      region when is_binary(region) ->
-        # Validate ISO 3166-1 alpha-2 country code (2 uppercase letters)
-        if String.match?(region, ~r/^[A-Z]{2}$/) do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "region must be a 2-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'JP')"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "region must be a string")
-    end
-  end
-
-  defp validate_fallback_languages(changeset, prefs) do
-    case Map.get(prefs, :fallback_languages) do
-      nil ->
-        changeset
-
-      langs when is_list(langs) ->
-        if Enum.all?(langs, &valid_language_code?/1) do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "fallback_languages must be a list of valid language codes"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "fallback_languages must be a list")
-    end
-  end
-
-  defp validate_auto_fetch_settings(changeset, prefs) do
-    changeset
-    |> validate_boolean_pref(prefs, :auto_fetch_enabled)
-    |> validate_positive_integer(prefs, :auto_refresh_interval_hours)
-  end
-
-  defp validate_fallback_settings(changeset, prefs) do
-    changeset
-    |> validate_boolean_pref(prefs, :fallback_on_provider_failure)
-    |> validate_boolean_pref(prefs, :skip_unavailable_providers)
-  end
-
-  defp validate_conflict_resolution(changeset, prefs) do
-    changeset
-    |> validate_enum_value(prefs, :conflict_resolution, ["prefer_newer", "prefer_older", "manual"])
-    |> validate_enum_value(prefs, :merge_strategy, ["union", "intersection", "priority"])
-  end
-
-  # Helper validation functions
-
-  defp validate_boolean_pref(changeset, prefs, key) do
-    case Map.get(prefs, key) do
-      nil -> changeset
-      val when is_boolean(val) -> changeset
-      _ -> add_error(changeset, :metadata_preferences, "#{key} must be a boolean")
-    end
-  end
-
-  defp validate_positive_integer(changeset, prefs, key) do
-    case Map.get(prefs, key) do
-      nil ->
-        changeset
-
-      val when is_integer(val) and val > 0 ->
+      value when is_number(value) and value >= 0 ->
         changeset
 
       _ ->
-        add_error(changeset, :metadata_preferences, "#{key} must be a positive integer")
+        add_error(changeset, :quality_standards, "min_ratio must be a non-negative number")
     end
   end
-
-  defp validate_enum_value(changeset, prefs, key, valid_values) do
-    case Map.get(prefs, key) do
-      nil ->
-        changeset
-
-      val when is_binary(val) ->
-        if val in valid_values do
-          changeset
-        else
-          add_error(
-            changeset,
-            :metadata_preferences,
-            "#{key} must be one of: #{Enum.join(valid_values, ", ")}"
-          )
-        end
-
-      _ ->
-        add_error(changeset, :metadata_preferences, "#{key} must be a string")
-    end
-  end
-
-  # Provider and language code validation
-
-  @valid_providers [
-    "metadata_relay",
-    "tvdb",
-    "tmdb",
-    "omdb",
-    :metadata_relay,
-    :tvdb,
-    :tmdb,
-    :omdb
-  ]
-
-  defp valid_provider_name?(name) when is_atom(name) do
-    Atom.to_string(name) in @valid_providers
-  end
-
-  defp valid_provider_name?(name) when is_binary(name) do
-    name in @valid_providers
-  end
-
-  defp valid_provider_name?(_), do: false
-
-  defp valid_language_code?(lang) when is_binary(lang) do
-    # Accept ISO 639-1 (2 chars) or locale codes (e.g., "en-US", "ja-JP")
-    String.match?(lang, ~r/^[a-z]{2}(-[A-Z]{2})?$/)
-  end
-
-  defp valid_language_code?(_), do: false
 
   # Quality scoring helpers
 
@@ -1044,26 +661,6 @@ defmodule Mydia.Settings.QualityProfile do
   end
 
   defp score_source(_standards, _media_attrs), do: 50.0
-
-  defp score_video_bitrate(standards, %{video_bitrate_mbps: bitrate}) when is_number(bitrate) do
-    min_bitrate = Map.get(standards, :min_video_bitrate_mbps)
-    max_bitrate = Map.get(standards, :max_video_bitrate_mbps)
-    preferred_bitrate = Map.get(standards, :preferred_video_bitrate_mbps)
-
-    score_from_range(bitrate, min_bitrate, max_bitrate, preferred_bitrate)
-  end
-
-  defp score_video_bitrate(_standards, _media_attrs), do: 50.0
-
-  defp score_audio_bitrate(standards, %{audio_bitrate_kbps: bitrate}) when is_number(bitrate) do
-    min_bitrate = Map.get(standards, :min_audio_bitrate_kbps)
-    max_bitrate = Map.get(standards, :max_audio_bitrate_kbps)
-    preferred_bitrate = Map.get(standards, :preferred_audio_bitrate_kbps)
-
-    score_from_range(bitrate, min_bitrate, max_bitrate, preferred_bitrate)
-  end
-
-  defp score_audio_bitrate(_standards, _media_attrs), do: 50.0
 
   defp score_file_size(standards, %{file_size_mb: size, media_type: :movie})
        when is_number(size) do

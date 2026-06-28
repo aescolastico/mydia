@@ -49,7 +49,7 @@ defmodule Mydia.Settings.QualityMatcher do
         {:error, :quality_score_too_low}
 
       %{score: score} ->
-        # Also check legacy qualities field for backward compatibility
+        # Also check the resolution allow-list from quality_standards
         with :ok <- check_quality_allowed(result, profile) do
           {:ok, score}
         end
@@ -114,8 +114,8 @@ defmodule Mydia.Settings.QualityMatcher do
       is_nil(current_quality) ->
         true
 
-      # Check if result quality is in allowed list
-      result_quality not in profile.qualities ->
+      # Check if result quality is in the allowed list
+      result_quality not in QualityProfile.preferred_resolutions(profile) ->
         false
 
       # If there's an upgrade_until_quality, don't exceed it
@@ -190,15 +190,16 @@ defmodule Mydia.Settings.QualityMatcher do
     |> String.replace("-", "")
   end
 
-  # Check quality allowed using legacy qualities field for backward compatibility
+  # Check quality allowed using the resolution allow-list from quality_standards
   defp check_quality_allowed(%SearchResult{quality: nil}, _profile) do
     {:error, :quality_unknown}
   end
 
-  defp check_quality_allowed(%SearchResult{quality: quality}, %QualityProfile{
-         qualities: qualities
-       }) do
-    if quality.resolution in qualities do
+  defp check_quality_allowed(
+         %SearchResult{quality: quality},
+         %QualityProfile{} = profile
+       ) do
+    if quality.resolution in QualityProfile.preferred_resolutions(profile) do
       :ok
     else
       {:error, :quality_not_allowed}

@@ -49,10 +49,10 @@ defmodule MydiaWeb.AdminQualityProfilesLiveTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "HD",
-          qualities: ["720p", "1080p"],
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
           quality_standards: %{
+            preferred_resolutions: ["720p", "1080p"],
             movie_min_size_mb: 1000,
             movie_max_size_mb: 5000,
             preferred_sources: []
@@ -82,7 +82,7 @@ defmodule MydiaWeb.AdminQualityProfilesLiveTest do
       |> form("#quality-profile-form",
         quality_profile: %{
           "name" => "4K Ultra HD",
-          "qualities" => ["2160p", "1080p"]
+          "quality_standards" => %{"preferred_resolutions" => ["2160p", "1080p"]}
         }
       )
       |> render_submit()

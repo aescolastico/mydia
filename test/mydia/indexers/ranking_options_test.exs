@@ -8,7 +8,6 @@ defmodule Mydia.Indexers.RankingOptionsTest do
     defaults = %{
       id: Ecto.UUID.generate(),
       name: "Test Profile",
-      qualities: ["1080p", "720p"],
       quality_standards: %{
         preferred_resolutions: ["1080p", "720p"]
       }

@@ -129,7 +129,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - HD Bluray + WEB",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["720p", "1080p"],
           description:
             "TRaSH Guides: High-quality HD encodes for Blu-ray and streaming sources (6-15 GB)",
           quality_standards: %{
@@ -162,7 +161,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - UHD Bluray + WEB",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["2160p"],
           description: "TRaSH Guides: Ultra HD 4K encodes with HDR support (20-60 GB)",
           quality_standards: %{
             min_resolution: "2160p",
@@ -195,7 +193,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - Remux + WEB 1080p",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["1080p"],
           description: "TRaSH Guides: 1080p with lossless audio (20-40 GB)",
           quality_standards: %{
             min_resolution: "1080p",
@@ -204,7 +201,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_sources: ["REMUX", "WEB-DL"],
             preferred_video_codecs: ["h265", "h264"],
             preferred_audio_codecs: ["truehd", "dts-hd", "atmos"],
-            min_video_bitrate_mbps: 15.0,
             movie_min_size_mb: 20480,
             movie_max_size_mb: 40960,
             episode_min_size_mb: 5120,
@@ -228,7 +224,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - Remux + WEB 2160p",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["2160p"],
           description: "TRaSH Guides: 4K with lossless audio and HDR (40-100 GB)",
           quality_standards: %{
             min_resolution: "2160p",
@@ -238,7 +233,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_video_codecs: ["h265", "av1"],
             preferred_audio_codecs: ["atmos", "truehd", "dts-hd"],
             hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-            min_video_bitrate_mbps: 25.0,
             movie_min_size_mb: 40960,
             movie_max_size_mb: 102_400,
             episode_min_size_mb: 10240,
@@ -262,7 +256,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - WEB-1080p",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["720p", "1080p"],
           description: "TRaSH Guides: Web releases optimized for TV shows (1-3 GB per episode)",
           quality_standards: %{
             min_resolution: "720p",
@@ -294,7 +287,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "TRaSH - WEB-2160p",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["2160p"],
           description:
             "TRaSH Guides: 4K web releases with HDR for TV shows (5-15 GB per episode)",
           quality_standards: %{
@@ -336,7 +328,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 720p Quality",
           upgrades_allowed: true,
           upgrade_until_quality: "720p",
-          qualities: ["480p", "720p"],
           description:
             "Profilarr: Transparent x264 720p encodes using GPPI scoring (original language only)",
           quality_standards: %{
@@ -370,7 +361,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Quality",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Transparent x264 1080p encodes using GPPI scoring (original language only)",
           quality_standards: %{
@@ -404,7 +394,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Quality HDR",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Transparent x265 HDR 1080p encodes using GPPI scoring (original language only)",
           quality_standards: %{
@@ -439,7 +428,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Balanced",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Consistent 1080p WEB-DLs with streaming source prioritization (original language only)",
           quality_standards: %{
@@ -474,7 +462,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Efficient",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Efficient 1080p x265 WEB-DLs for smaller file sizes (original language only)",
           quality_standards: %{
@@ -508,7 +495,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Compact",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Compact 1080p x265 encodes for maximum storage efficiency (original language only)",
           quality_standards: %{
@@ -543,7 +529,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 1080p Remux",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["480p", "720p", "1080p"],
           description:
             "Profilarr: Lossless 1080p Remux with premium audio (original language only)",
           quality_standards: %{
@@ -556,7 +541,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             # Lossless audio priority
             preferred_audio_codecs: ["truehd", "dts-hd", "atmos", "flac", "ac3"],
             hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-            min_video_bitrate_mbps: 15.0,
             movie_min_size_mb: 20480,
             movie_max_size_mb: 45056,
             episode_min_size_mb: 5120,
@@ -580,7 +564,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 2160p Quality",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["480p", "720p", "1080p", "2160p"],
           description:
             "Profilarr: Transparent x265 4K encodes using EEI scoring (original language only)",
           quality_standards: %{
@@ -615,7 +598,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 2160p Balanced",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["480p", "720p", "1080p", "2160p"],
           description:
             "Profilarr: Consistent 2160p WEB-DLs with streaming source prioritization (original language only)",
           quality_standards: %{
@@ -652,7 +634,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 2160p Efficient",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["480p", "720p", "1080p", "2160p"],
           description:
             "Profilarr: Efficient 2160p HEVC WEB-DLs for smaller 4K file sizes (original language only)",
           quality_standards: %{
@@ -688,7 +669,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Profilarr - 2160p Remux",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["480p", "720p", "1080p", "2160p"],
           description:
             "Profilarr: Lossless 4K UHD Remux with premium audio and HDR (original language only)",
           quality_standards: %{
@@ -701,7 +681,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             # Lossless audio priority
             preferred_audio_codecs: ["atmos", "truehd", "dts-hd", "flac"],
             hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-            min_video_bitrate_mbps: 25.0,
             movie_min_size_mb: 40960,
             movie_max_size_mb: 102_400,
             episode_min_size_mb: 10240,
@@ -731,7 +710,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Storage - Compact",
           upgrades_allowed: false,
           upgrade_until_quality: nil,
-          qualities: ["720p", "1080p"],
           description:
             "Compact file sizes for limited storage (1-4 GB movies, 300-800 MB episodes)",
           quality_standards: %{
@@ -740,7 +718,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_sources: ["WEB-DL", "WEBRip"],
             preferred_video_codecs: ["h265", "av1"],
             preferred_audio_codecs: ["aac"],
-            max_video_bitrate_mbps: 8.0,
             movie_min_size_mb: 1024,
             movie_max_size_mb: 4096,
             episode_min_size_mb: 300,
@@ -764,7 +741,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Storage - Balanced",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["720p", "1080p"],
           description: "Balanced quality and size (4-10 GB movies, 800-2 GB episodes)",
           quality_standards: %{
             min_resolution: "720p",
@@ -773,8 +749,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_sources: ["BluRay", "WEB-DL"],
             preferred_video_codecs: ["h265", "h264"],
             preferred_audio_codecs: ["ac3", "aac"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 12.0,
             movie_min_size_mb: 4096,
             movie_max_size_mb: 10240,
             episode_min_size_mb: 800,
@@ -798,7 +772,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Storage - Archival",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["1080p", "2160p"],
           description: "Maximum quality for archival (30-80 GB movies)",
           quality_standards: %{
             min_resolution: "1080p",
@@ -807,7 +780,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_video_codecs: ["h265", "av1", "h264"],
             preferred_audio_codecs: ["atmos", "truehd", "dts-hd"],
             hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
-            min_video_bitrate_mbps: 20.0,
             movie_min_size_mb: 30720,
             movie_max_size_mb: 81920,
             episode_min_size_mb: 8192,
@@ -837,7 +809,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Use Case - Streaming",
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
-          qualities: ["720p", "1080p"],
           description: "Optimized for streaming (2-8 GB movies)",
           quality_standards: %{
             min_resolution: "720p",
@@ -846,7 +817,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_sources: ["WEB-DL", "WEBRip"],
             preferred_video_codecs: ["h264", "h265"],
             preferred_audio_codecs: ["aac", "ac3"],
-            max_video_bitrate_mbps: 10.0,
             movie_min_size_mb: 2048,
             movie_max_size_mb: 8192,
             episode_min_size_mb: 512,
@@ -870,13 +840,11 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Use Case - Local Playback",
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
-          qualities: ["1080p", "2160p"],
           description: "High quality for local playback (10-40 GB movies)",
           quality_standards: %{
             min_resolution: "1080p",
             preferred_resolutions: ["1080p", "2160p"],
             preferred_sources: ["BluRay", "REMUX"],
-            min_video_bitrate_mbps: 10.0,
             movie_min_size_mb: 10240,
             movie_max_size_mb: 40960,
             episode_min_size_mb: 2560,
@@ -900,7 +868,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
           name: "Use Case - Mobile",
           upgrades_allowed: false,
           upgrade_until_quality: nil,
-          qualities: ["480p", "720p"],
           description: "Mobile-friendly sizes and codecs (500 MB-2 GB movies)",
           quality_standards: %{
             max_resolution: "720p",
@@ -908,7 +875,6 @@ defmodule Mydia.Settings.QualityProfilePresets do
             preferred_sources: ["WEB-DL", "WEBRip"],
             preferred_video_codecs: ["h264"],
             preferred_audio_codecs: ["aac"],
-            max_video_bitrate_mbps: 5.0,
             movie_min_size_mb: 512,
             movie_max_size_mb: 2048,
             episode_min_size_mb: 200,

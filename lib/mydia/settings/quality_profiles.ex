@@ -10,8 +10,7 @@ defmodule Mydia.Settings.QualityProfiles do
   alias Mydia.Settings.{
     QualityProfile,
     ConfigSetting,
-    DefaultQualityProfiles,
-    DefaultMetadataPreferences
+    DefaultQualityProfiles
   }
 
   ## Quality Profile CRUD
@@ -181,54 +180,14 @@ defmodule Mydia.Settings.QualityProfiles do
       name: name,
       upgrades_allowed: profile.upgrades_allowed,
       upgrade_until_quality: profile.upgrade_until_quality,
-      qualities: profile.qualities,
       description: profile.description,
       is_system: false,
       version: 1,
       source_url: nil,
-      quality_standards: profile.quality_standards,
-      metadata_preferences: profile.metadata_preferences,
-      customizations: nil
+      quality_standards: profile.quality_standards
     }
 
     create_quality_profile(attrs)
-  end
-
-  ## Metadata Preferences
-
-  def get_default_metadata_preferences do
-    DefaultMetadataPreferences.default()
-  end
-
-  def get_metadata_preferences_with_defaults(custom_prefs) when is_map(custom_prefs) do
-    DefaultMetadataPreferences.with_defaults(custom_prefs)
-  end
-
-  def validate_metadata_preferences_providers(prefs) when is_map(prefs) do
-    DefaultMetadataPreferences.validate_providers(prefs)
-  end
-
-  def get_field_provider(prefs, field) when is_map(prefs) and is_binary(field) do
-    # Check for field-specific override
-    case Map.get(prefs, :field_providers, %{}) do
-      field_providers when is_map(field_providers) ->
-        case Map.get(field_providers, field) do
-          nil ->
-            # No override, use first from priority list
-            prefs
-            |> Map.get(:provider_priority, [])
-            |> List.first()
-
-          provider ->
-            provider
-        end
-
-      _ ->
-        # Invalid field_providers, use first from priority list
-        prefs
-        |> Map.get(:provider_priority, [])
-        |> List.first()
-    end
   end
 
   ## Version Comparison
@@ -239,15 +198,12 @@ defmodule Mydia.Settings.QualityProfiles do
       :name,
       :upgrades_allowed,
       :upgrade_until_quality,
-      :qualities,
       :description,
       :is_system,
       :version,
       :source_url,
       :last_synced_at,
-      :quality_standards,
-      :metadata_preferences,
-      :customizations
+      :quality_standards
     ]
 
     changed =
@@ -263,7 +219,7 @@ defmodule Mydia.Settings.QualityProfiles do
       end)
 
     # For added/removed, focus on optional map fields
-    optional_fields = [:quality_standards, :metadata_preferences, :customizations]
+    optional_fields = [:quality_standards]
 
     added =
       Enum.reduce(optional_fields, %{}, fn field, acc ->
@@ -309,10 +265,7 @@ defmodule Mydia.Settings.QualityProfiles do
       description: profile.description,
       upgrades_allowed: profile.upgrades_allowed,
       upgrade_until_quality: profile.upgrade_until_quality,
-      qualities: profile.qualities,
       quality_standards: profile.quality_standards,
-      metadata_preferences: profile.metadata_preferences,
-      customizations: profile.customizations,
       version: profile.version,
       exported_at: DateTime.utc_now() |> DateTime.to_iso8601()
     }
@@ -504,7 +457,7 @@ defmodule Mydia.Settings.QualityProfiles do
 
   defp validate_import_schema(%{"schema_version" => 1} = data) do
     # Schema version 1 - validate required fields
-    required_fields = ["name", "qualities"]
+    required_fields = ["name", "quality_standards"]
 
     missing_fields =
       required_fields
@@ -534,10 +487,7 @@ defmodule Mydia.Settings.QualityProfiles do
       description: data["description"],
       upgrades_allowed: data["upgrades_allowed"],
       upgrade_until_quality: data["upgrade_until_quality"],
-      qualities: data["qualities"],
       quality_standards: atomize_keys(data["quality_standards"]),
-      metadata_preferences: atomize_keys(data["metadata_preferences"]),
-      customizations: atomize_keys(data["customizations"]),
       version: data["version"] || 1,
       is_system: false,
       source_url: determine_source_url(source, opts),

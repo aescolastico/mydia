@@ -75,14 +75,15 @@ defmodule Mydia.Indexers.RankingOptions do
 
   @doc """
   Extract `:preferred_qualities`, `:min_ratio`, and `:size_range` from a quality
-  profile for the given media type.
+  profile for the given media type. `:preferred_qualities` is sourced from
+  `quality_standards.preferred_resolutions`.
   """
   @spec build_quality_options(QualityProfile.t(), media_type()) :: keyword()
   def build_quality_options(%QualityProfile{} = quality_profile, media_type) do
     quality_opts =
-      case quality_profile.qualities do
-        qualities when is_list(qualities) -> [preferred_qualities: qualities]
-        _ -> []
+      case QualityProfile.preferred_resolutions(quality_profile) do
+        [] -> []
+        resolutions -> [preferred_qualities: resolutions]
       end
 
     ratio_opts = extract_min_ratio(quality_profile)

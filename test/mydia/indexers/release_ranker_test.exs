@@ -26,7 +26,6 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
     defaults = %{
       id: Ecto.UUID.generate(),
       name: "Test Profile",
-      qualities: ["1080p", "720p"],
       quality_standards: %{
         preferred_resolutions: ["1080p", "720p"],
         preferred_video_codecs: ["h265", "h264"],
@@ -536,7 +535,14 @@ defmodule Mydia.Indexers.ReleaseRankerTest do
   describe "quality scoring" do
     test "higher quality gets higher scores with quality_profile" do
       # With quality_profile, the SearchScorer uses QualityProfile.score_media_file
-      profile = build_quality_profile(%{qualities: ["2160p", "1080p", "720p"]})
+      profile =
+        build_quality_profile(%{
+          quality_standards: %{
+            preferred_resolutions: ["2160p"],
+            preferred_video_codecs: ["h265", "h264"],
+            preferred_audio_codecs: ["atmos", "truehd", "dts-hd", "ac3"]
+          }
+        })
 
       results = [
         build_result(%{

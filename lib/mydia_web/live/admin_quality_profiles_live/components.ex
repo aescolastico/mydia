@@ -324,34 +324,32 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
         rows="3"
       />
 
-      <%!-- Allowed Qualities --%>
+      <.input
+        field={@form[:upgrades_allowed]}
+        type="checkbox"
+        label="Allow automatic quality upgrades"
+      />
+
       <div class="form-control">
         <label class="label">
-          <span class="label-text">
-            Allowed Qualities <span class="text-error">*</span>
-          </span>
+          <span class="label-text">Upgrade until quality</span>
         </label>
-        <div class="grid grid-cols-3 gap-2">
-          <%= for quality <- ["360p", "480p", "576p", "720p", "1080p", "2160p", "4320p"] do %>
-            <label class="label cursor-pointer justify-start gap-2">
-              <input
-                type="checkbox"
-                name="quality_profile[qualities][]"
-                value={quality}
-                checked={quality in (Ecto.Changeset.get_field(@form.source, :qualities) || [])}
-                class="checkbox checkbox-sm"
-              />
-              <span class="label-text">{quality}</span>
-            </label>
+        <select
+          name="quality_profile[upgrade_until_quality]"
+          class="select select-bordered w-full"
+        >
+          <option value="" selected={!Ecto.Changeset.get_field(@form.source, :upgrade_until_quality)}>
+            No cap
+          </option>
+          <%= for res <- ["360p", "480p", "576p", "720p", "1080p", "2160p", "4320p"] do %>
+            <option
+              value={res}
+              selected={Ecto.Changeset.get_field(@form.source, :upgrade_until_quality) == res}
+            >
+              {res}
+            </option>
           <% end %>
-        </div>
-        <%= if @form.errors[:qualities] do %>
-          <label class="label">
-            <span class="label-text-alt text-error">
-              {translate_error(@form.errors[:qualities])}
-            </span>
-          </label>
-        <% end %>
+        </select>
       </div>
     </div>
     """
@@ -563,137 +561,29 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
         </div>
       </div>
 
-      <%!-- Bitrate Ranges --%>
-      <div class="divider">Bitrate Ranges</div>
-
       <div class="form-control">
         <label class="label">
-          <span class="label-text font-semibold">Video Bitrate (Mbps)</span>
+          <span class="label-text font-semibold">Minimum seeder ratio (torrents)</span>
         </label>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][min_video_bitrate_mbps]"
-              placeholder="Min"
-              step="0.1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:min_video_bitrate_mbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Minimum</span>
-            </label>
-          </div>
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][max_video_bitrate_mbps]"
-              placeholder="Max"
-              step="0.1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:max_video_bitrate_mbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Maximum</span>
-            </label>
-          </div>
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][preferred_video_bitrate_mbps]"
-              placeholder="Preferred"
-              step="0.1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:preferred_video_bitrate_mbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Preferred</span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <div class="form-control">
+        <input
+          type="number"
+          name="quality_profile[quality_standards][min_ratio]"
+          placeholder="e.g. 0.2"
+          step="0.05"
+          min="0"
+          value={
+            get_in(
+              Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
+              [:min_ratio]
+            )
+          }
+          class="input input-bordered w-full"
+        />
         <label class="label">
-          <span class="label-text font-semibold">Audio Bitrate (kbps)</span>
+          <span class="label-text-alt">
+            Reject torrents whose seeder/leecher ratio is below this value. Leave blank to disable.
+          </span>
         </label>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][min_audio_bitrate_kbps]"
-              placeholder="Min"
-              step="1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:min_audio_bitrate_kbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Minimum</span>
-            </label>
-          </div>
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][max_audio_bitrate_kbps]"
-              placeholder="Max"
-              step="1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:max_audio_bitrate_kbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Maximum</span>
-            </label>
-          </div>
-          <div>
-            <input
-              type="number"
-              name="quality_profile[quality_standards][preferred_audio_bitrate_kbps]"
-              placeholder="Preferred"
-              step="1"
-              min="0"
-              value={
-                get_in(
-                  Ecto.Changeset.get_field(@form.source, :quality_standards, %{}),
-                  [:preferred_audio_bitrate_kbps]
-                )
-              }
-              class="input input-bordered w-full"
-            />
-            <label class="label">
-              <span class="label-text-alt">Preferred</span>
-            </label>
-          </div>
-        </div>
       </div>
 
       <%!-- File Size Constraints --%>

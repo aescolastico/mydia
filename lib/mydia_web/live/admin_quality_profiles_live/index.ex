@@ -374,14 +374,6 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
   end
 
   defp transform_quality_profile_params(params) do
-    qualities =
-      case params["qualities"] do
-        nil -> []
-        [] -> []
-        list when is_list(list) -> list
-        _ -> []
-      end
-
     quality_standards =
       if params["quality_standards"] do
         transform_quality_standards(params["quality_standards"])
@@ -392,7 +384,8 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
     base_params = %{
       "name" => params["name"],
       "description" => params["description"],
-      "qualities" => qualities
+      "upgrades_allowed" => params["upgrades_allowed"],
+      "upgrade_until_quality" => blank_to_nil(params["upgrade_until_quality"])
     }
 
     if quality_standards do
@@ -401,6 +394,9 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
       base_params
     end
   end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   defp transform_quality_standards(standards) when is_map(standards) do
     standards
@@ -423,13 +419,8 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
   defp transform_quality_standard_value(_key, ""), do: nil
   defp transform_quality_standard_value(_key, nil), do: nil
 
-  defp transform_quality_standard_value(key, value)
-       when key in [
-              "min_video_bitrate_mbps",
-              "max_video_bitrate_mbps",
-              "preferred_video_bitrate_mbps"
-            ] do
-    case Float.parse(value) do
+  defp transform_quality_standard_value("min_ratio", value) when is_binary(value) do
+    case Float.parse(String.trim(value)) do
       {float, ""} -> float
       _ -> nil
     end
@@ -437,9 +428,6 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
 
   defp transform_quality_standard_value(key, value)
        when key in [
-              "min_audio_bitrate_kbps",
-              "max_audio_bitrate_kbps",
-              "preferred_audio_bitrate_kbps",
               "movie_min_size_mb",
               "movie_max_size_mb",
               "episode_min_size_mb",
