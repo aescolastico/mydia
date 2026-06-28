@@ -16,6 +16,18 @@ defmodule MydiaWeb.MediaLive.Show.ModalsTest do
     }
   end
 
+  defp rename_preview(current_filename, proposed_filename) do
+    %{
+      current_filename: current_filename,
+      proposed_filename: proposed_filename,
+      current_path: "/library/#{current_filename}",
+      proposed_path: "/library/#{proposed_filename}",
+      directory: "/library",
+      extension: Path.extname(current_filename),
+      file_id: System.unique_integer([:positive])
+    }
+  end
+
   describe "reidentify_modal/1" do
     test "renders candidates with selectable buttons wired to the select event" do
       html =
@@ -47,6 +59,35 @@ defmodule MydiaWeb.MediaLive.Show.ModalsTest do
 
       assert html =~ ~s(phx-click="cancel_reidentify")
       assert html =~ "Re-identify on TheTVDB"
+    end
+  end
+
+  describe "rename_files_modal/1" do
+    test "keeps already matching files collapsed with a no-rename hint" do
+      html =
+        render_component(&Modals.rename_files_modal/1,
+          rename_previews: [
+            rename_preview("Old.Name.mkv", "New.Name.mkv"),
+            rename_preview("Already.Matching.mkv", "Already.Matching.mkv")
+          ],
+          renaming_files: false
+        )
+
+      {:ok, document} = Floki.parse_document(html)
+      [details] = Floki.find(document, "details.collapse")
+      {"details", details_attrs, _children} = details
+
+      refute Enum.any?(details_attrs, fn {name, _value} -> name == "open" end)
+
+      collapsed_text = Floki.text([details])
+      assert collapsed_text =~ "Already Matching"
+      assert collapsed_text =~ "These files already match the proposed name"
+      assert collapsed_text =~ "Already.Matching.mkv"
+
+      page_text = Floki.text(document)
+      assert page_text =~ "Old.Name.mkv"
+      assert page_text =~ "New.Name.mkv"
+      assert page_text =~ "1 of 2 will be renamed"
     end
   end
 

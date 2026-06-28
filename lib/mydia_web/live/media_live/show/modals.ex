@@ -912,6 +912,14 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
   attr :renaming_files, :boolean, required: true
 
   def rename_files_modal(assigns) do
+    {same_previews, changed_previews} =
+      Enum.split_with(assigns.rename_previews, &same_rename_preview?/1)
+
+    assigns =
+      assigns
+      |> assign(:changed_rename_previews, changed_previews)
+      |> assign(:same_rename_previews, same_previews)
+
     ~H"""
     <div class="modal modal-open">
       <div class="modal-box max-w-4xl max-h-[85vh] flex flex-col p-0">
@@ -940,34 +948,39 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
             </div>
           <% else %>
             <div class="space-y-2">
-              <%= for preview <- @rename_previews do %>
-                <div class="border border-base-300 rounded-lg p-2 bg-base-100">
-                  <%!-- Current → Proposed in compact format --%>
-                  <div class="flex items-center gap-2 text-xs">
-                    <%= if preview.current_filename != preview.proposed_filename do %>
-                      <span class="badge badge-primary badge-xs">Rename</span>
-                    <% else %>
-                      <span class="badge badge-ghost badge-xs">Same</span>
-                    <% end %>
-                    <div class="flex-1 min-w-0">
-                      <div
-                        class="font-mono text-base-content/60 truncate"
-                        title={preview.current_filename}
-                      >
-                        {preview.current_filename}
-                      </div>
-                      <div class="flex items-center gap-1 mt-0.5">
-                        <.icon name="hero-arrow-right" class="w-3 h-3 text-primary flex-shrink-0" />
-                        <div
-                          class="font-mono text-primary font-medium truncate"
-                          title={preview.proposed_filename}
-                        >
-                          {preview.proposed_filename}
+              <%= for preview <- @changed_rename_previews do %>
+                <.rename_preview_row preview={preview} status={:rename} />
+              <% end %>
+
+              <%= if !Enum.empty?(@same_rename_previews) do %>
+                <details class="collapse collapse-arrow border border-base-300 bg-base-100">
+                  <summary class="collapse-title min-h-0 px-3 py-2 pr-10">
+                    <div class="flex items-start gap-2">
+                      <.icon
+                        name="hero-check-circle"
+                        class="w-4 h-4 mt-0.5 text-success flex-shrink-0"
+                      />
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                          <span>Already Matching</span>
+                          <span class="badge badge-ghost badge-sm">
+                            {length(@same_rename_previews)}
+                          </span>
                         </div>
+                        <p class="text-xs text-base-content/60">
+                          These files already match the proposed name and do not need to be renamed.
+                        </p>
                       </div>
                     </div>
+                  </summary>
+                  <div class="collapse-content px-3 pb-3">
+                    <div class="space-y-2 pt-1">
+                      <%= for preview <- @same_rename_previews do %>
+                        <.rename_preview_row preview={preview} status={:same} />
+                      <% end %>
+                    </div>
                   </div>
-                </div>
+                </details>
               <% end %>
             </div>
           <% end %>
@@ -1014,6 +1027,45 @@ defmodule MydiaWeb.MediaLive.Show.Modals do
       <div class="modal-backdrop" phx-click="hide_rename_modal"></div>
     </div>
     """
+  end
+
+  attr :preview, :map, required: true
+  attr :status, :atom, required: true, values: [:rename, :same]
+
+  defp rename_preview_row(assigns) do
+    ~H"""
+    <div class="border border-base-300 rounded-lg p-2 bg-base-100">
+      <%!-- Current -> Proposed in compact format --%>
+      <div class="flex items-center gap-2 text-xs">
+        <%= if @status == :rename do %>
+          <span class="badge badge-primary badge-xs">Rename</span>
+        <% else %>
+          <span class="badge badge-ghost badge-xs">Same</span>
+        <% end %>
+        <div class="flex-1 min-w-0">
+          <div
+            class="font-mono text-base-content/60 truncate"
+            title={@preview.current_filename}
+          >
+            {@preview.current_filename}
+          </div>
+          <div class="flex items-center gap-1 mt-0.5">
+            <.icon name="hero-arrow-right" class="w-3 h-3 text-primary flex-shrink-0" />
+            <div
+              class="font-mono text-primary font-medium truncate"
+              title={@preview.proposed_filename}
+            >
+              {@preview.proposed_filename}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp same_rename_preview?(preview) do
+    preview.current_filename == preview.proposed_filename
   end
 
   @doc """
