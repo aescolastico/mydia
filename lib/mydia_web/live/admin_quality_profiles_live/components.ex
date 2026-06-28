@@ -323,36 +323,6 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Components do
         label="Description"
         rows="3"
       />
-
-      <%!-- Allowed Qualities --%>
-      <div class="form-control">
-        <label class="label">
-          <span class="label-text">
-            Allowed Qualities <span class="text-error">*</span>
-          </span>
-        </label>
-        <div class="grid grid-cols-3 gap-2">
-          <%= for quality <- ["360p", "480p", "576p", "720p", "1080p", "2160p", "4320p"] do %>
-            <label class="label cursor-pointer justify-start gap-2">
-              <input
-                type="checkbox"
-                name="quality_profile[qualities][]"
-                value={quality}
-                checked={quality in (Ecto.Changeset.get_field(@form.source, :qualities) || [])}
-                class="checkbox checkbox-sm"
-              />
-              <span class="label-text">{quality}</span>
-            </label>
-          <% end %>
-        </div>
-        <%= if @form.errors[:qualities] do %>
-          <label class="label">
-            <span class="label-text-alt text-error">
-              {translate_error(@form.errors[:qualities])}
-            </span>
-          </label>
-        <% end %>
-      </div>
     </div>
     """
   end

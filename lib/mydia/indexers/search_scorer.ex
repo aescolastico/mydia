@@ -184,10 +184,7 @@ defmodule Mydia.Indexers.SearchScorer do
     # Convert search result to media_attrs format for scoring
     media_attrs = search_result_to_media_attrs(result, media_type)
 
-    # Ensure quality_standards has preferred_resolutions set from the qualities field
-    profile_with_resolution_fallback = ensure_preferred_resolutions(profile)
-
-    score_result = QualityProfile.score_media_file(profile_with_resolution_fallback, media_attrs)
+    score_result = QualityProfile.score_media_file(profile, media_attrs)
 
     {score_result.score, score_result.breakdown, score_result.violations}
   end
@@ -358,54 +355,6 @@ defmodule Mydia.Indexers.SearchScorer do
       hdr: quality.hdr,
       size_mb: if(result.size, do: Float.round(result.size / (1024 * 1024), 1), else: nil)
     }
-  end
-
-  # Ensure preferred_resolutions in quality_standards falls back to the qualities field
-  defp ensure_preferred_resolutions(%QualityProfile{quality_standards: nil} = profile) do
-    # No quality_standards set, create one with qualities as preferred_resolutions
-    case profile.qualities do
-      nil -> profile
-      [] -> profile
-      qualities -> %{profile | quality_standards: %{preferred_resolutions: qualities}}
-    end
-  end
-
-  defp ensure_preferred_resolutions(%QualityProfile{quality_standards: standards} = profile) do
-    # Check if preferred_resolutions is already set (could be string or atom key from JSON)
-    existing =
-      Map.get(standards, :preferred_resolutions) || Map.get(standards, "preferred_resolutions")
-
-    case existing do
-      nil ->
-        # Use qualities field as fallback - use atom key to match scoring functions
-        case profile.qualities do
-          nil ->
-            profile
-
-          [] ->
-            profile
-
-          qualities ->
-            %{profile | quality_standards: Map.put(standards, :preferred_resolutions, qualities)}
-        end
-
-      [] ->
-        # Empty list, use qualities field as fallback
-        case profile.qualities do
-          nil ->
-            profile
-
-          [] ->
-            profile
-
-          qualities ->
-            %{profile | quality_standards: Map.put(standards, :preferred_resolutions, qualities)}
-        end
-
-      _resolutions ->
-        # Already has preferred_resolutions, use as-is
-        profile
-    end
   end
 
   # Normalize video codec names to match quality profile format

@@ -374,14 +374,6 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
   end
 
   defp transform_quality_profile_params(params) do
-    qualities =
-      case params["qualities"] do
-        nil -> []
-        [] -> []
-        list when is_list(list) -> list
-        _ -> []
-      end
-
     quality_standards =
       if params["quality_standards"] do
         transform_quality_standards(params["quality_standards"])
@@ -391,8 +383,7 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
 
     base_params = %{
       "name" => params["name"],
-      "description" => params["description"],
-      "qualities" => qualities
+      "description" => params["description"]
     }
 
     if quality_standards do

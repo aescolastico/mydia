@@ -298,7 +298,8 @@ defmodule Mydia.Settings.QualityMatcherTest do
         name: "Test Profile",
         qualities: ["720p", "1080p", "2160p"],
         upgrades_allowed: true,
-        upgrade_until_quality: "1080p"
+        upgrade_until_quality: "1080p",
+        quality_standards: %{preferred_resolutions: ["720p", "1080p", "2160p"]}
       }
 
       {:ok, profile: profile}
@@ -428,6 +429,30 @@ defmodule Mydia.Settings.QualityMatcherTest do
       }
 
       refute QualityMatcher.is_upgrade?(result, profile, "720p")
+    end
+
+    test "uses preferred_resolutions (not qualities) for the allow-list" do
+      profile = %Mydia.Settings.QualityProfile{
+        name: "Std",
+        upgrades_allowed: true,
+        qualities: [],
+        quality_standards: %{preferred_resolutions: ["1080p", "720p"]}
+      }
+
+      result = %Mydia.Indexers.SearchResult{
+        title: "Movie 1080p",
+        size: 1_000_000,
+        seeders: 10,
+        leechers: 1,
+        download_url: "magnet:?x",
+        indexer: "test",
+        quality: %Mydia.Library.Structs.Quality{resolution: "1080p"}
+      }
+
+      assert Mydia.Settings.QualityMatcher.is_upgrade?(result, profile, "720p")
+
+      not_allowed = %{result | quality: %Mydia.Library.Structs.Quality{resolution: "480p"}}
+      refute Mydia.Settings.QualityMatcher.is_upgrade?(not_allowed, profile, "720p")
     end
   end
 end

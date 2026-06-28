@@ -49,7 +49,7 @@ defmodule Mydia.Settings.QualityMatcher do
         {:error, :quality_score_too_low}
 
       %{score: score} ->
-        # Also check legacy qualities field for backward compatibility
+        # Also check the resolution allow-list from quality_standards
         with :ok <- check_quality_allowed(result, profile) do
           {:ok, score}
         end
@@ -114,8 +114,8 @@ defmodule Mydia.Settings.QualityMatcher do
       is_nil(current_quality) ->
         true
 
-      # Check if result quality is in allowed list
-      result_quality not in profile.qualities ->
+      # Check if result quality is in the allowed list
+      result_quality not in preferred_resolutions(profile) ->
         false
 
       # If there's an upgrade_until_quality, don't exceed it
@@ -190,20 +190,30 @@ defmodule Mydia.Settings.QualityMatcher do
     |> String.replace("-", "")
   end
 
-  # Check quality allowed using legacy qualities field for backward compatibility
+  # Check quality allowed using the resolution allow-list from quality_standards
   defp check_quality_allowed(%SearchResult{quality: nil}, _profile) do
     {:error, :quality_unknown}
   end
 
-  defp check_quality_allowed(%SearchResult{quality: quality}, %QualityProfile{
-         qualities: qualities
-       }) do
-    if quality.resolution in qualities do
+  defp check_quality_allowed(
+         %SearchResult{quality: quality} = _result,
+         %QualityProfile{} = profile
+       ) do
+    if quality.resolution in preferred_resolutions(profile) do
       :ok
     else
       {:error, :quality_not_allowed}
     end
   end
+
+  # Read the resolution allow-list from quality_standards (atom or string key).
+  defp preferred_resolutions(%QualityProfile{quality_standards: standards})
+       when is_map(standards) do
+    Map.get(standards, :preferred_resolutions) ||
+      Map.get(standards, "preferred_resolutions") || []
+  end
+
+  defp preferred_resolutions(_profile), do: []
 
   # Map quality strings to numeric levels for comparison
   defp quality_level("360p"), do: 1
