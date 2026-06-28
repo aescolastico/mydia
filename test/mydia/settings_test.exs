@@ -1108,6 +1108,27 @@ defmodule Mydia.SettingsTest do
 
       assert changeset.valid?
     end
+
+    test "accepts zero min_ratio" do
+      changeset =
+        Mydia.Settings.QualityProfile.changeset(%Mydia.Settings.QualityProfile{}, %{
+          name: "R0",
+          quality_standards: %{preferred_resolutions: ["1080p"], min_ratio: 0.0}
+        })
+
+      assert changeset.valid?
+    end
+
+    test "rejects negative min_ratio with string key" do
+      changeset =
+        Mydia.Settings.QualityProfile.changeset(%Mydia.Settings.QualityProfile{}, %{
+          name: "Rs",
+          quality_standards: %{"preferred_resolutions" => ["1080p"], "min_ratio" => -0.5}
+        })
+
+      refute changeset.valid?
+      assert changeset.errors[:quality_standards] != nil
+    end
   end
 
   describe "enhanced quality_standards validation" do

@@ -420,7 +420,7 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
   defp transform_quality_standard_value(_key, nil), do: nil
 
   defp transform_quality_standard_value("min_ratio", value) when is_binary(value) do
-    case Float.parse(value) do
+    case Float.parse(String.trim(value)) do
       {float, ""} -> float
       _ -> nil
     end
