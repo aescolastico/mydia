@@ -1,11 +1,11 @@
 defmodule Mydia.Library.FileRenamerTest do
   use ExUnit.Case, async: true
 
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Library.FileRenamer
 
   describe "build_quality_info/1" do
-    test "builds QualityInfo from MediaFile with full metadata" do
+    test "builds Quality from MediaFile with full metadata" do
       file = %Mydia.Library.MediaFile{
         resolution: "1080p",
         codec: "x264",
@@ -16,7 +16,7 @@ defmodule Mydia.Library.FileRenamerTest do
 
       result = FileRenamer.build_quality_info(file)
 
-      assert %QualityInfo{} = result
+      assert %Quality{} = result
       assert result.resolution == "1080p"
       assert result.source == "BluRay"
       assert result.codec == "x264"
@@ -27,7 +27,7 @@ defmodule Mydia.Library.FileRenamerTest do
       assert result.repack == false
     end
 
-    test "builds QualityInfo with HDR format" do
+    test "builds Quality with HDR format" do
       file = %Mydia.Library.MediaFile{
         resolution: "2160p",
         codec: "x265",
@@ -88,7 +88,7 @@ defmodule Mydia.Library.FileRenamerTest do
 
       result = FileRenamer.build_quality_info(file)
 
-      assert %QualityInfo{} = result
+      assert %Quality{} = result
       assert result.resolution == nil
       assert result.source == nil
       assert result.codec == nil

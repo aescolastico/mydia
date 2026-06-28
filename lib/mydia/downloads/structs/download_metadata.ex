@@ -7,7 +7,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
   season pack details (for TV shows).
   """
 
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
 
   @enforce_keys [:size]
 
@@ -27,7 +27,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
           size: integer(),
           seeders: integer() | nil,
           leechers: integer() | nil,
-          quality: QualityInfo.t() | nil,
+          quality: Quality.t() | nil,
           season_pack: boolean() | nil,
           season_number: integer() | nil,
           episode_count: integer() | nil,
@@ -69,7 +69,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
   @doc """
   Converts a DownloadMetadata struct to a plain map for database storage.
 
-  Handles conversion of nested structs (like QualityInfo) to plain values.
+  Handles conversion of nested structs (like Quality) to plain values.
 
   ## Examples
 
@@ -81,7 +81,7 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
     # Convert quality struct to a plain map for JSON storage
     quality =
       case metadata.quality do
-        %QualityInfo{} = qi -> Map.from_struct(qi)
+        %Quality{} = qi -> Map.from_struct(qi)
         other -> other
       end
 
@@ -119,11 +119,11 @@ defmodule Mydia.Downloads.Structs.DownloadMetadata do
     size = map["size"] || map[:size] || 0
     raw_quality = map["quality"] || map[:quality]
 
-    # Reconstruct QualityInfo from plain map if stored as JSON object
+    # Reconstruct Quality from plain map if stored as JSON object
     quality =
       case raw_quality do
-        %QualityInfo{} = qi -> qi
-        %{} = m -> QualityInfo.from_map(m)
+        %Quality{} = qi -> qi
+        %{} = m -> Quality.from_map(m)
         _ -> nil
       end
 

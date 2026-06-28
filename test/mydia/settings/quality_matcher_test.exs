@@ -2,7 +2,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
   use Mydia.DataCase, async: true
 
   alias Mydia.Indexers.SearchResult
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Settings.QualityMatcher
   alias Mydia.Settings.QualityProfile
 
@@ -37,7 +37,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -62,7 +62,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "WEB-DL",
           codec: "x264",
@@ -86,7 +86,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 2,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "480p",
           source: "WEB-DL",
           codec: "x264",
@@ -134,7 +134,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "BluRay",
           codec: "x265",
@@ -158,7 +158,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: nil,
           codec: nil,
@@ -203,7 +203,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "2160p",
           source: "BluRay",
           codec: "h265",
@@ -221,7 +221,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "WEB-DL",
           codec: "x264",
@@ -250,7 +250,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 1,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: nil,
           codec: nil,
@@ -276,7 +276,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "WEB-DL",
           codec: "x264",
@@ -312,7 +312,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -336,7 +336,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 5,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "1080p",
           source: "BluRay",
           codec: "x265",
@@ -358,7 +358,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 10,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "2160p",
           source: "BluRay",
           codec: "x265",
@@ -380,7 +380,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 2,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "720p",
           source: "WEB-DL",
           codec: "x264",
@@ -402,7 +402,7 @@ defmodule Mydia.Settings.QualityMatcherTest do
         leechers: 1,
         download_url: "magnet:?xt=...",
         indexer: "Test",
-        quality: %QualityInfo{
+        quality: %Quality{
           resolution: "480p",
           source: "WEB-DL",
           codec: "x264",

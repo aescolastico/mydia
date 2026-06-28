@@ -2,7 +2,7 @@ defmodule MydiaWeb.DownloadsLive.Index do
   use MydiaWeb, :live_view
   alias Mydia.Downloads
   alias Mydia.Downloads.Structs.DownloadMetadata
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Library
   alias Mydia.Media
   alias Phoenix.PubSub

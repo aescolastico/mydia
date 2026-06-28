@@ -136,7 +136,7 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   # TRASH GUIDE RELEASE GROUP TIERS
   # Source: https://github.com/TRaSH-Guides/Guides/tree/master/docs/json/radarr/cf
   # Note: Release groups are matched via preferred_tags in ReleaseRanker,
-  #       not via a field in QualityInfo struct
+  #       not via a field in Quality struct
   # ===========================================================================
 
   @web_tier_01_groups ~w(ABBIE AJP69 APEX BLUTONiUM CMRG CRFW CRUD FLUX GNOME HONE KiNGS Kitsune NOSiViD NTb NTG SiC TEPES TheFarm ZoroSenpai)
@@ -798,7 +798,7 @@ defmodule Mydia.Indexers.ReleaseRankerTRaSHGuideIntegrationTest do
   # ===========================================================================
   # TEST: RELEASE GROUP TIER RANKING
   # TRaSH Guide defines release group quality tiers
-  # Release groups are matched via preferred_tags, not a QualityInfo field
+  # Release groups are matched via preferred_tags, not a Quality field
   # ===========================================================================
 
   describe "release group tier detection" do

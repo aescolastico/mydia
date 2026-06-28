@@ -8,7 +8,7 @@ defmodule Mydia.Library.FileRenamer do
 
   import Ecto.Query, warn: false
 
-  alias Mydia.Indexers.Structs.QualityInfo
+  alias Mydia.Library.Structs.Quality
   alias Mydia.Library.{FileNamer, MediaFile}
   alias Mydia.Media.MediaItem
   alias Mydia.Repo
@@ -212,7 +212,7 @@ defmodule Mydia.Library.FileRenamer do
   end
 
   @doc """
-  Builds a `QualityInfo` struct from a MediaFile's database fields.
+  Builds a `Quality` struct from a MediaFile's database fields.
 
   Uses resolution, codec, audio_codec, and hdr_format from the MediaFile,
   plus source from the file's metadata. This is the authoritative quality
@@ -226,7 +226,7 @@ defmodule Mydia.Library.FileRenamer do
         nil
       end
 
-    QualityInfo.new(%{
+    Quality.new(%{
       resolution: file.resolution,
       source: source,
       codec: file.codec,
