@@ -421,7 +421,12 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           VERSION_CODE="${{ needs.prepare.outputs.version_code }}"
-          sed -i '' "s/^version: .*/version: ${VERSION}+${VERSION_CODE}/" pubspec.yaml
+          # Apple's CFBundleShortVersionString must be at most three
+          # period-separated integers, so strip any prerelease suffix
+          # (e.g. 0.12.0-beta.2 -> 0.12.0). The unique build number is
+          # carried by VERSION_CODE (CFBundleVersion).
+          MARKETING_VERSION="${VERSION%%-*}"
+          sed -i '' "s/^version: .*/version: ${MARKETING_VERSION}+${VERSION_CODE}/" pubspec.yaml
 
       - name: Install dependencies
         if: steps.check_ios.outputs.enabled == 'true'

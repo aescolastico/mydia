@@ -24,7 +24,7 @@ set -euo pipefail
 #   --dir DIR        override dir (default: $PLUGINS_OVERRIDE_DIR)
 #
 # Requires the wasm32-wasip2 target (`rustup target add wasm32-wasip2`, or run
-# inside `nix develop`).
+# inside the devenv shell, which bakes the target in).
 
 crate_dir="."
 name=""

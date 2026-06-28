@@ -26,16 +26,16 @@ canonical WIT contract — all egress is through the imported `mydia.http_reques
 ## Linting
 
 The pre-commit hook runs `scripts/check-plugins.sh` (fmt + clippy against
-`wasm32-unknown-unknown`) on any `plugins/**.rs` change, using the flake's
-pinned Rust toolchain (`devShells.rust`) rather than a host rustup. Run it
-manually with:
+`wasm32-unknown-unknown`) on any `plugins/**.rs` change, using the devenv
+shell's pinned Rust toolchain (`languages.rust` in `devenv.nix`) rather than a
+host rustup. Run it manually from inside the devenv shell:
 
 ```sh
-nix develop .#rust -c scripts/check-plugins.sh        # fmt --check + clippy -D warnings
-nix develop .#rust -c scripts/check-plugins.sh --fix  # rewrite formatting
+devenv shell -- scripts/check-plugins.sh        # fmt --check + clippy -D warnings
+devenv shell -- scripts/check-plugins.sh --fix  # rewrite formatting
 ```
 
-(Without nix, `scripts/check-plugins.sh` also works against a host rustup that
+(Without devenv, `scripts/check-plugins.sh` also works against a host rustup that
 has the `wasm32-unknown-unknown` target installed.)
 
 ## ABI

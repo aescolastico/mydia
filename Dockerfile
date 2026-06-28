@@ -3,7 +3,11 @@
 # ============================================
 # Flutter Build Stage
 # ============================================
-FROM ghcr.io/cirruslabs/flutter:3.38.6 AS flutter-builder
+# KEEP IN SYNC: Flutter must match devenv.nix (flutter344 = 3.44.2) and the
+# FLUTTER_VERSION strings in ci.yml + ci-player.yml. cirruslabs publishes no
+# 3.44.2 image (the 3.44 line stops at 3.44.0), so this builder pins the nearest
+# published tag — 3.44.0, one bugfix patch behind the 3.44.2 SDK pin above.
+FROM ghcr.io/cirruslabs/flutter:3.44.0 AS flutter-builder
 
 WORKDIR /app/player
 
@@ -47,7 +51,7 @@ RUN apk add --no-cache \
 # Keep the default CARGO_HOME (/root/.cargo) so the existing registry/git cache
 # mounts on the compile steps below still apply.
 #
-# PINNED to 1.96 to match nix (nix/devShells/flake-module.nix) and CI. The guest
+# PINNED to 1.96 to match devenv.nix (languages.rust) and CI. The guest
 # is a wasip2 component whose WASI world tracks the Rust version (1.96 -> wasi
 # 0.2.6); the runtime host is wasmex 0.14 / wasmtime 39, which only validates up
 # to wasi 0.2.6. A bleeding-edge `stable` emits wasi 0.2.9 and the bundled plugin

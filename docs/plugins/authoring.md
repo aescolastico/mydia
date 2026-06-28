@@ -106,8 +106,9 @@ trapping cleanly. Abort traps immediately, with no stderr write.
 
 !!! note "Toolchain"
     You need the `wasm32-wasip2` target (`rustup target add wasm32-wasip2`), or
-    run inside `nix develop`. The SDK's `wit-bindgen` dependency generates the
-    component bindings — no system binding-generator is required.
+    run inside the Mydia devenv shell (`./dev shell`), which provides it. The
+    SDK's `wit-bindgen` dependency generates the component bindings — no system
+    binding-generator is required.
 
 ## The event
 
