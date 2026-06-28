@@ -39,6 +39,7 @@ defmodule Mydia.Indexers.SearchResult do
         codec: "x264" | "x265" | "H.264" | "H.265" | nil,
         audio: "AAC" | "AC3" | "DTS" | "TrueHD" | nil,
         hdr: true | false,
+        hdr_format: "hdr10" | "hdr10+" | "dolby_vision" | nil,
         proper: true | false,
         repack: true | false
       }

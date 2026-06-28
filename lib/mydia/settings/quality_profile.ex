@@ -276,6 +276,17 @@ defmodule Mydia.Settings.QualityProfile do
     end
   end
 
+  @doc """
+  Returns the profile's preferred resolution allow-list from quality_standards,
+  accepting atom or string keys. Returns [] when unset.
+  """
+  def preferred_resolutions(%__MODULE__{quality_standards: standards}) when is_map(standards) do
+    Map.get(standards, :preferred_resolutions) || Map.get(standards, "preferred_resolutions") ||
+      []
+  end
+
+  def preferred_resolutions(_profile), do: []
+
   # A profile must specify at least one preferred resolution. With the
   # standalone `qualities` list gone, the allow-list lives entirely in
   # quality_standards.preferred_resolutions.

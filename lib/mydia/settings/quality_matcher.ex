@@ -115,7 +115,7 @@ defmodule Mydia.Settings.QualityMatcher do
         true
 
       # Check if result quality is in the allowed list
-      result_quality not in preferred_resolutions(profile) ->
+      result_quality not in QualityProfile.preferred_resolutions(profile) ->
         false
 
       # If there's an upgrade_until_quality, don't exceed it
@@ -196,24 +196,15 @@ defmodule Mydia.Settings.QualityMatcher do
   end
 
   defp check_quality_allowed(
-         %SearchResult{quality: quality} = _result,
+         %SearchResult{quality: quality},
          %QualityProfile{} = profile
        ) do
-    if quality.resolution in preferred_resolutions(profile) do
+    if quality.resolution in QualityProfile.preferred_resolutions(profile) do
       :ok
     else
       {:error, :quality_not_allowed}
     end
   end
-
-  # Read the resolution allow-list from quality_standards (atom or string key).
-  defp preferred_resolutions(%QualityProfile{quality_standards: standards})
-       when is_map(standards) do
-    Map.get(standards, :preferred_resolutions) ||
-      Map.get(standards, "preferred_resolutions") || []
-  end
-
-  defp preferred_resolutions(_profile), do: []
 
   # Map quality strings to numeric levels for comparison
   defp quality_level("360p"), do: 1

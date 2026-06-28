@@ -81,7 +81,7 @@ defmodule Mydia.Indexers.RankingOptions do
   @spec build_quality_options(QualityProfile.t(), media_type()) :: keyword()
   def build_quality_options(%QualityProfile{} = quality_profile, media_type) do
     quality_opts =
-      case preferred_resolutions(quality_profile) do
+      case QualityProfile.preferred_resolutions(quality_profile) do
         [] -> []
         resolutions -> [preferred_qualities: resolutions]
       end
@@ -93,15 +93,6 @@ defmodule Mydia.Indexers.RankingOptions do
     |> Keyword.merge(ratio_opts)
     |> Keyword.merge(size_opts)
   end
-
-  # Read the resolution allow-list from quality_standards (atom or string key).
-  defp preferred_resolutions(%QualityProfile{quality_standards: standards})
-       when is_map(standards) do
-    Map.get(standards, :preferred_resolutions) ||
-      Map.get(standards, "preferred_resolutions") || []
-  end
-
-  defp preferred_resolutions(_profile), do: []
 
   # Single source of truth for min_ratio: quality_standards (atom or string key).
   defp extract_min_ratio(%QualityProfile{quality_standards: standards}) do
