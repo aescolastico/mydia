@@ -4,7 +4,7 @@ defmodule Mydia.SettingsTest do
   import Mydia.SettingsFixtures
 
   alias Mydia.Settings
-  alias Mydia.Settings.{QualityProfile, DefaultMetadataPreferences}
+  alias Mydia.Settings.QualityProfile
 
   describe "ensure_default_quality_profiles/0" do
     test "creates default quality profiles when none exist" do
@@ -1042,7 +1042,6 @@ defmodule Mydia.SettingsTest do
 
       # Check added fields
       assert Map.has_key?(comparison.added, :quality_standards)
-      assert Map.has_key?(comparison.added, :metadata_preferences)
     end
 
     test "compare_quality_profile_versions detects removed fields", %{profile: profile1} do
@@ -1057,7 +1056,6 @@ defmodule Mydia.SettingsTest do
 
       # Check removed fields
       assert Map.has_key?(comparison.removed, :quality_standards)
-      assert Map.has_key?(comparison.removed, :metadata_preferences)
     end
   end
 
@@ -1134,101 +1132,6 @@ defmodule Mydia.SettingsTest do
 
       assert {:error, changeset} = result
       assert changeset.errors[:quality_standards] != nil
-    end
-  end
-
-  describe "metadata_preferences validation" do
-    test "validates provider_priority is a list of valid providers" do
-      # Both strings and atoms should be accepted
-      {:ok, _profile1} =
-        Settings.create_quality_profile(%{
-          name: "Valid Provider Priority String",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            provider_priority: ["metadata_relay", "tvdb", "tmdb"]
-          }
-        })
-
-      {:ok, _profile2} =
-        Settings.create_quality_profile(%{
-          name: "Valid Provider Priority Atom",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            provider_priority: [:metadata_relay, :tvdb]
-          }
-        })
-
-      # Invalid provider names should be rejected
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Provider Priority",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            provider_priority: ["invalid_provider"]
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:metadata_preferences] != nil
-    end
-
-    test "validates language codes properly" do
-      # Both 2-char and locale codes should be accepted
-      {:ok, _profile1} =
-        Settings.create_quality_profile(%{
-          name: "Valid Language 2char",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            language: "en"
-          }
-        })
-
-      {:ok, _profile2} =
-        Settings.create_quality_profile(%{
-          name: "Valid Language Locale",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            language: "en-US"
-          }
-        })
-
-      # Invalid language codes should be rejected
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Language",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            language: "english"
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:metadata_preferences] != nil
-    end
-
-    test "validates boolean preferences" do
-      {:ok, _profile} =
-        Settings.create_quality_profile(%{
-          name: "Valid Booleans",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            auto_fetch_enabled: true,
-            fallback_on_provider_failure: false,
-            skip_unavailable_providers: true
-          }
-        })
-
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Booleans",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            auto_fetch_enabled: "yes"
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:metadata_preferences] != nil
     end
   end
 
@@ -1690,313 +1593,6 @@ defmodule Mydia.SettingsTest do
     end
   end
 
-  describe "enhanced metadata_preferences validation" do
-    test "accepts valid metadata preferences with all fields" do
-      valid_prefs = %{
-        provider_priority: ["metadata_relay", "tvdb", "tmdb"],
-        field_providers: %{
-          title: "tvdb",
-          overview: "tmdb"
-        },
-        language: "en-US",
-        region: "US",
-        fallback_languages: ["en", "ja"],
-        auto_fetch_enabled: true,
-        auto_refresh_interval_hours: 168,
-        fallback_on_provider_failure: true,
-        skip_unavailable_providers: true,
-        conflict_resolution: "prefer_newer",
-        merge_strategy: "union"
-      }
-
-      {:ok, profile} =
-        Settings.create_quality_profile(%{
-          name: "Test Profile with Metadata Prefs",
-          qualities: ["1080p"],
-          metadata_preferences: valid_prefs
-        })
-
-      assert profile.metadata_preferences == valid_prefs
-    end
-
-    test "accepts minimal metadata preferences" do
-      minimal_prefs = %{
-        provider_priority: ["metadata_relay"]
-      }
-
-      {:ok, profile} =
-        Settings.create_quality_profile(%{
-          name: "Minimal Metadata Profile",
-          qualities: ["1080p"],
-          metadata_preferences: minimal_prefs
-        })
-
-      assert profile.metadata_preferences.provider_priority == ["metadata_relay"]
-    end
-
-    test "rejects invalid provider names in priority list" do
-      invalid_prefs = %{
-        provider_priority: ["invalid_provider", "metadata_relay"]
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Provider Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert Enum.any?(
-               errors_on(changeset).metadata_preferences,
-               &String.contains?(&1, "provider_priority must be a list of valid provider names")
-             )
-    end
-
-    test "rejects invalid provider names in field_providers" do
-      invalid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        field_providers: %{
-          "title" => "invalid_provider"
-        }
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Field Provider Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert Enum.any?(
-               errors_on(changeset).metadata_preferences,
-               &String.contains?(&1, "field_providers contains invalid provider names")
-             )
-    end
-
-    test "rejects invalid language codes" do
-      invalid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        language: "invalid"
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Language Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert Enum.any?(
-               errors_on(changeset).metadata_preferences,
-               &String.contains?(&1, "language must be a valid language code")
-             )
-    end
-
-    test "accepts valid locale codes" do
-      valid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        language: "ja-JP"
-      }
-
-      {:ok, profile} =
-        Settings.create_quality_profile(%{
-          name: "Japanese Locale Profile",
-          qualities: ["1080p"],
-          metadata_preferences: valid_prefs
-        })
-
-      assert profile.metadata_preferences.language == "ja-JP"
-    end
-
-    test "rejects invalid region codes" do
-      invalid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        region: "USA"
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Region Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert Enum.any?(
-               errors_on(changeset).metadata_preferences,
-               &String.contains?(&1, "region must be a 2-letter ISO 3166-1 alpha-2 country code")
-             )
-    end
-
-    test "rejects invalid conflict_resolution values" do
-      invalid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        conflict_resolution: "invalid_strategy"
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Conflict Resolution Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert Enum.any?(
-               errors_on(changeset).metadata_preferences,
-               &String.contains?(&1, "conflict_resolution must be one of")
-             )
-    end
-
-    test "rejects non-positive refresh intervals" do
-      invalid_prefs = %{
-        provider_priority: ["metadata_relay"],
-        auto_refresh_interval_hours: 0
-      }
-
-      {:error, changeset} =
-        Settings.create_quality_profile(%{
-          name: "Invalid Interval Profile",
-          qualities: ["1080p"],
-          metadata_preferences: invalid_prefs
-        })
-
-      assert "auto_refresh_interval_hours must be a positive integer" in errors_on(changeset).metadata_preferences
-    end
-
-    test "accepts atom provider names" do
-      prefs_with_atoms = %{
-        provider_priority: [:metadata_relay, :tvdb]
-      }
-
-      {:ok, profile} =
-        Settings.create_quality_profile(%{
-          name: "Atom Provider Profile",
-          qualities: ["1080p"],
-          metadata_preferences: prefs_with_atoms
-        })
-
-      assert profile.metadata_preferences.provider_priority == [:metadata_relay, :tvdb]
-    end
-  end
-
-  describe "get_default_metadata_preferences/0" do
-    test "returns sensible defaults" do
-      defaults = Settings.get_default_metadata_preferences()
-
-      assert is_list(defaults.provider_priority)
-      assert "metadata_relay" in defaults.provider_priority
-      assert defaults.language == "en-US"
-      assert defaults.auto_fetch_enabled == true
-      assert defaults.auto_refresh_interval_hours == 168
-    end
-  end
-
-  describe "get_metadata_preferences_with_defaults/1" do
-    test "merges custom preferences with defaults" do
-      custom = %{language: "fr-FR", region: "FR"}
-      merged = Settings.get_metadata_preferences_with_defaults(custom)
-
-      assert merged.language == "fr-FR"
-      assert merged.region == "FR"
-      # Default values should still be present
-      assert is_list(merged.provider_priority)
-      assert merged.auto_fetch_enabled == true
-    end
-
-    test "overrides defaults completely for specified keys" do
-      custom = %{provider_priority: ["tvdb"]}
-      merged = Settings.get_metadata_preferences_with_defaults(custom)
-
-      # Should use custom priority, not merge with default
-      assert merged.provider_priority == ["tvdb"]
-    end
-  end
-
-  describe "get_field_provider/2" do
-    test "returns field-specific provider when defined" do
-      prefs = %{
-        provider_priority: ["metadata_relay", "tvdb"],
-        field_providers: %{"title" => "tvdb"}
-      }
-
-      assert Settings.get_field_provider(prefs, "title") == "tvdb"
-    end
-
-    test "returns first priority provider when no field override exists" do
-      prefs = %{
-        provider_priority: ["metadata_relay", "tvdb"],
-        field_providers: %{"title" => "tvdb"}
-      }
-
-      assert Settings.get_field_provider(prefs, "overview") == "metadata_relay"
-    end
-
-    test "returns first priority provider when field_providers is empty" do
-      prefs = %{
-        provider_priority: ["tvdb", "tmdb"],
-        field_providers: %{}
-      }
-
-      assert Settings.get_field_provider(prefs, "any_field") == "tvdb"
-    end
-
-    test "returns nil when no providers are configured" do
-      prefs = %{
-        provider_priority: [],
-        field_providers: %{}
-      }
-
-      assert Settings.get_field_provider(prefs, "any_field") == nil
-    end
-  end
-
-  describe "DefaultMetadataPreferences" do
-    test "default/0 returns complete preferences" do
-      defaults = DefaultMetadataPreferences.default()
-
-      assert defaults.provider_priority == ["metadata_relay", "tvdb", "tmdb"]
-      assert defaults.language == "en-US"
-      assert defaults.region == "US"
-      assert defaults.fallback_languages == ["en"]
-      assert defaults.auto_fetch_enabled == true
-      assert defaults.auto_refresh_interval_hours == 168
-      assert defaults.fallback_on_provider_failure == true
-      assert defaults.skip_unavailable_providers == true
-      assert defaults.conflict_resolution == "prefer_newer"
-      assert defaults.merge_strategy == "union"
-    end
-
-    test "anime_optimized/0 returns Japanese preferences" do
-      anime = DefaultMetadataPreferences.anime_optimized()
-
-      assert anime.language == "ja-JP"
-      assert anime.region == "JP"
-      assert "ja" in anime.fallback_languages
-    end
-
-    test "tv_optimized/0 includes TVDB field overrides" do
-      tv = DefaultMetadataPreferences.tv_optimized()
-
-      assert tv.field_providers["episode_name"] == "tvdb"
-      assert tv.field_providers["season_info"] == "tvdb"
-    end
-
-    test "movie_optimized/0 prioritizes TMDB" do
-      movie = DefaultMetadataPreferences.movie_optimized()
-
-      assert "tmdb" in movie.provider_priority
-      assert movie.field_providers["cast"] == "tmdb"
-      assert movie.field_providers["poster"] == "tmdb"
-    end
-
-    test "minimal/0 disables auto-fetch" do
-      minimal = DefaultMetadataPreferences.minimal()
-
-      assert minimal.auto_fetch_enabled == false
-      assert minimal.auto_refresh_interval_hours == 0
-      assert minimal.conflict_resolution == "manual"
-    end
-  end
-
   describe "export_profile/2" do
     setup do
       {:ok, profile} =
@@ -2033,7 +1629,6 @@ defmodule Mydia.SettingsTest do
       assert parsed["upgrades_allowed"] == true
       assert parsed["upgrade_until_quality"] == "1080p"
       assert is_map(parsed["quality_standards"])
-      assert is_map(parsed["metadata_preferences"])
       assert is_binary(parsed["exported_at"])
     end
 
@@ -2239,9 +1834,6 @@ defmodule Mydia.SettingsTest do
       # Keys should be atoms, not strings
       assert is_map(profile.quality_standards)
       assert Map.has_key?(profile.quality_standards, :preferred_video_codecs)
-
-      assert is_map(profile.metadata_preferences)
-      assert Map.has_key?(profile.metadata_preferences, :provider_priority)
     end
   end
 

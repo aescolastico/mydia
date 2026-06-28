@@ -2,7 +2,7 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
   use Mydia.DataCase, async: true
 
   alias Mydia.Settings
-  alias Mydia.Settings.{QualityProfile, QualityProfileEngine}
+  alias Mydia.Settings.QualityProfileEngine
   alias Mydia.Library.MediaFile
 
   describe "evaluate_file/2" do
@@ -176,60 +176,6 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
         # but we can verify the function doesn't crash)
         assert is_float(evaluation.score)
       end
-    end
-  end
-
-  describe "get_metadata_preferences/1" do
-    test "returns metadata preferences from profile struct" do
-      profile = %QualityProfile{
-        id: Ecto.UUID.generate(),
-        name: "Test",
-        qualities: ["1080p"],
-        metadata_preferences: %{
-          provider_priority: ["metadata_relay", "tvdb"],
-          language: "en-US"
-        }
-      }
-
-      assert {:ok, prefs} = QualityProfileEngine.get_metadata_preferences(profile)
-
-      assert prefs.provider_priority == ["metadata_relay", "tvdb"]
-      assert prefs.language == "en-US"
-    end
-
-    test "returns empty map when no preferences defined" do
-      profile = %QualityProfile{
-        id: Ecto.UUID.generate(),
-        name: "Test",
-        qualities: ["1080p"],
-        metadata_preferences: nil
-      }
-
-      assert {:ok, prefs} = QualityProfileEngine.get_metadata_preferences(profile)
-      assert prefs == %{}
-    end
-
-    test "fetches profile by ID and returns preferences" do
-      {:ok, profile} =
-        Settings.create_quality_profile(%{
-          name: "Test Profile",
-          qualities: ["1080p"],
-          metadata_preferences: %{
-            provider_priority: ["tmdb"],
-            language: "ja-JP"
-          }
-        })
-
-      assert {:ok, prefs} = QualityProfileEngine.get_metadata_preferences(profile.id)
-
-      # Note: map keys are stored as strings in the database
-      assert is_map(prefs)
-      assert Map.has_key?(prefs, :provider_priority) or Map.has_key?(prefs, "provider_priority")
-    end
-
-    test "returns error when profile not found" do
-      fake_id = Ecto.UUID.generate()
-      assert {:error, :profile_not_found} = QualityProfileEngine.get_metadata_preferences(fake_id)
     end
   end
 

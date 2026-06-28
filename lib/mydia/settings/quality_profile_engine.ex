@@ -188,47 +188,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
     end
   end
 
-  @doc """
-  Gets metadata provider preferences for applying during metadata refresh.
-
-  Extracts the metadata_preferences from a quality profile and returns
-  them in a format suitable for passing to metadata enrichment functions.
-
-  ## Parameters
-
-    - `profile` - QualityProfile struct or profile ID
-
-  ## Returns
-
-    `{:ok, preferences}` where preferences is a map with:
-    - `:provider_priority` - Ordered list of providers
-    - `:field_providers` - Field-specific provider overrides
-    - `:language` - Language code for metadata
-    - `:region` - Region code for metadata
-    - Other preference settings
-
-  ## Examples
-
-      iex> get_metadata_preferences(profile)
-      {:ok, %{
-        provider_priority: ["metadata_relay", "tvdb", "tmdb"],
-        language: "en-US",
-        region: "US",
-        ...
-      }}
-  """
-  def get_metadata_preferences(%QualityProfile{} = profile) do
-    prefs = profile.metadata_preferences || %{}
-    {:ok, prefs}
-  end
-
-  def get_metadata_preferences(profile_id) when is_binary(profile_id) do
-    case fetch_profile(profile_id) do
-      {:ok, profile} -> get_metadata_preferences(profile)
-      error -> error
-    end
-  end
-
   ## Private Functions
 
   # Fetches a quality profile by ID

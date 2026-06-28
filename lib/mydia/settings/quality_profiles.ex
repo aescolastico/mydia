@@ -10,8 +10,7 @@ defmodule Mydia.Settings.QualityProfiles do
   alias Mydia.Settings.{
     QualityProfile,
     ConfigSetting,
-    DefaultQualityProfiles,
-    DefaultMetadataPreferences
+    DefaultQualityProfiles
   }
 
   ## Quality Profile CRUD
@@ -192,43 +191,6 @@ defmodule Mydia.Settings.QualityProfiles do
     }
 
     create_quality_profile(attrs)
-  end
-
-  ## Metadata Preferences
-
-  def get_default_metadata_preferences do
-    DefaultMetadataPreferences.default()
-  end
-
-  def get_metadata_preferences_with_defaults(custom_prefs) when is_map(custom_prefs) do
-    DefaultMetadataPreferences.with_defaults(custom_prefs)
-  end
-
-  def validate_metadata_preferences_providers(prefs) when is_map(prefs) do
-    DefaultMetadataPreferences.validate_providers(prefs)
-  end
-
-  def get_field_provider(prefs, field) when is_map(prefs) and is_binary(field) do
-    # Check for field-specific override
-    case Map.get(prefs, :field_providers, %{}) do
-      field_providers when is_map(field_providers) ->
-        case Map.get(field_providers, field) do
-          nil ->
-            # No override, use first from priority list
-            prefs
-            |> Map.get(:provider_priority, [])
-            |> List.first()
-
-          provider ->
-            provider
-        end
-
-      _ ->
-        # Invalid field_providers, use first from priority list
-        prefs
-        |> Map.get(:provider_priority, [])
-        |> List.first()
-    end
   end
 
   ## Version Comparison
