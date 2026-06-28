@@ -16,8 +16,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
           preferred_audio_codecs: ["ac3", "aac"],
           preferred_resolutions: ["1080p", "720p"],
           preferred_sources: ["BluRay", "WEB-DL"],
-          min_video_bitrate_mbps: 5.0,
-          max_video_bitrate_mbps: 50.0,
           movie_min_size_mb: 2048,
           movie_max_size_mb: 15360
         }
@@ -183,8 +181,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
           preferred_audio_codecs: ["atmos", "truehd", "dts-hd", "ac3"],
           preferred_resolutions: ["2160p", "1080p"],
           preferred_sources: ["BluRay", "REMUX", "WEB-DL"],
-          min_video_bitrate_mbps: 5.0,
-          max_video_bitrate_mbps: 50.0,
           movie_min_size_mb: 2048,
           movie_max_size_mb: 15360
         }

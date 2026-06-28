@@ -128,16 +128,6 @@ defmodule Mydia.Settings.QualityProfile do
     # Source preferences (priority ordered)
     preferred_sources: ["BluRay", "REMUX", "WEB-DL"],
 
-    # Video bitrate ranges (Mbps)
-    min_video_bitrate_mbps: 5.0,
-    max_video_bitrate_mbps: 50.0,
-    preferred_video_bitrate_mbps: 15.0,
-
-    # Audio bitrate ranges (kbps)
-    min_audio_bitrate_kbps: 128,
-    max_audio_bitrate_kbps: 768,
-    preferred_audio_bitrate_kbps: 320,
-
     # File size guidelines (MB) - differentiated by media type
     movie_min_size_mb: 2048,
     movie_max_size_mb: 15360,
@@ -162,8 +152,6 @@ defmodule Mydia.Settings.QualityProfile do
         |> validate_resolution_ranges(standards)
         |> validate_resolutions(standards)
         |> validate_sources(standards)
-        |> validate_video_bitrates(standards)
-        |> validate_audio_bitrates(standards)
         |> validate_media_type_sizes(standards)
         |> validate_hdr_formats(standards)
 
@@ -188,8 +176,6 @@ defmodule Mydia.Settings.QualityProfile do
       - `:audio_channels` - Audio channels (e.g., "5.1", "7.1")
       - `:resolution` - Resolution (e.g., "1080p", "2160p")
       - `:source` - Source type (e.g., "BluRay", "WEB-DL")
-      - `:video_bitrate_mbps` - Video bitrate in Mbps
-      - `:audio_bitrate_kbps` - Audio bitrate in kbps
       - `:file_size_mb` - File size in MB
       - `:media_type` - Either :movie or :episode
       - `:hdr_format` - HDR format if present (e.g., "dolby_vision", "hdr10")
@@ -227,8 +213,6 @@ defmodule Mydia.Settings.QualityProfile do
     audio_channels_score = score_audio_channels(standards, media_attrs)
     resolution_score = score_resolution(standards, media_attrs)
     source_score = score_source(standards, media_attrs)
-    video_bitrate_score = score_video_bitrate(standards, media_attrs)
-    audio_bitrate_score = score_audio_bitrate(standards, media_attrs)
     file_size_score = score_file_size(standards, media_attrs)
     hdr_score = score_hdr_format(standards, media_attrs)
 
@@ -245,8 +229,6 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels: audio_channels_score,
           resolution: resolution_score,
           source: source_score,
-          video_bitrate: video_bitrate_score,
-          audio_bitrate: audio_bitrate_score,
           file_size: file_size_score,
           hdr: hdr_score
         },
@@ -254,17 +236,15 @@ defmodule Mydia.Settings.QualityProfile do
       }
     else
       # Calculate weighted average
-      # Weights are somewhat arbitrary but prioritize codec and resolution
+      # Weights sum to 1.0; bitrate terms removed (no real effect on search ranking)
       weights = %{
-        video_codec: 0.20,
-        audio_codec: 0.15,
-        audio_channels: 0.10,
-        resolution: 0.20,
-        source: 0.10,
-        video_bitrate: 0.10,
-        audio_bitrate: 0.05,
-        file_size: 0.05,
-        hdr: 0.05
+        video_codec: 0.22,
+        audio_codec: 0.16,
+        audio_channels: 0.12,
+        resolution: 0.24,
+        source: 0.12,
+        file_size: 0.07,
+        hdr: 0.07
       }
 
       total_score =
@@ -273,8 +253,6 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels_score * weights.audio_channels +
           resolution_score * weights.resolution +
           source_score * weights.source +
-          video_bitrate_score * weights.video_bitrate +
-          audio_bitrate_score * weights.audio_bitrate +
           file_size_score * weights.file_size +
           hdr_score * weights.hdr
 
@@ -286,8 +264,6 @@ defmodule Mydia.Settings.QualityProfile do
           audio_channels: audio_channels_score,
           resolution: resolution_score,
           source: source_score,
-          video_bitrate: video_bitrate_score,
-          audio_bitrate: audio_bitrate_score,
           file_size: file_size_score,
           hdr: hdr_score
         },
@@ -486,124 +462,6 @@ defmodule Mydia.Settings.QualityProfile do
     end
   end
 
-  defp validate_video_bitrates(changeset, standards) do
-    min_bitrate = Map.get(standards, :min_video_bitrate_mbps)
-    max_bitrate = Map.get(standards, :max_video_bitrate_mbps)
-    preferred_bitrate = Map.get(standards, :preferred_video_bitrate_mbps)
-
-    changeset =
-      if min_bitrate && !is_number(min_bitrate) do
-        add_error(changeset, :quality_standards, "min_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if max_bitrate && !is_number(max_bitrate) do
-        add_error(changeset, :quality_standards, "max_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if preferred_bitrate && !is_number(preferred_bitrate) do
-        add_error(changeset, :quality_standards, "preferred_video_bitrate_mbps must be a number")
-      else
-        changeset
-      end
-
-    changeset =
-      if min_bitrate && max_bitrate && min_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "min_video_bitrate_mbps cannot be greater than max_video_bitrate_mbps"
-        )
-      else
-        changeset
-      end
-
-    # Validate preferred is within range
-    if preferred_bitrate && min_bitrate && preferred_bitrate < min_bitrate do
-      add_error(
-        changeset,
-        :quality_standards,
-        "preferred_video_bitrate_mbps cannot be less than min_video_bitrate_mbps"
-      )
-    else
-      if preferred_bitrate && max_bitrate && preferred_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_video_bitrate_mbps cannot be greater than max_video_bitrate_mbps"
-        )
-      else
-        changeset
-      end
-    end
-  end
-
-  defp validate_audio_bitrates(changeset, standards) do
-    min_bitrate = Map.get(standards, :min_audio_bitrate_kbps)
-    max_bitrate = Map.get(standards, :max_audio_bitrate_kbps)
-    preferred_bitrate = Map.get(standards, :preferred_audio_bitrate_kbps)
-
-    changeset =
-      if min_bitrate && !is_integer(min_bitrate) do
-        add_error(changeset, :quality_standards, "min_audio_bitrate_kbps must be an integer")
-      else
-        changeset
-      end
-
-    changeset =
-      if max_bitrate && !is_integer(max_bitrate) do
-        add_error(changeset, :quality_standards, "max_audio_bitrate_kbps must be an integer")
-      else
-        changeset
-      end
-
-    changeset =
-      if preferred_bitrate && !is_integer(preferred_bitrate) do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_audio_bitrate_kbps must be an integer"
-        )
-      else
-        changeset
-      end
-
-    changeset =
-      if min_bitrate && max_bitrate && min_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "min_audio_bitrate_kbps cannot be greater than max_audio_bitrate_kbps"
-        )
-      else
-        changeset
-      end
-
-    # Validate preferred is within range
-    if preferred_bitrate && min_bitrate && preferred_bitrate < min_bitrate do
-      add_error(
-        changeset,
-        :quality_standards,
-        "preferred_audio_bitrate_kbps cannot be less than min_audio_bitrate_kbps"
-      )
-    else
-      if preferred_bitrate && max_bitrate && preferred_bitrate > max_bitrate do
-        add_error(
-          changeset,
-          :quality_standards,
-          "preferred_audio_bitrate_kbps cannot be greater than max_audio_bitrate_kbps"
-        )
-      else
-        changeset
-      end
-    end
-  end
-
   defp validate_media_type_sizes(changeset, standards) do
     # Validate movie sizes
     movie_min = Map.get(standards, :movie_min_size_mb)
@@ -783,26 +641,6 @@ defmodule Mydia.Settings.QualityProfile do
   end
 
   defp score_source(_standards, _media_attrs), do: 50.0
-
-  defp score_video_bitrate(standards, %{video_bitrate_mbps: bitrate}) when is_number(bitrate) do
-    min_bitrate = Map.get(standards, :min_video_bitrate_mbps)
-    max_bitrate = Map.get(standards, :max_video_bitrate_mbps)
-    preferred_bitrate = Map.get(standards, :preferred_video_bitrate_mbps)
-
-    score_from_range(bitrate, min_bitrate, max_bitrate, preferred_bitrate)
-  end
-
-  defp score_video_bitrate(_standards, _media_attrs), do: 50.0
-
-  defp score_audio_bitrate(standards, %{audio_bitrate_kbps: bitrate}) when is_number(bitrate) do
-    min_bitrate = Map.get(standards, :min_audio_bitrate_kbps)
-    max_bitrate = Map.get(standards, :max_audio_bitrate_kbps)
-    preferred_bitrate = Map.get(standards, :preferred_audio_bitrate_kbps)
-
-    score_from_range(bitrate, min_bitrate, max_bitrate, preferred_bitrate)
-  end
-
-  defp score_audio_bitrate(_standards, _media_attrs), do: 50.0
 
   defp score_file_size(standards, %{file_size_mb: size, media_type: :movie})
        when is_number(size) do

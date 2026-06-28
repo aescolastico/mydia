@@ -416,21 +416,6 @@ defmodule MydiaWeb.AdminQualityProfilesLive.Index do
 
   defp transform_quality_standard_value(key, value)
        when key in [
-              "min_video_bitrate_mbps",
-              "max_video_bitrate_mbps",
-              "preferred_video_bitrate_mbps"
-            ] do
-    case Float.parse(value) do
-      {float, ""} -> float
-      _ -> nil
-    end
-  end
-
-  defp transform_quality_standard_value(key, value)
-       when key in [
-              "min_audio_bitrate_kbps",
-              "max_audio_bitrate_kbps",
-              "preferred_audio_bitrate_kbps",
               "movie_min_size_mb",
               "movie_max_size_mb",
               "episode_min_size_mb",

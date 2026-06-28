@@ -19,10 +19,6 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
             max_resolution: "1080p",
             preferred_resolutions: ["1080p"],
             preferred_sources: ["BluRay", "WEB-DL"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 20.0,
-            min_audio_bitrate_kbps: 128,
-            max_audio_bitrate_kbps: 640,
             episode_min_size_mb: 500,
             episode_max_size_mb: 2048
           }

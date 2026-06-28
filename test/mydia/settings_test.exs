@@ -1087,33 +1087,6 @@ defmodule Mydia.SettingsTest do
       assert {:error, changeset} = result
       assert changeset.errors[:quality_standards] != nil
     end
-
-    test "validates video bitrate ranges" do
-      # Valid bitrate range
-      {:ok, _profile} =
-        Settings.create_quality_profile(%{
-          name: "Valid Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 50.0
-          }
-        })
-
-      # Invalid: min > max
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_video_bitrate_mbps: 50.0,
-            max_video_bitrate_mbps: 5.0
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:quality_standards] != nil
-    end
   end
 
   describe "enhanced quality_standards validation" do
@@ -1214,62 +1187,6 @@ defmodule Mydia.SettingsTest do
       {message, _} = changeset.errors[:quality_standards]
       assert message =~ "min_resolution"
       assert message =~ "cannot be greater than max_resolution"
-    end
-
-    test "validates video bitrate ranges with preferred" do
-      {:ok, _profile} =
-        Settings.create_quality_profile(%{
-          name: "Valid Video Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 50.0,
-            preferred_video_bitrate_mbps: 15.0
-          }
-        })
-
-      # Invalid: preferred > max
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Video Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 50.0,
-            preferred_video_bitrate_mbps: 100.0
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:quality_standards] != nil
-    end
-
-    test "validates audio bitrate ranges with preferred" do
-      {:ok, _profile} =
-        Settings.create_quality_profile(%{
-          name: "Valid Audio Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_audio_bitrate_kbps: 128,
-            max_audio_bitrate_kbps: 768,
-            preferred_audio_bitrate_kbps: 320
-          }
-        })
-
-      # Invalid: preferred < min
-      result =
-        Settings.create_quality_profile(%{
-          name: "Invalid Audio Bitrates",
-          quality_standards: %{
-            preferred_resolutions: ["1080p"],
-            min_audio_bitrate_kbps: 128,
-            max_audio_bitrate_kbps: 768,
-            preferred_audio_bitrate_kbps: 64
-          }
-        })
-
-      assert {:error, changeset} = result
-      assert changeset.errors[:quality_standards] != nil
     end
 
     test "validates media-type-specific file sizes" do
@@ -1375,11 +1292,6 @@ defmodule Mydia.SettingsTest do
             max_resolution: "2160p",
             preferred_resolutions: ["1080p"],
             preferred_sources: ["BluRay", "REMUX"],
-            min_video_bitrate_mbps: 5.0,
-            max_video_bitrate_mbps: 50.0,
-            preferred_video_bitrate_mbps: 15.0,
-            min_audio_bitrate_kbps: 128,
-            max_audio_bitrate_kbps: 768,
             movie_min_size_mb: 2048,
             movie_max_size_mb: 15360,
             episode_min_size_mb: 512,
@@ -1399,8 +1311,6 @@ defmodule Mydia.SettingsTest do
         audio_channels: "7.1",
         resolution: "1080p",
         source: "BluRay",
-        video_bitrate_mbps: 15.0,
-        audio_bitrate_kbps: 320,
         file_size_mb: 8192,
         media_type: :movie,
         hdr_format: "dolby_vision"
@@ -1436,7 +1346,6 @@ defmodule Mydia.SettingsTest do
 
     test "scores within range appropriately", %{profile: profile} do
       within_range = %{
-        video_bitrate_mbps: 20.0,
         file_size_mb: 5000,
         media_type: :movie,
         resolution: "1080p"
@@ -1444,13 +1353,11 @@ defmodule Mydia.SettingsTest do
 
       result = QualityProfile.score_media_file(profile, within_range)
 
-      assert result.breakdown.video_bitrate >= 75.0
       assert result.breakdown.file_size >= 75.0
     end
 
     test "penalizes values outside range", %{profile: profile} do
       outside_range = %{
-        video_bitrate_mbps: 100.0,
         file_size_mb: 30000,
         media_type: :movie,
         resolution: "1080p"
@@ -1458,7 +1365,6 @@ defmodule Mydia.SettingsTest do
 
       result = QualityProfile.score_media_file(profile, outside_range)
 
-      assert result.breakdown.video_bitrate <= 25.0
       assert result.breakdown.file_size <= 25.0
     end
 
@@ -1540,32 +1446,6 @@ defmodule Mydia.SettingsTest do
       assert is_float(result.score)
       assert is_map(result.breakdown)
       assert result.breakdown.resolution == 100.0
-    end
-
-    test "scores audio bitrate separately from video bitrate", %{profile: profile} do
-      with_audio = %{
-        video_bitrate_mbps: 15.0,
-        audio_bitrate_kbps: 320,
-        resolution: "1080p",
-        media_type: :movie
-      }
-
-      result = QualityProfile.score_media_file(profile, with_audio)
-
-      assert result.breakdown.video_bitrate >= 90.0
-      assert result.breakdown.audio_bitrate >= 75.0
-    end
-
-    test "scores preferred values within 10% as very high", %{profile: profile} do
-      close_to_preferred = %{
-        video_bitrate_mbps: 14.5,
-        resolution: "1080p",
-        media_type: :movie
-      }
-
-      result = QualityProfile.score_media_file(profile, close_to_preferred)
-
-      assert result.breakdown.video_bitrate >= 95.0
     end
   end
 

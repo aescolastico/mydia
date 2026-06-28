@@ -435,23 +435,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
     # Convert bytes to MB for file size
     file_size_mb = if media_file.size, do: div(media_file.size, 1_048_576), else: nil
 
-    # Extract video bitrate from total bitrate (approximation)
-    # Typically video is ~90% of total bitrate for high quality content
-    video_bitrate_mbps =
-      if media_file.bitrate do
-        Float.round(media_file.bitrate * 0.9 / 1_000_000, 1)
-      else
-        nil
-      end
-
-    # Audio bitrate approximation
-    audio_bitrate_kbps =
-      if media_file.bitrate do
-        round(media_file.bitrate * 0.1 / 1000)
-      else
-        nil
-      end
-
     # Build attributes map
     %{
       video_codec: media_file.codec,
@@ -459,8 +442,6 @@ defmodule Mydia.Settings.QualityProfileEngine do
       audio_channels: extract_audio_channels(media_file),
       resolution: media_file.resolution,
       source: extract_source(media_file),
-      video_bitrate_mbps: video_bitrate_mbps,
-      audio_bitrate_kbps: audio_bitrate_kbps,
       file_size_mb: file_size_mb,
       media_type: media_type,
       hdr_format: media_file.hdr_format
