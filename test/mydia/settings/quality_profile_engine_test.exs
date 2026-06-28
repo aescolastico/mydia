@@ -11,7 +11,6 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
       {:ok, profile} =
         Settings.create_quality_profile(%{
           name: "Test HD Profile",
-          qualities: ["720p", "1080p"],
           quality_standards: %{
             preferred_video_codecs: ["h265", "h264"],
             preferred_audio_codecs: ["atmos", "ac3"],
@@ -192,7 +191,7 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
       {:ok, profile} =
         Settings.create_quality_profile(%{
           name: "Test",
-          qualities: ["1080p"]
+          quality_standards: %{preferred_resolutions: ["1080p"]}
         })
 
       fake_item_ids = [Ecto.UUID.generate(), Ecto.UUID.generate()]
@@ -208,8 +207,7 @@ defmodule Mydia.Settings.QualityProfileEngineTest do
       {:ok, profile} =
         Settings.create_quality_profile(%{
           name: "Empty Profile",
-          qualities: ["1080p"],
-          quality_standards: %{preferred_video_codecs: ["h265"]}
+          quality_standards: %{preferred_resolutions: ["1080p"], preferred_video_codecs: ["h265"]}
         })
 
       assert {:ok, summary} = QualityProfileEngine.reevaluate_profile_files(profile.id)

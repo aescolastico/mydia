@@ -26,10 +26,10 @@ defmodule Mydia.Settings.QualityProfilePresetsTest do
 
       for preset <- presets do
         assert Map.has_key?(preset.profile_data, :name)
-        assert Map.has_key?(preset.profile_data, :qualities)
         assert Map.has_key?(preset.profile_data, :upgrades_allowed)
-        assert is_list(preset.profile_data.qualities)
-        assert length(preset.profile_data.qualities) > 0
+        assert Map.has_key?(preset.profile_data, :quality_standards)
+        assert is_list(preset.profile_data.quality_standards.preferred_resolutions)
+        assert length(preset.profile_data.quality_standards.preferred_resolutions) > 0
       end
     end
 
@@ -159,7 +159,7 @@ defmodule Mydia.Settings.QualityProfilePresetsTest do
 
       profile_data = preset.profile_data
       assert profile_data.name == "TRaSH - HD Bluray + WEB"
-      assert is_list(profile_data.qualities)
+      assert is_list(profile_data.quality_standards.preferred_resolutions)
       assert is_boolean(profile_data.upgrades_allowed)
       assert is_map(profile_data.quality_standards)
     end

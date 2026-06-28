@@ -6,7 +6,6 @@ defmodule Mydia.Settings.QualityProfile do
   import Ecto.Changeset
 
   alias Mydia.Settings.JsonAtomMapType
-  alias Mydia.Settings.StringListType
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -16,15 +15,12 @@ defmodule Mydia.Settings.QualityProfile do
           name: String.t() | nil,
           upgrades_allowed: boolean(),
           upgrade_until_quality: String.t() | nil,
-          qualities: [String.t()] | nil,
           description: String.t() | nil,
           is_system: boolean(),
           version: integer(),
           source_url: String.t() | nil,
           last_synced_at: DateTime.t() | nil,
           quality_standards: map() | nil,
-          metadata_preferences: map() | nil,
-          customizations: map() | nil,
           media_files: [Mydia.Library.MediaFile.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
@@ -74,7 +70,6 @@ defmodule Mydia.Settings.QualityProfile do
     field :name, :string
     field :upgrades_allowed, :boolean, default: true
     field :upgrade_until_quality, :string
-    field :qualities, StringListType
 
     # Enhanced fields for import/export and configuration management
     field :description, :string
@@ -83,8 +78,6 @@ defmodule Mydia.Settings.QualityProfile do
     field :source_url, :string
     field :last_synced_at, :utc_datetime
     field :quality_standards, JsonAtomMapType
-    field :metadata_preferences, JsonAtomMapType
-    field :customizations, JsonAtomMapType
 
     has_many :media_files, Mydia.Library.MediaFile
 
@@ -100,7 +93,6 @@ defmodule Mydia.Settings.QualityProfile do
       :name,
       :upgrades_allowed,
       :upgrade_until_quality,
-      :qualities,
       :description,
       :is_system,
       :version,
@@ -108,10 +100,10 @@ defmodule Mydia.Settings.QualityProfile do
       :last_synced_at,
       :quality_standards
     ])
-    |> validate_required([:name, :qualities])
-    |> validate_length(:qualities, min: 1)
+    |> validate_required([:name])
     |> unique_constraint(:name)
     |> validate_quality_standards()
+    |> validate_preferred_resolutions_present()
   end
 
   @doc """
@@ -301,6 +293,29 @@ defmodule Mydia.Settings.QualityProfile do
         },
         violations: []
       }
+    end
+  end
+
+  # A profile must specify at least one preferred resolution. With the
+  # standalone `qualities` list gone, the allow-list lives entirely in
+  # quality_standards.preferred_resolutions.
+  defp validate_preferred_resolutions_present(changeset) do
+    standards = get_field(changeset, :quality_standards)
+
+    resolutions =
+      case standards do
+        %{} = s -> Map.get(s, :preferred_resolutions) || Map.get(s, "preferred_resolutions")
+        _ -> nil
+      end
+
+    if is_list(resolutions) and resolutions != [] do
+      changeset
+    else
+      add_error(
+        changeset,
+        :quality_standards,
+        "must include at least one preferred resolution"
+      )
     end
   end
 

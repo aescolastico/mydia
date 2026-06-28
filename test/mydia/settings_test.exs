@@ -60,7 +60,7 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Any",
-          qualities: ["360p", "480p", "720p", "1080p"]
+          quality_standards: %{preferred_resolutions: ["360p", "480p", "720p", "1080p"]}
         })
 
       # Call the function - should create 7 more profiles
@@ -81,21 +81,21 @@ defmodule Mydia.SettingsTest do
       # Check the "Any" profile
       any_profile = Settings.get_quality_profile_by_name("Any")
       assert any_profile.name == "Any"
-      assert is_list(any_profile.qualities)
-      assert length(any_profile.qualities) > 0
+      assert is_list(any_profile.quality_standards.preferred_resolutions)
+      assert length(any_profile.quality_standards.preferred_resolutions) > 0
       assert is_boolean(any_profile.upgrades_allowed)
       assert is_binary(any_profile.description)
 
       # Check the "HD-1080p" profile
       hd_profile = Settings.get_quality_profile_by_name("HD-1080p")
       assert hd_profile.name == "HD-1080p"
-      assert "1080p" in hd_profile.qualities
+      assert "1080p" in hd_profile.quality_standards.preferred_resolutions
       assert is_binary(hd_profile.description)
 
       # Check the "4K/UHD" profile
       uhd_profile = Settings.get_quality_profile_by_name("4K/UHD")
       assert uhd_profile.name == "4K/UHD"
-      assert "2160p" in uhd_profile.qualities
+      assert "2160p" in uhd_profile.quality_standards.preferred_resolutions
       assert is_binary(uhd_profile.description)
     end
 
@@ -161,11 +161,11 @@ defmodule Mydia.SettingsTest do
       # Each profile should have required keys
       Enum.each(profiles, fn profile ->
         assert Map.has_key?(profile, :name)
-        assert Map.has_key?(profile, :qualities)
+        assert Map.has_key?(profile, :quality_standards)
         assert Map.has_key?(profile, :upgrades_allowed)
         assert Map.has_key?(profile, :description)
         assert Map.has_key?(profile, :quality_standards)
-        assert is_list(profile.qualities)
+        assert is_list(profile.quality_standards.preferred_resolutions)
         assert is_boolean(profile.upgrades_allowed)
         assert is_binary(profile.description)
         assert is_map(profile.quality_standards)
@@ -184,13 +184,13 @@ defmodule Mydia.SettingsTest do
       profiles = Settings.DefaultQualityProfiles.defaults()
 
       Enum.each(profiles, fn profile ->
-        assert is_list(profile.qualities)
-        assert length(profile.qualities) > 0
+        assert is_list(profile.quality_standards.preferred_resolutions)
+        assert length(profile.quality_standards.preferred_resolutions) > 0
 
         # All quality strings should be valid resolutions
         valid_resolutions = ["360p", "480p", "576p", "720p", "1080p", "2160p"]
 
-        Enum.each(profile.qualities, fn quality ->
+        Enum.each(profile.quality_standards.preferred_resolutions, fn quality ->
           assert quality in valid_resolutions,
                  "Invalid quality #{quality} in profile #{profile.name}"
         end)
@@ -900,7 +900,6 @@ defmodule Mydia.SettingsTest do
       {:ok, profile} =
         Settings.create_quality_profile(%{
           name: "Test Enhanced Profile",
-          qualities: ["1080p", "720p"],
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
           description: "Test profile with enhanced fields",
@@ -911,11 +910,6 @@ defmodule Mydia.SettingsTest do
             preferred_resolutions: ["1080p"],
             movie_min_size_mb: 2048,
             movie_max_size_mb: 15360
-          },
-          metadata_preferences: %{
-            provider_priority: ["tvdb", "tmdb"],
-            preferred_language: "en",
-            fetch_posters: true
           }
         })
 
@@ -938,7 +932,7 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile2} =
         Settings.create_quality_profile(%{
           name: "Version 2 Profile",
-          qualities: ["720p"],
+          quality_standards: %{preferred_resolutions: ["720p"]},
           version: 2
         })
 
@@ -957,7 +951,7 @@ defmodule Mydia.SettingsTest do
       {:ok, profile_with_url} =
         Settings.create_quality_profile(%{
           name: "Imported Profile",
-          qualities: ["1080p"],
+          quality_standards: %{preferred_resolutions: ["1080p"]},
           source_url: "https://example.com/profiles/hd.json"
         })
 
@@ -979,16 +973,13 @@ defmodule Mydia.SettingsTest do
       assert cloned.name == "Cloned Profile"
 
       # Check that other fields are copied
-      assert cloned.qualities == profile.qualities
-      assert cloned.upgrades_allowed == profile.upgrades_allowed
       assert cloned.quality_standards == profile.quality_standards
-      assert cloned.metadata_preferences == profile.metadata_preferences
+      assert cloned.upgrades_allowed == profile.upgrades_allowed
 
       # Check that system fields are reset
       assert cloned.is_system == false
       assert cloned.version == 1
       assert is_nil(cloned.source_url)
-      assert is_nil(cloned.customizations)
     end
 
     test "clone_quality_profile without name adds (Copy) suffix", %{profile: profile} do
@@ -1002,10 +993,10 @@ defmodule Mydia.SettingsTest do
       {:ok, profile2} =
         Settings.create_quality_profile(%{
           name: "Test Enhanced Profile V2",
-          qualities: ["2160p", "1080p"],
           upgrades_allowed: false,
           version: 2,
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             preferred_video_codecs: ["h265", "av1"],
             movie_min_size_mb: 5000
           }
@@ -1015,7 +1006,7 @@ defmodule Mydia.SettingsTest do
 
       # Check changed fields
       assert Map.has_key?(comparison.changed, :name)
-      assert Map.has_key?(comparison.changed, :qualities)
+      assert Map.has_key?(comparison.changed, :quality_standards)
       assert Map.has_key?(comparison.changed, :upgrades_allowed)
       assert Map.has_key?(comparison.changed, :version)
       assert Map.has_key?(comparison.changed, :quality_standards)
@@ -1031,12 +1022,8 @@ defmodule Mydia.SettingsTest do
     end
 
     test "compare_quality_profile_versions detects added fields", %{profile: profile1} do
-      # Create profile without optional fields
-      {:ok, profile_basic} =
-        Settings.create_quality_profile(%{
-          name: "Basic Profile",
-          qualities: ["720p"]
-        })
+      # Build a profile struct without quality_standards to test "added" detection
+      profile_basic = %QualityProfile{name: "Basic Profile"}
 
       comparison = Settings.compare_quality_profile_versions(profile_basic, profile1)
 
@@ -1045,12 +1032,8 @@ defmodule Mydia.SettingsTest do
     end
 
     test "compare_quality_profile_versions detects removed fields", %{profile: profile1} do
-      # Create profile without optional fields
-      {:ok, profile_basic} =
-        Settings.create_quality_profile(%{
-          name: "Basic Profile",
-          qualities: ["720p"]
-        })
+      # Build a profile struct without quality_standards to test "removed" detection
+      profile_basic = %QualityProfile{name: "Basic Profile"}
 
       comparison = Settings.compare_quality_profile_versions(profile1, profile_basic)
 
@@ -1064,8 +1047,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_video_codecs: ["h264", "h265", "av1"]
           }
         })
@@ -1073,8 +1056,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_video_codecs: ["invalid_codec"]
           }
         })
@@ -1087,7 +1070,6 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Resolutions",
-          qualities: ["1080p"],
           quality_standards: %{
             preferred_resolutions: ["1080p", "720p"]
           }
@@ -1097,7 +1079,6 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Resolutions",
-          qualities: ["1080p"],
           quality_standards: %{
             preferred_resolutions: ["8K"]
           }
@@ -1112,8 +1093,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_video_bitrate_mbps: 5.0,
             max_video_bitrate_mbps: 50.0
           }
@@ -1123,8 +1104,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_video_bitrate_mbps: 50.0,
             max_video_bitrate_mbps: 5.0
           }
@@ -1140,8 +1121,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Video Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_video_codecs: ["h265", "h264", "av1"]
           }
         })
@@ -1149,8 +1130,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Video Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_video_codecs: ["invalid_codec"]
           }
         })
@@ -1163,8 +1144,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Audio Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_audio_codecs: ["atmos", "truehd", "dts-hd"]
           }
         })
@@ -1172,8 +1153,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Audio Codecs",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_audio_codecs: ["invalid_audio"]
           }
         })
@@ -1186,8 +1167,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Audio Channels",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_audio_channels: ["7.1", "5.1", "2.0"]
           }
         })
@@ -1195,8 +1176,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Audio Channels",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_audio_channels: ["11.1"]
           }
         })
@@ -1209,7 +1190,6 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Resolution Range",
-          qualities: ["1080p"],
           quality_standards: %{
             min_resolution: "720p",
             max_resolution: "2160p",
@@ -1221,8 +1201,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Resolution Range",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_resolution: "2160p",
             max_resolution: "720p"
           }
@@ -1240,8 +1220,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Video Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_video_bitrate_mbps: 5.0,
             max_video_bitrate_mbps: 50.0,
             preferred_video_bitrate_mbps: 15.0
@@ -1252,8 +1232,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Video Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_video_bitrate_mbps: 5.0,
             max_video_bitrate_mbps: 50.0,
             preferred_video_bitrate_mbps: 100.0
@@ -1268,8 +1248,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Audio Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_audio_bitrate_kbps: 128,
             max_audio_bitrate_kbps: 768,
             preferred_audio_bitrate_kbps: 320
@@ -1280,8 +1260,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Audio Bitrates",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             min_audio_bitrate_kbps: 128,
             max_audio_bitrate_kbps: 768,
             preferred_audio_bitrate_kbps: 64
@@ -1296,8 +1276,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid Media Sizes",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             movie_min_size_mb: 2048,
             movie_max_size_mb: 15360,
             episode_min_size_mb: 512,
@@ -1309,8 +1289,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid Movie Sizes",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             movie_min_size_mb: 15360,
             movie_max_size_mb: 2048
           }
@@ -1323,8 +1303,8 @@ defmodule Mydia.SettingsTest do
       result2 =
         Settings.create_quality_profile(%{
           name: "Invalid Episode Sizes",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             episode_min_size_mb: 4096,
             episode_max_size_mb: 512
           }
@@ -1338,8 +1318,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid HDR",
-          qualities: ["2160p"],
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             hdr_formats: ["dolby_vision", "hdr10+", "hdr10"],
             require_hdr: true
           }
@@ -1348,8 +1328,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid HDR",
-          qualities: ["2160p"],
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             hdr_formats: ["invalid_hdr"]
           }
         })
@@ -1362,8 +1342,8 @@ defmodule Mydia.SettingsTest do
       {:ok, _profile} =
         Settings.create_quality_profile(%{
           name: "Valid HDR Requirement",
-          qualities: ["2160p"],
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             require_hdr: false
           }
         })
@@ -1371,8 +1351,8 @@ defmodule Mydia.SettingsTest do
       result =
         Settings.create_quality_profile(%{
           name: "Invalid HDR Requirement",
-          qualities: ["2160p"],
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             require_hdr: "yes"
           }
         })
@@ -1387,7 +1367,6 @@ defmodule Mydia.SettingsTest do
       {:ok, profile} =
         Settings.create_quality_profile(%{
           name: "Scoring Test Profile",
-          qualities: ["1080p", "2160p"],
           quality_standards: %{
             preferred_video_codecs: ["h265", "h264"],
             preferred_audio_codecs: ["atmos", "truehd", "ac3"],
@@ -1500,8 +1479,8 @@ defmodule Mydia.SettingsTest do
       {:ok, hdr_profile} =
         Settings.create_quality_profile(%{
           name: "HDR Required",
-          qualities: ["2160p"],
           quality_standards: %{
+            preferred_resolutions: ["2160p"],
             require_hdr: true
           }
         })
@@ -1540,11 +1519,8 @@ defmodule Mydia.SettingsTest do
     end
 
     test "returns 0 score and explanation when no quality_standards defined" do
-      {:ok, basic_profile} =
-        Settings.create_quality_profile(%{
-          name: "Basic No Standards",
-          qualities: ["1080p"]
-        })
+      # Build a struct directly to bypass the schema requirement for preferred_resolutions
+      basic_profile = %QualityProfile{name: "Basic No Standards"}
 
       result = QualityProfile.score_media_file(basic_profile, %{resolution: "1080p"})
 
@@ -1599,17 +1575,13 @@ defmodule Mydia.SettingsTest do
         Settings.create_quality_profile(%{
           name: "Export Test Profile",
           description: "Profile for testing export functionality",
-          qualities: ["1080p", "720p"],
           upgrades_allowed: true,
           upgrade_until_quality: "1080p",
           quality_standards: %{
+            preferred_resolutions: ["1080p", "720p"],
             preferred_video_codecs: ["h265", "h264"],
             min_resolution: "720p",
             max_resolution: "1080p"
-          },
-          metadata_preferences: %{
-            provider_priority: ["metadata_relay", "tvdb"],
-            language: "en-US"
           }
         })
 
@@ -1625,7 +1597,6 @@ defmodule Mydia.SettingsTest do
       assert parsed["schema_version"] == 1
       assert parsed["name"] == "Export Test Profile"
       assert parsed["description"] == "Profile for testing export functionality"
-      assert parsed["qualities"] == ["1080p", "720p"]
       assert parsed["upgrades_allowed"] == true
       assert parsed["upgrade_until_quality"] == "1080p"
       assert is_map(parsed["quality_standards"])
@@ -1640,7 +1611,6 @@ defmodule Mydia.SettingsTest do
 
       assert parsed["schema_version"] == 1
       assert parsed["name"] == "Export Test Profile"
-      assert parsed["qualities"] == ["1080p", "720p"]
     end
 
     test "includes all profile fields in export", %{profile: profile} do
@@ -1651,11 +1621,9 @@ defmodule Mydia.SettingsTest do
       assert Map.has_key?(parsed, "schema_version")
       assert Map.has_key?(parsed, "name")
       assert Map.has_key?(parsed, "description")
-      assert Map.has_key?(parsed, "qualities")
       assert Map.has_key?(parsed, "upgrades_allowed")
       assert Map.has_key?(parsed, "upgrade_until_quality")
       assert Map.has_key?(parsed, "quality_standards")
-      assert Map.has_key?(parsed, "metadata_preferences")
       assert Map.has_key?(parsed, "version")
       assert Map.has_key?(parsed, "exported_at")
     end
@@ -1682,9 +1650,9 @@ defmodule Mydia.SettingsTest do
         "schema_version": 1,
         "name": "Imported Profile",
         "description": "Test import",
-        "qualities": ["1080p"],
         "upgrades_allowed": false,
         "quality_standards": {
+          "preferred_resolutions": ["1080p"],
           "preferred_video_codecs": ["h265"]
         }
       }
@@ -1694,7 +1662,6 @@ defmodule Mydia.SettingsTest do
 
       assert profile.name == "Imported Profile"
       assert profile.description == "Test import"
-      assert profile.qualities == ["1080p"]
       assert profile.upgrades_allowed == false
       assert profile.quality_standards.preferred_video_codecs == ["h265"]
       assert profile.is_system == false
@@ -1706,16 +1673,16 @@ defmodule Mydia.SettingsTest do
       yaml_data = """
       schema_version: 1
       name: YAML Import Profile
-      qualities:
-        - 720p
-        - 1080p
+      quality_standards:
+        preferred_resolutions:
+          - 720p
+          - 1080p
       upgrades_allowed: true
       """
 
       {:ok, profile} = Settings.import_profile(yaml_data)
 
       assert profile.name == "YAML Import Profile"
-      assert profile.qualities == ["720p", "1080p"]
       assert profile.upgrades_allowed == true
     end
 
@@ -1725,7 +1692,7 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "URL Import Profile",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1740,7 +1707,7 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "Original Name",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1761,7 +1728,7 @@ defmodule Mydia.SettingsTest do
 
       assert message =~ "Missing required fields"
       assert message =~ "name"
-      assert message =~ "qualities"
+      assert message =~ "quality_standards"
     end
 
     test "rejects unsupported schema version" do
@@ -1769,7 +1736,7 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 999,
         "name": "Future Profile",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1783,7 +1750,7 @@ defmodule Mydia.SettingsTest do
       json_data = """
       {
         "name": "Legacy Profile",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1798,14 +1765,14 @@ defmodule Mydia.SettingsTest do
       {:ok, _existing} =
         Settings.create_quality_profile(%{
           name: "Conflict Profile",
-          qualities: ["720p"]
+          quality_standards: %{preferred_resolutions: ["720p"]}
         })
 
       json_data = """
       {
         "schema_version": 1,
         "name": "Conflict Profile",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1819,12 +1786,9 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "Key Test Profile",
-        "qualities": ["1080p"],
         "quality_standards": {
+          "preferred_resolutions": ["1080p"],
           "preferred_video_codecs": ["h265"]
-        },
-        "metadata_preferences": {
-          "provider_priority": ["tvdb"]
         }
       }
       """
@@ -1843,7 +1807,7 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "Dry Run Profile",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1863,14 +1827,14 @@ defmodule Mydia.SettingsTest do
       {:ok, existing} =
         Settings.create_quality_profile(%{
           name: "Conflict Test",
-          qualities: ["720p"]
+          quality_standards: %{preferred_resolutions: ["720p"]}
         })
 
       json_data = """
       {
         "schema_version": 1,
         "name": "Conflict Test",
-        "qualities": ["1080p"]
+        "quality_standards": {"preferred_resolutions": ["1080p"]}
       }
       """
 
@@ -1891,8 +1855,8 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "Validation Test",
-        "qualities": ["1080p"],
         "quality_standards": {
+          "preferred_resolutions": ["1080p"],
           "preferred_video_codecs": ["invalid_codec"]
         }
       }
@@ -1916,7 +1880,7 @@ defmodule Mydia.SettingsTest do
       {
         "schema_version": 1,
         "name": "Remote Profile",
-        "qualities": ["1080p", "720p"]
+        "quality_standards": {"preferred_resolutions": ["1080p", "720p"]}
       }
       """
 
@@ -1961,19 +1925,14 @@ defmodule Mydia.SettingsTest do
         Settings.create_quality_profile(%{
           name: "Round Trip Profile",
           description: "Test round-trip export/import",
-          qualities: ["2160p", "1080p"],
           upgrades_allowed: true,
           upgrade_until_quality: "2160p",
           quality_standards: %{
+            preferred_resolutions: ["2160p", "1080p"],
             preferred_video_codecs: ["h265", "av1"],
             preferred_audio_codecs: ["atmos", "truehd"],
             min_resolution: "1080p",
             max_resolution: "2160p"
-          },
-          metadata_preferences: %{
-            provider_priority: ["metadata_relay", "tvdb", "tmdb"],
-            language: "en-US",
-            auto_fetch_enabled: true
           }
         })
 
@@ -1985,19 +1944,17 @@ defmodule Mydia.SettingsTest do
 
       # Verify all settings match
       assert imported.description == original.description
-      assert imported.qualities == original.qualities
       assert imported.upgrades_allowed == original.upgrades_allowed
       assert imported.upgrade_until_quality == original.upgrade_until_quality
       assert imported.quality_standards == original.quality_standards
-      assert imported.metadata_preferences == original.metadata_preferences
     end
 
     test "YAML round-trip preserves all data" do
       {:ok, original} =
         Settings.create_quality_profile(%{
           name: "YAML Round Trip",
-          qualities: ["1080p"],
           quality_standards: %{
+            preferred_resolutions: ["1080p"],
             preferred_video_codecs: ["h264"]
           }
         })
@@ -2009,7 +1966,6 @@ defmodule Mydia.SettingsTest do
       {:ok, imported} = Settings.import_profile(exported_yaml, name: "YAML Round Trip Copy")
 
       # Verify core settings match
-      assert imported.qualities == original.qualities
       assert imported.quality_standards == original.quality_standards
     end
   end

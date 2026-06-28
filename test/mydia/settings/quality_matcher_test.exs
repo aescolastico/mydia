@@ -11,7 +11,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
       # Create a profile with quality_standards
       profile = %QualityProfile{
         name: "Test HD Profile",
-        qualities: ["720p", "1080p"],
         quality_standards: %{
           preferred_video_codecs: ["h265", "h264"],
           preferred_audio_codecs: ["ac3", "aac"],
@@ -179,7 +178,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
     setup do
       profile = %QualityProfile{
         name: "Test HD Profile",
-        qualities: ["720p", "1080p", "2160p"],
         quality_standards: %{
           preferred_video_codecs: ["h265", "h264"],
           preferred_audio_codecs: ["atmos", "truehd", "dts-hd", "ac3"],
@@ -296,7 +294,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
     setup do
       profile = %QualityProfile{
         name: "Test Profile",
-        qualities: ["720p", "1080p", "2160p"],
         upgrades_allowed: true,
         upgrade_until_quality: "1080p",
         quality_standards: %{preferred_resolutions: ["720p", "1080p", "2160p"]}
@@ -435,7 +432,6 @@ defmodule Mydia.Settings.QualityMatcherTest do
       profile = %Mydia.Settings.QualityProfile{
         name: "Std",
         upgrades_allowed: true,
-        qualities: [],
         quality_standards: %{preferred_resolutions: ["1080p", "720p"]}
       }
 

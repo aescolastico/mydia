@@ -26,7 +26,6 @@ defmodule Mydia.Indexers.SearchScorerTest do
     defaults = %{
       id: Ecto.UUID.generate(),
       name: "Test Profile",
-      qualities: ["1080p", "720p"],
       quality_standards: %{
         preferred_resolutions: ["1080p", "720p"],
         preferred_video_codecs: ["h265", "h264"],

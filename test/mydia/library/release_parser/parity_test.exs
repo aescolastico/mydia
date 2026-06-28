@@ -2652,7 +2652,6 @@ defmodule Mydia.Library.ReleaseParser.ParityTest do
 
       profile = %QualityProfile{
         name: preset.profile_data.name,
-        qualities: preset.profile_data.qualities,
         quality_standards: preset.profile_data.quality_standards
       }
 
@@ -2729,7 +2728,6 @@ defmodule Mydia.Library.ReleaseParser.ParityTest do
 
       profile = %QualityProfile{
         name: preset.profile_data.name,
-        qualities: preset.profile_data.qualities,
         quality_standards: preset.profile_data.quality_standards
       }
 
@@ -2793,7 +2791,6 @@ defmodule Mydia.Library.ReleaseParser.ParityTest do
 
       profile = %QualityProfile{
         name: preset.profile_data.name,
-        qualities: preset.profile_data.qualities,
         quality_standards: preset.profile_data.quality_standards
       }
 
