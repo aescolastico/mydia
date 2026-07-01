@@ -54,6 +54,16 @@ defmodule Mydia.Indexers.Adapter.RegistryTest do
   setup do
     # Clear registry before each test to ensure clean state
     Registry.clear()
+
+    # This registry is a single global Agent shared across the whole test run.
+    # Restore the real adapters afterward so other async: false suites that rely
+    # on them (e.g. Mydia.Jobs.TVShowSearchTest) don't run against an emptied
+    # registry and fail with "Unknown indexer type: prowlarr".
+    on_exit(fn ->
+      Registry.clear()
+      Mydia.Indexers.register_adapters()
+    end)
+
     :ok
   end
 
