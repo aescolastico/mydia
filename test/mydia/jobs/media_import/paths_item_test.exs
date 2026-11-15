@@ -34,6 +34,30 @@ defmodule Mydia.Jobs.MediaImport.PathsItemTest do
              Path.join([lib.path, "The Quiet Meridian", "Season 02"])
   end
 
+  test "disabling season folders places new episodes in the show folder", %{tmp_dir: tmp} do
+    original_config = Application.get_env(:mydia, :runtime_config)
+
+    on_exit(fn ->
+      if original_config,
+        do: Application.put_env(:mydia, :runtime_config, original_config),
+        else: Application.delete_env(:mydia, :runtime_config)
+    end)
+
+    Application.put_env(:mydia, :runtime_config, %{
+      naming: %Mydia.Config.Schema.Naming{
+        season_folders: false,
+        tv_folder: "{{title}} ({{year}})"
+      }
+    })
+
+    lib = library(tmp, "series")
+    show = media_item_fixture(%{type: "tv_show", title: "The Quiet Meridian", year: 2020})
+    ep = episode_fixture(%{media_item_id: show.id, season_number: 2, episode_number: 5})
+
+    assert Paths.item_destination_dir(show, ep, lib, []) ==
+             Path.join(lib.path, "The Quiet Meridian (2020)")
+  end
+
   test "series without an episode is the show folder", %{tmp_dir: tmp} do
     lib = library(tmp, "series")
     show = media_item_fixture(%{type: "tv_show", title: "The Quiet Meridian"})

@@ -1,7 +1,49 @@
 defmodule Mydia.Library.FileNamerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mydia.Library.FileNamer
+
+  test "custom templates render provider tags while preserving the original extension" do
+    original_config = Application.get_env(:mydia, :runtime_config)
+
+    on_exit(fn ->
+      if original_config,
+        do: Application.put_env(:mydia, :runtime_config, original_config),
+        else: Application.delete_env(:mydia, :runtime_config)
+    end)
+
+    naming = %Mydia.Config.Schema.Naming{
+      movie_folder: "{{title}} ({{year}}) {tmdb-{{tmdb}}}",
+      movie_file: "{{title}} {tmdb-{{tmdb}}} {{quality}}{{release_group}}",
+      episode_file: "{{title}}.{{sxxeyy}}.{tvdb-{{tvdb}}}{{release_group}}"
+    }
+
+    Application.put_env(:mydia, :runtime_config, %{naming: naming})
+
+    item = %{title: "The Matrix", year: 1999, tmdb_id: 603}
+
+    quality = %{
+      resolution: "1080p",
+      source: "BluRay",
+      codec: "x264",
+      audio: nil,
+      hdr_format: nil,
+      dolby_vision: false,
+      proper: false,
+      repack: false
+    }
+
+    assert FileNamer.generate_movie_folder(item) == "The Matrix (1999) {tmdb-603}"
+
+    assert FileNamer.generate_movie_filename(item, quality, "The.Matrix-GROUP.mp4") ==
+             "The Matrix {tmdb-603} [BluRay-1080p]-GROUP.mp4"
+
+    show = %{title: "The Office", year: 2005, tvdb_id: 73244}
+    episode = %{season_number: 1, episode_number: 5, title: "Pilot"}
+
+    assert FileNamer.generate_episode_filename(show, episode, quality, "The.Office-GROUP.mkv") ==
+             "The Office.S01E05.{tvdb-73244}-GROUP.mkv"
+  end
 
   describe "generate_movie_filename/3" do
     test "generates TRaSH-compatible filename for movie" do

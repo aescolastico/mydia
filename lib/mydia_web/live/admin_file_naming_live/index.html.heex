@@ -1,0 +1,71 @@
+<Layouts.app {assigns}>
+  <.admin_page page={:file_naming}>
+    <.form for={@form} id="file-naming-form" phx-change="validate" phx-submit="save" class="space-y-6">
+      <div class="alert bg-info/10 border border-info/20 text-sm">
+        <.icon name="hero-information-circle" class="size-5 shrink-0" />
+        <span>
+          {gettext("These templates apply to new imports and rename previews. Existing files keep their current names until you rename or move them.")}
+        </span>
+      </div>
+
+      <div :if={@env_overrides != []} class="alert alert-warning text-sm">
+        <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
+        <span>{gettext("Environment variables override saved naming settings:")} {Enum.join(@env_overrides, ", ")}</span>
+      </div>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <section class="card bg-base-100 border border-base-300 shadow-sm">
+          <div class="card-body gap-3">
+            <h2 class="card-title text-lg">{gettext("Folders")}</h2>
+            <p class="text-sm text-base-content/60">
+              {gettext("Choose how new movie, show, and season folders are named.")}
+            </p>
+            <.template_field field={@form[:movie_folder]} label={gettext("Movie folder")} preview={@previews["movie_folder"]} error={@errors["movie_folder"]} />
+            <.template_field field={@form[:tv_folder]} label={gettext("TV show folder")} preview={@previews["tv_folder"]} error={@errors["tv_folder"]} />
+            <.input field={@form[:season_folders]} type="checkbox" label={gettext("Use season subfolders")} class="toggle toggle-primary" />
+            <div class={not @season_folders && "hidden"}>
+              <.template_field field={@form[:season_folder]} label={gettext("Season folder")} preview={@previews["season_folder"]} error={@errors["season_folder"]} />
+            </div>
+          </div>
+        </section>
+
+        <section class="card bg-base-100 border border-base-300 shadow-sm">
+          <div class="card-body gap-3">
+            <h2 class="card-title text-lg">{gettext("File names")}</h2>
+            <p class="text-sm text-base-content/60">
+              {gettext("The original extension is kept. A filename only changes when its library allows automatic renaming or you choose Rename.")}
+            </p>
+            <.template_field field={@form[:movie_file]} label={gettext("Movie file")} preview={@previews["movie_file"]} error={@errors["movie_file"]} />
+            <.template_field field={@form[:episode_file]} label={gettext("Episode file")} preview={@previews["episode_file"]} error={@errors["episode_file"]} />
+          </div>
+        </section>
+      </div>
+
+      <details class="collapse collapse-arrow border border-base-300 bg-base-100 shadow-sm">
+        <summary class="collapse-title font-medium">{gettext("Available tokens")}</summary>
+        <div class="collapse-content text-sm text-base-content/70 space-y-3">
+          <p>{gettext("Use double braces for tokens. Literal braces let you create provider tags, for example {tmdb-{{tmdb}}}.")}</p>
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <thead><tr><th>{gettext("Token")}</th><th>{gettext("Meaning")}</th><th>{gettext("Example")}</th></tr></thead>
+              <tbody>
+                <tr :for={{token, description, sample} <- @token_catalog}>
+                  <td><code class="badge badge-ghost font-mono">{"{{#{token}}}"}</code></td>
+                  <td>{description}</td>
+                  <td class="font-mono text-xs">{sample}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>{gettext("Episode files need {{title}} and {{sxxeyy}}. Season folders need {{season}} and must look like Season 01 or S01 so scanning can recognize them.")}</p>
+        </div>
+      </details>
+
+      <div class="flex justify-end">
+        <.button type="submit" variant="primary" disabled={@errors != %{}}>
+          <.icon name="hero-check" class="size-4" /> {gettext("Save file naming")}
+        </.button>
+      </div>
+    </.form>
+  </.admin_page>
+</Layouts.app>

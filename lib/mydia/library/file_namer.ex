@@ -21,6 +21,10 @@ defmodule Mydia.Library.FileNamer do
   Example: `Show Title (2020) - S01E01 - Episode Title [WEB-1080p][DTS 5.1][HDR10][x264]-RlsGrp`
   """
 
+  alias Mydia.Config.Schema.Naming
+  alias Mydia.Library.NamingTemplate
+  alias Mydia.Settings.RuntimeConfig
+
   @doc """
   Generates a filename for a movie.
 
@@ -61,9 +65,10 @@ defmodule Mydia.Library.FileNamer do
       |> Enum.join(" ")
 
     # Append release group (if present) and extension
-    base
-    |> append_release_group(release_group)
-    |> Kernel.<>(extension)
+    default_name = append_release_group(base, release_group)
+    custom_name = render_file_template(:movie_file, media_item, quality_info, release_group)
+
+    (custom_name || default_name) <> extension
   end
 
   @doc """
@@ -114,9 +119,25 @@ defmodule Mydia.Library.FileNamer do
       |> Enum.join(" ")
 
     # Append release group (if present) and extension
-    base
-    |> append_release_group(release_group)
-    |> Kernel.<>(extension)
+    default_name = append_release_group(base, release_group)
+
+    episode_context = %{
+      "season" => season,
+      "episode" => ep_num,
+      "sxxeyy" => "S#{season}E#{ep_num}",
+      "episode_title" => sanitize_title(episode.title)
+    }
+
+    custom_name =
+      render_file_template(
+        :episode_file,
+        media_item,
+        quality_info,
+        release_group,
+        episode_context
+      )
+
+    (custom_name || default_name) <> extension
   end
 
   @doc """
@@ -150,7 +171,80 @@ defmodule Mydia.Library.FileNamer do
     |> String.trim()
   end
 
+  @doc "Whether newly imported TV episodes use per-season directories."
+  def season_folders_enabled?, do: RuntimeConfig.get_naming_config().season_folders
+
+  @doc "The configured folder name for a new movie."
+  def generate_movie_folder(media_item) do
+    render_folder(RuntimeConfig.get_naming_config().movie_folder, media_item)
+  end
+
+  @doc "The configured folder name for a new TV show."
+  def generate_tv_folder(media_item) do
+    render_folder(RuntimeConfig.get_naming_config().tv_folder, media_item)
+  end
+
+  @doc "The configured directory name for a season."
+  def generate_season_folder(season_number) do
+    RuntimeConfig.get_naming_config().season_folder
+    |> NamingTemplate.render(%{"season" => String.pad_leading(to_string(season_number), 2, "0")})
+    |> sanitize_path_component()
+  end
+
   ## Private Functions
+
+  # Keep the existing filename byte-for-byte until a template is customized.
+  # The legacy formatter has special handling for absent quality tags and years.
+  defp render_file_template(field, media_item, quality_info, release_group, extra \\ %{}) do
+    naming = RuntimeConfig.get_naming_config()
+    template = Map.fetch!(naming, field)
+
+    if template == Map.fetch!(%Naming{}, field) do
+      nil
+    else
+      context = %{
+        "title" => sanitize_title(media_item.title),
+        "year" => Map.get(media_item, :year) || "",
+        "quality" => build_quality_tag(quality_info) || "",
+        "audio" => build_audio_tag(quality_info.audio) || "",
+        "hdr" => build_hdr_tag(quality_info) || "",
+        "codec" => build_codec_tag(quality_info.codec) || "",
+        "release_group" => if(release_group in [nil, ""], do: "", else: "-#{release_group}"),
+        "tmdb" => Map.get(media_item, :tmdb_id) || "",
+        "tvdb" => Map.get(media_item, :tvdb_id) || "",
+        "imdb" => Map.get(media_item, :imdb_id) || ""
+      }
+
+      case template |> NamingTemplate.render(Map.merge(context, extra)) |> sanitize_path_component() do
+        "" -> nil
+        "." -> nil
+        ".." -> nil
+        name -> name
+      end
+    end
+  end
+
+  defp render_folder(template, media_item) do
+    context = %{
+      "title" => Map.get(media_item, :title) || "",
+      "year" => Map.get(media_item, :year) || "",
+      "tmdb" => Map.get(media_item, :tmdb_id) || "",
+      "tvdb" => Map.get(media_item, :tvdb_id) || "",
+      "imdb" => Map.get(media_item, :imdb_id) || ""
+    }
+
+    case template |> NamingTemplate.render(context) |> sanitize_path_component() do
+      name when name in ["", ".", ".."] -> "Unknown"
+      name -> name
+    end
+  end
+
+  defp sanitize_path_component(name) do
+    name
+    |> String.replace(~r/[<>:"\/\\|?*]/, "")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
 
   defp build_quality_tag(%{
          source: source,
