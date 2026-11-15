@@ -198,7 +198,7 @@ defmodule Mydia.Library.ReleaseParserTest do
     test "an episode directly under a tagged show folder keeps its filename season" do
       result =
         ReleaseParser.parse_with_path(
-          "/media/library/tv/Lantern Bay (2023) {tmdb-107463}/Lantern.Bay.S01E08.1080p.mkv"
+          "/data/animation/Lantern Bay (2023) {tmdb-107463}/Lantern.Bay.S01E08.1080p.mkv"
         )
 
       assert result.type == :tv_show
@@ -212,7 +212,9 @@ defmodule Mydia.Library.ReleaseParserTest do
 
     test "an untagged show folder identifies a misnamed episode" do
       result =
-        ReleaseParser.parse_with_path("/media/tv/Bluey (2018)/Playdate.2025.S03E04.1080p.mkv")
+        ReleaseParser.parse_with_path(
+          "/data/animation/Bluey (2018)/Playdate.2025.S03E04.1080p.mkv"
+        )
 
       assert result.type == :tv_show
       assert result.title == "Bluey"
@@ -221,13 +223,14 @@ defmodule Mydia.Library.ReleaseParserTest do
       assert result.episodes == [4]
     end
 
-    test "a movie subtree below a TV directory remains a movie" do
+    test "a show folder alone does not turn a movie filename into an episode" do
       result =
-        ReleaseParser.parse_with_path("/media/tv/movies/Twister (1996)/Twister.1996.1080p.mkv")
+        ReleaseParser.parse_with_path(
+          "/data/animation/Bluey (2018)/Playdate.2025.1080p.mkv"
+        )
 
       assert result.type == :movie
-      assert result.title == "Twister"
-      assert result.year == 1996
+      assert result.title == "Bluey"
     end
 
     test "movie folder structure: folder title takes precedence" do
