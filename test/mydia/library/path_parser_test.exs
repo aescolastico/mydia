@@ -158,6 +158,15 @@ defmodule Mydia.Library.PathParserTest do
       assert PathParser.is_tv_path?("/media/movies/Movie (2020)/movie.mkv") == false
     end
 
+    test "recognizes an episode directly under its TV show folder" do
+      assert PathParser.is_tv_path?("/media/tv/Bluey (2018)/Bluey.S01E03.mkv")
+    end
+
+    test "does not treat a movie subtree or a season folder as a show root" do
+      refute PathParser.is_tv_path?("/media/tv/movies/Twister (1996)/Twister.1996.mkv")
+      refute PathParser.is_tv_path?("/media/tv/Season 01/episode.mkv")
+    end
+
     test "returns false for downloads path" do
       assert PathParser.is_tv_path?("/downloads/random.mkv") == false
     end
@@ -529,6 +538,28 @@ defmodule Mydia.Library.PathParserTest do
   end
 
   describe "extract_tv_show_from_path/1" do
+    test "extracts a tagged show root without a season folder" do
+      result =
+        PathParser.extract_tv_show_from_path(
+          "/media/library/tv/Lantern Bay (2023) {tmdb-107463}/Lantern.Bay.S01E08.mkv"
+        )
+
+      assert result == %{
+               title: "Lantern Bay",
+               year: 2023,
+               external_id: "107463",
+               external_provider: :tmdb
+             }
+    end
+
+    test "does not infer a show root from a movie library or a bare season folder" do
+      assert PathParser.extract_tv_show_from_path(
+               "/media/tv/movies/Twister (1996)/Twister.1996.mkv"
+             ) == nil
+
+      assert PathParser.extract_tv_show_from_path("/media/tv/Season 01/episode.mkv") == nil
+    end
+
     test "extracts TV show metadata with TVDB ID from full path" do
       result =
         PathParser.extract_tv_show_from_path(

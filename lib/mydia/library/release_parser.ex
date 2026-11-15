@@ -103,20 +103,21 @@ defmodule Mydia.Library.ReleaseParser do
   Parse a full file path using folder structure to enhance matching
   accuracy.
 
-  Runs `PathParser.extract_from_path/1` (TV structure) or
-  `PathParser.extract_movie_from_path/1` (movie structure) **once**,
-  calls `parse/2` on `Path.basename(file_path)`, and applies
-  `SampleDetector.apply_detection/2` **once** at the outer layer.
+  Uses the TV show folder with or without a season folder, or the movie folder,
+  to enhance `parse/2` on `Path.basename(file_path)`. Applies
+  `SampleDetector.apply_detection/2` once at the outer layer.
   """
   @spec parse_with_path(String.t(), parse_opts()) :: ParsedFileInfo.t()
   def parse_with_path(file_path, opts \\ []) when is_binary(file_path) do
     filename = Path.basename(file_path)
     filename_result = parse(filename, opts)
+    tv = PathParser.extract_from_path(file_path)
+    tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
 
     cond do
-      tv = PathParser.extract_from_path(file_path) ->
-        tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
-        merge_tv_folder(filename_result, filename, file_path, tv, tv_folder_info)
+      tv || tv_folder_info ->
+        tv_context = tv || %{show_name: tv_folder_info.title, season: nil}
+        merge_tv_folder(filename_result, filename, file_path, tv_context, tv_folder_info)
 
       movie = PathParser.extract_movie_from_path(file_path) ->
         merge_movie_folder(filename_result, filename, file_path, movie)
@@ -429,6 +430,7 @@ defmodule Mydia.Library.ReleaseParser do
 
     season_factor =
       cond do
+        folder_season == nil -> 0.0
         filename_result.season == nil -> 0.0
         filename_result.season == folder_season -> 0.10
         true -> -0.10

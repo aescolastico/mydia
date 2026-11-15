@@ -4,8 +4,9 @@ defmodule Mydia.Library.PathParser do
 
   ## TV Shows
 
-  For files in structured TV library paths like `/media/tv/{Show Name}/Season {XX}/`,
-  this module prioritizes folder structure over filename parsing for show identification.
+  For files in TV library paths like `/media/tv/{Show Name}/Season {XX}/` or
+  `/media/tv/{Show Name}/episode.mkv`, this module prioritizes the show folder
+  over filename parsing for show identification.
 
   ### Why Folder Structure Matters
 
@@ -44,6 +45,9 @@ defmodule Mydia.Library.PathParser do
   """
 
   require Logger
+
+  @tv_directory_names ~w(tv shows series television)
+  @movie_directory_names ~w(movie movies film films)
 
   @doc """
   Reads a season number out of one path segment.
@@ -374,7 +378,8 @@ defmodule Mydia.Library.PathParser do
   @doc """
   Extracts TV show metadata from a file path by examining the show folder.
 
-  Looks at the show folder (parent of season folder) to extract external provider IDs.
+  Looks at the show folder (parent of the season folder, or parent of the file
+  when there is no season folder) to extract external provider IDs.
   This is used to enhance TV show matching when folder names contain [tvdb-123] or similar.
 
   Returns a map with `:title`, `:year`, `:external_id`, and `:external_provider` keys
@@ -406,34 +411,61 @@ defmodule Mydia.Library.PathParser do
       # Get the directory path (remove filename)
       dir_segments = Enum.drop(segments, -1)
 
-      # Find the show name folder (the folder before the season folder)
-      case find_show_folder(dir_segments) do
-        {:ok, show_folder_name} ->
-          # Parse the show folder to extract metadata
-          case parse_tv_show_folder(show_folder_name) do
-            %{} = result ->
-              Logger.debug("Extracted TV show metadata from folder",
-                path: path,
-                folder: show_folder_name,
-                title: result.title,
-                year: result.year,
-                external_id: result.external_id,
-                external_provider: result.external_provider
-              )
+      with show_folder_name when is_binary(show_folder_name) <- show_folder_name(dir_segments),
+           %{} = result <- parse_tv_show_folder(show_folder_name) do
+        Logger.debug("Extracted TV show metadata from folder",
+          path: path,
+          folder: show_folder_name,
+          title: result.title,
+          year: result.year,
+          external_id: result.external_id,
+          external_provider: result.external_provider
+        )
 
-              result
-
-            nil ->
-              nil
-          end
-
-        :error ->
-          nil
+        result
+      else
+        _ -> nil
       end
     end
   end
 
   def extract_tv_show_from_path(_), do: nil
+
+  defp show_folder_name(dir_segments) do
+    case find_show_folder(dir_segments) do
+      {:ok, folder_name} -> folder_name
+      :error -> show_root_folder(dir_segments)
+    end
+  end
+
+  # A show without a season folder needs an unambiguous TV library ancestor.
+  # The closest typed ancestor wins, so /tv/movies/Movie/file.mkv stays a movie.
+  defp show_root_folder(dir_segments) do
+    folder_name = List.last(dir_segments)
+
+    if valid_show_name?(folder_name) and season_from_segment(folder_name) == :error and
+         tv_library_path?(dir_segments) do
+      folder_name
+    end
+  end
+
+  defp tv_library_path?(dir_segments) do
+    nearest_type =
+      dir_segments
+      |> Enum.drop(-1)
+      |> Enum.reverse()
+      |> Enum.find_value(fn segment ->
+        segment = String.downcase(segment)
+
+        cond do
+          segment in @tv_directory_names -> :tv
+          segment in @movie_directory_names -> :movie
+          true -> nil
+        end
+      end)
+
+    nearest_type == :tv
+  end
 
   # Finds the show folder by looking for the folder before the season folder
   defp find_show_folder(dir_segments) do
@@ -466,7 +498,8 @@ defmodule Mydia.Library.PathParser do
   @doc """
   Checks if a path appears to be a TV show library path.
 
-  Returns true if the path contains a recognizable TV show folder structure.
+  Returns true if the path contains a recognizable TV show folder structure,
+  with or without a season folder.
 
   ## Examples
 
@@ -478,7 +511,7 @@ defmodule Mydia.Library.PathParser do
   """
   @spec is_tv_path?(String.t()) :: boolean()
   def is_tv_path?(path) when is_binary(path) do
-    extract_from_path(path) != nil
+    extract_from_path(path) != nil or extract_tv_show_from_path(path) != nil
   end
 
   def is_tv_path?(_), do: false
