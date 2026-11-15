@@ -103,7 +103,7 @@ defmodule Mydia.Library.ReleaseParser do
   Parse a full file path using folder structure to enhance matching
   accuracy.
 
-  Uses the TV show folder with or without a season folder, or the movie folder,
+  Uses a season folder, or an episode filename directly under a show folder,
   to enhance `parse/2` on `Path.basename(file_path)`. Applies
   `SampleDetector.apply_detection/2` once at the outer layer.
   """
@@ -112,7 +112,12 @@ defmodule Mydia.Library.ReleaseParser do
     filename = Path.basename(file_path)
     filename_result = parse(filename, opts)
     tv = PathParser.extract_from_path(file_path)
-    tv_folder_info = PathParser.extract_tv_show_from_path(file_path)
+    tv_folder_info =
+      PathParser.extract_tv_show_from_path(file_path) ||
+        if filename_result.type == :tv_show and filename_result.season != nil and
+             filename_result.episodes not in [nil, []] do
+          PathParser.extract_tv_show_from_parent(file_path)
+        end
 
     cond do
       tv || tv_folder_info ->
