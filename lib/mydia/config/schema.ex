@@ -52,6 +52,7 @@ defmodule Mydia.Config.Schema do
           auth: __MODULE__.Auth.t() | nil,
           media: __MODULE__.Media.t() | nil,
           metadata: __MODULE__.Metadata.t() | nil,
+          naming: __MODULE__.Naming.t() | nil,
           ui: __MODULE__.Ui.t() | nil,
           downloads: __MODULE__.Downloads.t() | nil,
           upgrades: __MODULE__.Upgrades.t() | nil,
@@ -129,6 +130,21 @@ defmodule Mydia.Config.Schema do
     end
 
     embeds_one :metadata, Mydia.Config.Schema.Metadata, on_replace: :update
+
+    embeds_one :naming, Naming, on_replace: :update, primary_key: false do
+      @type t :: %__MODULE__{}
+      field :season_folders, :boolean, default: true
+      field :season_folder, :string, default: "Season {{season}}"
+      field :movie_folder, :string, default: "{{title}} ({{year}})"
+      field :tv_folder, :string, default: "{{title}}"
+
+      field :movie_file, :string,
+        default: "{{title}} ({{year}}) {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
+
+      field :episode_file, :string,
+        default:
+          "{{title}} ({{year}}) - {{sxxeyy}} - {{episode_title}} {{quality}} {{audio}} {{hdr}} {{codec}}{{release_group}}"
+    end
 
     embeds_one :downloads, Downloads, on_replace: :update, primary_key: false do
       @type t :: %__MODULE__{}
@@ -482,6 +498,7 @@ defmodule Mydia.Config.Schema do
     |> cast_embed(:auth, with: &auth_changeset/2)
     |> cast_embed(:media, with: &media_changeset/2)
     |> cast_embed(:metadata)
+    |> cast_embed(:naming, with: &naming_changeset/2)
     |> cast_embed(:ui)
     |> cast_embed(:downloads, with: &downloads_changeset/2)
     |> cast_embed(:upgrades, with: &upgrades_changeset/2)
@@ -574,6 +591,29 @@ defmodule Mydia.Config.Schema do
     # daily `TrashCleanup` run rather than failing at config load.
     |> validate_required([:trash_retention_days])
     |> validate_number(:trash_retention_days, greater_than_or_equal_to: 0)
+  end
+
+  defp naming_changeset(schema, attrs) do
+    fields = [:season_folder, :movie_folder, :tv_folder, :movie_file, :episode_file]
+    defaults = %__MODULE__.Naming{}
+
+    changeset =
+      schema
+      |> cast(attrs, [:season_folders | fields])
+      |> validate_required([:season_folders])
+
+    Enum.reduce(fields, changeset, fn field, changeset ->
+      case get_field(changeset, field) do
+        value when is_binary(value) and value != "" ->
+          case Mydia.Library.NamingTemplate.validate_for(value, field) do
+            :ok -> changeset
+            {:error, reason} -> add_error(changeset, field, reason)
+          end
+
+        _ ->
+          put_change(changeset, field, Map.fetch!(defaults, field))
+      end
+    end)
   end
 
   defp downloads_changeset(schema, attrs) do
@@ -1043,6 +1083,7 @@ defmodule Mydia.Config.Schema do
       auth: %__MODULE__.Auth{},
       media: %__MODULE__.Media{},
       metadata: %__MODULE__.Metadata{},
+      naming: %__MODULE__.Naming{},
       ui: %__MODULE__.Ui{},
       downloads: %__MODULE__.Downloads{},
       upgrades: %__MODULE__.Upgrades{},

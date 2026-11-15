@@ -37,6 +37,7 @@ defmodule Mydia.Library.FileOrganizer do
   require Logger
 
   alias Mydia.Library.Dirs
+  alias Mydia.Library.FileNamer
   alias Mydia.Library.MediaFile
   alias Mydia.Media.MediaItem
   alias Mydia.Settings.LibraryPath
@@ -654,32 +655,13 @@ defmodule Mydia.Library.FileOrganizer do
     |> Repo.update()
   end
 
-  defp build_media_folder(%MediaItem{type: "movie", title: title, year: year}) do
-    sanitize_filename(
-      if year do
-        "#{title} (#{year})"
-      else
-        title
-      end
-    )
-  end
+  defp build_media_folder(%MediaItem{type: "movie"} = item),
+    do: FileNamer.generate_movie_folder(item)
 
-  defp build_media_folder(%MediaItem{type: "tv_show", title: title}) do
-    sanitize_filename(title)
-  end
+  defp build_media_folder(%MediaItem{type: "tv_show"} = item),
+    do: FileNamer.generate_tv_folder(item)
 
-  defp build_media_folder(%MediaItem{title: title}) do
-    sanitize_filename(title)
-  end
-
-  defp sanitize_filename(filename) when is_binary(filename) do
-    filename
-    |> String.replace(~r/[<>:\"\/\\|?*]/, "")
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-  end
-
-  defp sanitize_filename(_), do: "Unknown"
+  defp build_media_folder(%MediaItem{} = item), do: FileNamer.generate_tv_folder(item)
 
   defp list_library_media_files(library_path_id) do
     import Ecto.Query

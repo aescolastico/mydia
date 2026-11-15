@@ -239,6 +239,14 @@ defmodule Mydia.Settings.RuntimeConfig do
     end
   end
 
+  @doc "Returns the active file and folder naming settings."
+  def get_naming_config do
+    case get_runtime_config() do
+      %{naming: %Mydia.Config.Schema.Naming{} = naming} -> naming
+      _ -> %Mydia.Config.Schema.Naming{}
+    end
+  end
+
   def get_downloads_config do
     get_runtime_config().downloads
   end

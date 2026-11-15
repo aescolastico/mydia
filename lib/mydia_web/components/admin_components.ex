@@ -167,9 +167,8 @@ defmodule MydiaWeb.AdminComponents do
       </div>
     </div>
 
-    <%!-- Measured 2026-10-23: Configuration's nine tabs need 842px as labels and
-          1080px with icons, against 960px beside the sidebar at xl and 1216px at
-          2xl. Lifted tabs that wrap look broken, so the strip starts at xl and
+    <%!-- Configuration's tabs need more width with icons than the sidebar leaves
+          at xl. Lifted tabs that wrap look broken, so the strip starts at xl and
           its icons at 2xl. The strip and the switcher both overlap the panel's top
           border by 1px (-mb-px), so the active tab's fill covers it and the inactive
           tabs' bottom borders coincide with it. --%>

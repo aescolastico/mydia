@@ -34,6 +34,7 @@ defmodule MydiaWeb.AdminNav do
     :clients,
     :indexers,
     :library_paths,
+    :file_naming,
     :path_mappings,
     :subtitle_providers,
     :media_servers,
@@ -70,6 +71,7 @@ defmodule MydiaWeb.AdminNav do
   def page_label(:clients), do: gettext("Clients")
   def page_label(:indexers), do: gettext("Indexers")
   def page_label(:library_paths), do: gettext("Library")
+  def page_label(:file_naming), do: gettext("File Naming")
   def page_label(:path_mappings), do: gettext("Path Mappings")
   def page_label(:subtitle_providers), do: gettext("Subtitle Providers")
   def page_label(:media_servers), do: gettext("Media Servers")
@@ -98,6 +100,7 @@ defmodule MydiaWeb.AdminNav do
   def page_description(:clients), do: gettext("Torrent, Usenet and debrid download clients")
   def page_description(:indexers), do: gettext("Where searches look for releases")
   def page_description(:library_paths), do: gettext("Library folders for movies and TV")
+  def page_description(:file_naming), do: gettext("Templates for imported folders and files")
 
   def page_description(:path_mappings),
     do: gettext("Translate download client paths to paths this server sees")
@@ -171,6 +174,12 @@ defmodule MydiaWeb.AdminNav do
         hub: :configuration,
         icon: "hero-folder",
         path: ~p"/admin/library-paths"
+      },
+      %Page{
+        key: :file_naming,
+        hub: :configuration,
+        icon: "hero-document-text",
+        path: ~p"/admin/file-naming"
       },
       %Page{
         key: :path_mappings,

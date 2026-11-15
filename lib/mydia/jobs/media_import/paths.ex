@@ -75,26 +75,21 @@ defmodule Mydia.Jobs.MediaImport.Paths do
     cond do
       # TV episode
       download.episode && download.media_item ->
-        title = sanitize_filename(download.media_item.title)
-        season = download.episode.season_number
+        base = Path.join(library_root, FileNamer.generate_tv_folder(download.media_item))
 
-        Path.join([library_root, title, "Season #{String.pad_leading("#{season}", 2, "0")}"])
+        if FileNamer.season_folders_enabled?() do
+          Path.join(base, FileNamer.generate_season_folder(download.episode.season_number))
+        else
+          base
+        end
 
       # Movie
       download.media_item && download.media_item.type == "movie" ->
-        title = sanitize_filename(download.media_item.title)
-        year = download.media_item.year
-
-        if year do
-          Path.join([library_root, "#{title} (#{year})"])
-        else
-          Path.join([library_root, title])
-        end
+        Path.join(library_root, FileNamer.generate_movie_folder(download.media_item))
 
       # TV show (no specific episode) - fallback
       download.media_item && download.media_item.type == "tv_show" ->
-        title = sanitize_filename(download.media_item.title)
-        Path.join([library_root, title])
+        Path.join(library_root, FileNamer.generate_tv_folder(download.media_item))
 
       # Unknown - use download title
       true ->
@@ -142,7 +137,7 @@ defmodule Mydia.Jobs.MediaImport.Paths do
       if library_path.auto_organize do
         FileOrganizer.destination_path(media_item, library_path)
       else
-        Path.join(library_path.path, sanitize_filename(media_item.title))
+        Path.join(library_path.path, FileNamer.generate_tv_folder(media_item))
       end
     end)
   end
@@ -152,11 +147,15 @@ defmodule Mydia.Jobs.MediaImport.Paths do
   this season, else `Season NN`.
   """
   def season_dir(base, media_item, library_path, season) do
-    name =
-      Home.season_folder_name(media_item, library_path, base, season) ||
-        "Season #{String.pad_leading("#{season}", 2, "0")}"
+    if FileNamer.season_folders_enabled?() do
+      name =
+        Home.season_folder_name(media_item, library_path, base, season) ||
+          FileNamer.generate_season_folder(season)
 
-    Path.join(base, name)
+      Path.join(base, name)
+    else
+      base
+    end
   end
 
   # An item already living in a folder keeps getting its files there
@@ -173,11 +172,7 @@ defmodule Mydia.Jobs.MediaImport.Paths do
     if library_path.auto_organize do
       FileOrganizer.destination_path(media_item, library_path)
     else
-      title = sanitize_filename(media_item.title)
-
-      if media_item.year,
-        do: Path.join(library_path.path, "#{title} (#{media_item.year})"),
-        else: Path.join(library_path.path, title)
+      Path.join(library_path.path, FileNamer.generate_movie_folder(media_item))
     end
   end
 

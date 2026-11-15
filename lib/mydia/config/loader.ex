@@ -250,6 +250,16 @@ defmodule Mydia.Config.Loader do
     Settings.load_database_config()
   end
 
+  defp load_naming_env do
+    %{}
+    |> put_if_present(:season_folders, System.get_env("NAMING_SEASON_FOLDERS"), &parse_boolean/1)
+    |> put_if_present(:season_folder, System.get_env("NAMING_SEASON_FOLDER"))
+    |> put_if_present(:movie_folder, System.get_env("NAMING_MOVIE_FOLDER"))
+    |> put_if_present(:tv_folder, System.get_env("NAMING_TV_FOLDER"))
+    |> put_if_present(:movie_file, System.get_env("NAMING_MOVIE_FILE"))
+    |> put_if_present(:episode_file, System.get_env("NAMING_EPISODE_FILE"))
+  end
+
   defp load_env do
     %{
       server: load_server_env(),
@@ -257,6 +267,7 @@ defmodule Mydia.Config.Loader do
       auth: load_auth_env(),
       media: load_media_env(),
       metadata: Mydia.Config.Env.MetadataEnv.load(),
+      naming: load_naming_env(),
       ui: Mydia.Config.Env.UiEnv.load(),
       downloads: load_downloads_env(),
       upgrades: load_upgrades_env(),
