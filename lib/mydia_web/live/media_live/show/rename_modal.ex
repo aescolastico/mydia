@@ -1,21 +1,29 @@
 defmodule MydiaWeb.MediaLive.Show.RenameModal do
   @moduledoc """
-  The show page's rename modal: current and proposed filenames, grouped by
-  season for TV shows, with a checkbox per file and per season.
+  Current and proposed filenames, grouped by media item for bulk renames and
+  by season for TV shows, with a checkbox per file and per season.
   """
 
   use MydiaWeb, :html
 
+  alias MydiaWeb.MediaLive.RenameGroup
   alias MydiaWeb.MediaLive.Show.RenameSelection
 
   attr :rename_previews, :list, required: true
   attr :rename_selected, :any, required: true
   attr :renaming_files, :boolean, required: true
+  attr :media_groups, :list, default: []
 
   def rename_files_modal(assigns) do
+    media_groups =
+      case assigns.media_groups do
+        [] -> [%RenameGroup{media_item_id: nil, title: nil, previews: assigns.rename_previews}]
+        groups -> groups
+      end
+
     assigns =
       assigns
-      |> assign(:groups, RenameSelection.groups(assigns.rename_previews))
+      |> assign(:media_groups, media_groups)
       |> assign(:selected_count, MapSet.size(assigns.rename_selected))
 
     ~H"""
@@ -47,13 +55,23 @@ defmodule MydiaWeb.MediaLive.Show.RenameModal do
               </p>
             </div>
           <% else %>
-            <div class="space-y-3">
-              <.rename_group
-                :for={{season, previews} <- @groups}
-                season={season}
-                previews={previews}
-                selected={@rename_selected}
-              />
+            <div class="space-y-4">
+              <section
+                :for={media_group <- @media_groups}
+                id={media_group.media_item_id && "rename-item-#{media_group.media_item_id}"}
+                class="space-y-3"
+              >
+                <h4 :if={media_group.title} class="px-1 text-sm font-semibold text-base-content">
+                  {media_group.title}
+                </h4>
+                <.rename_group
+                  :for={{season, previews} <- RenameSelection.groups(media_group.previews)}
+                  season={season}
+                  previews={previews}
+                  selected={@rename_selected}
+                  media_item_id={media_group.media_item_id}
+                />
+              </section>
             </div>
           <% end %>
         </div>
@@ -121,19 +139,25 @@ defmodule MydiaWeb.MediaLive.Show.RenameModal do
   attr :season, :any, required: true
   attr :previews, :list, required: true
   attr :selected, :any, required: true
+  attr :media_item_id, :string, default: nil
 
   defp rename_group(assigns) do
     changed = Enum.filter(assigns.previews, & &1.changed?)
+    group_prefix =
+      if assigns.media_item_id,
+        do: "rename-item-#{assigns.media_item_id}-season",
+        else: "rename-season"
 
     assigns =
       assigns
+      |> assign(:group_prefix, group_prefix)
       |> assign(:changed_count, length(changed))
       |> assign(:unchanged_count, length(assigns.previews) - length(changed))
       |> assign(:picked, Enum.count(changed, &MapSet.member?(assigns.selected, &1.file_id)))
       |> assign(:state, RenameSelection.season_state(assigns.selected, assigns.previews))
 
     ~H"""
-    <section id={@season && "rename-season-#{@season}"}>
+    <section id={@season && "#{@group_prefix}-#{@season}"}>
       <%!-- Movies form a single nil group: no header, rows only. --%>
       <div
         :if={not is_nil(@season) and @changed_count == 0}
@@ -152,11 +176,12 @@ defmodule MydiaWeb.MediaLive.Show.RenameModal do
       >
         <input
           type="checkbox"
-          id={"rename-season-#{@season}-toggle"}
+          id={"#{@group_prefix}-#{@season}-toggle"}
           class="checkbox checkbox-sm checkbox-primary"
           checked={@state == :all}
           phx-click="toggle_rename_season"
           phx-value-season-number={@season}
+          phx-value-media-item-id={@media_item_id}
         />
         <span class="badge badge-primary badge-sm font-semibold">S{@season}</span>
         <span class="text-xs text-base-content/70">

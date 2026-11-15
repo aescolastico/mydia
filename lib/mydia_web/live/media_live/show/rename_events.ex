@@ -61,6 +61,20 @@ defmodule MydiaWeb.MediaLive.Show.RenameEvents do
   end
 
   def handle_rename_files_async({:ok, {:ok, results}}, socket) do
+    {flash_type, message} = result_flash(results)
+
+    {:noreply,
+     socket
+     |> reset()
+     |> assign(
+       :media_item,
+       load_media_item(socket.assigns.current_scope, socket.assigns.media_item.id)
+     )
+     |> put_flash(flash_type, message)}
+  end
+
+  @doc "The same localized completion summary for a single item or a bulk rename."
+  def result_flash(results) do
     success_count = Enum.count(results, &match?({:ok, _}, &1))
     error_count = Enum.count(results, &match?({:error, _}, &1))
 
@@ -86,15 +100,7 @@ defmodule MydiaWeb.MediaLive.Show.RenameEvents do
       end
 
     flash_type = if error_count > 0, do: :warning, else: :info
-
-    {:noreply,
-     socket
-     |> reset()
-     |> assign(
-       :media_item,
-       load_media_item(socket.assigns.current_scope, socket.assigns.media_item.id)
-     )
-     |> put_flash(flash_type, message)}
+    {flash_type, message}
   end
 
   def handle_rename_files_async({:ok, {:error, reason}}, socket) do
