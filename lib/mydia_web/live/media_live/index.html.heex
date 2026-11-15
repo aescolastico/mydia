@@ -995,6 +995,18 @@
                         <.icon name="hero-tag" class="w-4 h-4" /> {gettext("Re-classify")}
                       </button>
                     </li>
+                    <li :if={@live_action in [:movies, :tv_shows]}>
+                      <button
+                        id="batch-rename-files"
+                        type="button"
+                        phx-click="show_rename_modal"
+                        class="gap-2"
+                      >
+                        <.icon name="hero-document-text" class="w-4 h-4" /> {gettext(
+                          "Rename files"
+                        )}
+                      </button>
+                    </li>
                     <li>
                       <button
                         id="batch-move-library-button"
@@ -1044,6 +1056,15 @@
       selected_count={MapSet.size(@selected_ids)}
       delete_files={@delete_files}
     />
+
+    <%= if @show_rename_modal do %>
+      <RenameModal.rename_files_modal
+        rename_previews={@rename_previews}
+        rename_selected={@rename_selected}
+        renaming_files={@renaming_files}
+        media_groups={@rename_groups}
+      />
+    <% end %>
 
     <.live_component
       module={MydiaWeb.Live.LibraryMoveComponent}

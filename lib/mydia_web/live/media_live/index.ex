@@ -25,7 +25,9 @@ defmodule MydiaWeb.MediaLive.Index do
   alias MydiaWeb.MediaLive.Index.Messages
   alias MydiaWeb.MediaLive.Index.ReclassifyFlash
   alias MydiaWeb.MediaLive.Index.RememberedListing
+  alias MydiaWeb.MediaLive.Index.RenameEvents
   alias MydiaWeb.MediaLive.Index.Window
+  alias MydiaWeb.MediaLive.Show.RenameModal
 
   import MydiaWeb.Formatters, only: [format_file_size: 1]
 
@@ -79,6 +81,11 @@ defmodule MydiaWeb.MediaLive.Index do
      |> assign(:delete_files, false)
      |> assign(:show_batch_edit_modal, false)
      |> assign(:show_auto_search_confirm_modal, false)
+     |> assign(:show_rename_modal, false)
+     |> assign(:rename_groups, [])
+     |> assign(:rename_previews, [])
+     |> assign(:rename_selected, MapSet.new())
+     |> assign(:renaming_files, false)
      |> assign(:quality_profiles, [])
      |> assign(:batch_edit_form, to_form(%{}, as: :batch_edit))
      |> assign(:scanning, false)
@@ -438,6 +445,27 @@ defmodule MydiaWeb.MediaLive.Index do
     with_media_permission(socket, :update, &batch_reclassify/1)
   end
 
+  def handle_event("show_rename_modal", params, socket),
+    do: with_media_permission(socket, :update, &RenameEvents.show_rename_modal(params, &1))
+
+  def handle_event("hide_rename_modal", params, socket),
+    do: RenameEvents.hide_rename_modal(params, socket)
+
+  def handle_event("toggle_rename_file", params, socket),
+    do: RenameEvents.toggle_rename_file(params, socket)
+
+  def handle_event("toggle_rename_season", params, socket),
+    do: RenameEvents.toggle_rename_season(params, socket)
+
+  def handle_event("select_all_rename", params, socket),
+    do: RenameEvents.select_all_rename(params, socket)
+
+  def handle_event("clear_rename_selection", params, socket),
+    do: RenameEvents.clear_rename_selection(params, socket)
+
+  def handle_event("confirm_rename_files", params, socket),
+    do: with_media_permission(socket, :update, &RenameEvents.confirm_rename_files(params, &1))
+
   def handle_event("show_delete_confirmation", _params, socket) do
     {:noreply,
      socket
@@ -643,6 +671,10 @@ defmodule MydiaWeb.MediaLive.Index do
         {:noreply, put_flash(socket, :error, gettext("Could not create the Anime section"))}
     end
   end
+
+  @impl true
+  def handle_async(:rename_files, result, socket),
+    do: RenameEvents.handle_rename_files_async(result, socket)
 
   @impl true
   def handle_info({:download_updated, _download_id}, socket) do
