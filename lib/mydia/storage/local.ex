@@ -154,13 +154,33 @@ defmodule Mydia.Storage.Local do
   """
   @spec copy_file(Path.t(), Path.t()) :: :ok | {:error, File.posix()}
   def copy_file(source, dest) do
-    case :file.copy(source, dest) do
+    case copy_bytes(source, dest) do
       {:ok, _bytes} ->
         copy_mode(source, dest)
         :ok
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # A path-to-path :file.copy runs the entire transfer inside Erlang's global
+  # file server. A large SMB copy then blocks unrelated File.stat/mkdir calls,
+  # including Exqlite reconnects, until every byte has landed. Raw handles
+  # keep the transfer in this process instead.
+  defp copy_bytes(source, dest) do
+    with {:ok, source_io} <- :file.open(source, [:read, :raw, :binary]) do
+      try do
+        with {:ok, dest_io} <- :file.open(dest, [:write, :raw, :binary]) do
+          try do
+            :file.copy(source_io, dest_io)
+          after
+            :file.close(dest_io)
+          end
+        end
+      after
+        :file.close(source_io)
+      end
     end
   end
 
