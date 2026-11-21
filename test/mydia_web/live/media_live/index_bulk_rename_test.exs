@@ -66,6 +66,37 @@ defmodule MydiaWeb.MediaLive.IndexBulkRenameTest do
     refute Repo.reload(second_file).relative_path == "blue-s1e1.mkv"
   end
 
+  test "bulk preview includes an untitled episode without crashing", %{conn: conn, tmp_dir: root} do
+    library = library_path_fixture(%{path: root, type: "series"})
+    {first, _first_file} = show_file(library, root, "Amber Harbor", "amber-s1e1.mkv")
+    {second, _second_file} = show_file(library, root, "Blue Harbor", "blue-s1e1.mkv")
+    third = media_item_fixture(%{type: "tv_show", title: "Cedar Harbor", year: 2022})
+
+    episode =
+      episode_fixture(%{
+        media_item_id: third.id,
+        season_number: 1,
+        episode_number: 2,
+        title: nil
+      })
+
+    file =
+      media_file_fixture(%{
+        episode_id: episode.id,
+        library_path_id: library.id,
+        relative_path: "cedar-s1e2.mkv"
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/tv")
+    select_items(view, [first.id, second.id, third.id])
+    view |> element("#batch-rename-files") |> render_click()
+
+    assert has_element?(view, "#rename-item-#{first.id}")
+    assert has_element?(view, "#rename-item-#{second.id}")
+    assert has_element?(view, "#rename-item-#{third.id}")
+    assert view |> element("#rename-file-#{file.id}") |> render() =~ "Episode 02"
+  end
+
   test "a reader cannot open the rename dialog through a crafted event", %{
     conn: conn,
     tmp_dir: root
@@ -79,6 +110,7 @@ defmodule MydiaWeb.MediaLive.IndexBulkRenameTest do
     render_click(view, "show_rename_modal", %{})
 
     refute has_element?(view, "#rename-files-modal")
+
     assert view |> element("#flash-error") |> render() =~
              "You do not have permission to modify media items"
   end

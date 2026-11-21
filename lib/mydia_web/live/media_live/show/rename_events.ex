@@ -73,6 +73,27 @@ defmodule MydiaWeb.MediaLive.Show.RenameEvents do
      |> put_flash(flash_type, message)}
   end
 
+  def handle_rename_files_async({:ok, {:error, reason}}, socket) do
+    Logger.error("File rename failed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, false)
+     |> put_flash(
+       :error,
+       gettext("Failed to rename files: %{reason}", reason: inspect(reason))
+     )}
+  end
+
+  def handle_rename_files_async({:exit, reason}, socket) do
+    Logger.error("File rename task crashed: #{inspect(reason)}")
+
+    {:noreply,
+     socket
+     |> assign(:renaming_files, false)
+     |> put_flash(:error, gettext("File rename failed unexpectedly"))}
+  end
+
   @doc "The same localized completion summary for a single item or a bulk rename."
   def result_flash(results) do
     success_count = Enum.count(results, &match?({:ok, _}, &1))
@@ -101,27 +122,6 @@ defmodule MydiaWeb.MediaLive.Show.RenameEvents do
 
     flash_type = if error_count > 0, do: :warning, else: :info
     {flash_type, message}
-  end
-
-  def handle_rename_files_async({:ok, {:error, reason}}, socket) do
-    Logger.error("File rename failed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:renaming_files, false)
-     |> put_flash(
-       :error,
-       gettext("Failed to rename files: %{reason}", reason: inspect(reason))
-     )}
-  end
-
-  def handle_rename_files_async({:exit, reason}, socket) do
-    Logger.error("File rename task crashed: #{inspect(reason)}")
-
-    {:noreply,
-     socket
-     |> assign(:renaming_files, false)
-     |> put_flash(:error, gettext("File rename failed unexpectedly"))}
   end
 
   defp update_selection(socket, fun) do

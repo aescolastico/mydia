@@ -10,7 +10,7 @@ defmodule Mydia.Library.FileRenamer do
 
   alias Mydia.Library.Structs.{Quality, RenamePreview}
   alias Mydia.Library.{FileNamer, MediaFile}
-  alias Mydia.Media.MediaItem
+  alias Mydia.Media.{Episode, MediaItem}
   alias Mydia.Repo
   alias Mydia.Storage
 
@@ -24,7 +24,10 @@ defmodule Mydia.Library.FileRenamer do
   def generate_rename_preview(%MediaFile{} = file) do
     # Load associations if needed - force reload to ensure we have fresh data
     file = Repo.preload(file, [:library_path, :media_item, episode: :media_item], force: true)
+    build_rename_preview(file)
+  end
 
+  defp build_rename_preview(%MediaFile{} = file) do
     # storage_path keeps the s3:// URI for S3 files and is the absolute path otherwise
     current_path = MediaFile.storage_path(file)
     directory = Path.dirname(current_path)
@@ -87,34 +90,43 @@ defmodule Mydia.Library.FileRenamer do
   Movie previews have no season and keep filename order.
   """
   def generate_rename_previews_for_media_item(%MediaItem{} = media_item) do
-    active_files_query = MediaFile.versions()
+    [media_item]
+    |> generate_rename_previews_for_media_items()
+    |> Map.get(media_item.id, [])
+  end
 
-    media_item =
-      Repo.preload(media_item,
-        media_files: active_files_query,
-        episodes: [media_files: active_files_query]
-      )
+  @doc """
+  Generates previews for several media items with one file query and shared
+  association preloads. Returns previews keyed by media item ID.
+  """
+  @spec generate_rename_previews_for_media_items([MediaItem.t()]) ::
+          %{optional(binary()) => [RenamePreview.t()]}
+  def generate_rename_previews_for_media_items([]), do: %{}
 
-    # Get all media file IDs (both movie files and episode files)
-    file_ids =
-      if media_item.type == "tv_show" do
-        # For TV shows, get all episode file IDs
-        media_item.episodes
-        |> Enum.flat_map(& &1.media_files)
-        |> Enum.map(& &1.id)
-      else
-        # For movies, get media item file IDs
-        media_item.media_files
-        |> Enum.map(& &1.id)
-      end
+  def generate_rename_previews_for_media_items(media_items) when is_list(media_items) do
+    movie_ids = for %MediaItem{type: "movie", id: id} <- media_items, do: id
+    show_ids = for %MediaItem{type: "tv_show", id: id} <- media_items, do: id
 
-    # Reload each file fresh from database to ensure we have current data
-    file_ids
-    |> Enum.map(&Mydia.Library.get_media_file!/1)
-    |> Enum.map(&generate_rename_preview/1)
-    |> Enum.sort_by(
-      &{sort_key(&1.season_number), sort_key(&1.episode_number), &1.current_filename}
-    )
+    episode_ids = from(e in Episode, where: e.media_item_id in ^show_ids, select: e.id)
+
+    MediaFile.versions()
+    |> where([file], file.media_item_id in ^movie_ids or file.episode_id in subquery(episode_ids))
+    |> Repo.all()
+    |> Repo.preload([:library_path, :media_item, episode: :media_item])
+    |> Enum.reduce(%{}, fn file, previews_by_item ->
+      item_id = if file.episode, do: file.episode.media_item_id, else: file.media_item_id
+      preview = build_rename_preview(file)
+      Map.update(previews_by_item, item_id, [preview], &[preview | &1])
+    end)
+    |> Map.new(fn {item_id, previews} ->
+      sorted =
+        Enum.sort_by(
+          previews,
+          &{sort_key(&1.season_number), sort_key(&1.episode_number), &1.current_filename}
+        )
+
+      {item_id, sorted}
+    end)
   end
 
   # nil sorts after every integer, so previews without an episode land last.

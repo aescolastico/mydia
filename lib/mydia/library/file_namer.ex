@@ -71,7 +71,8 @@ defmodule Mydia.Library.FileNamer do
 
   ## Parameters
     - `media_item` - The TV show media item (must have title)
-    - `episode` - The episode record (must have season_number, episode_number, title)
+    - `episode` - The episode record (must have season_number and episode_number;
+      an absent title falls back to "Episode NN")
     - `quality_info` - Quality information map with keys: resolution, source, codec, audio, hdr_format, dolby_vision, proper, repack
     - `original_filename` - Original filename (for extension and release group)
 
@@ -95,12 +96,21 @@ defmodule Mydia.Library.FileNamer do
     season = String.pad_leading("#{episode.season_number}", 2, "0")
     ep_num = String.pad_leading("#{episode.episode_number}", 2, "0")
 
+    episode_title =
+      case episode.title do
+        title when is_binary(title) ->
+          if String.trim(title) == "", do: "Episode #{ep_num}", else: title
+
+        _ ->
+          "Episode #{ep_num}"
+      end
+
     # Build filename parts (release group handled separately)
     parts = [
       sanitize_title(media_item.title),
       if(media_item.year, do: "(#{media_item.year})", else: nil),
       "- S#{season}E#{ep_num} -",
-      sanitize_title(episode.title),
+      sanitize_title(episode_title),
       build_quality_tag(quality_info),
       build_audio_tag(quality_info.audio),
       build_hdr_tag(quality_info),

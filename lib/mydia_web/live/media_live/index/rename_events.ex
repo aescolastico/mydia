@@ -22,18 +22,22 @@ defmodule MydiaWeb.MediaLive.Index.RenameEvents do
       |> MapSet.to_list()
 
     if socket.assigns.live_action in [:movies, :tv_shows] and selected_ids != [] do
-      groups =
-        socket.assigns.current_scope
-        |> Media.list_media_items(
+      items =
+        Media.list_media_items(socket.assigns.current_scope,
           ids: selected_ids,
           type: socket.assigns.filter_type,
           order_by: :title
         )
+
+      previews_by_item = FileRenamer.generate_rename_previews_for_media_items(items)
+
+      groups =
+        items
         |> Enum.map(fn item ->
           %RenameGroup{
             media_item_id: item.id,
             title: item.title,
-            previews: FileRenamer.generate_rename_previews_for_media_item(item)
+            previews: Map.get(previews_by_item, item.id, [])
           }
         end)
         |> Enum.reject(&(&1.previews == []))
@@ -83,6 +87,7 @@ defmodule MydiaWeb.MediaLive.Index.RenameEvents do
 
   def confirm_rename_files(_params, socket) do
     specs = RenameSelection.specs(socket.assigns.rename_selected, socket.assigns.rename_previews)
+
     ready? =
       socket.assigns.live_action in [:movies, :tv_shows] and
         socket.assigns.show_rename_modal and

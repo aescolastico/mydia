@@ -62,6 +62,28 @@ defmodule Mydia.Library.FileRenamerPreviewTest do
     assert order == [{1, 1}, {1, 2}, {2, 1}]
   end
 
+  test "an untitled episode uses its episode number in a rename preview", ctx do
+    episode =
+      episode_fixture(%{
+        media_item_id: ctx.show.id,
+        season_number: 1,
+        episode_number: 4,
+        title: nil
+      })
+
+    file =
+      media_file_fixture(%{
+        episode_id: episode.id,
+        library_path_id: ctx.library_path.id,
+        relative_path: "untitled.mkv"
+      })
+
+    assert %RenamePreview{proposed_filename: proposed} =
+             FileRenamer.generate_rename_preview(file)
+
+    assert proposed =~ "S01E04 - Episode 04"
+  end
+
   test "movie previews have no season or episode" do
     movie = media_item_fixture(%{type: "movie", title: "The Paper Orchard"})
     file = media_file_fixture(%{media_item_id: movie.id})
